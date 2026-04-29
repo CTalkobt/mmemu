@@ -7,7 +7,8 @@
       "cpu": { "type": "45gs02", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "hyper_serial", "name": "HyperSerial", "baseAddr": "0xD6C0" },
-        { "type": "exit_trap", "name": "ExitTrap", "baseAddr": "0xD6CF" }
+        { "type": "exit_trap", "name": "ExitTrap", "baseAddr": "0xD6CF" },
+        { "type": "mega65_math", "name": "MathUnit", "baseAddr": "0xD760" }
       ],
       "roms": []
     }

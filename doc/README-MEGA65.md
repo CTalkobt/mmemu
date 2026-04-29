@@ -49,7 +49,9 @@ The VIC-IV supports traditional C64 modes plus advanced features:
 - **Palette**: 256 entries from a 4096-colour space.
 
 ### 4.2 Math Accelerator
-Hardware registers at `$D770–$D77F` provide instantaneous 16-bit multiplication and 32/16-bit division.
+Hardware registers at `$D760–$D77F` provide fast 32-bit integer multiplication and division.
+
+See [README-MEGA65-MATH.md](README-MEGA65-MATH.md) for detailed register maps and usage.
 
 ---
 

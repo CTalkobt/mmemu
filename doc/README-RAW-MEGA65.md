@@ -12,6 +12,7 @@ The `rawMega65` machine is a minimal, non-cycle-accurate MEGA65 target designed 
 - **I/O Devices**:
   - **HyperSerial** (`$D6C0`): Character logging to `hyper_serial.log`.
   - **ExitTrap** (`$D6CF`): Triggered by writing `$42`.
+  - **Math Accelerator** (`$D760`): Fast 32-bit integer multiplication and division. (See [README-MEGA65-MATH.md](README-MEGA65-MATH.md))
 
 ---
 
@@ -35,3 +36,4 @@ It is defined in `machines/rawMega65.json`.
 |-------|-------------|
 | `$0000 0000 – $0FFF FFFF` | 256 MB Flat RAM |
 | `$0000 D6C0 – $0000 D6CF` | I/O Devices (HyperSerial & ExitTrap) |
+| `$0000 D760 – $0000 D77F` | Math Accelerator |
