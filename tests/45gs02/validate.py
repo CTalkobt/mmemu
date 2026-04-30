@@ -38,7 +38,6 @@ def run_xmega65(prg_path):
         "-autoload",
         "-prgexit",
         "-dumpmem", dump_path,
-        "-config", "tests/45gs02/xmega65_test.cfg"
     ]
     
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)

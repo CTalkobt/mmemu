@@ -30,23 +30,44 @@ static MachineDescriptor* createMachineRawMega65() {
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 40}); // 40MHz
     desc->buses.push_back({"system", bus});
 
-    // Add Hyper Serial if available
+    // Add I/O devices if available
     if (g_host && g_host->createDevice) {
+        if (!desc->ioRegistry) desc->ioRegistry = new IORegistry();
+        IOHandler* haltDev = nullptr;
+
         IOHandler* hs = g_host->createDevice("hyper_serial");
         if (hs) {
             hs->setBaseAddr(0xD6C0);
-            if (!desc->ioRegistry) desc->ioRegistry = new IORegistry();
             desc->ioRegistry->registerOwnedHandler(hs);
-            
-            bus->setIoHooks(
-                [io = desc->ioRegistry](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead(b, a, v); },
-                [io = desc->ioRegistry](IBus* b, uint32_t a, uint8_t v) { return io->dispatchWrite(b, a, v); }
-            );
-
-            bus->setHaltCheck([hs] {
-                return static_cast<HyperSerialLogger*>(hs)->isHaltRequested();
-            });
+            haltDev = hs;
         }
+
+        IOHandler* et = g_host->createDevice("exit_trap");
+        if (et) {
+            et->setBaseAddr(0xD6CF);
+            desc->ioRegistry->registerOwnedHandler(et);
+            if (!haltDev) haltDev = et;
+        }
+
+        IOHandler* math = g_host->createDevice("mega65_math");
+        if (math) {
+            math->setBaseAddr(0xD700);
+            desc->ioRegistry->registerOwnedHandler(math);
+        }
+
+        bus->setIoHooks(
+            [io = desc->ioRegistry](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead(b, a, v); },
+            [io = desc->ioRegistry](IBus* b, uint32_t a, uint8_t v) { return io->dispatchWrite(b, a, v); }
+        );
+
+        bus->setHaltCheck([io = desc->ioRegistry] {
+            if (!io) return false;
+            std::vector<IOHandler*> handlers;
+            io->enumerate(handlers);
+            for (auto* h : handlers)
+                if (h->isHaltRequested()) return true;
+            return false;
+        });
     }
 
     return desc;

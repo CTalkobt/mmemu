@@ -8,7 +8,7 @@
       "devices": [
         { "type": "hyper_serial", "name": "HyperSerial", "baseAddr": "0xD6C0" },
         { "type": "exit_trap", "name": "ExitTrap", "baseAddr": "0xD6CF" },
-        { "type": "mega65_math", "name": "MathUnit", "baseAddr": "0xD760" }
+        { "type": "mega65_math", "name": "MathUnit", "baseAddr": "0xD700" }
       ],
       "roms": []
     }
