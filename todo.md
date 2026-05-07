@@ -23,3 +23,15 @@
   [x] - Update Makefile test targets
   [x] - Update validate.py for ca45 assembler
   [x] - Update documentation with ca45 project link
+
+## Assembler Support & Selection
+[ ] Add ca45 assembler backend support for GUI, CLI, and MCP (similar to KickAssembler)
+  [ ] - Implement `Ca45AssemblerBackend` in libtoolchain
+  [ ] - Support ca45 `.s` file format and `.prg` output
+  [ ] - Parse ca45 symbol output (if available)
+  [ ] - Register ca45 backend with toolchain registry
+  [ ] - Add assembler selection mechanism (config, command-line, or file extension detection)
+  [ ] - Update CLI `asm` command to support assembler selection
+  [ ] - Update GUI assemble dialog with assembler picker
+  [ ] - Update MCP assembler tool with backend selection
+  [ ] - Document assembler backend architecture and how to add new assemblers
