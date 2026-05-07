@@ -218,6 +218,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/test/test_iec_d64.cpp \
 	src/plugins/cbm-hle/test/test_kernal_hle.cpp \
+	src/plugins/devices/f018b_dma/test/test_f018b_dma.cpp \
 	tests/src/test_cbm_disk_images.cpp \
 	tests/src/test_d81_directory_listing.cpp \
 	tests/src/test_plugin_validation.cpp
