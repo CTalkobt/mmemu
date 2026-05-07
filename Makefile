@@ -21,6 +21,7 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/45gs02/main \
 	-Isrc/plugins/devices/hyper_serial/main \
 	-Isrc/plugins/devices/virtual_iec/main \
+	-Isrc/plugins/devices/f018b_dma/main \
 	-Isrc/plugins/machines/pet/main -Itests/src
 
 BINDIR   = bin
@@ -145,6 +146,8 @@ PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/cbm-loader/main/t64_parser.cpp \
 	src/plugins/cbm-loader/main/g64_parser.cpp
 
+PLUGIN_F018B_DMA_SRCS = src/plugins/devices/f018b_dma/main/f018b_dma.cpp
+
 GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
@@ -263,6 +266,7 @@ PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
 	src/plugins/devices/gtia/main/gtia.o \
 	src/plugins/devices/pokey/main/pokey.o \
 	src/plugins/devices/virtual_iec/main/virtual_iec.o \
+	src/plugins/devices/f018b_dma/main/f018b_dma.o \
 	src/plugins/cbm-hle/main/kernal_hle.o
 REGISTRY_OBJS = src/cli/main/cli_interpreter.o \
 	src/cli/main/plugin_command_registry.o \
@@ -325,6 +329,7 @@ PLUGIN_GTIA_OBJS = $(PLUGIN_GTIA_SRCS:.cpp=.o)
 PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
+PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_EXIT_TRAP_OBJS = src/plugins/devices/exit_trap/main/exit_trap.o
 PLUGIN_MEGA65_MATH_OBJS = src/plugins/devices/mega65_math/main/mega65_math.o
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
@@ -362,6 +367,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-pokey.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
+	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
 	$(LIBDIR)/mmemu-plugin-exit-trap.so \
 	$(LIBDIR)/mmemu-plugin-mega65-math.so \
 	$(LIBDIR)/mmemu-plugin-cbm-hle.so
@@ -472,6 +478,9 @@ $(LIBDIR)/mmemu-plugin-pokey.so: $(PLUGIN_POKEY_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-f018b-dma.so: $(PLUGIN_F018B_DMA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
