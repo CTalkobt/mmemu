@@ -6,11 +6,7 @@
 .const SUCCESS = $55
 .const MEGA65_KEY = $d02f
 
-// BASIC header: 10 SYS 2064 ($0810)
-* = $0801
-    .byte $0C, $08, $0A, $00, $9E, $20, $32, $30, $36, $34, $00, $00, $00
-
-* = $0810 "Program"
+* = $2000 "Program"
 
 start:
     lda #$20
