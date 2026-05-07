@@ -273,7 +273,7 @@ The emulator uses a centralized discovery system to find its components at runti
 ### Assemblers
 The **45GS02 test suite** uses **ca45**, a cross-assembler for the 45GS02 CPU:
 - **ca45** — Official assembler for 45GS02 and 6502-family processors
-- **Project**: [github.com/CTalkobt/sim6502](https://github.com/CTalkobt/sim6502) (includes ca45 binary and source)
+- **Project**: [github.com/CTalkobt/m65compiler](https://github.com/CTalkobt/m65compiler) (includes ca45 binary and source)
 - **Usage**: Test programs are written in `.s` format and assembled with `ca45 test.s -o test.prg`
 - **Test Validation**: The `tests/45gs02/validate.py` script assembles `.s` files and cross-validates output against both **mmsim** and **xmega65** emulators.
 
@@ -284,7 +284,7 @@ The **45GS02 test suite** uses **ca45**, a cross-assembler for the 45GS02 CPU:
 ### Prerequisites
 - **C++17 Compiler** (GCC 9+, Clang 10+).
 - **Libraries**: `spdlog`, `fmt`, `wxWidgets` (3.0+), `ALSA` (`libasound`), `nlohmann/json`.
-- **Test Tools**: `ca45` assembler (from [github.com/CTalkobt/sim6502](https://github.com/CTalkobt/sim6502)).
+- **Test Tools**: `ca45` assembler (from [github.com/CTalkobt/m65compiler](https://github.com/CTalkobt/m65compiler)).
 - **Documentation**: `pandoc` (optional, required for `make man`).
 
 ### Building
