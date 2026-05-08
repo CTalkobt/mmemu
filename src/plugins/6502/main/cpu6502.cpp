@@ -240,6 +240,12 @@ bool MOS6502::isReturnAt(IBus* bus, uint32_t addr) {
 }
 
 bool MOS6502::isProgramEnd(IBus* bus) {
+    // Check for RTS/RTI on empty stack (SP at initial value)
+    if (m_state.sp == 0xFF) {
+        uint8_t op = bus->peek8(m_state.pc);
+        if (op == 0x60 || op == 0x40) return true; // RTS, RTI
+    }
+
     if (bus->peek8(m_state.pc) == 0x4C) {
         uint8_t lo = bus->peek8(m_state.pc + 1);
         uint8_t hi = bus->peek8(m_state.pc + 2);

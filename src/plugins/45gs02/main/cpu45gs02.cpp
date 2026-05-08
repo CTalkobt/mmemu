@@ -1377,10 +1377,16 @@ void MOS45GS02::saveState(uint8_t* buf) const { memcpy(buf, &m_state, sizeof(m_s
 void MOS45GS02::loadState(const uint8_t* buf) { memcpy(&m_state, buf, sizeof(m_state)); }
 int MOS45GS02::isCallAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return (op == 0x20 || op == 0x22 || op == 0x23) ? 3 : 0; }
 bool MOS45GS02::isReturnAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return op == 0x60 || op == 0x40 || op == 0x62; }
-bool MOS45GS02::isProgramEnd(IBus* bus) { 
+bool MOS45GS02::isProgramEnd(IBus* bus) {
     if (m_state.haltLine) return true;
     if (bus && bus->isHaltRequested()) return true;
-    
+
+    // Check for RTS/RTI on empty stack (SP at initial value)
+    if (m_state.sp == 0x01FF && bus) {
+        uint8_t op = bus->peek8(m_state.pc);
+        if (op == 0x60 || op == 0x40 || op == 0x62) return true; // RTS, RTI, RTZ
+    }
+
     // Check for JMP * (infinite loop at current PC)
     if (bus) {
         uint32_t addr = m_state.pc;
