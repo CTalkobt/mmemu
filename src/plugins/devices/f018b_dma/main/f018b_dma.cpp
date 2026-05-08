@@ -4,7 +4,7 @@
 #include <cstring>
 
 F018bDmaDevice::F018bDmaDevice(uint32_t base)
-    : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false) {
+    : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false), m_enhancedMode(false) {
     std::memset(m_regs, 0, sizeof(m_regs));
 }
 
@@ -29,8 +29,14 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     m_regs[offset] = val;
     m_bus = bus;  // Cache the bus reference for DMA operations
 
-    // Write to $D703 triggers DMA execution
+    // Write to $D703 triggers standard DMA execution
     if (offset == 0x03) {
+        m_enhancedMode = false;
+        executeDma();
+    }
+    // Write to $D705 triggers Enhanced DMA execution
+    else if (offset == 0x05) {
+        m_enhancedMode = true;
         executeDma();
     }
 
@@ -41,6 +47,43 @@ void F018bDmaDevice::tick(uint64_t /*cycles*/) {
     // DMA execution happens synchronously in ioWrite; tick is a no-op
     // If async execution is needed in the future, execute chained jobs here
     // and clear m_dmaActive when complete.
+}
+
+void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
+    if (!m_bus) return;
+
+    while (true) {
+        uint8_t option = m_bus->read8(addr);
+        addr++;
+
+        // End of job option list
+        if (option == 0x00) break;
+
+        // Options with MSB set take a 1-byte argument
+        if (option & 0x80) {
+            uint8_t arg = m_bus->read8(addr);
+            addr++;
+
+            switch (option) {
+                case 0x82:  // Source skip rate (256ths of bytes) - fractional part
+                    job.srcSkipRate = (job.srcSkipRate & 0xFF00) | arg;
+                    break;
+                case 0x83:  // Source skip rate (whole bytes) - integer part
+                    job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8);
+                    break;
+                case 0x84:  // Destination skip rate (256ths of bytes) - fractional part
+                    job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg;
+                    break;
+                case 0x85:  // Destination skip rate (whole bytes) - integer part
+                    job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8);
+                    break;
+                // Other options are ignored for now (line drawing, etc.)
+                default:
+                    break;
+            }
+        }
+        // Options without MSB are no-argument tokens
+    }
 }
 
 void F018bDmaDevice::executeDma() {
@@ -87,16 +130,17 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
 
     for (uint32_t jobIdx = 0; jobIdx < MAX_JOBS; ++jobIdx) {
         DmaJob job = {};
+        job.srcSkipRate = 0x0100;  // Default: 1.0 bytes per iteration
+        job.dstSkipRate = 0x0100;
+
+        // Parse job option tokens if in enhanced mode
+        if (m_enhancedMode) {
+            parseJobOptions(currentAddr, job);
+        }
 
         // Read job descriptor (10 bytes for standard format)
         // Byte 0: command
         job.command = m_bus->read8(currentAddr + 0);
-
-        // Check if enhanced format (bit 6 set) — not supported yet
-        if (job.command & 0x40) {
-            // Enhanced format has additional bytes; skip for now
-            return false;  // Unsupported enhanced format
-        }
 
         // Bytes 1–2: count (16-bit little-endian)
         uint8_t count_lo = m_bus->read8(currentAddr + 1);
@@ -143,16 +187,20 @@ void F018bDmaDevice::processJob(const DmaJob& job) {
     uint32_t srcPhys = (job.srcAddr & 0x0FFFFF) | bankHigh;
     uint32_t dstPhys = (job.dstAddr & 0x0FFFFF) | bankHigh;
 
+    // Use default 1.0 byte stepping if not set by options
+    uint16_t srcStep = job.srcSkipRate ? job.srcSkipRate : 0x0100;
+    uint16_t dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
+
     switch (op) {
         case DMA_COPY:
-            doCopy(srcPhys, dstPhys, job.count);
+            doCopy(srcPhys, dstPhys, job.count, srcStep, dstStep);
             break;
         case DMA_FILL:
             // Fill byte is the low byte of the source address
-            doFill(dstPhys, job.count, job.srcAddr & 0xFF);
+            doFill(dstPhys, job.count, job.srcAddr & 0xFF, dstStep);
             break;
         case DMA_SWAP:
-            doSwap(srcPhys, dstPhys, job.count);
+            doSwap(srcPhys, dstPhys, job.count, srcStep, dstStep);
             break;
         case DMA_MIX:
             // Mix operation not yet implemented
@@ -160,41 +208,49 @@ void F018bDmaDevice::processJob(const DmaJob& job) {
     }
 }
 
-void F018bDmaDevice::doCopy(uint32_t src, uint32_t dst, uint16_t count) {
+void F018bDmaDevice::doCopy(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep) {
     if (!m_bus || count == 0) return;
 
-    // Handle overlapping regions: if src < dst, copy backward to avoid corruption
-    if (src < dst && src + count > dst) {
-        // Backward copy
-        for (uint16_t i = 0; i < count; ++i) {
-            uint8_t byte = m_bus->read8(src + count - 1 - i);
-            m_bus->write8(dst + count - 1 - i, byte);
-        }
-    } else {
-        // Forward copy
-        for (uint16_t i = 0; i < count; ++i) {
-            uint8_t byte = m_bus->read8(src + i);
-            m_bus->write8(dst + i, byte);
-        }
+    // srcStep and dstStep are in format: high byte = integer bytes, low byte = 256ths
+    // E.g., $0100 = 1.0 bytes, $0080 = 0.5 bytes, $0200 = 2.0 bytes
+
+    uint32_t srcAccum = 0;  // Accumulated address offset (in 256ths)
+    uint32_t dstAccum = 0;
+
+    for (uint16_t i = 0; i < count; ++i) {
+        uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
+        m_bus->write8(dst + (dstAccum >> 8), byte);
+
+        srcAccum += srcStep;
+        dstAccum += dstStep;
     }
 }
 
-void F018bDmaDevice::doFill(uint32_t dst, uint16_t count, uint8_t fillByte) {
+void F018bDmaDevice::doFill(uint32_t dst, uint16_t count, uint8_t fillByte, uint16_t dstStep) {
     if (!m_bus || count == 0) return;
 
+    uint32_t dstAccum = 0;  // Accumulated address offset (in 256ths)
+
     for (uint16_t i = 0; i < count; ++i) {
-        m_bus->write8(dst + i, fillByte);
+        m_bus->write8(dst + (dstAccum >> 8), fillByte);
+        dstAccum += dstStep;
     }
 }
 
-void F018bDmaDevice::doSwap(uint32_t src, uint32_t dst, uint16_t count) {
+void F018bDmaDevice::doSwap(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep) {
     if (!m_bus || count == 0) return;
 
+    uint32_t srcAccum = 0;  // Accumulated address offset (in 256ths)
+    uint32_t dstAccum = 0;
+
     for (uint16_t i = 0; i < count; ++i) {
-        uint8_t srcByte = m_bus->read8(src + i);
-        uint8_t dstByte = m_bus->read8(dst + i);
-        m_bus->write8(src + i, dstByte);
-        m_bus->write8(dst + i, srcByte);
+        uint8_t srcByte = m_bus->read8(src + (srcAccum >> 8));
+        uint8_t dstByte = m_bus->read8(dst + (dstAccum >> 8));
+        m_bus->write8(src + (srcAccum >> 8), dstByte);
+        m_bus->write8(dst + (dstAccum >> 8), srcByte);
+
+        srcAccum += srcStep;
+        dstAccum += dstStep;
     }
 }
 

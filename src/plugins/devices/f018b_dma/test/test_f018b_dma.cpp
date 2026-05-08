@@ -445,3 +445,76 @@ TEST_CASE(dma_zero_count) {
     dma.ioWrite(&bus, 0xD703, 0x01);
     ASSERT(true);  // If we got here, no crash occurred
 }
+
+// ============================================================================
+// Test: Enhanced DMA Jobs with Fractional Stepping
+// ============================================================================
+
+TEST_CASE(dma_enhanced_fractional_stepping_copy) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Fill source region with pattern
+    for (int i = 0; i < 16; ++i) {
+        bus.write8(0x010000 + i, i);
+    }
+
+    // Create Enhanced DMA job list with skip rates
+    // Skip rate format: high byte = integer bytes, low byte = 256ths
+    // $0200 = 2.0 bytes per iteration (skip every other byte)
+    uint32_t jobListAddr = 0x030000;
+    uint32_t jobAddr = jobListAddr;
+
+    // Enhanced DMA job option tokens
+    bus.write8(jobAddr + 0, 0x83);  // Source skip rate (whole bytes)
+    bus.write8(jobAddr + 1, 0x02);  // 2.0 bytes per iteration
+    bus.write8(jobAddr + 2, 0x85);  // Destination skip rate (whole bytes)
+    bus.write8(jobAddr + 3, 0x01);  // 1.0 bytes per iteration
+    bus.write8(jobAddr + 4, 0x00);  // End of options
+
+    // Standard F018B DMA job (copy 8 iterations)
+    uint32_t dmaJobAddr = jobAddr + 5;
+    bus.write8(dmaJobAddr + 0, 0x00);   // Command: copy
+    bus.write8(dmaJobAddr + 1, 0x08);   // Count = 8 iterations
+    bus.write8(dmaJobAddr + 2, 0x00);
+    bus.write8(dmaJobAddr + 3, 0x00);   // Source = $010000
+    bus.write8(dmaJobAddr + 4, 0x00);
+    bus.write8(dmaJobAddr + 5, 0x01);
+    bus.write8(dmaJobAddr + 6, 0x00);   // Dest = $020000
+    bus.write8(dmaJobAddr + 7, 0x00);
+    bus.write8(dmaJobAddr + 8, 0x02);
+    bus.write8(dmaJobAddr + 9, 0x00);   // End of chain
+
+    // Set DMA list address
+    dma.ioWrite(&bus, 0xD700, 0x00);
+    dma.ioWrite(&bus, 0xD701, 0x00);
+    dma.ioWrite(&bus, 0xD702, 0x03);
+    dma.ioWrite(&bus, 0xD704, 0x00);
+
+    // Trigger Enhanced DMA (via $D705)
+    dma.ioWrite(&bus, 0xD705, 0x01);
+
+    // With skip rates of 2.0 (src) and 1.0 (dst):
+    // Iteration 0: src[0]=0 -> dst[0]
+    // Iteration 1: src[2]=2 -> dst[1]
+    // Iteration 2: src[4]=4 -> dst[2]
+    // Iteration 3: src[6]=6 -> dst[3]
+    // Iteration 4: src[8]=8 -> dst[4]
+    // Iteration 5: src[10]=10 -> dst[5]
+    // Iteration 6: src[12]=12 -> dst[6]
+    // Iteration 7: src[14]=14 -> dst[7]
+
+    uint8_t val;
+    bus.read8(0x020000);
+    val = bus.read8(0x020000);
+    ASSERT_EQ(val, 0);  // Should be 0 (from src[0])
+
+    val = bus.read8(0x020001);
+    ASSERT_EQ(val, 2);  // Should be 2 (from src[2])
+
+    val = bus.read8(0x020002);
+    ASSERT_EQ(val, 4);  // Should be 4 (from src[4])
+
+    val = bus.read8(0x020003);
+    ASSERT_EQ(val, 6);  // Should be 6 (from src[6])
+}

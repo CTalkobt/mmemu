@@ -32,9 +32,9 @@
   [x] - 28-bit address support with bank register
   [x] - CPU halt during DMA execution
   [x] - Plugin creation and machine wiring
-  [ ] - Mix operation implementation
-  [ ] - Fractional stepping and modulus modes
-  [ ] - Interrupt on completion (bit 3)
+  [x] - Fractional stepping and modulus modes
+  [d] - Mix operation implementation
+  [d] - Interrupt on completion (bit 3)
 
 ## Assembler Support & Selection
 [ ] Add ca45 assembler backend support for GUI, CLI, and MCP (similar to KickAssembler)

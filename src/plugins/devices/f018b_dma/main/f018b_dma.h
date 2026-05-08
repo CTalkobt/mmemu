@@ -50,14 +50,17 @@ private:
         uint32_t srcAddr;       // Bytes 3–5: source address (24-bit)
         uint32_t dstAddr;       // Bytes 6–8: destination address (24-bit)
         uint8_t chainByte;      // Byte 9: 0 = end, 4 = chain to next job
+        uint16_t srcSkipRate;   // Source fractional step rate ($0100 = 1.0 byte)
+        uint16_t dstSkipRate;   // Destination fractional step rate
     };
 
     void executeDma();
     bool fetchJobList(uint32_t listAddr);
+    void parseJobOptions(uint32_t& addr, DmaJob& job);
     void processJob(const DmaJob& job);
-    void doCopy(uint32_t src, uint32_t dst, uint16_t count);
-    void doFill(uint32_t dst, uint16_t count, uint8_t fillByte);
-    void doSwap(uint32_t src, uint32_t dst, uint16_t count);
+    void doCopy(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep);
+    void doFill(uint32_t dst, uint16_t count, uint8_t fillByte, uint16_t dstStep);
+    void doSwap(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep);
 
     uint32_t m_base;
     std::string m_name{"F018B DMA"};
@@ -65,5 +68,6 @@ private:
     uint8_t m_regs[16];         // Register shadow: $D700–$D70F
     uint32_t m_dmaListAddr;     // 28-bit pointer to job list
     bool m_dmaActive;           // Set during execution; CPU halts while true
+    bool m_enhancedMode;        // Enhanced DMA Jobs mode (triggered via $D705)
     std::vector<DmaJob> m_jobs; // Fetched job chain
 };
