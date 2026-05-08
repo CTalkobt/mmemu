@@ -103,9 +103,14 @@ public:
 
     uint64_t cycles() const override { return m_state.cycles; }
 
+    // MEGA65 MAP instruction support (optional — only set if MapMmu is in use)
+    class MapMmu* getMapMmu() const { return m_mapMmu; }
+    void setMapMmu(class MapMmu* mmu) { m_mapMmu = mmu; }
+
 private:
     CPU45GS02State m_state;
     IBus*          m_bus;
+    class MapMmu*  m_mapMmu = nullptr;
 
     // Helper for address translation (MAP)
     uint32_t translate(uint16_t addr);

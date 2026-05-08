@@ -36,6 +36,22 @@
   [d] - Mix operation implementation
   [d] - Interrupt on completion (bit 3)
 
+## Phase 19: SparseMemoryBus(28) and MAP MMU
+[x] - SparseMemoryBus with 4KB lazy-allocated pages and pre-mapped ROM regions
+[x] - MapMmu as pure address translator (MAP instruction support)
+[x] - Snapshot serialization (sparse format)
+[x] - Unit tests for both components
+
+## MEGA65 Machine Integration (Phase 21)
+[x] - Wire MapMmu as CPU's bus pointer (CPU reads/writes via MapMmu → SparseMemoryBus)
+[x] - Wire MapMmu pointer to 45GS02 CPU for MAP instruction support
+[ ] - Implement MAP instruction (0x5C) in 45GS02 CPU to call MapMmu.setMapState()
+[ ] - Separate C64 mode path (use C64BankController) from MEGA65 mode path (use MapMmu)
+[ ] - Load MEGA65 ROM and wire overlays on SparseMemoryBus (KERNAL, BASIC, CHARROM)
+[ ] - Implement I/O personality switching ($D02F) in machine factory
+[ ] - Implement MAP instruction parameter parsing (read map spec from memory)
+[ ] - MEGA65 integration tests (MAP functionality, address translation, ROM visibility)
+
 ## Assembler Support & Selection
 [ ] Add ca45 assembler backend support for GUI, CLI, and MCP (similar to KickAssembler)
   [ ] - Implement `Ca45AssemblerBackend` in libtoolchain

@@ -22,6 +22,8 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/hyper_serial/main \
 	-Isrc/plugins/devices/virtual_iec/main \
 	-Isrc/plugins/devices/f018b_dma/main \
+	-Isrc/plugins/devices/map_mmu/main \
+	-Isrc/plugins/machines/mega65/main \
 	-Isrc/plugins/machines/pet/main -Itests/src
 
 BINDIR   = bin
@@ -38,7 +40,8 @@ WXLIBS     = $(shell wx-config --libs aui,xrc,html,qa,core,xml,net,base)
 PLUGIN_LIBS =
 
 # Library Sources
-LIBMEM_SRCS       = src/libmem/main/ibus.cpp src/libmem/main/memory_bus.cpp src/libmem/main/libmem.cpp
+LIBMEM_SRCS       = src/libmem/main/ibus.cpp src/libmem/main/memory_bus.cpp \
+	src/libmem/main/sparse_memory_bus.cpp src/libmem/main/libmem.cpp
 LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp src/libcore/main/core_registry.cpp \
 	src/libcore/main/machines/machine_registry.cpp src/libcore/main/libcore.cpp \
 	src/libcore/main/image_loader.cpp src/libcore/main/json_machine_loader.cpp \
@@ -148,6 +151,12 @@ PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 
 PLUGIN_F018B_DMA_SRCS = src/plugins/devices/f018b_dma/main/f018b_dma.cpp
 
+PLUGIN_MAP_MMU_SRCS = src/plugins/devices/map_mmu/main/map_mmu.cpp \
+	src/plugins/devices/map_mmu/main/plugin_init.cpp
+
+PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
+	src/plugins/machines/mega65/main/plugin_init.cpp
+
 GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
@@ -187,6 +196,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/cli/test/test_cli.cpp \
 	src/gui/test/test_gui_logic.cpp \
 	src/libmem/test/test_flatmembus.cpp \
+	src/libmem/test/test_sparse_memory_bus.cpp \
 	src/libcore/test/test_libcore.cpp \
 	src/libcore/test/test_registry.cpp \
 	src/libcore/test/test_json_machine_loader.cpp \
@@ -219,6 +229,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/virtual_iec/test/test_iec_d64.cpp \
 	src/plugins/cbm-hle/test/test_kernal_hle.cpp \
 	src/plugins/devices/f018b_dma/test/test_f018b_dma.cpp \
+	src/plugins/devices/map_mmu/test/test_map_mmu.cpp \
 	tests/src/test_cbm_disk_images.cpp \
 	tests/src/test_d81_directory_listing.cpp \
 	tests/src/test_plugin_validation.cpp
@@ -268,6 +279,7 @@ PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
 	src/plugins/devices/pokey/main/pokey.o \
 	src/plugins/devices/virtual_iec/main/virtual_iec.o \
 	src/plugins/devices/f018b_dma/main/f018b_dma.o \
+	src/plugins/devices/map_mmu/main/map_mmu.o \
 	src/plugins/cbm-hle/main/kernal_hle.o
 REGISTRY_OBJS = src/cli/main/cli_interpreter.o \
 	src/cli/main/plugin_command_registry.o \
@@ -331,6 +343,8 @@ PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
 PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
+PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
+PLUGIN_MEGA65_OBJS = $(PLUGIN_MEGA65_SRCS:.cpp=.o)
 PLUGIN_EXIT_TRAP_OBJS = src/plugins/devices/exit_trap/main/exit_trap.o
 PLUGIN_MEGA65_MATH_OBJS = src/plugins/devices/mega65_math/main/mega65_math.o
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
@@ -369,6 +383,8 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
 	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
+	$(LIBDIR)/mmemu-plugin-map-mmu.so \
+	$(LIBDIR)/mmemu-plugin-mega65.so \
 	$(LIBDIR)/mmemu-plugin-exit-trap.so \
 	$(LIBDIR)/mmemu-plugin-mega65-math.so \
 	$(LIBDIR)/mmemu-plugin-cbm-hle.so
@@ -481,6 +497,12 @@ $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-f018b-dma.so: $(PLUGIN_F018B_DMA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-map-mmu.so: $(PLUGIN_MAP_MMU_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
