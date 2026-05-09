@@ -22,6 +22,7 @@
 #include "libdebug/main/breakpoint_list.h"
 #include "libdebug/main/stack_trace.h"
 #include "libdebug/main/expression_evaluator.h"
+#include "libdebug/main/trace_buffer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include "imap_controller.h"
@@ -55,6 +56,7 @@ struct MachineState {
     std::string        id;
     std::vector<uint8_t> lastSearchPattern;
     uint32_t             lastSearchFoundAddr = 0xFFFFFFFF;
+    std::string          traceFilter = "all";  // all, instructions, breakpoints, memory
 
     ~MachineState() {
         // MachineDescriptor owns cpu and bus
@@ -76,6 +78,7 @@ struct MachineState {
         id = std::move(o.id);
         lastSearchPattern = std::move(o.lastSearchPattern);
         lastSearchFoundAddr = o.lastSearchFoundAddr;
+        traceFilter = std::move(o.traceFilter);
     }
     MachineState& operator=(MachineState&& o) noexcept {
         if (this != &o) {
@@ -88,6 +91,7 @@ struct MachineState {
             id = std::move(o.id);
             lastSearchPattern = std::move(o.lastSearchPattern);
             lastSearchFoundAddr = o.lastSearchFoundAddr;
+            traceFilter = std::move(o.traceFilter);
         }
         return *this;
     }
@@ -270,6 +274,37 @@ Json handleDescribe() {
     Json spReq2(Json::ARR); spReq2.push_back(Json("machine_id")); spReq2.push_back(Json("personality"));
     spSchema2.oVal["required"] = spReq2;
     addTool("set_personality", "Switch I/O personality mode via KEY register knock sequence. Only available if KEY register is present.", spSchema2);
+
+    Json gtSchema(Json::OBJ);
+    gtSchema.oVal["type"] = Json("object");
+    Json gtProps(Json::OBJ);
+    gtProps.oVal["machine_id"] = midProp;
+    Json limitProp(Json::OBJ); limitProp.oVal["type"] = Json("integer"); limitProp.oVal["description"] = Json("Maximum number of entries to return (default: all)");
+    gtProps.oVal["limit"] = limitProp;
+    gtSchema.oVal["properties"] = gtProps;
+    Json gtReq(Json::ARR); gtReq.push_back(Json("machine_id"));
+    gtSchema.oVal["required"] = gtReq;
+    addTool("get_trace_buffer", "Retrieve instruction execution trace entries from the trace buffer. Each entry includes address, mnemonic, registers, and cycle count.", gtSchema);
+
+    Json tbSchema(Json::OBJ);
+    tbSchema.oVal["type"] = Json("object");
+    Json tbProps(Json::OBJ);
+    tbProps.oVal["machine_id"] = midProp;
+    tbSchema.oVal["properties"] = tbProps;
+    Json tbReq(Json::ARR); tbReq.push_back(Json("machine_id"));
+    tbSchema.oVal["required"] = tbReq;
+    addTool("clear_trace", "Clear all entries from the trace buffer.", tbSchema);
+
+    Json stSchema(Json::OBJ);
+    stSchema.oVal["type"] = Json("object");
+    Json stProps(Json::OBJ);
+    stProps.oVal["machine_id"] = midProp;
+    Json filterProp(Json::OBJ); filterProp.oVal["type"] = Json("string"); filterProp.oVal["description"] = Json("Trace filter mode: all, instructions, breakpoints, memory");
+    stProps.oVal["filter"] = filterProp;
+    stSchema.oVal["properties"] = stProps;
+    Json stReq(Json::ARR); stReq.push_back(Json("machine_id")); stReq.push_back(Json("filter"));
+    stSchema.oVal["required"] = stReq;
+    addTool("set_trace_filter", "Configure which types of events are recorded in the trace buffer.", stSchema);
 
     Json mtSchema(Json::OBJ);
     mtSchema.oVal["type"] = Json("object");
@@ -934,6 +969,70 @@ Json handleToolsCall(const Json& params) {
                     kr->ioWrite(ms->bus, 0xD02F, sequence->second);
                     textItem.oVal["text"] = Json("Personality switched to " + persStr);
                 }
+            }
+        }
+    } else if (name == "get_trace_buffer") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->dbg) {
+            textItem.oVal["text"] = Json("Error: No debug context available");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            TraceBuffer& buf = ms->dbg->trace();
+            size_t limit = args.contains("limit") ? (size_t)args["limit"].nVal : buf.size();
+            limit = std::min(limit, buf.size());
+
+            std::stringstream ss;
+            ss << "Trace buffer: " << buf.size() << " entries\n";
+            ss << "Showing " << limit << " most recent:\n\n";
+
+            size_t start = (buf.size() > limit) ? (buf.size() - limit) : 0;
+            for (size_t i = start; i < buf.size(); i++) {
+                const TraceEntry& e = buf.at(i);
+                ss << std::hex << std::setw(4) << std::setfill('0') << e.addr << ": " << e.mnemonic;
+                if (!e.regs.empty()) {
+                    ss << " | ";
+                    bool first = true;
+                    for (const auto& [regName, regVal] : e.regs) {
+                        if (!first) ss << " ";
+                        ss << regName << "=$" << std::hex << std::setw(2) << std::setfill('0') << regVal;
+                        first = false;
+                    }
+                }
+                ss << " | cycles=" << e.cycles << "\n";
+            }
+            textItem.oVal["text"] = Json(ss.str());
+        }
+    } else if (name == "clear_trace") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->dbg) {
+            textItem.oVal["text"] = Json("Error: No debug context available");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            ms->dbg->trace().clear();
+            textItem.oVal["text"] = Json("Trace buffer cleared");
+        }
+    } else if (name == "set_trace_filter") {
+        std::string mid = args["machine_id"].sVal;
+        std::string filterStr = args["filter"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            if (filterStr == "all" || filterStr == "instructions" || filterStr == "breakpoints" || filterStr == "memory") {
+                ms->traceFilter = filterStr;
+                textItem.oVal["text"] = Json("Trace filter set to: " + filterStr);
+            } else {
+                textItem.oVal["text"] = Json("Error: Invalid filter (valid: all, instructions, breakpoints, memory)");
+                textItem.oVal["isError"] = Json(true);
             }
         }
     } else if (name == "mount_tape") {

@@ -221,6 +221,48 @@ def run_tests():
     assert "Error" in res["result"]["content"][0]["text"], "Expected error for invalid personality"
     print("MEGA65-specific features error handling OK")
 
+    print("\n--- 11. Trace Buffer ---")
+    # Use raw6502 machine for trace testing
+    client.call_tool("create_machine", {"machine_id": "raw6502_trace"})
+
+    # Execute a few instructions to populate trace buffer
+    client.call_tool("write_memory", {"machine_id": "raw6502", "addr": 0x1000, "bytes": [0xEA, 0xEA, 0xEA]})  # Three NOPs
+    client.call_tool("set_pc", {"machine_id": "raw6502", "addr": 0x1000})
+    client.call_tool("step_cpu", {"machine_id": "raw6502", "count": 3})
+
+    # Get trace buffer
+    res = client.call_tool("get_trace_buffer", {"machine_id": "raw6502"})
+    trace_text = res["result"]["content"][0]["text"]
+    assert "Trace buffer" in trace_text, "Trace buffer response missing header"
+    assert "entries" in trace_text, "Trace buffer response missing entry count"
+    print("get_trace_buffer OK")
+
+    # Test limit parameter
+    res = client.call_tool("get_trace_buffer", {"machine_id": "raw6502", "limit": 2})
+    trace_text = res["result"]["content"][0]["text"]
+    assert "Showing" in trace_text, "Limit parameter response incorrect"
+    print("get_trace_buffer with limit OK")
+
+    # Set trace filter
+    res = client.call_tool("set_trace_filter", {"machine_id": "raw6502", "filter": "instructions"})
+    assert "instructions" in res["result"]["content"][0]["text"], "Filter not set"
+    print("set_trace_filter OK")
+
+    # Test invalid filter
+    res = client.call_tool("set_trace_filter", {"machine_id": "raw6502", "filter": "INVALID"})
+    assert "Error" in res["result"]["content"][0]["text"], "Should error on invalid filter"
+    print("set_trace_filter error handling OK")
+
+    # Clear trace
+    res = client.call_tool("clear_trace", {"machine_id": "raw6502"})
+    assert "cleared" in res["result"]["content"][0]["text"], "Clear trace response incorrect"
+    res = client.call_tool("get_trace_buffer", {"machine_id": "raw6502"})
+    trace_text = res["result"]["content"][0]["text"]
+    assert "0 entries" in trace_text, "Trace buffer should be empty after clear"
+    print("clear_trace OK")
+
+    print("Trace buffer operations OK")
+
     client.close()
     print("\nALL MCP TESTS PASSED")
 
