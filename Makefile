@@ -230,6 +230,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/cbm-hle/test/test_kernal_hle.cpp \
 	src/plugins/devices/f018b_dma/test/test_f018b_dma.cpp \
 	src/plugins/devices/map_mmu/test/test_map_mmu.cpp \
+	src/plugins/machines/mega65/test/test_mega65_map.cpp \
 	tests/src/test_cbm_disk_images.cpp \
 	tests/src/test_d81_directory_listing.cpp \
 	tests/src/test_plugin_validation.cpp
@@ -251,6 +252,7 @@ PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
 	src/plugins/6502/main/disassembler_6502.o \
 	src/plugins/6502/main/assembler_6502.o \
 	src/plugins/6502/main/kickassembler.o \
+	src/plugins/45gs02/main/cpu45gs02.o \
 	src/plugins/devices/via6522/main/via6522.o \
 	src/plugins/devices/vic6560/main/vic6560.o \
 	src/plugins/devices/kbd_vic20/main/kbd_vic20.o \
