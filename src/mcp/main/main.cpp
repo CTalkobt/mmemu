@@ -38,6 +38,22 @@ static bool resolveAddr(const Json& val, DebugContext* dbg, uint32_t& result) {
     return false;
 }
 
+static bool resolveAddrWithDiagnostic(const Json& val, DebugContext* dbg, uint32_t& result, std::string& errMsg) {
+    if (val.type == Json::NUM) {
+        result = (uint32_t)val.nVal;
+        return true;
+    }
+    if (val.type == Json::STR) {
+        if (ExpressionEvaluator::evaluate(val.sVal, dbg, result)) {
+            return true;
+        }
+        errMsg = "Invalid expression: \"" + val.sVal + "\" (supports: hex $1000, decimal 4096, registers A/X/Y/SP/PC, symbols, and operators +/-/*)";
+        return false;
+    }
+    errMsg = "Address must be a number or string expression";
+    return false;
+}
+
 #include "plugin_tool_registry.h"
 #include "include/util/logging.h"
 
@@ -687,11 +703,12 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             uint32_t addr;
-            if (resolveAddr(args["addr"], ms->dbg, addr)) {
+            std::string errMsg;
+            if (resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg)) {
                 ms->cpu->setPc(addr);
                 textItem.oVal["text"] = Json("PC set to $" + toHex(addr));
             } else {
-                textItem.oVal["text"] = Json("Error: Invalid address expression");
+                textItem.oVal["text"] = Json("Error: " + errMsg);
                 textItem.oVal["isError"] = Json(true);
             }
         }
@@ -703,9 +720,14 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             uint32_t addr, size;
-            if (resolveAddr(args["addr"], ms->dbg, addr) &&
-                resolveAddr(args["size"], ms->dbg, size)) 
-            {
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: addr parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else if (!resolveAddrWithDiagnostic(args["size"], ms->dbg, size, errMsg)) {
+                textItem.oVal["text"] = Json("Error: size parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
                 std::stringstream ss;
                 for (uint32_t i = 0; i < size; i += 16) {
                     ss << std::hex << std::setw(4) << std::setfill('0') << (addr + i) << ": ";
@@ -715,9 +737,6 @@ Json handleToolsCall(const Json& params) {
                     ss << "\n";
                 }
                 textItem.oVal["text"] = Json(ss.str());
-            } else {
-                textItem.oVal["text"] = Json("Error: Invalid address/size expression");
-                textItem.oVal["isError"] = Json(true);
             }
         }
     } else if (name == "write_memory") {
@@ -732,14 +751,15 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             uint32_t addr;
-            if (resolveAddr(args["addr"], ms->dbg, addr)) {
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
                 for (size_t i = 0; i < bytes.aVal.size(); ++i) {
                     ms->bus->write8(addr + i, (uint8_t)bytes.aVal[i].nVal);
                 }
                 textItem.oVal["text"] = Json("Wrote " + std::to_string(bytes.aVal.size()) + " bytes at $" + toHex(addr));
-            } else {
-                textItem.oVal["text"] = Json("Error: Invalid address expression");
-                textItem.oVal["isError"] = Json(true);
             }
         }
     } else if (name == "read_registers") {
@@ -1543,7 +1563,19 @@ Json handleToolsCall(const Json& params) {
                     uint8_t buf[32];
                     int n = asmb->assembleLine(line, buf, sizeof(buf), curAddr);
                     if (n < 0) {
-                        errors.push_back("Error on line: " + line);
+                        std::string hint;
+                        std::string lower = line;
+                        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+                        // Try to provide helpful error context
+                        if (lower.find("$") != std::string::npos && lower.find(",") == std::string::npos) {
+                            hint = " (hex notation looks correct; check instruction mnemonic)";
+                        } else if (line.find("#") != std::string::npos && lower.find("lda") == std::string::npos &&
+                                  lower.find("ldx") == std::string::npos && lower.find("ldy") == std::string::npos) {
+                            hint = " (# is for immediate mode; not valid for this instruction)";
+                        } else if (line.length() > 50) {
+                            hint = " (line too long; instruction with operand should be <50 chars)";
+                        }
+                        errors.push_back("Syntax error: \"" + line + "\"" + hint);
                     } else {
                         for (int i = 0; i < n; i++) bytes.push_back(buf[i]);
                         curAddr += (uint32_t)n;
@@ -1612,8 +1644,9 @@ Json handleToolsCall(const Json& params) {
         } else {
             uint32_t addr;
             if (args.contains("addr")) {
-                if (!resolveAddr(args["addr"], ms->dbg, addr)) {
-                    textItem.oVal["text"] = Json("Error: Invalid address expression");
+                std::string errMsg;
+                if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg)) {
+                    textItem.oVal["text"] = Json("Error: " + errMsg);
                     textItem.oVal["isError"] = Json(true);
                     content.push_back(textItem);
                     res.oVal["content"] = content;
@@ -1641,15 +1674,19 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             uint32_t addr, value, size;
-            if (resolveAddr(args["addr"], ms->dbg, addr) &&
-                resolveAddr(args["value"], ms->dbg, value) &&
-                resolveAddr(args["size"], ms->dbg, size)) 
-            {
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: addr parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else if (!resolveAddrWithDiagnostic(args["value"], ms->dbg, value, errMsg)) {
+                textItem.oVal["text"] = Json("Error: value parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else if (!resolveAddrWithDiagnostic(args["size"], ms->dbg, size, errMsg)) {
+                textItem.oVal["text"] = Json("Error: size parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
                 for (uint32_t i = 0; i < size; ++i) ms->bus->write8(addr + i, (uint8_t)value);
                 textItem.oVal["text"] = Json("Filled " + std::to_string(size) + " bytes at $" + toHex(addr));
-            } else {
-                textItem.oVal["text"] = Json("Error: Invalid expression in fill_memory");
-                textItem.oVal["isError"] = Json(true);
             }
         }
     } else if (name == "copy_memory") {
@@ -1660,17 +1697,21 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             uint32_t src, dst, size;
-            if (resolveAddr(args["src_addr"], ms->dbg, src) &&
-                resolveAddr(args["dst_addr"], ms->dbg, dst) &&
-                resolveAddr(args["size"], ms->dbg, size))
-            {
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["src_addr"], ms->dbg, src, errMsg)) {
+                textItem.oVal["text"] = Json("Error: src_addr parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else if (!resolveAddrWithDiagnostic(args["dst_addr"], ms->dbg, dst, errMsg)) {
+                textItem.oVal["text"] = Json("Error: dst_addr parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else if (!resolveAddrWithDiagnostic(args["size"], ms->dbg, size, errMsg)) {
+                textItem.oVal["text"] = Json("Error: size parameter - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
                 std::vector<uint8_t> buf(size);
                 for (uint32_t i = 0; i < size; ++i) buf[i] = ms->bus->peek8(src + i);
                 for (uint32_t i = 0; i < size; ++i) ms->bus->write8(dst + i, buf[i]);
                 textItem.oVal["text"] = Json("Copied " + std::to_string(size) + " bytes from $" + toHex(src) + " to $" + toHex(dst));
-            } else {
-                textItem.oVal["text"] = Json("Error: Invalid expression in copy_memory");
-                textItem.oVal["isError"] = Json(true);
             }
         }
     } else if (name == "swap_memory") {
