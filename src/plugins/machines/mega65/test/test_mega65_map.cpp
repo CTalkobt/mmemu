@@ -459,7 +459,7 @@ TEST_CASE(mega65_map_instruction_full_coverage) {
     MapMmu mmu("mmu", &physBus);
 
     // Fill entire 16-bit address space with distinct values
-    for (uint16_t addr = 0; addr < 0x10000; addr += 8) {
+    for (int addr = 0; addr < 0x10000; addr += 8) {
         physBus.write8((addr >> 8) << 8, (uint8_t)(addr >> 8));
     }
 
