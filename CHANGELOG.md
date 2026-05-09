@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0-dev] - 2026-05-08
+
+### Added
+- **MCP Server Enhancements** — Expanded Model Context Protocol support with 11 new tools:
+    - **Code Generation**: `asm` tool for 6502/45GS02 assembly with error diagnostics
+    - **Search Navigation**: `search_next`, `search_prior` for memory pattern navigation without rescanning
+    - **MEGA65 Features**: `get_map_state`, `set_map_state` (address translation control), `get_personality`, `set_personality` (I/O mode switching)
+    - **Trace Buffer**: `get_trace_buffer`, `clear_trace`, `set_trace_filter` for instruction execution history
+- **Improved Error Messages**:
+    - Address expression failures now explain valid formats (hex $1000, decimal 4096, registers, operators, symbols)
+    - Assembler errors provide syntax hints (e.g., immediate mode usage, instruction validation)
+    - Multi-parameter tools identify which parameter failed
+    - Diagnostic `resolveAddrWithDiagnostic()` function for better user feedback
+
+### Changed
+- **MCP Tool Count**: 40 → 51 tools (27.5% expansion)
+
 ## [0.8.0-dev] - 2026-05-07
 
 ### Added

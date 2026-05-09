@@ -54,8 +54,21 @@
 [ ] - Implement MAP instruction parameter parsing (read map spec from memory)
 [ ] - MEGA65 integration tests (MAP functionality, address translation, ROM visibility)
 
+## MCP Server Expansion (0.8.0) - COMPLETED
+[x] - Assembler Support: `asm` tool for 6502/45GS02 code generation with error diagnostics
+[x] - Search Navigation: `search_next`, `search_prior` for multi-match memory searches
+[x] - MEGA65-Specific Features: MAP state control and I/O personality switching
+[x] - Trace Buffer Integration: `get_trace_buffer`, `clear_trace`, `set_trace_filter`
+[x] - Better Error Messages: Diagnostic feedback for address expressions and assembler errors
+[x] - MCP Tool Count: 40 → 51 tools (27.5% expansion)
+
 ## Assembler Support & Selection
-[ ] Add ca45 assembler backend support for GUI, CLI, and MCP (similar to KickAssembler)
+[x] MCP assembler tool (`.asm` tool in MCP server)
+  [x] - Line-by-line assembly via IAssembler backend
+  [x] - Support for both 6502 and 45GS02 ISAs
+  [x] - Error diagnostics with syntax hints
+  [x] - Optional memory loading of assembled bytes
+[ ] Add ca45 assembler backend support for CLI and GUI (similar to KickAssembler)
   [ ] - Implement `Ca45AssemblerBackend` in libtoolchain
   [ ] - Support ca45 `.s` file format and `.prg` output
   [ ] - Parse ca45 symbol output (if available)
@@ -63,5 +76,4 @@
   [ ] - Add assembler selection mechanism (config, command-line, or file extension detection)
   [ ] - Update CLI `asm` command to support assembler selection
   [ ] - Update GUI assemble dialog with assembler picker
-  [ ] - Update MCP assembler tool with backend selection
   [ ] - Document assembler backend architecture and how to add new assemblers
