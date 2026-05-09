@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.8.0-dev] - 2026-05-08
+## [0.8.1-dev] - 2026-05-08
 
 ### Added
 - **MCP Server Enhancements** — Expanded Model Context Protocol support with 11 new tools:

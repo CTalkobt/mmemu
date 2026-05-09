@@ -4,7 +4,7 @@
 
 The mmemu-mcp (Model Context Protocol) server provides Claude Code and other MCP clients with programmatic access to the emulation system. It exposes debugging, machine control, and device management capabilities through a standardized interface.
 
-**Status:** Feature-complete with 51 tools (27.5% expansion in 0.8.0). All major features implemented and tested.
+**Status:** Feature-complete with 51 tools (27.5% expansion in 0.8.1). All major features implemented and tested.
 
 ---
 
@@ -87,7 +87,7 @@ The mmemu-mcp (Model Context Protocol) server provides Claude Code and other MCP
 
 ---
 
-## Completed Features (0.8.0)
+## Completed Features (0.8.1)
 
 ### 1. ✅ Assembler Support (HIGH PRIORITY) - COMPLETE
 
@@ -203,7 +203,7 @@ Diagnostic feedback for user errors:
 
 ---
 
-## Implementation Priority & Effort Matrix (0.8.0 Complete)
+## Implementation Priority & Effort Matrix (0.8.1 Complete)
 
 | Feature | Priority | Effort | User Impact | Status |
 |---------|----------|--------|-------------|--------|
@@ -223,7 +223,7 @@ Diagnostic feedback for user errors:
 
 ## Next Steps
 
-**Phase 2 (Post 0.8.0) Candidates:**
+**Phase 2 (Post 0.8.1) Candidates:**
 
 1. **Plugin Tool Integration Testing** (1 hr, low effort)
    - Verify plugin-registered tools appear in tools/list

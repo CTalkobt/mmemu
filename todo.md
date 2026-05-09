@@ -54,7 +54,7 @@
 [ ] - Implement MAP instruction parameter parsing (read map spec from memory)
 [ ] - MEGA65 integration tests (MAP functionality, address translation, ROM visibility)
 
-## MCP Server Expansion (0.8.0) - COMPLETED
+## MCP Server Expansion (0.8.1) - COMPLETED
 [x] - Assembler Support: `asm` tool for 6502/45GS02 code generation with error diagnostics
 [x] - Search Navigation: `search_next`, `search_prior` for multi-match memory searches
 [x] - MEGA65-Specific Features: MAP state control and I/O personality switching
