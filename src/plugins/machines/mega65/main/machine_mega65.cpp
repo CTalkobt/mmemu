@@ -4,6 +4,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libmem/main/sparse_memory_bus.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
+#include "plugins/45gs02/main/cpu45gs02.h"
 #include "util/path_util.h"
 #include <cstring>
 
@@ -40,10 +41,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     cpu->setCodeBus(mmu);
 
     // Wire MapMmu to CPU so MAP instruction can update mapping state
-    // Note: We avoid the dynamic_cast here due to symbol visibility issues when
-    // loading plugins. The MAP instruction will need to be implemented differently.
-    // For now, the MapMmu is wired as the CPU's bus, so address translation works.
-    // TODO: Implement a virtual method on ICore to pass custom data like MapMmu.
+    // Use IMapController interface to avoid cross-plugin symbol visibility issues
+    dynamic_cast<MOS45GS02*>(cpu)->setMapMmu(static_cast<IMapController*>(mmu));
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
 
@@ -57,12 +56,14 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Phase 21.1 COMPLETED:
     // [x] Wire MapMmu as CPU's bus pointer for reads/writes
     // [x] Wire MapMmu to CPU so it can execute MAP instruction
+    // [x] Implement IMapController interface (cross-plugin visibility)
+    // [x] Implement MAP instruction (0x5C) parameter parsing
+    // [x] Fix translate() to avoid double-mapping when MapMmu is in use
     //
     // Phase 21.2 IN PROGRESS:
     // [ ] Load MEGA65 ROMs (KERNAL, BASIC, CHARROM)
     // [ ] Add ROM regions to SparseMemoryBus via addRegion()
-    // [ ] Implement MAP instruction (0x5C) parameter parsing
-    // [ ] Call MapMmu.setMapState() when MAP instruction executes
+    // [ ] Create IORegistry hooks for device integration
     //
     // Phase 21.3 TODO:
     // [ ] Create I/O personality handler for $D02F switching

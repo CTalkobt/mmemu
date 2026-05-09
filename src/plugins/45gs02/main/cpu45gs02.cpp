@@ -1,5 +1,6 @@
 #include "cpu45gs02.h"
 #include "libdebug/main/execution_observer.h"
+#include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -23,9 +24,7 @@ MOS45GS02::MOS45GS02() : m_bus(nullptr) {
 
 void MOS45GS02::reset() {
     m_state.a = 0; m_state.x = 0; m_state.y = 0; m_state.z = 0; m_state.b = 0;
-    m_state.sp = 0x01FF; m_state.p = FLAG_I; m_state.cycles = 0;
-    m_state.mapEnabled = false; m_state.haltLine = 0;
-    for(int i=0; i<4; i++) m_state.map[i] = i * 0x40; 
+    m_state.sp = 0x01FF; m_state.p = FLAG_I; m_state.cycles = 0; m_state.haltLine = 0;
     if (m_bus) {
         uint16_t lo = read8(0xFFFC); uint16_t hi = read8(0xFFFD);
         m_state.pc = lo | (hi << 8);
@@ -59,8 +58,10 @@ void MOS45GS02::regWrite(int idx, uint32_t val) {
 }
 
 uint32_t MOS45GS02::translate(uint16_t addr) {
-    if (!m_state.mapEnabled) return addr;
-    return (m_state.map[addr >> 14] << 8) | (addr & 0x3FFF);
+    // If MapMmu is in use, it handles all translation via setMapState()
+    // The CPU's internal translate() is bypassed for MapMmu integration
+    if (m_mapMmu) return addr;
+    return addr;  // No internal translation without MapMmu
 }
 
 uint32_t MOS45GS02::read32(uint16_t addr) {
@@ -1008,8 +1009,38 @@ int MOS45GS02::step() {
             else { m_state.a = -(int8_t)m_state.a; updateNZ(m_state.a); }
             m_state.cycles++; break;
         }
-        case 0x5C: { m_state.mapEnabled = true; break; } // MAP
-        case 0x7C: { m_state.mapEnabled = false; break; } // EOM
+        case 0x5C: { // MAP - Update memory mapping
+            if (m_mapMmu) {
+                // From MEGA65 specification:
+                // Lower 32KB (blocks 0-3): offset = ((X & 0x0F) << 8) | A
+                //                           enables = (Z >> 4) & 0x0F
+                // Upper 32KB (blocks 4-7): offset = ((Z & 0x0F) << 8) | Y
+                //                           enables = (X >> 4) & 0x0F
+                MapState state = {};
+
+                // Compute offsets
+                uint32_t lo = ((m_state.x & 0x0F) << 8) | m_state.a;
+                uint32_t hi = ((m_state.z & 0x0F) << 8) | m_state.y;
+
+                // Apply same offset to all 4 blocks in each half
+                for (int i = 0; i < 4; i++) state.offsets[i] = lo;
+                for (int i = 4; i < 8; i++) state.offsets[i] = hi;
+
+                // Compute enable bits: lower 4 from Z[7:4], upper 4 from X[7:4]
+                state.enables = ((m_state.z >> 4) & 0x0F) | (((m_state.x >> 4) & 0x0F) << 4);
+
+                m_mapMmu->setMapState(state);
+                m_state.cycles++;
+            }
+            break;
+        }
+        case 0x7C: { // EOM - Exit MAP mode
+            if (m_mapMmu) {
+                m_mapMmu->clearMapState();
+            }
+            m_state.cycles++;
+            break;
+        }
 
         // 16-bit word operations
         case 0xE3: { uint16_t a = getZp(); uint16_t v = (uint16_t)read8(a) | ((uint16_t)read8(a+1) << 8); v++; write8(a, (uint8_t)(v&0xFF)); write8(a+1, (uint8_t)(v>>8)); updateNZ16(v); break; } // INW

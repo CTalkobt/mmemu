@@ -1,6 +1,8 @@
 #pragma once
 
 #include "libcore/main/icore.h"
+#include "imap_controller.h"
+#include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <cstdint>
 
 /**
@@ -29,10 +31,6 @@ struct CPU45GS02State {
     uint16_t pc;
     uint8_t  p;
     uint64_t cycles;
-    
-    // MMU (MAP) state
-    uint16_t map[4]; // 4 slots of 16KB mapping
-    bool     mapEnabled;
 
     uint8_t  irqLine;
     uint8_t  nmiLine;
@@ -104,13 +102,13 @@ public:
     uint64_t cycles() const override { return m_state.cycles; }
 
     // MEGA65 MAP instruction support (optional — only set if MapMmu is in use)
-    class MapMmu* getMapMmu() const { return m_mapMmu; }
-    void setMapMmu(class MapMmu* mmu) { m_mapMmu = mmu; }
+    IMapController* getMapMmu() const { return m_mapMmu; }
+    void setMapMmu(IMapController* mmu) { m_mapMmu = mmu; }
 
 private:
     CPU45GS02State m_state;
     IBus*          m_bus;
-    class MapMmu*  m_mapMmu = nullptr;
+    IMapController* m_mapMmu = nullptr;
 
     // Helper for address translation (MAP)
     uint32_t translate(uint16_t addr);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libmem/main/ibus.h"
+#include "imap_controller.h"
 #include <cstdint>
 #include <string>
 
@@ -47,7 +48,7 @@ struct MapState {
     uint8_t  enables;     // bitmask: bit i = block i enabled
 };
 
-class MapMmu : public IBus {
+class MapMmu : public IBus, public IMapController {
 public:
     MapMmu(const std::string& name, SparseMemoryBus* physBus);
     virtual ~MapMmu();
@@ -70,8 +71,9 @@ public:
                             uint8_t *after, int max)                        const override {}
     void clearWriteLog() override {}
 
-    void setMapState(const MapState& state);
-    const MapState& getMapState() const { return m_mapState; }
+    void setMapState(const MapState& state) override;
+    const MapState& getMapState() const override { return m_mapState; }
+    void clearMapState() override;
 
 private:
     std::string m_name;

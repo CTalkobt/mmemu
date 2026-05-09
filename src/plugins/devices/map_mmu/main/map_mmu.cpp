@@ -64,6 +64,10 @@ void MapMmu::setMapState(const MapState& state) {
 }
 
 void MapMmu::reset() {
+    clearMapState();
+}
+
+void MapMmu::clearMapState() {
     std::memset(&m_mapState, 0, sizeof(MapState));
 }
 

@@ -16,6 +16,7 @@ CLAUDE.md
 GEMINI.md
 ref/
 rom/
+man/
 .aider*
 
 tests/45gs02/tests
