@@ -167,6 +167,31 @@ def run_tests():
     assert "a9 42" in res2["result"]["content"][0]["text"].lower(), "LDA #$42 bytes not in memory"
     print("Assembler OK")
 
+    print("\n--- 9. Search Navigation ---")
+    # Plant two identical patterns at known addresses
+    client.call_tool("write_memory", {"machine_id": "raw6502", "addr": 0x3000, "bytes": [0xDE, 0xAD]})
+    client.call_tool("write_memory", {"machine_id": "raw6502", "addr": 0x3100, "bytes": [0xDE, 0xAD]})
+
+    # Initial search finds first occurrence
+    res = client.call_tool("search_memory", {"machine_id": "raw6502", "pattern": "DE AD", "is_hex": True})
+    assert "3000" in res["result"]["content"][0]["text"].lower(), "Initial search failed"
+    print("Initial search OK")
+
+    # search_next advances to second occurrence
+    res = client.call_tool("search_next", {"machine_id": "raw6502"})
+    assert "3100" in res["result"]["content"][0]["text"].lower(), f"search_next failed: {res['result']['content'][0]['text']}"
+    print("search_next OK")
+
+    # search_prior goes back to first
+    res = client.call_tool("search_prior", {"machine_id": "raw6502"})
+    assert "3000" in res["result"]["content"][0]["text"].lower(), f"search_prior failed: {res['result']['content'][0]['text']}"
+    print("search_prior OK")
+
+    # search_next with no prior search gives clear error
+    res2 = client.call_tool("search_next", {"machine_id": "c64"})
+    assert "Error" in res2["result"]["content"][0]["text"], "Expected error for no prior search"
+    print("Search navigation OK")
+
     client.close()
     print("\nALL MCP TESTS PASSED")
 

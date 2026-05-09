@@ -50,6 +50,8 @@ struct MachineState {
     IDisassembler*     disasm  = nullptr;
     DebugContext*      dbg     = nullptr;
     std::string        id;
+    std::vector<uint8_t> lastSearchPattern;
+    uint32_t             lastSearchFoundAddr = 0xFFFFFFFF;
 
     ~MachineState() {
         // MachineDescriptor owns cpu and bus
@@ -69,6 +71,8 @@ struct MachineState {
         disasm = o.disasm; o.disasm = nullptr;
         dbg = o.dbg; o.dbg = nullptr;
         id = std::move(o.id);
+        lastSearchPattern = std::move(o.lastSearchPattern);
+        lastSearchFoundAddr = o.lastSearchFoundAddr;
     }
     MachineState& operator=(MachineState&& o) noexcept {
         if (this != &o) {
@@ -79,6 +83,8 @@ struct MachineState {
             disasm = o.disasm; o.disasm = nullptr;
             dbg = o.dbg; o.dbg = nullptr;
             id = std::move(o.id);
+            lastSearchPattern = std::move(o.lastSearchPattern);
+            lastSearchFoundAddr = o.lastSearchFoundAddr;
         }
         return *this;
     }
@@ -201,6 +207,24 @@ Json handleDescribe() {
     Json smReq(Json::ARR); smReq.push_back(Json("machine_id")); smReq.push_back(Json("pattern"));
     smSchema.oVal["required"] = smReq;
     addTool("search_memory", "Search for a byte pattern in memory. Use is_hex=true for hex patterns (e.g. \"A9 00\"), otherwise ASCII text. Optional start_addr limits search range.", smSchema);
+
+    Json snSchema(Json::OBJ);
+    snSchema.oVal["type"] = Json("object");
+    Json snProps(Json::OBJ);
+    snProps.oVal["machine_id"] = midProp;
+    snSchema.oVal["properties"] = snProps;
+    Json snReq(Json::ARR); snReq.push_back(Json("machine_id"));
+    snSchema.oVal["required"] = snReq;
+    addTool("search_next", "Find the next occurrence of the last search_memory pattern, wrapping at end of address space.", snSchema);
+
+    Json spSchema(Json::OBJ);
+    spSchema.oVal["type"] = Json("object");
+    Json spProps(Json::OBJ);
+    spProps.oVal["machine_id"] = midProp;
+    spSchema.oVal["properties"] = spProps;
+    Json spReq(Json::ARR); spReq.push_back(Json("machine_id"));
+    spSchema.oVal["required"] = spReq;
+    addTool("search_prior", "Find the previous occurrence of the last search_memory pattern, wrapping at start of address space.", spSchema);
 
     Json mtSchema(Json::OBJ);
     mtSchema.oVal["type"] = Json("object");
@@ -680,11 +704,13 @@ Json handleToolsCall(const Json& params) {
                 } else {
                     for (char c : pattern) bytes.push_back((uint8_t)c);
                 }
-                
+
                 if (bytes.empty()) {
                     textItem.oVal["text"] = Json("Error: Empty or invalid pattern");
                     textItem.oVal["isError"] = Json(true);
                 } else {
+                    ms->lastSearchPattern = bytes;
+                    ms->lastSearchFoundAddr = 0xFFFFFFFF;
                     uint32_t found = 0xFFFFFFFF;
                     uint32_t mask = ms->bus->config().addrMask;
                     for (uint32_t i = startAddr; i <= mask && (i + bytes.size() <= mask + 1); ++i) {
@@ -697,6 +723,7 @@ Json handleToolsCall(const Json& params) {
                         if (match) { found = i; break; }
                     }
                     if (found != 0xFFFFFFFF) {
+                        ms->lastSearchFoundAddr = found;
                         std::stringstream ss;
                         ss << "Found at $" << std::hex << std::setw(4) << std::setfill('0') << found;
                         textItem.oVal["text"] = Json(ss.str());
@@ -704,6 +731,46 @@ Json handleToolsCall(const Json& params) {
                         textItem.oVal["text"] = Json("Pattern not found");
                     }
                 }
+            }
+        }
+    } else if (name == "search_next" || name == "search_prior") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (ms->lastSearchPattern.empty()) {
+            textItem.oVal["text"] = Json("Error: No previous search — call search_memory first");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            const auto& pattern = ms->lastSearchPattern;
+            uint32_t addrMask = ms->bus->config().addrMask;
+            uint32_t sz = (uint32_t)pattern.size();
+            uint32_t found = 0xFFFFFFFF;
+            bool forward = (name == "search_next");
+
+            uint32_t cur = ms->lastSearchFoundAddr;
+            uint32_t start = (cur == 0xFFFFFFFF)
+                ? (forward ? 0 : addrMask)
+                : (forward ? (cur + 1) & addrMask : (cur - 1) & addrMask);
+
+            for (uint32_t step = 0; step <= addrMask; step++) {
+                uint32_t addr = forward
+                    ? (start + step) & addrMask
+                    : (start - step) & addrMask;
+                bool match = true;
+                for (uint32_t j = 0; j < sz && match; j++)
+                    if (ms->bus->peek8((addr + j) & addrMask) != pattern[j]) match = false;
+                if (match) { found = addr; break; }
+            }
+
+            if (found == 0xFFFFFFFF) {
+                textItem.oVal["text"] = Json("Pattern not found");
+            } else {
+                ms->lastSearchFoundAddr = found;
+                std::stringstream ss;
+                ss << "Found at $" << std::hex << std::setw(4) << std::setfill('0') << found;
+                textItem.oVal["text"] = Json(ss.str());
             }
         }
     } else if (name == "mount_tape") {
