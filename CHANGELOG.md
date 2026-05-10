@@ -2,22 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.8.1-dev] - 2026-05-08
+## [0.8.1-dev] - 2026-05-09
 
 ### Added
-- **MCP Server Enhancements** — Expanded Model Context Protocol support with 11 new tools:
-    - **Code Generation**: `asm` tool for 6502/45GS02 assembly with error diagnostics
-    - **Search Navigation**: `search_next`, `search_prior` for memory pattern navigation without rescanning
-    - **MEGA65 Features**: `get_map_state`, `set_map_state` (address translation control), `get_personality`, `set_personality` (I/O mode switching)
-    - **Trace Buffer**: `get_trace_buffer`, `clear_trace`, `set_trace_filter` for instruction execution history
-- **Improved Error Messages**:
-    - Address expression failures now explain valid formats (hex $1000, decimal 4096, registers, operators, symbols)
-    - Assembler errors provide syntax hints (e.g., immediate mode usage, instruction validation)
-    - Multi-parameter tools identify which parameter failed
-    - Diagnostic `resolveAddrWithDiagnostic()` function for better user feedback
+- **Pluggable Assembler Infrastructure**:
+    - **SimConfig** class loads tool configuration from `config.json` (with search in standard paths)
+    - **ToolchainRegistry** extended with name-based assembler registration
+    - **resolveAssembler()** function with 3-level precedence: runtime override → machine-preferred → ISA-default
+    - **MachineDescriptor** now includes `preferredAssembler` field (loaded from machine JSON)
+- **CA45 Assembler Backend**:
+    - Integrated CA45 assembler for 45GS02/MEGA65 as pluggable backend
+    - Auto-configured via SimConfig tool settings
+    - Registered in 45GS02 plugin
+- **MCP Server Assembler Tools**:
+    - `set_assembler` — Override assembler for a specific machine at runtime
+    - `get_assembler` — Query current assembler for a machine
+    - Enhanced `asm` tool with fallback from line-by-line to file-based assembly modes
+- **MCP Multi-Instance Machine Management**:
+    - `list_instances` — List all running machine instances with their type and display name
+    - `destroy_machine` — Close and release a machine instance by instance ID
+- **Previous MCP Enhancements** (from earlier 0.8.1 work):
+    - Code generation tools with error diagnostics
+    - Search navigation tools for memory pattern navigation
+    - MEGA65-specific address translation and I/O personality control
+    - Trace buffer integration
 
 ### Changed
-- **MCP Tool Count**: 40 → 51 tools (27.5% expansion)
+- **Multi-Instance Machine Support**: `create_machine` refactored for independent instances
+  - `machine_id` parameter renamed to `machine_type` (the registry type: "c64", "rawMega65", etc.)
+  - `machine_id` now an optional instance name; auto-generated as `<type>_<n>` if omitted
+  - Enables multiple independent instances of the same machine type (e.g., "c64_1", "c64_2")
+- **Assembler Handling**: Moved from ISA-only default to configurable per-machine selection
+- **MCP Tool Count**: 40 → 53 → 55 tools (multi-instance support adds 2 new tools)
+
+### Technical Details
+- **SimConfig**: Searches `./config.json` then standard data paths for tool configuration
+- **ToolchainRegistry**: Now supports both ISA-based and name-based assembler factories
+- **MachineState (MCP)**: Added `IAssembler* assem` field; global `g_assemblerOverrides` map for per-machine runtime selection
 
 ## [0.8.0-dev] - 2026-05-07
 

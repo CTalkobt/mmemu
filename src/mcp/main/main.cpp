@@ -12,6 +12,8 @@
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "libcore/main/image_loader.h"
+#include "libcore/main/sim_config.h"
+#include "libcore/main/json_machine_loader.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "plugin_loader/main/plugin_loader.h"
 #include "libmem/main/memory_bus.h"
@@ -68,8 +70,10 @@ struct MachineState {
     ICore*             cpu     = nullptr;
     IBus*              bus     = nullptr;
     IDisassembler*     disasm  = nullptr;
+    IAssembler*        assem   = nullptr;
     DebugContext*      dbg     = nullptr;
     std::string        id;
+    std::string        machineType;  // registry type (e.g., "c64")
     std::vector<uint8_t> lastSearchPattern;
     uint32_t             lastSearchFoundAddr = 0xFFFFFFFF;
     std::string          traceFilter = "all";  // all, instructions, breakpoints, memory
@@ -78,6 +82,7 @@ struct MachineState {
         // MachineDescriptor owns cpu and bus
         delete dbg;
         delete disasm;
+        delete assem;
         delete machine;
     }
     
@@ -90,21 +95,25 @@ struct MachineState {
         cpu = o.cpu; o.cpu = nullptr;
         bus = o.bus; o.bus = nullptr;
         disasm = o.disasm; o.disasm = nullptr;
+        assem = o.assem; o.assem = nullptr;
         dbg = o.dbg; o.dbg = nullptr;
         id = std::move(o.id);
+        machineType = std::move(o.machineType);
         lastSearchPattern = std::move(o.lastSearchPattern);
         lastSearchFoundAddr = o.lastSearchFoundAddr;
         traceFilter = std::move(o.traceFilter);
     }
     MachineState& operator=(MachineState&& o) noexcept {
         if (this != &o) {
-            delete dbg; delete disasm; delete machine;
+            delete dbg; delete disasm; delete assem; delete machine;
             machine = o.machine; o.machine = nullptr;
             cpu = o.cpu; o.cpu = nullptr;
             bus = o.bus; o.bus = nullptr;
             disasm = o.disasm; o.disasm = nullptr;
+            assem = o.assem; o.assem = nullptr;
             dbg = o.dbg; o.dbg = nullptr;
             id = std::move(o.id);
+            machineType = std::move(o.machineType);
             lastSearchPattern = std::move(o.lastSearchPattern);
             lastSearchFoundAddr = o.lastSearchFoundAddr;
             traceFilter = std::move(o.traceFilter);
@@ -114,27 +123,36 @@ struct MachineState {
 };
 
 static std::map<std::string, MachineState> g_machines;
+static std::map<std::string, std::string> g_assemblerOverrides;  // per-instance assembler overrides
+static std::map<std::string, int> g_typeCounters;  // per-type instance counter for auto-generation
 
-static MachineState* getMachine(const std::string& id) {
-    if (g_machines.count(id)) return &g_machines[id];
-    
-    auto* desc = MachineRegistry::instance().createMachine(id);
+static MachineState* getMachine(const std::string& instanceId) {
+    auto it = g_machines.find(instanceId);
+    return (it != g_machines.end()) ? &it->second : nullptr;
+}
+
+static MachineState* createMachineInstance(const std::string& instanceId, const std::string& machineType) {
+    auto* desc = MachineRegistry::instance().createMachine(machineType);
     if (desc && !desc->cpus.empty() && desc->cpus[0].cpu && !desc->buses.empty() && desc->buses[0].bus) {
         MachineState ms;
         ms.machine = desc;
         ms.cpu = desc->cpus[0].cpu;
         ms.bus = desc->buses[0].bus;
-        ms.id = id;
+        ms.id = instanceId;
+        ms.machineType = machineType;
         ms.disasm = ToolchainRegistry::instance().createDisassembler(ms.cpu->isaName());
+        // Resolve assembler with optional per-instance override
+        std::string overrideName = g_assemblerOverrides.count(instanceId) ? g_assemblerOverrides[instanceId] : "";
+        ms.assem = resolveAssembler(ms.cpu->isaName(), desc->preferredAssembler, overrideName);
         ms.dbg = new DebugContext(ms.cpu, ms.bus);
         ms.cpu->setObserver(ms.dbg);
         ms.bus->setObserver(ms.dbg);
         ms.dbg->onMachineLoad(desc);
         if (ms.disasm && ms.dbg) ms.disasm->setSymbolTable(&ms.dbg->symbols());
-
-        g_machines[id] = std::move(ms);
-        return &g_machines[id];
-        } else if (desc) {        delete desc;
+        g_machines[instanceId] = std::move(ms);
+        return &g_machines[instanceId];
+    } else if (desc) {
+        delete desc;
     }
     return nullptr;
 }
@@ -154,7 +172,7 @@ Json handleDescribe() {
     };
 
     // Common property schemas
-    Json midProp(Json::OBJ); midProp.oVal["type"] = Json("string"); midProp.oVal["description"] = Json("Machine type from list_machines (e.g. rawMega65, c64)");
+    Json midProp(Json::OBJ); midProp.oVal["type"] = Json("string"); midProp.oVal["description"] = Json("Machine instance ID (from create_machine or list_instances)");
     Json addrProp(Json::OBJ); addrProp.oVal["type"] = Json("string"); addrProp.oVal["description"] = Json("Address expression (e.g. $1000, start+5, %1010, decimal)");
     Json cntProp(Json::OBJ); cntProp.oVal["type"] = Json("integer"); cntProp.oVal["description"] = Json("Number of items (instructions, bytes, stack entries, etc.)");
     Json sizeProp(Json::OBJ); sizeProp.oVal["type"] = Json("string"); sizeProp.oVal["description"] = Json("Size expression (hex or decimal)");
@@ -463,13 +481,28 @@ Json handleDescribe() {
     // list_machines
     addTool("list_machines", "List all available machine types with their descriptions. Use these IDs with create_machine.", emptySchema);
 
+    addTool("list_instances", "List all currently running machine instances with their type and display name.", emptySchema);
+
     // create_machine
+    Json mtypeProp(Json::OBJ); mtypeProp.oVal["type"] = Json("string"); mtypeProp.oVal["description"] = Json("Machine type from list_machines (e.g. c64, rawMega65)");
     Json cmSchema(Json::OBJ); cmSchema.oVal["type"] = Json("object");
-    Json cmProps(Json::OBJ); cmProps.oVal["machine_id"] = midProp;
+    Json cmProps(Json::OBJ); cmProps.oVal["machine_type"] = mtypeProp;
+    cmProps.oVal["machine_id"] = midProp;
     cmSchema.oVal["properties"] = cmProps;
-    Json cmReq(Json::ARR); cmReq.push_back(Json("machine_id"));
+    Json cmReq(Json::ARR); cmReq.push_back(Json("machine_type"));
     cmSchema.oVal["required"] = cmReq;
-    addTool("create_machine", "Create (or re-create) a machine instance. Use list_machines to see valid IDs.", cmSchema);
+    addTool("create_machine",
+        "Create a new machine instance. machine_type selects the hardware (see list_machines). "
+        "machine_id is an optional user-chosen instance name; auto-generated (e.g. c64_1) if omitted. "
+        "Returns the instance_id to use with all other tools.", cmSchema);
+
+    // destroy_machine
+    Json dmProps(Json::OBJ); dmProps.oVal["machine_id"] = midProp;
+    Json dmSchema(Json::OBJ); dmSchema.oVal["type"] = Json("object");
+    dmSchema.oVal["properties"] = dmProps;
+    Json dmReq(Json::ARR); dmReq.push_back(Json("machine_id"));
+    dmSchema.oVal["required"] = dmReq;
+    addTool("destroy_machine", "Destroy a running machine instance and release all its resources.", dmSchema);
 
     // list_symbols
     Json lsSchema(Json::OBJ); lsSchema.oVal["type"] = Json("object");
@@ -628,6 +661,30 @@ Json handleDescribe() {
     Json asmReq(Json::ARR); asmReq.push_back(Json("machine_id")); asmReq.push_back(Json("source"));
     asmSchema.oVal["required"] = asmReq;
     addTool("asm", "Assemble source code for the machine's ISA. Returns JSON: {\"bytes\":[...],\"symbols\":{},\"errors\":[...]}. Optional load_addr writes assembled bytes into machine memory.", asmSchema);
+
+    // set_assembler tool
+    Json setAsmSchema(Json::OBJ);
+    setAsmSchema.oVal["type"] = Json("object");
+    Json setAsmProps(Json::OBJ);
+    setAsmProps.oVal["machine_id"] = midProp;
+    Json asmNameProp(Json::OBJ);
+    asmNameProp.oVal["type"] = Json("string");
+    asmNameProp.oVal["description"] = Json("Assembler name (e.g. 'ca45', 'kickAssembler')");
+    setAsmProps.oVal["assembler_name"] = asmNameProp;
+    setAsmSchema.oVal["properties"] = setAsmProps;
+    Json setAsmReq(Json::ARR); setAsmReq.push_back(Json("machine_id")); setAsmReq.push_back(Json("assembler_name"));
+    setAsmSchema.oVal["required"] = setAsmReq;
+    addTool("set_assembler", "Override the assembler for a specific machine. Returns the new assembler name or error.", setAsmSchema);
+
+    // get_assembler tool
+    Json getAsmSchema(Json::OBJ);
+    getAsmSchema.oVal["type"] = Json("object");
+    Json getAsmProps(Json::OBJ);
+    getAsmProps.oVal["machine_id"] = midProp;
+    getAsmSchema.oVal["properties"] = getAsmProps;
+    Json getAsmReq(Json::ARR); getAsmReq.push_back(Json("machine_id"));
+    getAsmSchema.oVal["required"] = getAsmReq;
+    addTool("get_assembler", "Get the current assembler for a machine. Returns the assembler name.", getAsmSchema);
 
     std::vector<std::string> pluginTools;
     PluginToolRegistry::instance().listTools(pluginTools);
@@ -1363,11 +1420,33 @@ Json handleToolsCall(const Json& params) {
             ss << "\n";
         }
         textItem.oVal["text"] = Json(ss.str().empty() ? "(none)\n" : ss.str());
+    } else if (name == "list_instances") {
+        std::stringstream ss;
+        if (g_machines.empty()) {
+            ss << "(no instances running)\n";
+        } else {
+            for (const auto& pair : g_machines) {
+                ss << pair.first << "  [" << pair.second.machineType << "]  "
+                   << pair.second.machine->displayName << "\n";
+            }
+        }
+        textItem.oVal["text"] = Json(ss.str());
     } else if (name == "create_machine") {
-        std::string mid = args["machine_id"].sVal;
-        // Destroy any existing instance so getMachine creates a fresh one
-        g_machines.erase(mid);
-        MachineState* ms = getMachine(mid);
+        std::string machineType = args["machine_type"].sVal;
+
+        // Resolve instance ID: use provided or auto-generate
+        std::string instanceId;
+        if (args.oVal.count("machine_id") && args["machine_id"].type == Json::STR && !args["machine_id"].sVal.empty()) {
+            instanceId = args["machine_id"].sVal;
+        } else {
+            int n = ++g_typeCounters[machineType];
+            instanceId = machineType + "_" + std::to_string(n);
+        }
+
+        // Destroy any existing instance with this ID
+        g_machines.erase(instanceId);
+        MachineState* ms = createMachineInstance(instanceId, machineType);
+
         if (!ms) {
             std::vector<std::string> validIds;
             MachineRegistry::instance().enumerate(validIds);
@@ -1376,11 +1455,22 @@ Json handleToolsCall(const Json& params) {
                 if (i > 0) validList += ", ";
                 validList += validIds[i];
             }
-            textItem.oVal["text"] = Json("Error: Unknown machine ID: " + mid +
-                ". Valid IDs: " + (validList.empty() ? "(none)" : validList));
+            textItem.oVal["text"] = Json("Error: Unknown machine type: " + machineType +
+                ". Valid types: " + (validList.empty() ? "(none)" : validList));
             textItem.oVal["isError"] = Json(true);
         } else {
-            textItem.oVal["text"] = Json("Created machine: " + std::string(ms->machine->displayName));
+            textItem.oVal["text"] = Json("Created instance \"" + instanceId +
+                "\" of machine: " + std::string(ms->machine->displayName));
+        }
+    } else if (name == "destroy_machine") {
+        std::string mid = args["machine_id"].sVal;
+        if (!g_machines.count(mid)) {
+            textItem.oVal["text"] = Json("Error: No instance with ID: " + mid);
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            g_machines.erase(mid);
+            g_assemblerOverrides.erase(mid);
+            textItem.oVal["text"] = Json("Destroyed instance: " + mid);
         }
     } else if (name == "list_symbols") {
         std::string mid = args["machine_id"].sVal;
@@ -1530,7 +1620,7 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             std::string isa = ms->cpu->isaName();
-            IAssembler* asmb = ToolchainRegistry::instance().createAssembler(isa);
+            IAssembler* asmb = ms->assem ? ms->assem : ToolchainRegistry::instance().createAssembler(isa);
             std::vector<uint8_t> bytes;
             std::vector<std::string> errors;
 
@@ -1538,6 +1628,9 @@ Json handleToolsCall(const Json& params) {
                 errors.push_back("No assembler registered for ISA: " + isa);
             } else {
                 uint32_t curAddr = 0;
+                bool useFileMode = false;
+
+                // Try line-by-line assembly first; if the first line returns -1, switch to file mode
                 std::istringstream lineStream(source);
                 std::string line;
                 while (std::getline(lineStream, line)) {
@@ -1563,25 +1656,62 @@ Json handleToolsCall(const Json& params) {
                     uint8_t buf[32];
                     int n = asmb->assembleLine(line, buf, sizeof(buf), curAddr);
                     if (n < 0) {
-                        std::string hint;
-                        std::string lower = line;
-                        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-                        // Try to provide helpful error context
-                        if (lower.find("$") != std::string::npos && lower.find(",") == std::string::npos) {
-                            hint = " (hex notation looks correct; check instruction mnemonic)";
-                        } else if (line.find("#") != std::string::npos && lower.find("lda") == std::string::npos &&
-                                  lower.find("ldx") == std::string::npos && lower.find("ldy") == std::string::npos) {
-                            hint = " (# is for immediate mode; not valid for this instruction)";
-                        } else if (line.length() > 50) {
-                            hint = " (line too long; instruction with operand should be <50 chars)";
-                        }
-                        errors.push_back("Syntax error: \"" + line + "\"" + hint);
+                        // Line-by-line not supported; switch to file-based assembly
+                        useFileMode = true;
+                        break;
                     } else {
                         for (int i = 0; i < n; i++) bytes.push_back(buf[i]);
                         curAddr += (uint32_t)n;
                     }
                 }
-                delete asmb;
+
+                // If line-mode failed, try file-based assembly
+                if (useFileMode) {
+                    bytes.clear();
+                    errors.clear();
+
+                    // Write source to temporary file
+                    const char* tmpSrcName = "/tmp/mmsim_asm_XXXXXX";
+                    const char* tmpOutName = "/tmp/mmsim_out_XXXXXX";
+                    char srcBuf[256], outBuf[256];
+                    strncpy(srcBuf, tmpSrcName, sizeof(srcBuf) - 1);
+                    strncpy(outBuf, tmpOutName, sizeof(outBuf) - 1);
+
+                    int srcFd = mkstemp(srcBuf);
+                    if (srcFd >= 0) {
+                        ssize_t written = write(srcFd, source.c_str(), source.size());
+                        close(srcFd);
+
+                        int outFd = mkstemp(outBuf);
+                        close(outFd);
+
+                        if (written >= 0) {
+                            AssemblerResult result = asmb->assemble(srcBuf, outBuf);
+                            if (result.success) {
+                                // Read .prg output, skipping 2-byte CBM load header if present
+                                std::ifstream prg(outBuf, std::ios::binary);
+                                if (prg) {
+                                    uint8_t byte;
+                                    int headerSkipped = 0;
+                                    while (prg.read((char*)&byte, 1)) {
+                                        if (headerSkipped < 2) {
+                                            headerSkipped++;
+                                        } else {
+                                            bytes.push_back(byte);
+                                        }
+                                    }
+                                    prg.close();
+                                }
+                            } else {
+                                errors.push_back(result.errorMessage);
+                            }
+                        }
+                        std::remove(srcBuf);
+                        std::remove(outBuf);
+                    }
+                }
+
+                if (!ms->assem) delete asmb;  // Only delete if not part of MachineState
             }
 
             // Optionally write to machine memory
@@ -1601,6 +1731,44 @@ Json handleToolsCall(const Json& params) {
             for (auto& e : errors) errArr.push_back(Json(e));
             result.oVal["errors"] = errArr;
             textItem.oVal["text"] = Json(result.stringify());
+        }
+    } else if (name == "set_assembler") {
+        std::string mid = args["machine_id"].sVal;
+        std::string asmName = args["assembler_name"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            g_assemblerOverrides[mid] = asmName;
+            // Re-create the assembler with the new override
+            if (ms->assem) { delete ms->assem; ms->assem = nullptr; }
+            ms->assem = resolveAssembler(ms->cpu->isaName(), ms->machine->preferredAssembler, asmName);
+            if (ms->assem) {
+                textItem.oVal["text"] = Json("Assembler set to: " + asmName);
+            } else {
+                textItem.oVal["text"] = Json("Error: Assembler '" + asmName + "' not found");
+                textItem.oVal["isError"] = Json(true);
+            }
+        }
+    } else if (name == "get_assembler") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            std::string asmName;
+            if (g_assemblerOverrides.count(mid)) {
+                asmName = g_assemblerOverrides[mid];
+            } else if (!ms->machine->preferredAssembler.empty()) {
+                asmName = ms->machine->preferredAssembler;
+            } else if (ms->assem) {
+                asmName = ms->assem->name();
+            } else {
+                asmName = "none";
+            }
+            textItem.oVal["text"] = Json(asmName);
         }
     } else if (name == "run_cpu") {
         std::string mid = args["machine_id"].sVal;
@@ -1903,6 +2071,11 @@ int main(int argc, char* argv[]) {
 
     LogRegistry::instance().init();
     PluginLoader::instance().loadFromStandardLocations();
+    SimConfig::instance().load();
+
+    // Load JSON machines after all plugins are registered
+    JsonMachineLoader jsonLoader;
+    jsonLoader.loadFile("machines/rawMega65.json");
 
     std::string line;
     while (std::getline(std::cin, line)) {
