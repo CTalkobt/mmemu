@@ -1,4 +1,5 @@
 #include "machine_registry.h"
+#include <iostream>
 
 static MachineRegistry* s_instance = nullptr;
 
@@ -21,9 +22,18 @@ void MachineRegistry::registerMachine(const std::string& id, FactoryFn factory, 
 }
 
 MachineDescriptor* MachineRegistry::createMachine(const std::string& id) {
+    std::cerr << "[MachineRegistry::createMachine] Looking for machine: '" << id << "'\n" << std::flush;
+    std::cerr << "[MachineRegistry::createMachine] Total machines registered: " << m_factories.size() << "\n" << std::flush;
     if (m_factories.count(id)) {
-        return m_factories[id]();
+        std::cerr << "[MachineRegistry::createMachine] Found factory for '" << id << "', calling it...\n" << std::flush;
+        auto* result = m_factories[id]();
+        std::cerr << "[MachineRegistry::createMachine] Factory returned: " << result << "\n" << std::flush;
+        if (result) {
+            std::cerr << "[MachineRegistry::createMachine] Result has " << result->cpus.size() << " CPUs and " << result->buses.size() << " buses\n" << std::flush;
+        }
+        return result;
     }
+    std::cerr << "[MachineRegistry::createMachine] Factory NOT FOUND for '" << id << "'\n" << std::flush;
     return nullptr;
 }
 

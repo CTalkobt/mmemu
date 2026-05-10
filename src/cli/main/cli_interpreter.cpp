@@ -3,6 +3,7 @@
 #include "libcore/main/machines/machine_registry.h"
 #include "libtoolchain/main/toolchain_registry.h"
 #include "libcore/main/image_loader.h"
+#include "libcore/main/sim_config.h"
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "plugin_command_registry.h"
@@ -132,7 +133,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 if (m_ctx.disasm) { delete m_ctx.disasm; m_ctx.disasm = nullptr; }
                 if (m_ctx.assem)  { delete m_ctx.assem;  m_ctx.assem = nullptr; }
                 m_ctx.disasm = ToolchainRegistry::instance().createDisassembler(m_ctx.cpu->isaName());
-                m_ctx.assem = ToolchainRegistry::instance().createAssembler(m_ctx.cpu->isaName());
+                m_ctx.assem = resolveAssembler(m_ctx.cpu->isaName(), md->preferredAssembler, "");
                 
                 if (m_ctx.dbg) { delete m_ctx.dbg; m_ctx.dbg = nullptr; }
                 m_ctx.dbg = new DebugContext(m_ctx.cpu, m_ctx.bus);
@@ -808,6 +809,34 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         } else {
             m_output("Syntax: asm <address>\n");
+        }
+    } else if (cmd == "config") {
+        std::string subcmd;
+        if (ss >> subcmd) {
+            if (subcmd == "assembler") {
+                std::string name;
+                if (ss >> name) {
+                    m_ctx.assemblerOverride = name;
+                    // Re-resolve assembler with the new override
+                    if (m_ctx.cpu && m_ctx.machine) {
+                        if (m_ctx.assem) { delete m_ctx.assem; m_ctx.assem = nullptr; }
+                        m_ctx.assem = resolveAssembler(m_ctx.cpu->isaName(), m_ctx.machine->preferredAssembler, m_ctx.assemblerOverride);
+                    }
+                    m_output("Assembler override set to: " + name + "\n");
+                } else {
+                    // Show current assembler
+                    std::string current = m_ctx.assemblerOverride.empty()
+                        ? (m_ctx.machine && !m_ctx.machine->preferredAssembler.empty()
+                            ? m_ctx.machine->preferredAssembler
+                            : "default")
+                        : m_ctx.assemblerOverride;
+                    m_output("Current assembler: " + current + "\n");
+                }
+            } else {
+                m_output("Unknown config: " + subcmd + "\n");
+            }
+        } else {
+            m_output("Usage: config <assembler> [name]\n");
         }
     } else if (cmd == "type") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }

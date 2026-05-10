@@ -18,6 +18,7 @@ struct CliContext {
     DebugContext* dbg = nullptr;
     uint32_t lastLoadAddr = 0;
     bool quit = false;
+    std::string assemblerOverride;  // Set by "config assembler <name>"
 };
 
 class CliInterpreter {

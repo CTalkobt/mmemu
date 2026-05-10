@@ -68,12 +68,23 @@
   [x] - Support for both 6502 and 45GS02 ISAs
   [x] - Error diagnostics with syntax hints
   [x] - Optional memory loading of assembled bytes
-[ ] Add ca45 assembler backend support for CLI and GUI (similar to KickAssembler)
-  [ ] - Implement `Ca45AssemblerBackend` in libtoolchain
-  [ ] - Support ca45 `.s` file format and `.prg` output
-  [ ] - Parse ca45 symbol output (if available)
-  [ ] - Register ca45 backend with toolchain registry
-  [ ] - Add assembler selection mechanism (config, command-line, or file extension detection)
-  [ ] - Update CLI `asm` command to support assembler selection
+[x] Pluggable Assembler Infrastructure (0.8.1)
+  [x] - **SimConfig** class for loading tool configuration from config.json
+  [x] - **ToolchainRegistry** extended with name-based assembler registration
+  [x] - **resolveAssembler()** with 3-level precedence (runtime → machine → ISA-default)
+  [x] - **MachineDescriptor** now includes `preferredAssembler` field
+  [x] - **JsonMachineLoader** loads assembler preferences from machine JSON
+  [x] - Auto-configuration of assemblers via SimConfig
+[x] CA45 Assembler Backend
+  [x] - **Ca45Assembler** class in 45GS02 plugin for CA45 assembly support
+  [x] - Registered with ToolchainRegistry by name
+  [x] - Integrated into 45GS02 plugin init
+[ ] Add ca45 assembler backend support for CLI and GUI (phase 2)
+  [ ] - Update CLI `asm` command to support assembler selection and file-based mode
   [ ] - Update GUI assemble dialog with assembler picker
+  [ ] - Add ca45 backend configuration to example config.json
   [ ] - Document assembler backend architecture and how to add new assemblers
+[x] MCP Server Assembler Tools (0.8.1)
+  [x] - `set_assembler` tool — Override assembler for a specific machine
+  [x] - `get_assembler` tool — Query current assembler
+  [x] - Enhanced `asm` tool with file-based assembly fallback

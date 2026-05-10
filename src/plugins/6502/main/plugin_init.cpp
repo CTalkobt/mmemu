@@ -3,6 +3,7 @@
 #include "cpu6510.h"
 #include "disassembler_6502.h"
 #include "assembler_6502.h"
+#include "kickassembler.h"
 #include "libcore/main/machine_desc.h"
 #include "libmem/main/memory_bus.h"
 
@@ -26,6 +27,10 @@ static IDisassembler* createDisasm6502() {
 
 static IAssembler* createAsm6502() {
     return new Assembler6502();
+}
+
+static IAssembler* createAsmKick() {
+    return new KickAssemblerBackend();
 }
 
 static MachineDescriptor* createMachineRaw6502() {
@@ -64,7 +69,8 @@ static CorePluginInfo s_cores[] = {
 };
 
 static ToolchainPluginInfo s_toolchains[] = {
-    {"6502", createDisasm6502, createAsm6502}
+    {"6502", nullptr, createDisasm6502, createAsm6502},           // ISA default, no name
+    {nullptr, "kickAssembler", nullptr, createAsmKick}            // Name-only registration
 };
 
 static MachinePluginInfo s_machines[] = {
@@ -80,7 +86,7 @@ static SimPluginManifest s_manifest = {
     nullptr,        // deps
     nullptr,        // supportedMachineIds
     2, s_cores,
-    1, s_toolchains,
+    2, s_toolchains,
     0, nullptr,     // devices
     2, s_machines,  // machines
     0, nullptr,     // loaders

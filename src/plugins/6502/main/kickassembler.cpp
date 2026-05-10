@@ -3,6 +3,7 @@
 #include <iostream>
 #include <sstream>
 #include <filesystem>
+#include <spdlog/spdlog.h>
 
 namespace fs = std::filesystem;
 
@@ -16,24 +17,23 @@ AssemblerResult KickAssemblerBackend::assemble(const std::string& sourcePath, co
     result.errorCount = 0;
     result.warningCount = 0;
 
-    std::string jarPath = m_config.binaryPath;
-    if (jarPath.empty()) {
-        jarPath = "tools/KickAss65CE02.jar";
+    std::string command = m_config.binaryPath;
+    if (command.empty()) {
+        command = "java -jar tools/KickAss65CE02.jar";
     }
 
-    if (!fs::exists(jarPath)) {
-        result.errorMessage = "KickAssembler JAR not found at: " + jarPath;
-        return result;
-    }
-
+    // Build command: <command> <sourcePath> -o <outputPath> -v [extraOptions]
     std::stringstream ss;
-    ss << "java -jar " << jarPath << " ";
-    ss << sourcePath << " ";
-    ss << "-o " << outputPath << " ";
-    ss << "-v "; // verbose for better parsing if we implemented it
-    ss << m_config.extraOptions;
+    ss << command << " ";
+    ss << "\"" << sourcePath << "\" ";
+    ss << "-o \"" << outputPath << "\" ";
+    ss << "-v ";
+    if (!m_config.extraOptions.empty()) {
+        ss << m_config.extraOptions;
+    }
 
     std::string cmd = ss.str();
+    spdlog::debug("Executing KickAssembler: {}", cmd);
     int ret = std::system(cmd.c_str());
 
     if (ret == 0) {

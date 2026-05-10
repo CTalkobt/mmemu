@@ -4,6 +4,7 @@
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_command_registry.h"
 #include "include/util/logging.h"
+#include "libcore/main/json_machine_loader.h"
 
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
@@ -38,6 +39,12 @@ int main(int argc, char *argv[]) {
     }
 
     PluginLoader::instance().loadFromStandardLocations();
+
+    // Load JSON machines after all plugins are registered
+    {
+        JsonMachineLoader jsonLoader;
+        jsonLoader.loadFile("machines/rawMega65.json");
+    }
 
     CliContext ctx;
     CliInterpreter interpreter(ctx, [](const std::string& out) {

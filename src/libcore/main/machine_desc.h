@@ -59,6 +59,7 @@ struct MachineDescriptor {
     std::string machineId;
     std::string displayName;
     std::string licenseClass;
+    std::string preferredAssembler;  // From machine JSON "assembler" key, e.g. "ca45"
 
     std::vector<CpuSlot> cpus;
     std::vector<BusSlot> buses;

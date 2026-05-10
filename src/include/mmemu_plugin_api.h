@@ -124,6 +124,7 @@ struct CorePluginInfo {
  */
 struct ToolchainPluginInfo {
     const char* isa;            // e.g. "6502"
+    const char* assemblerName;  // e.g. "ca45", "kickAssembler"; nullptr to skip name-based registration
     IDisassembler* (*createDisassembler)(void);
     IAssembler*    (*createAssembler)(void);
 };

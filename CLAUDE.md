@@ -210,6 +210,26 @@ The evaluator resolves symbols at expression-parse time. Symbols are auto-loaded
 
 ---
 
+## Assembler Infrastructure (0.8.1)
+
+The simulator now features a pluggable assembler system with per-machine selection:
+
+- **SimConfig** loads tool configuration from `config.json` (searched in `./`, `~/.local/share/mmsim/`, `/usr/local/share/mmsim/`)
+- **ToolchainRegistry** supports both ISA-based defaults and named assembler factories
+- **MachineDescriptor** includes optional `"assembler"` field (e.g., `"ca45"`, `"kickAssembler"`)
+- **resolveAssembler()** follows 3-level precedence: runtime override → machine-preferred → ISA-default
+- **CA45Assembler** plugin provides MEGA65 45GS02 assembly support
+- **MCP Server** includes `set_assembler` and `get_assembler` tools for runtime override
+
+### Adding a New Assembler
+
+1. Implement `IAssembler` interface with `assembleLine()` (line-mode) or set return value to -1 to trigger file-based fallback
+2. Create plugin entry point calling `host->registerAssemblerByName("name", factory)`
+3. Add configuration to `config.json` under `tools.assemblers.<name>`
+4. Optional: Set `"assembler": "name"` in machine JSON for default selection
+
+---
+
 ## Current Development Focus
 
 **Phase 21: MEGA65 Machine Integration** (In Progress)
@@ -231,3 +251,7 @@ See `todo.md` for the full roadmap.
 | Debugger UI | `src/gui/main/*.cpp` |
 | Machine factory | `src/libcore/main/json_machine_loader.cpp` |
 | Plugin loading | `src/plugin_loader/main/plugin_loader.cpp` |
+| Assembler registry | `src/libtoolchain/main/toolchain_registry.cpp` |
+| Simulator config | `src/libcore/main/sim_config.cpp` (loads `config.json`) |
+| CA45 assembler | `src/plugins/45gs02/main/ca45_assembler.cpp` |
+| MCP server | `src/mcp/main/main.cpp` (includes assembler tools) |

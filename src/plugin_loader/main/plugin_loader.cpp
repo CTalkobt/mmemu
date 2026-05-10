@@ -186,7 +186,13 @@ void PluginLoader::registerPluginItems(SimPluginManifest* manifest) {
     // Toolchains
     for (int i = 0; i < manifest->toolchainCount; ++i) {
         auto& t = manifest->toolchains[i];
-        ToolchainRegistry::instance().registerToolchain(t.isa, t.createDisassembler, t.createAssembler);
+        if (t.isa) {
+            ToolchainRegistry::instance().registerToolchain(t.isa, t.createDisassembler, t.createAssembler);
+        }
+        // Register by name if specified
+        if (t.assemblerName && t.createAssembler) {
+            ToolchainRegistry::instance().registerAssemblerByName(t.assemblerName, t.createAssembler);
+        }
     }
 
     // Machines

@@ -3,8 +3,9 @@
     {
       "id": "rawMega65",
       "displayName": "Raw MEGA65 (45GS02 / RAM only)",
+      "assembler": "ca45",
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 28 },
-      "cpu": { "type": "45gs02", "dataBus": "system", "codeBus": "system" },
+      "cpu": { "type": "45GS02", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "hyper_serial", "name": "HyperSerial", "baseAddr": "0xD6C0" },
         { "type": "exit_trap", "name": "ExitTrap", "baseAddr": "0xD6CF" },
