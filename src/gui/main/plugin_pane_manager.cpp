@@ -39,8 +39,6 @@ void PluginPaneManager::onMachineSwitch(const std::string& machineId, wxWindow* 
                         break;
                     }
                 }
-            } else if (it->second.window) {
-                // it->second.window->Destroy(); // FIXME: Segfaults in tests
             }
             it = m_livePanes.erase(it);
         } else {
