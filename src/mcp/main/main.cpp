@@ -137,7 +137,7 @@ static MachineState* createMachineInstance(const std::string& instanceId, const 
         MachineState ms;
         ms.machine = desc;
         ms.cpu = desc->cpus[0].cpu;
-        ms.bus = desc->buses[0].bus;
+        ms.bus = ms.cpu->getDataBus() ? ms.cpu->getDataBus() : desc->buses[0].bus;
         ms.id = instanceId;
         ms.machineType = machineType;
         ms.disasm = ToolchainRegistry::instance().createDisassembler(ms.cpu->isaName());

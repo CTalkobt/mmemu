@@ -235,7 +235,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/mega65/test/test_mega65_map.cpp \
 	tests/src/test_cbm_disk_images.cpp \
 	tests/src/test_d81_directory_listing.cpp \
-	tests/src/test_plugin_validation.cpp
+	tests/src/test_plugin_validation.cpp \
+	tests/src/test_ffd0_bug.cpp
 
 LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp
 LIBCORE_TEST_SRCS = src/libcore/test/test_c_compatibility.c
