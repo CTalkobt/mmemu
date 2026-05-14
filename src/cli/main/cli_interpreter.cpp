@@ -19,6 +19,12 @@ static std::string toHex(uint32_t v, int width = 4) {
     return ss.str();
 }
 
+int CliInterpreter::addrWidth() const {
+    if (!m_ctx.bus) return 4;
+    uint32_t bits = m_ctx.bus->config().addrBits;
+    return (bits + 3) / 4;  // round up to nearest hex digit
+}
+
 void CliInterpreter::processLine(const std::string& line) {
     if (m_asmMode) {
         handleAssemblyLine(line);
@@ -366,7 +372,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     uint32_t addr;
                     if (parseAddr(expr, addr)) {
                         m_ctx.dbg->symbols().addSymbol(addr, label);
-                        m_output("Symbol added: " + label + " = $" + toHex(addr) + "\n");
+                        m_output("Symbol added: " + label + " = $" + toHex(addr, addrWidth()) + "\n");
                     } else {
                         m_output("Error: Invalid address '" + expr + "'\n");
                     }
@@ -387,9 +393,10 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     m_output("No symbols defined.\n");
                 } else {
                     std::stringstream out;
+                    int aw = addrWidth();
                     out << std::setfill('0') << std::uppercase << std::hex;
                     for (const auto& pair : syms) {
-                        out << "$" << std::setw(4) << pair.first << "  " << pair.second << "\n";
+                        out << "$" << std::setw(aw) << pair.first << "  " << pair.second << "\n";
                     }
                     m_output(out.str());
                 }
@@ -398,10 +405,11 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 if (ss >> query) {
                     auto syms = m_ctx.dbg->symbols().symbols();
                     std::stringstream out;
+                    int aw = addrWidth();
                     bool found = false;
                     for (const auto& pair : syms) {
                         if (pair.second.find(query) != std::string::npos) {
-                            out << "$" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << pair.first << "  " << pair.second << "\n";
+                            out << "$" << std::hex << std::uppercase << std::setw(aw) << std::setfill('0') << pair.first << "  " << pair.second << "\n";
                             found = true;
                         }
                     }
@@ -690,9 +698,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 }
             }
             if (match) {
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%04X", i);
-                m_output("Found at $" + std::string(buf) + "\n");
+                m_output("Found at $" + toHex(i, addrWidth()) + "\n");
                 if (m_lastSearchFoundAddr == 0xFFFFFFFF) m_lastSearchFoundAddr = i;
             }
         }
@@ -718,9 +724,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 }
             }
             if (match) {
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%04X", i);
-                m_output("Found at $" + std::string(buf) + "\n");
+                m_output("Found at $" + toHex(i, addrWidth()) + "\n");
                 if (m_lastSearchFoundAddr == 0xFFFFFFFF) m_lastSearchFoundAddr = i;
             }
         }
@@ -741,9 +745,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
             if (match) {
                 m_lastSearchFoundAddr = curr;
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%04X", curr);
-                m_output("Found at $" + std::string(buf) + "\n");
+                m_output("Found at $" + toHex(curr, addrWidth()) + "\n");
                 break;
             }
             if (i == mask) m_output("No further occurrences found.\n");
@@ -765,9 +767,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
             if (match) {
                 m_lastSearchFoundAddr = curr;
-                char buf[16];
-                snprintf(buf, sizeof(buf), "%04X", curr);
-                m_output("Found at $" + std::string(buf) + "\n");
+                m_output("Found at $" + toHex(curr, addrWidth()) + "\n");
                 found = true;
                 break;
             }
@@ -789,7 +789,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         for (int i = 0; i < n; ++i) {
             char buf[64];
             std::stringstream res;
-            res << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << addr << ": ";
+            res << std::hex << std::uppercase << std::setfill('0') << std::setw(addrWidth()) << addr << ": ";
             int bytes = m_ctx.disasm->disasmOne(m_ctx.bus, addr, buf, sizeof(buf));
             res << buf << "\n";
             m_output(res.str());
@@ -1017,7 +1017,7 @@ void CliInterpreter::printHelp() {
 void CliInterpreter::dumpMemory(uint32_t addr, uint32_t len) {
     std::stringstream res;
     for (uint32_t i = 0; i < len; i += 16) {
-        res << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << (addr + i) << ": ";
+        res << std::hex << std::uppercase << std::setfill('0') << std::setw(addrWidth()) << (addr + i) << ": ";
         for (uint32_t j = 0; j < 16 && (i + j) < len; ++j) {
             res << std::setw(2) << (int)m_ctx.bus->peek8(addr + i + j) << " ";
         }

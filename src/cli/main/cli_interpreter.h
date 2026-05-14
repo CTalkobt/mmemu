@@ -38,6 +38,7 @@ private:
     void dumpMemory(uint32_t addr, uint32_t len);
     void saveMemory(const std::string& path, uint32_t addr, uint32_t len);
     void showRegisters();
+    int addrWidth() const;
 
     CliContext& m_ctx;
     OutputFn m_output;

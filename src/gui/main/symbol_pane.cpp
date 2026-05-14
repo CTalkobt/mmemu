@@ -75,7 +75,8 @@ void SymbolPane::RefreshValues() {
         }
 
         std::ostringstream ss;
-        ss << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << pair.first;
+        int w = (pair.first > 0xFFFF) ? 7 : 4;
+        ss << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(w) << pair.first;
         
         m_list->InsertItem(row, ss.str());
         m_list->SetItem(row, 1, label);
