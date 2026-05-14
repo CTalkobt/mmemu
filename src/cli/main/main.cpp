@@ -4,13 +4,14 @@
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_command_registry.h"
 #include "include/util/logging.h"
+#include "include/version.h"
 #include "libcore/main/json_machine_loader.h"
 
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
 
     std::cout << "mmemu - Multi Machine Emulator (CLI)\n";
-    std::cout << "Version 0.1.0-dev\n";
+    std::cout << "Version " MMSIM_VERSION_FULL "\n";
     
     LogRegistry::instance().init();
 

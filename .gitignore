@@ -20,3 +20,4 @@ man/
 .aider*
 
 tests/45gs02/tests
+src/include/version.h

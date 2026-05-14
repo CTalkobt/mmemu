@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "include/version.h"
 #include "minijson.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
@@ -160,7 +161,7 @@ static MachineState* createMachineInstance(const std::string& instanceId, const 
 Json handleDescribe() {
     Json res(Json::OBJ);
     res.oVal["name"] = Json("mmemu-mcp");
-    res.oVal["version"] = Json("0.1.0");
+    res.oVal["version"] = Json(MMSIM_VERSION_FULL);
     
     Json tools(Json::ARR);
     auto addTool = [&](const std::string& name, const std::string& desc, const Json& schema) {
@@ -2031,7 +2032,7 @@ static Json handleInitialize(const Json& params) {
 
     Json info(Json::OBJ);
     info.oVal["name"] = Json("mmemu-mcp");
-    info.oVal["version"] = Json("0.1.0");
+    info.oVal["version"] = Json(MMSIM_VERSION_FULL);
     res.oVal["serverInfo"] = info;
 
     Json caps(Json::OBJ);

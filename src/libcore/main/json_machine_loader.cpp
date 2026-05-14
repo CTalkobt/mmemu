@@ -14,6 +14,7 @@
 #include "libdevices/main/open_bus_handler.h"
 #include "libdevices/main/shared_irq_manager.h"
 #include "libdevices/main/simple_signal_line.h"
+#include "util/logging.h"
 #include <fstream>
 #include <sstream>
 #include <map>
@@ -140,10 +141,10 @@ int JsonMachineLoader::registerAll(const nlohmann::json& doc) {
         std::string displayName;
         if (spec.contains("displayName") && spec["displayName"].is_string())
             displayName = spec["displayName"].get<std::string>();
-        std::cerr << "[JsonMachineLoader::registerAll] Registering machine: " << id << "\n" << std::flush;
+        LogRegistry::instance().getLogger("system")->debug("Registering machine: {}", id);
         MachineRegistry::instance().registerMachine(id,
             [specCopy]() -> MachineDescriptor* {
-                std::cerr << "[JsonMachineLoader] Factory lambda called for machine\n" << std::flush;
+                LogRegistry::instance().getLogger("system")->debug("Factory lambda called for machine");
                 return JsonMachineLoader::buildFromSpec(specCopy);
             }, displayName);
         ++count;
