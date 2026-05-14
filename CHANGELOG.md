@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-05-14
+
+### Added
+- **MEGA65 Phase 21 Progress**:
+    - **MAP instruction (0x5C)**: Fixed register encoding (X[7:4]/Z[7:4] enables), per-block additive offsets, correct 8×8KB block model.
+    - **EOM instruction (0x7C)**: Fixed to preserve MAP state (no longer clears mapping).
+    - **C64BankController**: New component for MEGA65 C64-mode ROM banking via $00/$01 (LORAM/HIRAM/CHAREN). Manages SparseMemoryBus overlays for KERNAL, BASIC, and character ROM. Banking bypassed when MAP blocks are active.
+    - **KEY register ($D02F)**: Wired into MEGA65 machine factory for I/O personality switching (C64/C65/MEGA65/ETHERNET knock sequences).
+- **45GS02 CPU Enhancements**:
+    - **Quad immediate modes**: LDQ/ADCQ/SBCQ/CMPQ/ANDQ/ORAQ/EORQ #imm32 now execute (previously halted).
+    - **Decimal mode (BCD)**: ADC/SBC now handle FLAG_D correctly via doAdc8/doSbc8 helpers.
+    - **Full disassembly**: All opcodes including quad prefix (#imm32 shown as 8-digit hex).
+- **28-bit Symbol Table Display**: CLI and GUI adapt address width based on bus (4 digits for 16-bit, 7 for 28-bit) across sym list, memory dump, disasm, and search results.
+- **Version string**: Build system generates `version.h` with git hash (displayed as `0.2.0-<hash>`).
+
+### Changed
+- Suppressed "Registering machine:" and plugin load messages to spdlog debug level.
+- Refactored all inline 8-bit ADC/SBC to shared doAdc8/doSbc8 helpers (decimal-aware).
+
+### Fixed
+- MAP instruction enable bit encoding (was swapped between lower/upper halves).
+- EOM incorrectly clearing MAP state.
+- GUI plugin pane manager segfault on window destroy in test environment.
+
 ## [0.8.1-dev] - 2026-05-09
 
 ### Added

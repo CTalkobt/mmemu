@@ -234,7 +234,11 @@ The simulator now features a pluggable assembler system with per-machine selecti
 
 **Phase 21: MEGA65 Machine Integration** (In Progress)
 - Phase 19 ✓ Complete: `SparseMemoryBus` and `MapMmu` implemented with unit tests
-- Remaining: MAP instruction in 45GS02, ROM loading, I/O personality switching, integration tests
+- ✓ MAP instruction fixed (correct 8×8KB block encoding, per-block offsets)
+- ✓ C64BankController for ROM banking in C64 compatibility mode
+- ✓ KEY register ($D02F) wired for I/O personality switching
+- ✓ 45GS02: quad immediate modes, decimal mode, full disassembly, 28-bit symbol display
+- Remaining: ROM loading, MEGA65 integration tests
 
 See `todo.md` for the full roadmap.
 

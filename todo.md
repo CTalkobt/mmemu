@@ -4,16 +4,16 @@
 [x] Pop-up Modal Calculator
   [x] - Base conversion
   [x] - Basic Calculator Operations
-    ( + - * / ^(power) square root, x^2, nth root, x^n, 
+    ( + - * / ^(power) square root, x^2, nth root, x^n,
       sin, cos, sec, csc, tan, atn
-      arc sin, arc cos.... 
-      negate, ... 
+      arc sin, arc cos....
+      negate, ...
     )
   [x] - 1's complement, 2's compliment
-  [x] - Float / Integer mode. 
-  [x] - Memory mode (8 results) 
-  [x] - Ans (aka Rcl 0) button - Recall prior result. 
-  [x] - Rcl n button to recall nth prior result. 
+  [x] - Float / Integer mode.
+  [x] - Memory mode (8 results)
+  [x] - Ans (aka Rcl 0) button - Recall prior result.
+  [x] - Rcl n button to recall nth prior result.
   [x] - Set precision display for int or floating point.
 
 ## Toolchain Migration
@@ -41,18 +41,27 @@
 [x] - MapMmu as pure address translator (MAP instruction support)
 [x] - Snapshot serialization (sparse format)
 [x] - Unit tests for both components
-    - `test_sparse_memory.cpp`: Validates lazy allocation, ROM overlays, snapshots
-    - `test_map_mmu.cpp`: Validates memory mapping and translation
 
 ## MEGA65 Machine Integration (Phase 21) - IN PROGRESS
 [x] - Wire MapMmu as CPU's bus pointer (CPU reads/writes via MapMmu → SparseMemoryBus)
 [x] - Wire MapMmu pointer to 45GS02 CPU for MAP instruction support
-[x] - Implement MAP instruction (0x5C) in 45GS02 CPU to call MapMmu.setMapState()
-[x] - Separate C64 mode path (use C64BankController) from MEGA65 mode path (use MapMmu)
+[x] - Implement MAP instruction (0x5C) with correct 8×8KB block encoding
+[x] - Separate C64 mode path (C64BankController) from MEGA65 mode path (MapMmu)
+[x] - Implement I/O personality switching ($D02F KEY register) in machine factory
+[x] - MAP instruction parameter parsing (register encoding from A/X/Y/Z)
 [ ] - Load MEGA65 ROM and wire overlays on SparseMemoryBus (KERNAL, BASIC, CHARROM)
-[x] - Implement I/O personality switching ($D02F) in machine factory
-[x] - Implement MAP instruction parameter parsing (read map spec from memory)
 [ ] - MEGA65 integration tests (MAP functionality, address translation, ROM visibility)
+
+## 45GS02 CPU Core
+[x] - Quad immediate modes (LDQ/ADCQ/SBCQ/CMPQ/ANDQ/ORAQ/EORQ #imm32)
+[x] - Decimal mode (BCD) accuracy for ADC/SBC
+[x] - Full disassembly support (all opcodes, quad prefix, 32-bit indirect prefix)
+[x] - 28-bit symbol table display (adaptive address width in CLI and GUI)
+[x] - 32-bit indirect pointers ($EA prefix for [$zp],Z)
+[x] - Stack-relative indirect addressing (d,S),Y
+[x] - 8-bit / 16-bit stack mode switching (CLE/SEE)
+[ ] - B-register offset for stack operations
+[ ] - Interrupt masking / vector redirection via MMU
 
 ## MCP Server Expansion (0.8.1) - COMPLETED
 [x] - Assembler Support: `asm` tool for 6502/45GS02 code generation with error diagnostics
@@ -64,27 +73,15 @@
 
 ## Assembler Support & Selection
 [x] MCP assembler tool (`.asm` tool in MCP server)
-  [x] - Line-by-line assembly via IAssembler backend
-  [x] - Support for both 6502 and 45GS02 ISAs
-  [x] - Error diagnostics with syntax hints
-  [x] - Optional memory loading of assembled bytes
 [x] Pluggable Assembler Infrastructure (0.8.1)
-  [x] - **SimConfig** class for loading tool configuration from config.json
-  [x] - **ToolchainRegistry** extended with name-based assembler registration
-  [x] - **resolveAssembler()** with 3-level precedence (runtime → machine → ISA-default)
-  [x] - **MachineDescriptor** now includes `preferredAssembler` field
-  [x] - **JsonMachineLoader** loads assembler preferences from machine JSON
-  [x] - Auto-configuration of assemblers via SimConfig
 [x] CA45 Assembler Backend
-  [x] - **Ca45Assembler** class in 45GS02 plugin for CA45 assembly support
-  [x] - Registered with ToolchainRegistry by name
-  [x] - Integrated into 45GS02 plugin init
+[x] MCP Server Assembler Tools (0.8.1)
 [ ] Add ca45 assembler backend support for CLI and GUI (phase 2)
   [ ] - Update CLI `asm` command to support assembler selection and file-based mode
   [ ] - Update GUI assemble dialog with assembler picker
   [ ] - Add ca45 backend configuration to example config.json
   [ ] - Document assembler backend architecture and how to add new assemblers
-[x] MCP Server Assembler Tools (0.8.1)
-  [x] - `set_assembler` tool — Override assembler for a specific machine
-  [x] - `get_assembler` tool — Query current assembler
-  [x] - Enhanced `asm` tool with file-based assembly fallback
+
+## Deprioritized
+- Cycle-accurate timing for all opcodes/modes
+- I/O stalls and DMA contention simulation
