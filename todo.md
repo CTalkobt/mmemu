@@ -51,7 +51,7 @@
 [x] - Separate C64 mode path (use C64BankController) from MEGA65 mode path (use MapMmu)
 [ ] - Load MEGA65 ROM and wire overlays on SparseMemoryBus (KERNAL, BASIC, CHARROM)
 [x] - Implement I/O personality switching ($D02F) in machine factory
-[ ] - Implement MAP instruction parameter parsing (read map spec from memory)
+[x] - Implement MAP instruction parameter parsing (read map spec from memory)
 [ ] - MEGA65 integration tests (MAP functionality, address translation, ROM visibility)
 
 ## MCP Server Expansion (0.8.1) - COMPLETED
