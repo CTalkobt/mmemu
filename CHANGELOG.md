@@ -5,11 +5,19 @@ All notable changes to this project will be documented in this file.
 ## [0.2.0] - 2026-05-14
 
 ### Added
-- **MEGA65 Phase 21 Progress**:
-    - **MAP instruction (0x5C)**: Fixed register encoding (X[7:4]/Z[7:4] enables), per-block additive offsets, correct 8×8KB block model.
-    - **EOM instruction (0x7C)**: Fixed to preserve MAP state (no longer clears mapping).
-    - **C64BankController**: New component for MEGA65 C64-mode ROM banking via $00/$01 (LORAM/HIRAM/CHAREN). Manages SparseMemoryBus overlays for KERNAL, BASIC, and character ROM. Banking bypassed when MAP blocks are active.
-    - **KEY register ($D02F)**: Wired into MEGA65 machine factory for I/O personality switching (C64/C65/MEGA65/ETHERNET knock sequences).
+- **MEGA65 Phase 21 Completion**:
+    - **Machine Factory**: Implemented `Mega65MachineFactory` for the full "mega65" machine preset.
+    - **ROM Loading**: Integrated automatic loading of `mega65.rom` (128KB) into physical Banks 2-3 with write protection.
+    - **Device Registration**: Wired and registered all core MEGA65 devices: F018B DMA, Math Accelerator, Hyper Serial, and Exit Trap.
+    - **Integration Testing**: Added `test_mega65_integration.cpp` verifying 28-bit bus wiring, MMU translation, and I/O personality switching.
+    - **MEGA65 Phase 24 (ROM Importer)**:
+        - New plugin: `lib/mmemu-plugin-mega65-importer.so`.
+        - Automatically discovers MEGA65 ROMs in standard `xemu-xmega65` installation paths across Linux, macOS, and Windows.
+        - Added "Manual Selection..." in the GUI to allow users to browse for their `MEGA65.ROM` file.
+        - CLI command `importmega65` and MCP tool `import_mega65_roms` for scriptable setup.
+        - Namespaced existing `viceImporter` to prevent symbol collisions during static linking in tests.
+    - **Build System Refactor**:
+ Moved plugin entry points (`mmemuPluginInit`) to separate `plugin_init.cpp` files for Exit Trap, DMA, and Math Unit to prevent linker collisions in test binaries.
 - **45GS02 CPU Enhancements**:
     - **Quad immediate modes**: LDQ/ADCQ/SBCQ/CMPQ/ANDQ/ORAQ/EORQ #imm32 now execute (previously halted).
     - **Decimal mode (BCD)**: ADC/SBC now handle FLAG_D correctly via doAdc8/doSbc8 helpers.

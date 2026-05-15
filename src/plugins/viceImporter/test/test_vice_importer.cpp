@@ -8,6 +8,7 @@
 #include <cstdint>
 
 namespace fs = std::filesystem;
+using namespace vice_importer;
 
 // ---------------------------------------------------------------------------
 // Helpers

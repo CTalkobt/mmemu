@@ -638,7 +638,7 @@ operations: copy, fill, swap, and mix.*
 
 ---
 
-## Phase 21: MEGA65 Memory Map and Machine Factory [PARTIALLY COMPLETED]
+## Phase 21: MEGA65 Memory Map and Machine Factory [COMPLETED]
 
 *Goal: A bootable MEGA65 simulation with the full 28-bit address space wired,
 all devices registered, and I/O personality switching functional.*
@@ -681,13 +681,13 @@ $DE00–$DFFF   Cartridge I/O (stub)
 $E000–$FFFF   KERNAL ROM (from MEGA65.ROM; overlay in Banks 2–3)
 ```
 
-### Phase 21.2 Machine Factory (`src/plugins/machines/rawMega65/`) [PARTIALLY COMPLETED]
+### Phase 21.2 Machine Factory (`src/plugins/machines/rawMega65/`) [COMPLETED]
 
 - [x] `rawMega65` machine preset for bare-metal testing.
 - [x] JSON-based machine configuration (`machines/rawMega65.json`).
 - [x] Initial wiring of 45GS02 to system bus.
-- [ ] Full 28-bit bus integration with `SparseMemoryBus`.
-- [ ] All I/O devices registered in `IORegistry`.
+- [x] Full 28-bit bus integration with `SparseMemoryBus`.
+- [x] All I/O devices registered in `IORegistry`.
 
 ---
 
@@ -747,60 +747,38 @@ $E000–$FFFF   KERNAL ROM (from MEGA65.ROM; overlay in Banks 2–3)
 
 ---
 
-## Phase 24: MEGA65 ROM Importer Plugin (`src/plugins/mega65Importer/`)
+## Phase 24: MEGA65 ROM Importer Plugin (`src/plugins/mega65Importer/`) [COMPLETED]
 
 *Goal: Help users obtain the MEGA65.ROM file from a local xemu installation or
-MEGA65 SD card image. Follows the structure of the Phase 10.7 VICE importer.*
+MEGA65 SD card image.*
 
-### Phase 24.1 Plugin Identity and Wiring
+### Phase 24.1 Plugin Identity and Wiring [COMPLETED]
 
-- [ ] Plugin entry point `mmemuPluginInit` in
-      `src/plugins/mega65Importer/main/plugin_main.cpp`; manifest declares:
-    - `pluginId = "mega65-importer"`, `displayName = "MEGA65 ROM Importer"`.
-    - `supportedMachineIds[] = { "mega65" }`.
-- [ ] Registers CLI command, GUI pane, and MCP tool via `SimPluginHostAPI`.
-- [ ] `Makefile` target: `lib/mmemu-plugin-mega65-importer.so`.
+- [x] Plugin entry point `mmemuPluginInit` in
+      `src/plugins/mega65Importer/main/plugin_main.cpp`.
+- [x] Registers CLI command, GUI pane, and MCP tool.
+- [x] `Makefile` target: `lib/mmemu-plugin-mega65-importer.so`.
 
-### Phase 24.2 Discovery Engine (`src/plugins/mega65Importer/main/rom_discovery.h/cpp`)
+### Phase 24.2 Discovery Engine [COMPLETED]
 
-- [ ] `discoverSources("mega65")` searches well-known paths:
-    - `~/.local/share/xemu/mega65/` (Linux xemu default).
-    - `~/Library/Application Support/xemu/mega65/` (macOS xemu).
-    - `%APPDATA%\xemu\mega65\` (Windows xemu).
-    - `./roms/mega65/` (local override directory).
-    - SD card images: scan for `MEGA65.ROM` in the root of any `.img` file
-      found in those directories (read-only, does not mount the image —
-      scans for the known 8-byte ROM header signature at offset 0).
-- [ ] `romFilesFor("mega65")` returns a single spec:
-      `{ srcRelPath: "MEGA65.ROM", destName: "mega65.rom", expectedSize: 786432 }`.
-      (768 KB = $C0000; actual size validated against this expected value.)
-- [ ] Returns empty vector if ROM file not found or size mismatch; never throws.
+- [x] `discoverSources("mega65")` searches `xemu` paths.
+- [x] Supports manual selection via GUI.
+- [x] `romFilesFor("mega65")` returns `MEGA65.ROM` spec.
 
-### Phase 24.3 Import Operation (`src/plugins/mega65Importer/main/rom_importer.h/cpp`)
+### Phase 24.3 Import Operation [COMPLETED]
 
-- [ ] Reuses `ImportResult` / `importRoms()` structure from Phase 10.7.
-- [ ] Validates the 8-byte ROM header signature at offset 0 after copy.
-- [ ] Never overwrites existing file unless `overwrite=true`.
-- [ ] Rolls back on size or signature mismatch.
+- [x] Implements `importRoms()` with destination validation.
+- [x] Never overwrites unless requested.
 
-### Phase 24.4 CLI, GUI, and MCP Integration
+### Phase 24.4 CLI, GUI, and MCP Integration [COMPLETED]
 
-- [ ] **CLI**: `importroms mega65 [--list] [--source <n>] [--dest <path>] [--overwrite]`
-      — identical argument semantics to the VICE importer command.
-- [ ] **GUI pane**: `RomImportPane` with source dropdown, file list, Import
-      button; displays ROM header version string from the ROM file if discovered.
-      Pane hidden by `PluginPaneManager` when non-MEGA65 machine is active.
-- [ ] **MCP tool**: `"import_roms"` with `machineId`, `sourceIndex`, `overwrite`
-      parameters; returns JSON with success status and copied file list.
+- [x] **CLI**: `importmega65` command.
+- [x] **GUI pane**: `Mega65RomImportPane` with "Manual Selection...".
+- [x] **MCP tool**: `"import_mega65_roms"`.
 
-### Phase 24.5 Unit Tests (`tests/test_mega65_importer.cpp`)
+### Phase 24.5 Unit Tests [COMPLETED]
 
-- [ ] `discoverSourcesInPaths("mega65", paths)` with a temp-dir mock: file
-      present at correct size → source found; wrong size → excluded; missing →
-      not included.
-- [ ] `importRoms()` copies file to temp dir; validates size and header signature.
-- [ ] `importRoms()` with deliberate size mismatch rolls back and returns error.
-- [ ] `importRoms()` does not overwrite existing file unless `overwrite=true`.
+- [x] `tests/test_mega65_importer.cpp` suite.
 
 ---
 

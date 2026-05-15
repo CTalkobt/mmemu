@@ -7,7 +7,7 @@
 #include <cstring>
 #include <cstdlib>
 
-using namespace vice_importer;
+using namespace mega65_importer;
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,23 +16,17 @@ extern "C" {
 static const SimPluginHostAPI* g_host = nullptr;
 
 // ---------------------------------------------------------------------------
-// CLI command: importroms
+// CLI command: importmega65
 // ---------------------------------------------------------------------------
 
-static int cmdImportRoms(int argc, const char* const* argv, void* ctx) {
+static int cmdImportMega65(int argc, const char* const* argv, void* ctx) {
     (void)ctx;
-    if (argc < 2) {
-        std::cout << "Usage: importroms <machineId> [--list] [--source <n>] [--dest <path>] [--overwrite]\n";
-        return 1;
-    }
-
-    std::string machineId = argv[1];
     bool listOnly = false;
     int sourceIdx = -1;
-    std::string destDir = "roms/" + machineId;
+    std::string destDir = "roms/mega65";
     bool overwrite = false;
 
-    for (int i = 2; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--list") listOnly = true;
         else if (arg == "--source" && i + 1 < argc) sourceIdx = std::stoi(argv[++i]);
@@ -40,14 +34,14 @@ static int cmdImportRoms(int argc, const char* const* argv, void* ctx) {
         else if (arg == "--overwrite") overwrite = true;
     }
 
-    auto sources = discoverSources(machineId);
+    auto sources = discoverSources("mega65");
     if (sources.empty()) {
-        std::cout << "No VICE installations found for machine: " << machineId << "\n";
+        std::cout << "No MEGA65 ROMs found in standard locations.\n";
         return 1;
     }
 
     if (listOnly) {
-        std::cout << "Found " << sources.size() << " VICE installation(s):\n";
+        std::cout << "Found " << sources.size() << " MEGA65 ROM source(s):\n";
         for (size_t i = 0; i < sources.size(); ++i) {
             std::cout << "  [" << i << "] " << sources[i].label << " (" << sources[i].basePath << ")\n";
         }
@@ -71,44 +65,26 @@ static int cmdImportRoms(int argc, const char* const* argv, void* ctx) {
         return 1;
     }
 
-    std::cout << "Importing ROMs from: " << sources[sourceIdx].label << " to " << destDir << "...\n";
-    auto result = importRoms(sources[sourceIdx], machineId, destDir, overwrite);
+    std::cout << "Importing MEGA65 ROM from: " << sources[sourceIdx].label << " to " << destDir << "...\n";
+    auto result = importRoms("mega65", sources[sourceIdx].basePath, destDir, overwrite);
 
     if (result.success) {
-        std::cout << "Successfully imported " << result.copiedFiles.size() << " file(s):\n";
-        for (const auto& f : result.copiedFiles) std::cout << "  - " << f << "\n";
-        std::cout << "Please reset the machine to load the new ROMs.\n";
+        std::cout << "Successfully imported MEGA65 ROM.\n";
+        std::cout << "Please reset the machine to load the new ROM.\n";
         return 0;
     } else {
-        std::cerr << "Import failed: " << result.errorMessage << "\n";
+        std::cerr << "Import failed: " << result.message << "\n";
         return 1;
     }
 }
 
 // ---------------------------------------------------------------------------
-// MCP tool: import_roms
+// MCP tool: import_mega65_roms
 // ---------------------------------------------------------------------------
 
-static void mcpImportRoms(const char* paramsJson, char** resultJson, void* ctx) {
+static void mcpImportMega65Roms(const char* paramsJson, char** resultJson, void* ctx) {
     (void)ctx;
     std::string params = paramsJson ? paramsJson : "{}";
-
-    // Extract string field from minimal JSON
-    auto extractStr = [&](const std::string& key) -> std::string {
-        std::string token = "\"" + key + "\"";
-        size_t pos = params.find(token);
-        if (pos == std::string::npos) return "";
-        pos = params.find(':', pos + token.size());
-        if (pos == std::string::npos) return "";
-        pos = params.find('"', pos);
-        if (pos == std::string::npos) return "";
-        size_t end = params.find('"', pos + 1);
-        if (end == std::string::npos) return "";
-        return params.substr(pos + 1, end - pos - 1);
-    };
-
-    std::string machineId = extractStr("machineId");
-    if (machineId.empty()) machineId = "vic20";
 
     bool overwrite = false;
     size_t owPos = params.find("\"overwrite\"");
@@ -129,9 +105,9 @@ static void mcpImportRoms(const char* paramsJson, char** resultJson, void* ctx) 
         }
     }
 
-    auto sources = discoverSources(machineId);
+    auto sources = discoverSources("mega65");
     if (sources.empty()) {
-        *resultJson = strdup("{\"success\":false,\"error\":\"No VICE installations found\"}");
+        *resultJson = strdup("{\"success\":false,\"error\":\"No MEGA65 ROMs found\"}");
         return;
     }
     if (sourceIndex < 0 || sourceIndex >= (int)sources.size()) {
@@ -139,18 +115,12 @@ static void mcpImportRoms(const char* paramsJson, char** resultJson, void* ctx) 
         return;
     }
 
-    auto res = importRoms(sources[sourceIndex], machineId, "roms/" + machineId, overwrite);
+    auto res = importRoms("mega65", sources[sourceIndex].basePath, "roms/mega65", overwrite);
 
     if (res.success) {
-        std::string json = "{\"success\":true,\"files\":[";
-        for (size_t i = 0; i < res.copiedFiles.size(); ++i) {
-            if (i > 0) json += ",";
-            json += "\"" + res.copiedFiles[i] + "\"";
-        }
-        json += "]}";
-        *resultJson = strdup(json.c_str());
+        *resultJson = strdup("{\"success\":true}");
     } else {
-        std::string escaped = res.errorMessage;
+        std::string escaped = res.message;
         for (size_t i = 0; i < escaped.size(); ++i) {
             if (escaped[i] == '"') { escaped.insert(i, "\\"); ++i; }
         }
@@ -166,7 +136,7 @@ static void mcpFreeString(char* s) {
 // GUI pane factory (implemented in rom_import_pane.cpp)
 // ---------------------------------------------------------------------------
 
-void* createRomImportPane(void* parent, void* ctx);
+void* createMega65RomImportPane(void* parent, void* ctx);
 
 // ---------------------------------------------------------------------------
 // Plugin entry point
@@ -177,20 +147,20 @@ SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* host) {
 
     // CLI command
     static struct PluginCommandInfo cmdInfo;
-    cmdInfo.name    = "importroms";
-    cmdInfo.usage   = "<machineId> [--list] [--source <n>] [--dest <path>] [--overwrite]";
-    cmdInfo.execute = cmdImportRoms;
+    cmdInfo.name    = "importmega65";
+    cmdInfo.usage   = "[--list] [--source <n>] [--dest <path>] [--overwrite]";
+    cmdInfo.execute = cmdImportMega65;
     cmdInfo.ctx     = nullptr;
     host->registerCommand(&cmdInfo);
 
     // GUI pane
-    static const char* paneMatchIds[] = { "vic20", nullptr };
+    static const char* paneMatchIds[] = { "mega65", nullptr };
     static struct PluginPaneInfo paneInfo;
-    paneInfo.paneId      = "vice-importer.main";
-    paneInfo.displayName = "VICE ROM Importer";
+    paneInfo.paneId      = "mega65-importer.main";
+    paneInfo.displayName = "MEGA65 ROM Importer";
     paneInfo.menuSection = "Tools";
     paneInfo.machineIds  = paneMatchIds;
-    paneInfo.createPane  = createRomImportPane;
+    paneInfo.createPane  = createMega65RomImportPane;
     paneInfo.destroyPane = nullptr;  // wxWidgets manages lifetime
     paneInfo.refreshPane = nullptr;
     paneInfo.ctx         = nullptr;
@@ -198,33 +168,30 @@ SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* host) {
 
     // MCP tool
     static struct PluginMcpToolInfo mcpInfo;
-    mcpInfo.toolName   = "import_roms";
+    mcpInfo.toolName   = "import_mega65_roms";
     mcpInfo.schemaJson =
         "{"
         "\"type\":\"object\","
         "\"properties\":{"
-        "\"machineId\":{\"type\":\"string\",\"description\":\"Target machine ID (e.g. vic20)\"},"
-        "\"sourceIndex\":{\"type\":\"integer\",\"description\":\"Index into discovered VICE installations\"},"
+        "\"sourceIndex\":{\"type\":\"integer\",\"description\":\"Index into discovered sources\"},"
         "\"overwrite\":{\"type\":\"boolean\",\"description\":\"Overwrite existing ROM files\"}"
-        "},"
-        "\"required\":[\"machineId\"]"
+        "}"
         "}";
-    mcpInfo.handle     = mcpImportRoms;
+    mcpInfo.handle     = mcpImportMega65Roms;
     mcpInfo.freeString = mcpFreeString;
     mcpInfo.ctx        = nullptr;
     host->registerMcpTool(&mcpInfo);
 
     // Manifest
-    static const char* deps[]             = { "vic20", nullptr };
-    static const char* supportedMachines[] = { "vic20", nullptr };
+    static const char* supportedMachines[] = { "mega65", nullptr };
 
     static SimPluginManifest manifest;
     std::memset(&manifest, 0, sizeof(manifest));
     manifest.apiVersion          = MMEMU_PLUGIN_API_VERSION;
-    manifest.pluginId            = "vice-importer";
-    manifest.displayName         = "VICE ROM Importer";
+    manifest.pluginId            = "mega65-importer";
+    manifest.displayName         = "MEGA65 ROM Importer";
     manifest.version             = "0.1.0";
-    manifest.deps                = deps;
+    manifest.deps                = nullptr;
     manifest.supportedMachineIds = supportedMachines;
 
     return &manifest;

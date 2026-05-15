@@ -1,16 +1,16 @@
 #include "rom_discovery.h"
 #include <filesystem>
+#include <cstdlib>
 
 namespace fs = std::filesystem;
 
-namespace vice_importer {
+namespace mega65_importer {
 
 std::vector<RomFileSpec> romFilesFor(const std::string& machineId) {
-    if (machineId == "vic20") {
+    if (machineId == "mega65") {
         return {
-            { "VIC20/basic",    "basic.bin",   8192 },
-            { "VIC20/kernal",   "kernal.bin",  8192 },
-            { "VIC20/chargen",  "char.bin",    4096 }
+            // Standard full ROM image used by xemu and real hardware
+            { "MEGA65.ROM", "mega65.rom", 786432 }
         };
     }
     return {};
@@ -29,13 +29,21 @@ std::vector<RomSource> discoverSourcesInPaths(const std::string& machineId,
         for (const auto& spec : specs) {
             fs::path fullPath = fs::path(path) / spec.srcRelPath;
             if (!fs::exists(fullPath) || fs::file_size(fullPath) != spec.expectedSize) {
-                allPresent = false;
-                break;
+                // Try lowercase if uppercase fails
+                std::string lowerRel = spec.srcRelPath;
+                for (char &c : lowerRel) c = std::tolower(c);
+                fullPath = fs::path(path) / lowerRel;
+                
+                if (!fs::exists(fullPath) || fs::file_size(fullPath) != spec.expectedSize) {
+                    allPresent = false;
+                    break;
+                }
             }
         }
 
         if (allPresent) {
-            std::string label = (path == "rom") ? "Bundled ROMs (rom/)" : "VICE at " + path;
+            std::string label = "Source at " + path;
+            if (path.find("xemu") != std::string::npos) label = "xemu installation at " + path;
             found.push_back({ label, path });
         }
     }
@@ -45,28 +53,23 @@ std::vector<RomSource> discoverSourcesInPaths(const std::string& machineId,
 
 std::vector<RomSource> discoverSources(const std::string& machineId) {
     std::vector<std::string> candidates = {
-        "rom",
-        "/usr/share/vice",
-        "/usr/local/share/vice",
-        "/usr/share/games/vice",
-        "/opt/vice",
-        "/opt/vice/lib/vice",
-        "/usr/lib/vice"
+        ".",
+        "roms/mega65"
     };
 
     const char* home = std::getenv("HOME");
     if (home) {
         std::string h(home);
-        candidates.push_back(h + "/.local/share/vice");
-        candidates.push_back(h + "/Applications/VICE.app/Contents/Resources");
+        candidates.push_back(h + "/.local/share/xemu/mega65");
+        candidates.push_back(h + "/Library/Application Support/xemu/mega65");
     }
 
-#ifdef _WIN32
-    candidates.push_back("C:\\Program Files\\VICE");
-    candidates.push_back("C:\\Program Files (x86)\\VICE");
-#endif
+    const char* appData = std::getenv("APPDATA");
+    if (appData) {
+        candidates.push_back(std::string(appData) + "\\xemu\\mega65");
+    }
 
     return discoverSourcesInPaths(machineId, candidates);
 }
 
-} // namespace vice_importer
+} // namespace mega65_importer

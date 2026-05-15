@@ -10,4 +10,6 @@ struct ImportResult {
     std::string errorMessage;
 };
 
+namespace vice_importer {
 ImportResult importRoms(const RomSource& src, const std::string& machineId, const std::string& destDir, bool overwrite = false);
+}

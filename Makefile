@@ -102,6 +102,11 @@ PLUGIN_VICEIMPORTER_SRCS = src/plugins/viceImporter/main/plugin_main.cpp \
 	src/plugins/viceImporter/main/rom_importer.cpp \
 	src/plugins/viceImporter/main/rom_import_pane.cpp
 
+PLUGIN_MEGA65IMPORTER_SRCS = src/plugins/mega65Importer/main/plugin_main.cpp \
+	src/plugins/mega65Importer/main/rom_discovery.cpp \
+	src/plugins/mega65Importer/main/rom_importer.cpp \
+	src/plugins/mega65Importer/main/rom_import_pane.cpp
+
 PLUGIN_C64PLA_SRCS = src/plugins/devices/c64_pla/main/c64_pla.cpp \
 	src/plugins/devices/c64_pla/main/plugin_init.cpp
 
@@ -154,7 +159,8 @@ PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/cbm-loader/main/t64_parser.cpp \
 	src/plugins/cbm-loader/main/g64_parser.cpp
 
-PLUGIN_F018B_DMA_SRCS = src/plugins/devices/f018b_dma/main/f018b_dma.cpp
+PLUGIN_F018B_DMA_SRCS = src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
+	src/plugins/devices/f018b_dma/main/plugin_init.cpp
 
 PLUGIN_MAP_MMU_SRCS = src/plugins/devices/map_mmu/main/map_mmu.cpp \
 	src/plugins/devices/map_mmu/main/key_register.cpp \
@@ -166,6 +172,12 @@ PLUGIN_SID_PAIR_SRCS = src/plugins/devices/sid_pair/main/sid_pair.cpp \
 
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
+
+PLUGIN_EXIT_TRAP_SRCS = src/plugins/devices/exit_trap/main/exit_trap.cpp \
+	src/plugins/devices/exit_trap/main/plugin_init.cpp
+
+PLUGIN_MEGA65_MATH_SRCS = src/plugins/devices/mega65_math/main/mega65_math.cpp \
+	src/plugins/devices/mega65_math/main/plugin_init.cpp
 
 GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/machine_selector.cpp \
@@ -242,6 +254,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/map_mmu/test/test_key_register.cpp \
 	src/plugins/devices/map_mmu/test/test_c64_bank_controller.cpp \
 	src/plugins/machines/mega65/test/test_mega65_map.cpp \
+	src/plugins/machines/mega65/test/test_mega65_integration.cpp \
 	tests/src/test_cbm_disk_images.cpp \
 	tests/src/test_d81_directory_listing.cpp \
 	tests/src/test_plugin_validation.cpp \
@@ -252,6 +265,7 @@ LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp
 LIBCORE_TEST_SRCS = src/libcore/test/test_c_compatibility.c
 PLUGINLOADER_TEST_SRCS = src/plugin_loader/test/test_plugin_extension.cpp
 PLUGIN_VICEIMPORTER_TEST_SRCS = src/plugins/viceImporter/test/test_vice_importer.cpp
+PLUGIN_MEGA65IMPORTER_TEST_SRCS = src/plugins/mega65Importer/test/test_mega65_importer.cpp
 PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 	src/plugins/devices/vic2/test/test_c64_boot_screen.cpp
 PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
@@ -271,6 +285,8 @@ PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
 	src/plugins/devices/kbd_vic20/main/kbd_vic20.o \
 	src/plugins/viceImporter/main/rom_discovery.o \
 	src/plugins/viceImporter/main/rom_importer.o \
+	src/plugins/mega65Importer/main/rom_discovery.o \
+	src/plugins/mega65Importer/main/rom_importer.o \
 	src/plugins/devices/c64_pla/main/c64_pla.o \
 	src/plugins/devices/cia6526/main/cia6526.o \
 	src/plugins/devices/vic2/main/vic2.o \
@@ -298,6 +314,10 @@ PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
 	src/plugins/devices/map_mmu/main/map_mmu.o \
 	src/plugins/devices/map_mmu/main/key_register.o \
 	src/plugins/devices/map_mmu/main/c64_bank_controller.o \
+	src/plugins/devices/mega65_math/main/mega65_math.o \
+	src/plugins/devices/hyper_serial/main/hyper_serial.o \
+	src/plugins/devices/exit_trap/main/exit_trap.o \
+	src/plugins/machines/mega65/main/machine_mega65.o \
 	src/plugins/cbm-hle/main/kernal_hle.o
 REGISTRY_OBJS = src/cli/main/cli_interpreter.o \
 	src/cli/main/plugin_command_registry.o \
@@ -311,6 +331,7 @@ TEST_OBJS = $(TEST_SRCS:.cpp=.o) \
             $(LIBCORE_TEST_SRCS:.c=.o) \
             $(PLUGINLOADER_TEST_SRCS:.cpp=.o) \
             $(PLUGIN_VICEIMPORTER_TEST_SRCS:.cpp=.o) \
+            $(PLUGIN_MEGA65IMPORTER_TEST_SRCS:.cpp=.o) \
             $(PLUGIN_VIC2_TEST_SRCS:.cpp=.o) \
 	$(sort $(ALL_PLUGIN_OBJS)) \
 	$(REGISTRY_OBJS)
@@ -335,6 +356,7 @@ PLUGIN_VIC20_CORE_OBJS = $(PLUGIN_VIC20_CORE_SRCS:.cpp=.o) \
 	src/plugins/devices/vic6560/main/vic6560.o
 PLUGIN_VIC20_GUI_OBJS  = src/plugins/machines/vic20/main/plugin_init.o
 PLUGIN_VICEIMPORTER_OBJS = $(PLUGIN_VICEIMPORTER_SRCS:.cpp=.o)
+PLUGIN_MEGA65IMPORTER_OBJS = $(PLUGIN_MEGA65IMPORTER_SRCS:.cpp=.o)
 PLUGIN_C64PLA_OBJS   = $(PLUGIN_C64PLA_SRCS:.cpp=.o)
 PLUGIN_CIA6526_OBJS  = $(PLUGIN_CIA6526_SRCS:.cpp=.o)
 PLUGIN_VIC2_OBJS     = $(PLUGIN_VIC2_SRCS:.cpp=.o)
@@ -364,8 +386,8 @@ PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
 PLUGIN_SID_PAIR_OBJS = $(PLUGIN_SID_PAIR_SRCS:.cpp=.o)
 PLUGIN_MEGA65_OBJS = $(PLUGIN_MEGA65_SRCS:.cpp=.o)
-PLUGIN_EXIT_TRAP_OBJS = src/plugins/devices/exit_trap/main/exit_trap.o
-PLUGIN_MEGA65_MATH_OBJS = src/plugins/devices/mega65_math/main/mega65_math.o
+PLUGIN_EXIT_TRAP_OBJS = $(PLUGIN_EXIT_TRAP_SRCS:.cpp=.o)
+PLUGIN_MEGA65_MATH_OBJS = $(PLUGIN_MEGA65_MATH_SRCS:.cpp=.o)
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
 
 GUI_OBJS = $(GUI_SRCS:.cpp=.o)
@@ -386,6 +408,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-vic20.so \
 	$(LIBDIR)/mmemu-plugin-kbd-vic20.so \
 	$(LIBDIR)/mmemu-plugin-vice-importer.so \
+	$(LIBDIR)/mmemu-plugin-mega65-importer.so \
 	$(LIBDIR)/mmemu-plugin-c64-pla.so \
 	$(LIBDIR)/mmemu-plugin-cia6526.so \
 	$(LIBDIR)/mmemu-plugin-vic2.so \
@@ -469,6 +492,9 @@ $(LIBDIR)/mmemu-plugin-kbd-vic20.so: $(PLUGIN_KBDVIC20_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-vice-importer.so: $(PLUGIN_VICEIMPORTER_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-mega65-importer.so: $(PLUGIN_MEGA65IMPORTER_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-c64-pla.so: $(PLUGIN_C64PLA_OBJS) | $(LIBDIR)

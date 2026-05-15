@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 
+using namespace vice_importer;
+
 class RomImportPane : public wxPanel {
 public:
     RomImportPane(wxWindow* parent) : wxPanel(parent) {
