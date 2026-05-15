@@ -16,7 +16,7 @@
  */
 class VIC6560 : public IOHandler, public IVideoOutput, public IAudioOutput {
 public:
-    VIC6560() : m_name("VIC-I"), m_baseAddr(0x9000) { reset(); }
+    VIC6560() : m_name("VIC-I"), m_baseAddr(0x9000) { VIC6560::reset(); }
     VIC6560(const std::string& name, uint32_t baseAddr);
     virtual ~VIC6560() = default;
 

@@ -13,7 +13,7 @@
  */
 class GTIA : public IOHandler {
 public:
-    GTIA() : m_name("GTIA"), m_baseAddr(0xD000) { reset(); }
+    GTIA() : m_name("GTIA"), m_baseAddr(0xD000) { GTIA::reset(); }
     ~GTIA() override = default;
 
     // -----------------------------------------------------------------------

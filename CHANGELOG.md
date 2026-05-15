@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
     - **Decimal mode (BCD)**: ADC/SBC now handle FLAG_D correctly via doAdc8/doSbc8 helpers.
     - **Full disassembly**: All opcodes including quad prefix (#imm32 shown as 8-digit hex).
 - **28-bit Symbol Table Display**: CLI and GUI adapt address width based on bus (4 digits for 16-bit, 7 for 28-bit) across sym list, memory dump, disasm, and search results.
+- **Build System**:
+    - Added `make cppcheck` target for static analysis of the codebase.
+    - Fixed several One Definition Rule (ODR) violations in test suites by using anonymous namespaces for mock classes.
 - **Version string**: Build system generates `version.h` with git hash (displayed as `0.2.0-<hash>`).
 
 ### Changed

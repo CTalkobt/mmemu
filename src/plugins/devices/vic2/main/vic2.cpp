@@ -8,7 +8,7 @@
 VIC2::VIC2(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
 {
-    reset();
+    VIC2::reset();
 }
 
 void VIC2::reset() {

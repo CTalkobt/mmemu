@@ -19,7 +19,7 @@ static const RegDescriptor s_regDescriptors[] = {
 
 MOS45GS02::MOS45GS02() : m_bus(nullptr) {
     memset(&m_state, 0, sizeof(m_state));
-    reset();
+    MOS45GS02::reset();
 }
 
 void MOS45GS02::reset() {

@@ -2,7 +2,7 @@
 #include <iostream>
 
 Datasette::Datasette() {
-    reset();
+    Datasette::reset();
 }
 
 void Datasette::reset() {

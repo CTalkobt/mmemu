@@ -59,7 +59,7 @@ public:
 
     // ---------------------------------------------------------------------------
 
-    VIC2() : m_name("VIC-II"), m_baseAddr(0xD000) { reset(); }
+    VIC2() : m_name("VIC-II"), m_baseAddr(0xD000) { VIC2::reset(); }
     VIC2(const std::string& name, uint32_t baseAddr);
     ~VIC2() override = default;
 

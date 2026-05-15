@@ -3,6 +3,7 @@
 #include "libmem/main/ibus.h"
 #include <vector>
 
+namespace {
 class MockSignal : public ISignalLine {
 public:
     bool get() const override { return m_level; }
@@ -29,6 +30,7 @@ public:
     BusConfig m_config = {16, 8, BusRole::DMA, true, 0xFFFF};
     uint8_t m_mem[65536] = {0};
 };
+} // namespace
 
 TEST_CASE(antic_registers) {
     Antic antic;

@@ -27,7 +27,7 @@ public:
     uint32_t    addrMask() const override { return 0; }
     bool ioRead (IBus*, uint32_t, uint8_t*) override { return false; }
     bool ioWrite(IBus*, uint32_t, uint8_t)  override { return false; }
-    void reset() override { clearKeys(); }
+    void reset() override { KbdC64::clearKeys(); }
     void tick(uint64_t cycles) override;
 
     // IKeyboardMatrix

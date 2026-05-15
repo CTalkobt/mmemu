@@ -20,7 +20,7 @@ KbdC64::KbdC64() : m_colPort(this), m_rowPort(this) {
         {"1",{7,0}},         {"arrow_left",{7,1}},{"ctrl",{7,2}},     {"2",{7,3}},
         {"space",{7,4}},     {"cbm",{7,5}},      {"q",{7,6}},         {"run_stop",{7,7}},
     };
-    clearKeys();
+    KbdC64::clearKeys();
 }
 
 void KbdC64::updateMatrix() {

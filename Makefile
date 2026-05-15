@@ -1,6 +1,6 @@
 # mmemu — Multi Machine Emulator
 # Top-level Makefile
-.PHONY: all cli gui mcp libs test test-mcp plugins clean man serve
+.PHONY: all cli gui mcp libs test test-mcp plugins clean man serve cppcheck
 
 all: cli gui mcp plugins
 
@@ -588,6 +588,10 @@ test-mega65: $(CLI_BIN) plugins
 	./tests/45gs02/validate.py tests/45gs02/transfers.s
 	./tests/45gs02/validate.py tests/45gs02/advanced.s
 	./tests/45gs02/validate.py tests/45gs02/quad.s
+
+cppcheck:
+	@echo "Running cppcheck..."
+	cppcheck --enable=all --suppress=missingIncludeSystem --inline-suppr --quiet --force $(INCLUDES) src
 
 serve: $(MCP_BIN) plugins
 	@echo "============================================"

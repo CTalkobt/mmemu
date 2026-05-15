@@ -13,6 +13,7 @@ static constexpr uint32_t CRA_ADDR = BASE + 1;
 static constexpr uint32_t ORB_DDRB = BASE + 2;
 static constexpr uint32_t CRB_ADDR = BASE + 3;
 
+namespace {
 class MockSignal : public ISignalLine {
 public:
     bool get()   const override { return m_level; }
@@ -30,6 +31,7 @@ public:
     uint8_t m_written = 0;
     uint8_t m_ddr    = 0;
 };
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Test 1: DDR / OR select via CRA/CRB bit 2

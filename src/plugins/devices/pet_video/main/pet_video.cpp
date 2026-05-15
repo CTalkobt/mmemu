@@ -8,7 +8,7 @@ void PetVideo::setLinkedDevice(const char* role, IOHandler* dev) {
 }
 
 PetVideo::PetVideo(Model model) : m_model(model) {
-    reset();
+    PetVideo::reset();
 }
 
 void PetVideo::reset() {

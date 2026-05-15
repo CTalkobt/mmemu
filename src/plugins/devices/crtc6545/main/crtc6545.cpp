@@ -2,7 +2,7 @@
 #include <cstring>
 
 CRTC6545::CRTC6545() {
-    reset();
+    CRTC6545::reset();
 }
 
 void CRTC6545::reset() {

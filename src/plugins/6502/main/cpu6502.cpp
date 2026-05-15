@@ -17,7 +17,7 @@ static const RegDescriptor s_regDescriptors[] = {
 };
 
 MOS6502::MOS6502() {
-    reset();
+    MOS6502::reset();
 }
 
 int MOS6502::regCount() const {

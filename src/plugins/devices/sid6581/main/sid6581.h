@@ -43,7 +43,7 @@
  */
 class SID6581 : public IOHandler, public IAudioOutput {
 public:
-    SID6581() : m_name("SID"), m_baseAddr(0xD400) { reset(); }
+    SID6581() : m_name("SID"), m_baseAddr(0xD400) { SID6581::reset(); }
     SID6581(const std::string& name, uint32_t baseAddr);
     ~SID6581() override = default;
 

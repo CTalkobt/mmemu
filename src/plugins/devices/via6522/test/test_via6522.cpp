@@ -2,6 +2,7 @@
 #include "via6522.h"
 #include <vector>
 
+namespace {
 class MockSignal : public ISignalLine {
 public:
     bool get() const override { return m_level; }
@@ -10,6 +11,7 @@ public:
     bool m_level = false;
     bool m_changed = false;
 };
+} // namespace
 
 TEST_CASE(via6522_timers) {
     VIA6522 via("via1", 0x9110);

@@ -6,7 +6,7 @@
 SID6581::SID6581(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
 {
-    reset();
+    SID6581::reset();
 }
 
 // ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ KbdVic20::KbdVic20()
         {"2",          {7, 0}}, {"4",          {7, 1}}, {"6",        {7, 2}}, {"8",     {7, 3}},
         {"0",          {7, 4}}, {"arrow_up",   {7, 5}}, {"home",     {7, 6}}, {"f7",    {7, 7}},
     };
-    clearKeys();
+    KbdVic20::clearKeys();
 }
 
 void KbdVic20::clearKeys() {

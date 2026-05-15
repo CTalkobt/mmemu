@@ -2,7 +2,7 @@
 #include <algorithm>
 
 SimpleIEEE488Bus::SimpleIEEE488Bus() {
-    reset();
+    SimpleIEEE488Bus::reset();
 }
 
 void SimpleIEEE488Bus::reset() {

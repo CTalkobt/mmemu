@@ -4,7 +4,7 @@
 CIA6526::CIA6526(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
 {
-    reset();
+    CIA6526::reset();
 }
 
 void CIA6526::reset() {

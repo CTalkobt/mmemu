@@ -15,7 +15,7 @@
  */
 class POKEY : public IOHandler, public IAudioOutput {
 public:
-    POKEY() : m_name("POKEY"), m_baseAddr(0xD200) { reset(); }
+    POKEY() : m_name("POKEY"), m_baseAddr(0xD200) { POKEY::reset(); }
     ~POKEY() override = default;
 
     void setClockHz(uint32_t hz) override  { m_clockHz = hz; }

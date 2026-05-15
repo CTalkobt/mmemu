@@ -19,7 +19,7 @@ public:
     static constexpr int DISPLAY_W = 320;
     static constexpr int DISPLAY_H = 192; // Standard 192 scanlines display
 
-    Antic() : m_name("ANTIC"), m_baseAddr(0xD400) { reset(); }
+    Antic() : m_name("ANTIC"), m_baseAddr(0xD400) { Antic::reset(); }
     ~Antic() override = default;
 
     // -----------------------------------------------------------------------

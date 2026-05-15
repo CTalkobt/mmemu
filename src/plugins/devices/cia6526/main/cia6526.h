@@ -34,7 +34,7 @@
  */
 class CIA6526 : public IOHandler {
 public:
-    CIA6526() : m_name("CIA"), m_baseAddr(0) { reset(); }
+    CIA6526() : m_name("CIA"), m_baseAddr(0) { CIA6526::reset(); }
     CIA6526(const std::string& name, uint32_t baseAddr);
 
     // -----------------------------------------------------------------------

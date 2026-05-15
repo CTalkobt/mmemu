@@ -13,7 +13,7 @@ VIA6522::VIA6522(const std::string& name, uint32_t baseAddr)
     m_pb7Proxy.m_reg = &m_regs[ORB];
     m_pb7Proxy.m_bit = 7;
     for (int i = 0; i < 7; ++i) { m_pbProxy[i].m_reg = &m_regs[ORB]; m_pbProxy[i].m_bit = i; }
-    reset();
+    VIA6522::reset();
 }
 
 void VIA6522::CA1Conduit::set(bool level) {

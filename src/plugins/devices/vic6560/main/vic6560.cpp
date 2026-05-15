@@ -5,7 +5,7 @@
 VIC6560::VIC6560(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
 {
-    reset();
+    VIC6560::reset();
 }
 
 // Constexpr array definitions (ODR-used by tickAudio)
