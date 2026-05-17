@@ -12,8 +12,12 @@ public:
     void RefreshValues();
 
 private:
+    void rebuildAnnotations();
+
     ICore* m_cpu = nullptr;
     wxGrid* m_grid;
+    wxStaticText* m_annotationLabel;
     std::vector<uint32_t> m_prevValues;
     wxFont m_fixedFont;
+    bool m_is45GS02 = false;
 };

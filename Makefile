@@ -206,6 +206,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/screen_pane.cpp \
         src/gui/main/tape_pane.cpp \
         src/gui/main/drive_status_pane.cpp \
+	src/gui/main/mega65_status_pane.cpp \
 	src/gui/main/dialogs/memory_dialogs.cpp \
 	src/gui/main/dialogs/assemble_dialog.cpp \
 	src/gui/main/dialogs/image_dialogs.cpp \

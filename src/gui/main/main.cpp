@@ -34,6 +34,7 @@
 #include "tape_pane.h"
 #include "symbol_pane.h"
 #include "drive_status_pane.h"
+#include "mega65_status_pane.h"
 #include "include/util/logging.h"
 #include "gui_utils.h"
 #include <fstream>
@@ -119,6 +120,7 @@ private:
     StackPane*      m_stackPane = nullptr;
     MachineInspectorPane* m_machineInspectorPane = nullptr;
     DeviceInfoPane* m_deviceInfoPane = nullptr;
+    Mega65StatusPane* m_mega65StatusPane = nullptr;
     wxAuiNotebook*  m_notebook  = nullptr;
 
     wxTimer m_timer;
@@ -562,7 +564,8 @@ MmemuFrame::MmemuFrame()
     m_notebook->AddPage(m_symPane, "Symbols");
     m_stackPane = new StackPane(m_notebook);
     m_notebook->AddPage(m_stackPane, "Stack");
-    
+    m_mega65StatusPane = new Mega65StatusPane(m_notebook);
+
     mainSplitter->SplitVertically(leftTopBottomSplitter, m_notebook, 750);
     mainSplitter->SetMinimumPaneSize(200);
     
@@ -728,7 +731,23 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
             m_cartPane->SetBus(m_bus);
             m_machineInspectorPane->setMachine(m_machine);
             m_deviceInfoPane->setMachine(m_machine);
-            
+
+            // Show/hide MEGA65 status pane based on machine type
+            {
+                bool isMega65 = (id.find("mega65") != std::string::npos);
+                // Remove existing page if present
+                for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+                    if (m_notebook->GetPage(i) == m_mega65StatusPane) {
+                        m_notebook->RemovePage(i);
+                        break;
+                    }
+                }
+                if (isMega65) {
+                    m_mega65StatusPane->SetMachine(m_machine, m_cpu);
+                    m_notebook->AddPage(m_mega65StatusPane, "MEGA65");
+                }
+            }
+
             if (m_machine->onReset) m_machine->onReset(*m_machine);
 
             // Discover and start audio output for any IAudioOutput device in
@@ -1220,6 +1239,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_machineInspectorPane->refreshValues();
         if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
             m_deviceInfoPane->refreshValues();
+        if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
+            m_mega65StatusPane->RefreshValues();
     }
 }
 
