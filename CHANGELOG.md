@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-05-18
+
+### Added
+- **Code Coverage**: `make coverage` target using gcov instrumentation with optional lcov HTML reports.
+- **59 New Unit Tests** (309 → 368 total):
+    - `test_stack_trace`: Push/pop, recent ordering, clear, type name strings.
+    - `test_breakpoint_list`: Exec/read/write watchpoints, enable/disable, conditions, hit counts.
+    - `test_source_map`: KickAssembler list parsing, address lookup, missing files, malformed input.
+    - `test_tap_parser`: TAP load/save, normal and long pulse decoding, recording roundtrip.
+    - `test_mega65_math`: Multiply, divide, divide-by-zero, RNG advancement, reset, out-of-range.
+    - `test_datasette`: Mount, play/stop/rewind, recording, signal line wiring, end-of-tape.
+    - `test_crtc6545`: Register select/write, read-only registers, counter advancement, reset.
+    - `test_sim_config`: Missing config defaults.
+
+### Fixed
+- **ImportResult ODR violation**: `vice_importer` and `mega65_importer` both defined `struct ImportResult` at global scope with different member layouts (swapped `string`/`vector` fields). This caused a double-free crash when building at `-O0`. Fixed by moving each struct into its respective namespace.
+
+### Changed
+- `make clean` now removes coverage artifacts (`.gcno`, `.gcda`, `coverage/`).
+
 ## [0.2.0] - 2026-05-14
 
 ### Added
