@@ -313,3 +313,69 @@ TEST_CASE(expression_evaluator_flag_and_reg_shortcuts) {
     // No cpu → flag fails gracefully
     ASSERT(!ExpressionEvaluator::evaluate(".C", nullptr, res));
 }
+
+TEST_CASE(expression_evaluator_condition) {
+    // Empty condition is always true
+    ASSERT(ExpressionEvaluator::evaluateCondition("", nullptr));
+
+    // Non-zero = true
+    ASSERT(ExpressionEvaluator::evaluateCondition("1", nullptr));
+    ASSERT(ExpressionEvaluator::evaluateCondition("$FF", nullptr));
+
+    // Zero = false
+    ASSERT(!ExpressionEvaluator::evaluateCondition("0", nullptr));
+
+    // Expression that evaluates to true/false
+    ASSERT(ExpressionEvaluator::evaluateCondition("10 == 10", nullptr));
+    ASSERT(!ExpressionEvaluator::evaluateCondition("10 == 20", nullptr));
+
+    // Invalid expression = false
+    ASSERT(!ExpressionEvaluator::evaluateCondition("???invalid", nullptr));
+}
+
+TEST_CASE(expression_evaluator_char_escapes) {
+    uint32_t res;
+
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("'\\r'", nullptr, res));
+    EXPECT_EQ(res, (uint32_t)'\r');
+
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("'\\t'", nullptr, res));
+    EXPECT_EQ(res, (uint32_t)'\t');
+
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("'\\\\'", nullptr, res));
+    EXPECT_EQ(res, (uint32_t)'\\');
+
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("'\\''", nullptr, res));
+    EXPECT_EQ(res, (uint32_t)'\'');
+
+    // Unknown escape
+    ASSERT(!ExpressionEvaluator::evaluate("'\\q'", nullptr, res));
+
+    // Multi-char literal without backslash (too long)
+    ASSERT(!ExpressionEvaluator::evaluate("'ab'", nullptr, res));
+}
+
+TEST_CASE(expression_evaluator_error_paths) {
+    uint32_t res;
+
+    // Division by zero
+    ASSERT(!ExpressionEvaluator::evaluate("10 / 0", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("10 % 0", nullptr, res));
+
+    // Empty expression
+    ASSERT(!ExpressionEvaluator::evaluate("", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("   ", nullptr, res));
+
+    // Completely invalid
+    ASSERT(!ExpressionEvaluator::evaluate("@@@", nullptr, res));
+
+    // Bare $ or % with space after
+    ASSERT(!ExpressionEvaluator::evaluate("$ ", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("% ", nullptr, res));
+
+    // Unary on invalid sub-expression
+    ASSERT(!ExpressionEvaluator::evaluate("-$ZZZZ", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("!$ZZZZ", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("<$ZZZZ", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate(">$ZZZZ", nullptr, res));
+}
