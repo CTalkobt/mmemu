@@ -283,7 +283,9 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/datasette/test/test_datasette.cpp \
 	src/plugins/devices/crtc6545/test/test_crtc6545.cpp \
 	src/libcore/test/test_sim_config.cpp \
-	src/plugins/45gs02/test/test_cpu45gs02.cpp
+	src/plugins/45gs02/test/test_cpu45gs02.cpp \
+	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
+	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp
 
 LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp
 LIBCORE_TEST_SRCS = src/libcore/test/test_c_compatibility.c
