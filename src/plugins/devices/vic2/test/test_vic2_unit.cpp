@@ -329,3 +329,237 @@ TEST_CASE(vic2_name_and_base) {
     ASSERT_EQ(vic.baseAddr(), (uint32_t)0xD400);
     ASSERT_EQ(vic.addrMask(), (uint32_t)0x003F);
 }
+
+// --- Bitmap modes ---
+
+TEST_CASE(vic2_render_standard_bitmap) {
+    VicFixture f;
+
+    // Enable bitmap mode: SCR1 BMM=1, DEN=1, RSEL=1
+    f.vic.ioWrite(nullptr, 0xD011, VIC2::SCR1_BMM | VIC2::SCR1_DEN | VIC2::SCR1_RSEL | 0x03);
+    // MCM=0 (standard bitmap)
+    f.vic.ioWrite(nullptr, 0xD016, VIC2::SCR2_CSEL);
+
+    // VMEM: screen at $0400, bitmap at $2000
+    // screen = (V >> 4) * $400; bitmap = (V >> 1 & 7) * $800
+    // For screen=$0400: V>>4 = 1; For bitmap=$2000: (V>>1&7) = 4 → V bit1-3 = 0b100 → 0x08
+    // V = 0x18
+    f.vic.ioWrite(nullptr, 0xD018, 0x18);
+
+    // Screen RAM at $0400 holds color info: high nibble=fg, low nibble=bg
+    // Cell (0,0): fg=white(1), bg=black(0)
+    f.bus.write8(0x0400, 0x10);
+
+    // Bitmap data at $2000: first row of cell (0,0) = all fg pixels
+    f.bus.write8(0x2000, 0xFF);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // First pixel of display area should be white (fg)
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], (uint32_t)0xFFFFFFFF);
+
+    // Second row of cell (0,0) = all bg pixels (0x00)
+    f.bus.write8(0x2001, 0x00);
+    f.vic.renderFrame(buf);
+    // Row 1 of cell should be black (bg)
+    ASSERT_EQ(buf[(py + 1) * VIC2::FRAME_W + px], (uint32_t)0xFF000000);
+}
+
+TEST_CASE(vic2_render_multicolor_bitmap) {
+    VicFixture f;
+
+    // BMM=1, MCM=1
+    f.vic.ioWrite(nullptr, 0xD011, VIC2::SCR1_BMM | VIC2::SCR1_DEN | VIC2::SCR1_RSEL | 0x03);
+    f.vic.ioWrite(nullptr, 0xD016, VIC2::SCR2_CSEL | VIC2::SCR2_MCM);
+
+    // VMEM: screen=$0400, bitmap=$2000
+    f.vic.ioWrite(nullptr, 0xD018, 0x18);
+
+    // BGCOL0 = black (0)
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+
+    // Screen RAM cell (0,0): high=fg1 (1=white), low=fg2 (2=red)
+    f.bus.write8(0x0400, 0x12);
+
+    // Color RAM cell (0,0): fg3 = cyan (3)
+    f.colorRam[0] = 0x03;
+
+    // Bitmap row 0: bit pairs select colors: 00=bg, 01=hi nibble, 10=lo nibble, 11=colorRam
+    // Byte: 0b01_10_11_00 = 0x6C → pixels: white, red, cyan, black
+    f.bus.write8(0x2000, 0x6C);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+
+    // MC bitmap: 2 bits per pixel, each pixel is 2 screen pixels wide
+    // Pair 0 (bits 7-6 = 01): white at px+0, px+1
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], (uint32_t)0xFFFFFFFF);     // white
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 1], (uint32_t)0xFFFFFFFF);
+    // Pair 1 (bits 5-4 = 10): red at px+2, px+3
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 2], (uint32_t)0xFF68372B); // red
+    // Pair 2 (bits 3-2 = 11): cyan at px+4, px+5
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 4], (uint32_t)0xFF70A4B2); // cyan
+    // Pair 3 (bits 1-0 = 00): black at px+6, px+7
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 6], (uint32_t)0xFF000000); // black
+}
+
+// --- Extended background color text ---
+
+TEST_CASE(vic2_render_ecm_text) {
+    VicFixture f;
+
+    // ECM=1, BMM=0
+    f.vic.ioWrite(nullptr, 0xD011, VIC2::SCR1_ECM | VIC2::SCR1_DEN | VIC2::SCR1_RSEL | 0x03);
+    f.vic.ioWrite(nullptr, 0xD016, VIC2::SCR2_CSEL);
+
+    // Set 4 background colors
+    f.vic.ioWrite(nullptr, 0xD021, 0x00); // BGCOL0 = black
+    f.vic.ioWrite(nullptr, 0xD022, 0x01); // BGCOL1 = white
+    f.vic.ioWrite(nullptr, 0xD023, 0x02); // BGCOL2 = red
+    f.vic.ioWrite(nullptr, 0xD024, 0x03); // BGCOL3 = cyan
+
+    // Default VMEM: screen=$0400, char=$1000 (char ROM)
+    f.vic.ioWrite(nullptr, 0xD018, 0x14);
+
+    // Screen code: top 2 bits select BG color, low 6 bits = char code
+    // 0xC1 = bg_sel=3 (cyan), char_code=1
+    f.bus.write8(0x0400, 0xC1);
+
+    // Char ROM: char 1, row 0 = 0x00 (all background pixels)
+    f.charRom[1 * 8 + 0] = 0x00;
+
+    // Color RAM: fg = white (1)
+    f.colorRam[0] = 0x01;
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+    // All bg pixels → should be BGCOL3 (cyan, index 3)
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], (uint32_t)0xFF70A4B2); // cyan
+}
+
+// --- Multicolor text mode ---
+
+TEST_CASE(vic2_render_multicolor_text) {
+    VicFixture f;
+
+    // MCM=1, BMM=0, ECM=0
+    f.vic.ioWrite(nullptr, 0xD011, VIC2::SCR1_DEN | VIC2::SCR1_RSEL | 0x03);
+    f.vic.ioWrite(nullptr, 0xD016, VIC2::SCR2_CSEL | VIC2::SCR2_MCM);
+
+    // Default VMEM: screen=$0400, char=$1000 (char ROM)
+    f.vic.ioWrite(nullptr, 0xD018, 0x14);
+
+    f.vic.ioWrite(nullptr, 0xD021, 0x00); // BGCOL0 = black
+    f.vic.ioWrite(nullptr, 0xD022, 0x01); // BGCOL1 = white
+    f.vic.ioWrite(nullptr, 0xD023, 0x02); // BGCOL2 = red
+
+    // Screen code = char 1 at cell (0,0)
+    f.bus.write8(0x0400, 1);
+
+    // Color RAM nibble with bit 3 set → enables MC for this cell
+    // Low 3 bits = color index for pair 11
+    f.colorRam[0] = 0x0B; // bit3=1, color=3 (cyan)
+
+    // Char ROM: char 1, row 0 = 0b01_10_11_00 = 0x6C
+    // Pair 0=01 → BGCOL1(white), Pair 1=10 → BGCOL2(red), Pair 2=11 → colorRam(cyan), Pair 3=00 → BGCOL0(black)
+    f.charRom[1 * 8 + 0] = 0x6C;
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+
+    // MC text: 2 bits → double-wide pixels
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], (uint32_t)0xFFFFFFFF);     // white (pair 01)
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 1], (uint32_t)0xFFFFFFFF);
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 2], (uint32_t)0xFF68372B); // red (pair 10)
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 4], (uint32_t)0xFF70A4B2); // cyan (pair 11)
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 6], (uint32_t)0xFF000000); // black (pair 00)
+}
+
+// --- DMA-based character fetch (non-char-ROM address) ---
+
+TEST_CASE(vic2_render_text_dma_chars) {
+    VicFixture f;
+
+    // Standard text, but place char data in RAM instead of char ROM shadow
+    // Bank 1 ($4000) — char ROM is NOT visible here
+    f.vic.setBankBase(0x4000);
+
+    // VMEM: screen at offset $0400 → $4400, char at offset $0000 → $4000
+    // V = (1 << 4) | (0 << 1) = 0x10
+    f.vic.ioWrite(nullptr, 0xD018, 0x10);
+    f.vic.ioWrite(nullptr, 0xD011, VIC2::SCR1_DEN | VIC2::SCR1_RSEL | 0x03);
+    f.vic.ioWrite(nullptr, 0xD016, VIC2::SCR2_CSEL);
+
+    // Screen RAM at $4400: char code 2
+    f.bus.write8(0x4400, 2);
+
+    // Character data in RAM at $4000 + 2*8 = $4010
+    f.bus.write8(0x4010, 0xFF); // row 0: all foreground
+
+    // Color RAM: fg = white (1)
+    f.colorRam[0] = 0x01;
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], (uint32_t)0xFFFFFFFF); // white fg from RAM chars
+}
+
+// --- Sprite Y expansion row duplication ---
+
+TEST_CASE(vic2_sprite_y_expansion) {
+    VicFixture f;
+
+    // Enable sprite 0, Y-expanded
+    f.vic.ioWrite(nullptr, 0xD015, 0x01); // SPENA
+    f.vic.ioWrite(nullptr, 0xD017, 0x01); // YXPAND sprite 0
+    f.vic.ioWrite(nullptr, 0xD000, 50);   // SP0X
+    f.vic.ioWrite(nullptr, 0xD001, 50);   // SP0Y
+    f.vic.ioWrite(nullptr, 0xD027, 0x01); // SP0COL = white
+
+    // Sprite pointer at default screen base + $3F8
+    f.bus.write8(0x07F8, 0x0D); // data at $0340
+
+    // First row of sprite data: all pixels set
+    f.bus.write8(0x0340, 0xFF);
+    f.bus.write8(0x0341, 0xFF);
+    f.bus.write8(0x0342, 0xFF);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // Y-expanded: row 0 of sprite data appears at y=50 AND y=51
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF);
+    ASSERT_EQ(buf[51 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF); // duplicated row
+
+    // Row 2 (next sprite data row at y=52,53) should NOT be white (data is 0)
+    ASSERT_NE(buf[52 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF);
+}
+
+// --- Logger callback ---
+
+TEST_CASE(vic2_log_callback) {
+    VicFixture f;
+
+    int logCount = 0;
+    f.vic.setLogger(&logCount, [](void* ctx, int level, const char* msg) {
+        (*(int*)ctx)++;
+    });
+
+    f.vic.log(0, "test message");
+    ASSERT_EQ(logCount, 1);
+}
