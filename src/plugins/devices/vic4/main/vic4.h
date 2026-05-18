@@ -1,27 +1,28 @@
 #pragma once
 
-#include "plugins/devices/vic2/main/vic2.h"
+#include "plugins/devices/vic3/main/vic3.h"
 #include <vector>
 
 /**
  * VIC-IV Video Interface Chip for MEGA65.
- * 
- * Extends the VIC-II with:
- * - MEGA65 personality unlock ($D02F KEY).
- * - Extended registers ($D040–$D07F).
- * - 256-color palette ($D100–$D3FF).
- * - 80-column and Full Color Mode (FCM).
- * - 28-bit physical addressing for all video data.
- * - 32 KB internal color RAM.
+ *
+ * Extends the VIC-III (CSG 4567) with:
+ * - VIC-IV specific registers ($D048–$D07F)
+ * - 32 KB internal color RAM
+ * - 28-bit physical addressing for screen/char/color data
+ * - Full Color Mode (FCM) and Nibble Color Mode (NCM) [future]
+ * - Super-Extended Attribute Mode [future]
+ * - Alpha blending [future]
+ *
+ * Inheritance: VIC2 → VIC3 → VIC4
  */
-class VIC4 : public VIC2 {
+class VIC4 : public VIC3 {
 public:
     VIC4();
     ~VIC4() override = default;
 
     // IOHandler overrides
     const char* name() const override { return "VIC-IV"; }
-    uint32_t addrMask() const override { return 0x03FF; } // 1 KB window ($D000-$D3FF)
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t  val) override;
@@ -31,30 +32,14 @@ public:
     // IVideoOutput overrides
     void renderFrame(uint32_t* buffer) override;
 
-    // Personality management
-    bool isLocked() const { return m_locked; }
-    void setLocked(bool locked) { m_locked = locked; }
-
 private:
-    // Extended register accessors
+    // VIC-IV extended register accessors (28-bit physical addresses)
     uint32_t getScreenBase() const;
     uint32_t getCharBase() const;
-    uint32_t getColorRamBase() const;
 
-    bool m_locked = true; // Locked to VIC-II mode by default
-    
-    // Extended registers $D040-$D07F (64 bytes)
-    uint8_t m_extRegs[64];
-
-    // Palette: 256 entries x 3 bytes (R, G, B)
-    // Stored in three 256-byte arrays corresponding to $D100, $D200, $D300
-    uint8_t m_paletteR[256];
-    uint8_t m_paletteG[256];
-    uint8_t m_paletteB[256];
+    // Extended registers $D048-$D07F (56 bytes, VIC-IV only)
+    uint8_t m_extRegs[64]; // indexed as offset - 0x40
 
     // Internal color RAM (32 KB)
-    // Default base is $FF80000.
     std::vector<uint8_t> m_colorRamExt;
-
-    uint32_t getPaletteRGBA(uint8_t index) const;
 };
