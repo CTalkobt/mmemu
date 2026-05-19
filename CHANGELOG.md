@@ -2,11 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-05-19
+
+### Added
+- **VIC-III (CSG 4567) Implementation** (`src/plugins/devices/vic3/`):
+    - 256-color palette ($D100-$D3FF: R, G, B channels)
+    - $D030 banking register (CRAM2K, EXTSYNC, PAL, ROM8/A/C/E, CROM9)
+    - $D031 mode control (H640, FAST, ATTR, BPM, V400, H1280, MONO, INT)
+    - 80-column text mode (H640 bit) with half-width character cells
+    - Bitplane mode (BPM) with up to 8 planes, complement flags, X/Y offsets
+    - Extended attributes (ATTR) with 8-bit colour register access
+    - Bitplane enable ($D032), addresses ($D033-$D03A), DAT ports ($D040-$D047)
+    - Personality lock: C64 mode delegates to VIC-II, C65 mode uses VIC-III
+    - Plugin registered as device type "4567"
+- **VIC-IV Full Colour Mode (FCM)**:
+    - 8×8 character cells with 64 bytes of pixel data (one byte per pixel = palette index)
+    - FCLRLO ($D054.1): FCM for character numbers ≤ $FF
+    - FCLRHI ($D054.2): FCM for character numbers > $FF
+    - CHR16 ($D054.0): 16-bit character numbers from screen RAM
+    - Pixel value $FF selects foreground colour from colour RAM
+    - $D054 bit constants (CHR16, FCLRLO, FCLRHI, SPRH640, VFAST, PALEMU, ALPHEN)
+
+### Changed
+- **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.
+
+### Fixed
+- **VIC-IV register address mapping**: Screen RAM pointer was incorrectly mapped to $D04C-$D04F (TEXTXPOS). Fixed to $D060-$D063 (SCRNPTR, 28-bit). Character set pointer fixed from $D050-$D053 to $D068-$D06A (CHARPTR, 24-bit). Colour RAM pointer added at $D064-$D065 (COLPTR).
+
 ## [0.2.1] - 2026-05-18
 
 ### Added
 - **Code Coverage**: `make coverage` target using gcov instrumentation with optional lcov HTML reports.
-- **99 New Unit Tests** (309 → 408 total):
+- **175 New Unit Tests** (309 → 484 total):
     - `test_stack_trace`: Push/pop, recent ordering, clear, type name strings.
     - `test_breakpoint_list`: Exec/read/write watchpoints, enable/disable, conditions, hit counts.
     - `test_source_map`: KickAssembler list parsing, address lookup, missing files, malformed input.
@@ -19,6 +46,10 @@ All notable changes to this project will be documented in this file.
     - `test_toolchain`: Named assemblers, getAssemblerNames, resolveAssembler 3-level precedence (53% → 98%).
     - `test_cli`: Registers, memory dump/fill/copy/swap, step, disasm, breakpoints, watchpoints, symbols, search, stack, save, config, inline assemble-execute, no-machine error paths (22% → 61%).
     - `test_cpu45gs02`: Register access (inc. Q), reset, LDA/LDX/LDY/LDZ, stores, transfers, INC/DEC, JMP, JSR/RTS, flags, ADC/SBC, PHA/PLA (10% → 16%).
+    - `test_vic2_unit`: Registers, raster counter/IRQ, rendering (all 5 video modes), sprites (Y-expansion), banking, char ROM shadow, device info, logger (48% → 99.7%).
+    - `test_vic3`: Registers, palette, locked/unlocked state, 80-col rendering, bitplane rendering, complement flags, DAT ports, ATTR mode, VIC-II backward compat (new, 98.9%).
+    - `test_vic4`: Locked/unlocked rendering, tick, register accessors, FCM basic/CHR16/$FF substitution/FCLRLO selection (new + expanded).
+    - `test_virtual_iec_unit`: Initial state, readPort, writePort ATN, reset, mount/eject/status, LED activity, device info (14% → 24%).
 
 ### Fixed
 - **ImportResult ODR violation**: `vice_importer` and `mega65_importer` both defined `struct ImportResult` at global scope with different member layouts (swapped `string`/`vector` fields). This caused a double-free crash when building at `-O0`. Fixed by moving each struct into its respective namespace.
