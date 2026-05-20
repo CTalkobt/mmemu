@@ -60,13 +60,14 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* bankCtrl = new C64BankController(physBus);
     bankCtrl->setMapMmu(mmu);
 
-    // MEGA65 ROM layout (128KB image):
-    // $0000-$1FFF: C64 BASIC (8KB)
-    // $2000-$3FFF: C64 KERNAL (8KB)
-    // $4000-$4FFF: C64 Char ROM (4KB)
-    bankCtrl->setBasicRom (romBuf + 0x0000, 8192);
-    bankCtrl->setKernalRom(romBuf + 0x2000, 8192);
-    bankCtrl->setCharRom  (romBuf + 0x4000, 4096);
+    // MEGA65 ROM is a flat 128KB image mapped to physical $020000-$03FFFF.
+    // C64-compatible regions mirror the standard C64 memory map within it:
+    //   CPU $A000-$BFFF (BASIC)  = phys $02A000 = file offset $A000
+    //   CPU $D000-$DFFF (Char)   = phys $02D000 = file offset $D000
+    //   CPU $E000-$FFFF (KERNAL) = phys $02E000 = file offset $E000
+    bankCtrl->setBasicRom (romBuf + 0xA000, 8192);
+    bankCtrl->setKernalRom(romBuf + 0xE000, 8192);
+    bankCtrl->setCharRom  (romBuf + 0xD000, 4096);
 
     // -----------------------------------------------------------------------
     // Create I/O Devices
@@ -85,7 +86,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     dma->setDmaBus(physBus);
     vic4->setDmaBus(physBus);
-    vic4->setCharRom(romBuf + 0x4000, 4096);
+    vic4->setCharRom(romBuf + 0xD000, 4096);
 
     // Allocate 1KB colour RAM and wire to VIC4
     // (VIC4 also has 32KB internal colour RAM, but the VIC-II compatible
