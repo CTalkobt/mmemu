@@ -33,6 +33,13 @@ All notable changes to this project will be documented in this file.
     - $D07B (DISPROWS): configurable text rows (0 = default 25)
     - $D058-$D059 (LINESTEP): bytes between screen RAM rows (16-bit, 0 = auto)
     - Enables non-contiguous screen RAM layouts
+- **VIC-IV Sprite Extensions**:
+    - Extended height ($D055 SPRHGTEN per-sprite, $D056 SPRHGHT 0-255px)
+    - 16-colour sprites ($D06B SPR16EN): 4 bits/pixel, color = sprite# × 16 + nibble, nibble 0 = transparent
+    - 64-pixel wide mode ($D057 SPRX64EN): 8 bytes per row
+    - Sprite pointer relocation ($D06C-$D06E SPRPTRADR, 24-bit base)
+    - 16-bit sprite pointers ($D06E.7 SPRPTR16)
+    - Sprite Y MSBs ($D077 SPRYMSBS): 9-bit Y positioning
 
 ### Changed
 - **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.
