@@ -54,6 +54,12 @@ All notable changes to this project will be documented in this file.
 - **VIC-IV 16-Colour Bitplanes** ($D071 BP16ENS):
     - Pairs of bitplanes form 4-bit colour nibbles instead of individual bits
 - **MEGA65 Machine Factory**: VIC4 now receives char ROM and colour RAM wiring, fixing C64-mode text rendering
+- **MEGA65 Boot Support**: Machine now boots to C64 KERNAL reset vector ($E4B8) and executes MEGA65 KEY unlock sequence, VIC-III banking, and INTERFACE ROM transition
+
+### Fixed
+- **MEGA65 ROM offset mapping**: C64 compatibility regions (BASIC, KERNAL, Char ROM) were loaded from wrong offsets in the 128KB ROM file. Corrected per MEGA65 Book Appendix J (C65 Compatibility ROM Layout): BASIC at file $A000, KERNAL at $E000, Char ROM at $D000.
+- **MEGA65 onReset callback**: Machine factory did not set `onReset`, so the CPU was never reset after bus wiring. PC stayed at $0000 instead of reading the reset vector. Added reset callback matching JSON loader pattern.
+- **MCP server onReset**: `createMachineInstance()` did not call `onReset` after setup, leaving newly created machines with PC=$0000. Now calls `onReset` after wiring, matching CLI behavior.
 
 ### Changed
 - **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.
