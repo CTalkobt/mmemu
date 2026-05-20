@@ -40,6 +40,20 @@ All notable changes to this project will be documented in this file.
     - Sprite pointer relocation ($D06C-$D06E SPRPTRADR, 24-bit base)
     - 16-bit sprite pointers ($D06E.7 SPRPTR16)
     - Sprite Y MSBs ($D077 SPRYMSBS): 9-bit Y positioning
+- **VIC-IV Display Geometry Registers**:
+    - $D048-$D049 (TBDRPOS): top border position (12-bit)
+    - $D04A-$D04B (BBDRPOS): bottom border position (12-bit)
+    - $D04C-$D04D (TEXTXPOS): text X position (12-bit)
+    - $D04E-$D04F (TEXTYPOS): text Y position (12-bit)
+    - $D05C-$D05D (SDBDRWD): side border width
+- **VIC-IV Palette Banks** ($D070):
+    - SPRPALSEL, BTPALSEL, ABTPALSEL, MAPEDPAL (2 bits each)
+- **VIC-IV System Flags**:
+    - $D054.5 (VFAST): 40 MHz CPU mode
+    - $D06F.7 (PALNTSC): PAL/NTSC timing selection
+- **VIC-IV 16-Colour Bitplanes** ($D071 BP16ENS):
+    - Pairs of bitplanes form 4-bit colour nibbles instead of individual bits
+- **MEGA65 Machine Factory**: VIC4 now receives char ROM and colour RAM wiring, fixing C64-mode text rendering
 
 ### Changed
 - **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.
