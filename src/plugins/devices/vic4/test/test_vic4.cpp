@@ -587,3 +587,190 @@ TEST_CASE(vic4_ncm_without_chr16_is_fcm) {
     // Should render as FCM (byte=5 → palette 5), not NCM
     ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(5));
 }
+
+// --- Sprite extension tests ---
+
+TEST_CASE(vic4_sprite_extended_height) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // FCM mode so renderFCM calls renderSpritesV4
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    // Enable sprite 0
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 50); // X
+    f.vic.ioWrite(nullptr, 0xD001, 50); // Y
+    f.vic.ioWrite(nullptr, 0xD027, 0x01); // color = white
+
+    // Default pointer: screen=$0400, ptr at $07F8
+    f.bus.write8(0x07F8, 0x0D); // data at $0340
+
+    // Enable extended height for sprite 0: 30 pixels tall
+    f.vic.ioWrite(nullptr, 0xD055, 0x01); // SPRHGTEN sprite 0
+    f.vic.ioWrite(nullptr, 0xD056, 30);   // SPRHGHT = 30
+
+    // Fill all 30 rows of sprite data (3 bytes/row) with $FF
+    for (int r = 0; r < 30; r++) {
+        f.bus.write8(0x0340 + r * 3, 0xFF);
+        f.bus.write8(0x0340 + r * 3 + 1, 0xFF);
+        f.bus.write8(0x0340 + r * 3 + 2, 0xFF);
+    }
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // Row 0 should be white
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    // Row 21 (beyond VIC-II limit) should also be white
+    ASSERT_EQ(buf[71 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    // Row 29 (last) should be white
+    ASSERT_EQ(buf[79 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    // Row 30 should NOT be sprite (border = black)
+    ASSERT_EQ(buf[80 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(0));
+}
+
+TEST_CASE(vic4_sprite_16colour) {
+    Vic4Fixture f;
+    f.unlock();
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    // Enable sprite 0
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 50);
+
+    f.bus.write8(0x07F8, 0x0D); // data at $0340
+
+    // Enable 16-colour for sprite 0
+    f.vic.ioWrite(nullptr, 0xD06B, 0x01);
+
+    // 16-colour: 4 bits/pixel, 3 bytes/row = 6 pixels per row
+    // Byte 0 of row 0: high nibble=5, low nibble=3
+    f.bus.write8(0x0340, 0x53);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // Color = sprite# * 16 + nibble. Sprite 0 → 0*16+5=5, 0*16+3=3
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 51], f.vic.getPaletteRGBA(3));
+}
+
+TEST_CASE(vic4_sprite_16colour_transparent) {
+    Vic4Fixture f;
+    f.unlock();
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x06); // blue border/bg
+    f.vic.ioWrite(nullptr, 0xD021, 0x06);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.bus.write8(0x07F8, 0x0D);
+
+    f.vic.ioWrite(nullptr, 0xD06B, 0x01); // 16-colour sprite 0
+
+    // Nibble 0 = transparent
+    f.bus.write8(0x0340, 0x05); // high=0 (transparent), low=5
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // First pixel: transparent → should be border color (blue)
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(6));
+    // Second pixel: nibble 5 → palette 0*16+5=5
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 51], f.vic.getPaletteRGBA(5));
+}
+
+TEST_CASE(vic4_sprite_y_msb) {
+    Vic4Fixture f;
+    f.unlock();
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 10);
+    f.vic.ioWrite(nullptr, 0xD001, 0x05); // Y low = 5
+    f.vic.ioWrite(nullptr, 0xD077, 0x01); // SPRYMSBS: sprite 0 bit 8 set → Y = 256+5 = 261
+
+    f.bus.write8(0x07F8, 0x0D);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+
+    f.bus.write8(0x0340, 0xFF);
+    f.bus.write8(0x0341, 0xFF);
+    f.bus.write8(0x0342, 0xFF);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    // Sprite at Y=261 — should be visible near bottom of frame
+    ASSERT_EQ(buf[261 * VIC2::FRAME_W + 10], f.vic.getPaletteRGBA(1));
+    // Y=260 should be border
+    ASSERT_EQ(buf[260 * VIC2::FRAME_W + 10], f.vic.getPaletteRGBA(0));
+}
+
+TEST_CASE(vic4_sprite_pointer_relocation) {
+    Vic4Fixture f;
+    f.unlock();
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+
+    // Relocate sprite pointers to $0800
+    f.vic.ioWrite(nullptr, 0xD06C, 0x00); // SPRPTRADRLSB
+    f.vic.ioWrite(nullptr, 0xD06D, 0x08); // SPRPTRADRMSB
+    f.vic.ioWrite(nullptr, 0xD06E, 0x00); // SPRPTRBNK (no SPRPTR16)
+
+    // Sprite 0 pointer at $0800: value $0E → data at $0E*64 = $0380
+    f.bus.write8(0x0800, 0x0E);
+
+    // Sprite data at $0380
+    f.bus.write8(0x0380, 0xFF);
+    f.bus.write8(0x0381, 0xFF);
+    f.bus.write8(0x0382, 0xFF);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+}

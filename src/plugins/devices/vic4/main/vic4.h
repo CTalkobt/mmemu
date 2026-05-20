@@ -53,6 +53,9 @@ public:
     int getDispRows() const;    // $D07B: text rows to display (0 = use default)
     uint16_t getLineStep() const; // $D058-$D059: bytes between rows (0 = auto)
 
+    // Override VIC2 sprite rendering with VIC-IV extensions
+    void renderSpritesV4(uint32_t* buf);
+
 private:
     void renderFCM(uint32_t* buf);
 
