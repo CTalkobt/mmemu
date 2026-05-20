@@ -437,6 +437,125 @@ TEST_CASE(vic4_ncm_zero_nibble_is_bg) {
     ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(2));
 }
 
+// --- Variable columns/rows and line step ---
+
+TEST_CASE(vic4_chrcount_default) {
+    Vic4Fixture f;
+    f.unlock();
+    // Default CHRCOUNT = 0 → getChrCount returns -1 (use default)
+    ASSERT_EQ(f.vic.getChrCount(), -1);
+}
+
+TEST_CASE(vic4_chrcount_custom) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD05E, 60); // 60 columns
+    ASSERT_EQ(f.vic.getChrCount(), 60);
+}
+
+TEST_CASE(vic4_disprows_default) {
+    Vic4Fixture f;
+    f.unlock();
+    // Default DISPROWS = 0 → 25
+    ASSERT_EQ(f.vic.getDispRows(), 25);
+}
+
+TEST_CASE(vic4_disprows_custom) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD07B, 50); // 50 rows
+    ASSERT_EQ(f.vic.getDispRows(), 50);
+}
+
+TEST_CASE(vic4_linestep_default) {
+    Vic4Fixture f;
+    f.unlock();
+    // Default = 0 → auto
+    ASSERT_EQ(f.vic.getLineStep(), (uint16_t)0);
+}
+
+TEST_CASE(vic4_linestep_custom) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD058, 0x80); // LSB
+    f.vic.ioWrite(nullptr, 0xD059, 0x00); // MSB → 128 bytes per row
+    ASSERT_EQ(f.vic.getLineStep(), (uint16_t)128);
+}
+
+TEST_CASE(vic4_fcm_variable_rows) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // FCM with only 2 rows
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD07B, 2); // 2 rows
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    // Char 1 at row 0 col 0
+    f.bus.write8(0x0400, 1);
+    // Char 1 FCM data: pixel 0 = palette 5
+    f.bus.write8(0x2040, 5);
+    f.colorRam[0] = 0x01;
+
+    // Char 2 at row 1 col 0
+    f.bus.write8(0x0400 + 40, 2);
+    f.bus.write8(0x2080, 7); // char 2 pixel 0 = palette 7
+    f.colorRam[40] = 0x01;
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    // Row 0
+    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(5));
+    // Row 1 (8 pixels down)
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(7));
+    // Row 2 should NOT have been rendered (only 2 rows) — stays as border (black)
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 16) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0));
+}
+
+TEST_CASE(vic4_fcm_linestep) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // FCM with custom line step (64 bytes between rows instead of default 40)
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD058, 64); // LINESTEP LSB = 64
+    f.vic.ioWrite(nullptr, 0xD059, 0);  // LINESTEP MSB = 0
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    // Row 0, col 0: char 1
+    f.bus.write8(0x0400, 1);
+    f.bus.write8(0x2040, 3); // char 1 pixel 0 = palette 3
+    f.colorRam[0] = 0x01;
+
+    // Row 1 starts at scrBase + lineStep = $0400 + 64 = $0440
+    f.bus.write8(0x0440, 2);
+    f.bus.write8(0x2080, 9); // char 2 pixel 0 = palette 9
+    f.colorRam[40] = 0x01; // colour RAM still uses cellIdx = row*cols+col = 1*40+0 = 40
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(3));
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(9));
+}
+
 TEST_CASE(vic4_ncm_without_chr16_is_fcm) {
     Vic4Fixture f;
     f.unlock();

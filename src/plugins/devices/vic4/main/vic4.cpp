@@ -88,6 +88,24 @@ uint16_t VIC4::getColBase() const {
     return ((uint16_t)m_extRegs[0x25] << 8) | m_extRegs[0x24];
 }
 
+int VIC4::getChrCount() const {
+    // $D05E (offset 0x1E): characters per row. 0 = default (40 or 80).
+    uint8_t v = m_extRegs[0x1E];
+    return (v == 0) ? -1 : v; // -1 signals "use default"
+}
+
+int VIC4::getDispRows() const {
+    // $D07B (offset 0x3B): text rows to display. 0 = default (25).
+    uint8_t v = m_extRegs[0x3B];
+    return (v == 0) ? 25 : v;
+}
+
+uint16_t VIC4::getLineStep() const {
+    // $D058-$D059 (offsets 0x18-0x19): bytes between each text row (16-bit LE).
+    // 0 = auto-calculate from columns × bytes-per-char.
+    return ((uint16_t)m_extRegs[0x19] << 8) | m_extRegs[0x18];
+}
+
 // ---------------------------------------------------------------------------
 // Full-Colour Mode (FCM) and Nibble-Colour Mode (NCM) rendering
 //
@@ -123,14 +141,20 @@ void VIC4::renderFCM(uint32_t* buf) {
     bool fclrHi = (ctrl54 & D054_FCLRHI) != 0;
 
     bool h640 = (m_regs[REG_D031] & D031_H640) != 0;
-    int cols = h640 ? 80 : 40;
+    int defaultCols = h640 ? 80 : 40;
+    int chrCount = getChrCount();
+    int cols = (chrCount < 0) ? defaultCols : chrCount;
+    int rows = getDispRows();
 
     int bytesPerChar = chr16 ? 2 : 1;
+    uint16_t lineStep = getLineStep();
+    if (lineStep == 0) lineStep = cols * bytesPerChar;
 
-    for (int row = 0; row < 25; ++row) {
+    for (int row = 0; row < rows; ++row) {
+        uint32_t rowBase = scrBase + (uint32_t)row * lineStep;
         for (int col = 0; col < cols; ++col) {
             int cellIdx = row * cols + col;
-            uint32_t scrAddr = scrBase + cellIdx * bytesPerChar;
+            uint32_t scrAddr = rowBase + (uint32_t)col * bytesPerChar;
 
             // Read character number
             uint16_t charNum;

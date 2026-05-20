@@ -48,6 +48,11 @@ public:
     uint16_t getColBase() const;
     uint8_t  d054() const { return m_extRegs[0x14]; } // $D054 - $D040 = 0x14
 
+    // Display geometry accessors
+    int getChrCount() const;    // $D05E: characters per row (0 = use default)
+    int getDispRows() const;    // $D07B: text rows to display (0 = use default)
+    uint16_t getLineStep() const; // $D058-$D059: bytes between rows (0 = auto)
+
 private:
     void renderFCM(uint32_t* buf);
 
