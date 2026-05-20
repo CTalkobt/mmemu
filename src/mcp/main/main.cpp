@@ -150,6 +150,11 @@ static MachineState* createMachineInstance(const std::string& instanceId, const 
         ms.bus->setObserver(ms.dbg);
         ms.dbg->onMachineLoad(desc);
         if (ms.disasm && ms.dbg) ms.disasm->setSymbolTable(&ms.dbg->symbols());
+
+        // Trigger machine reset so CPU reads the reset vector
+        // (bus must be wired before this point)
+        if (desc->onReset) desc->onReset(*desc);
+
         g_machines[instanceId] = std::move(ms);
         return &g_machines[instanceId];
     } else if (desc) {
