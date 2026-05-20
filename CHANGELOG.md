@@ -28,6 +28,11 @@ All notable changes to this project will be documented in this file.
     - Nibble $F selects full colour RAM value as palette index; $0 = background
     - Per-character selection via colour RAM bit 3 when CHR16 enabled
     - Shares 64-byte character data format with FCM
+- **VIC-IV Variable Display Geometry**:
+    - $D05E (CHRCOUNT): configurable characters per row (0 = default 40/80)
+    - $D07B (DISPROWS): configurable text rows (0 = default 25)
+    - $D058-$D059 (LINESTEP): bytes between screen RAM rows (16-bit, 0 = auto)
+    - Enables non-contiguous screen RAM layouts
 
 ### Changed
 - **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.
