@@ -85,6 +85,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     dma->setDmaBus(physBus);
     vic4->setDmaBus(physBus);
+    vic4->setCharRom(romBuf + 0x4000, 4096);
+
+    // Allocate 1KB colour RAM and wire to VIC4
+    // (VIC4 also has 32KB internal colour RAM, but the VIC-II compatible
+    //  $D800 window reads from this pointer for C64 mode rendering)
+    uint8_t* colorRam = new uint8_t[1024];
+    std::memset(colorRam, 0, 1024);
+    vic4->setColorRam(colorRam);
+    desc->deleters.push_back([colorRam]() { delete[] colorRam; });
     
     // Wire keyboard to CIA1
     cia1->setPortADevice(kbd->getPort(0)); // CIA1 Port A drives columns

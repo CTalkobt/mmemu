@@ -106,6 +106,45 @@ uint16_t VIC4::getLineStep() const {
     return ((uint16_t)m_extRegs[0x19] << 8) | m_extRegs[0x18];
 }
 
+// --- Border / text position ---
+
+uint16_t VIC4::getTopBorder() const {
+    // $D048-$D049 (offsets 0x08-0x09): top border position (12-bit)
+    return ((uint16_t)(m_extRegs[0x09] & 0x0F) << 8) | m_extRegs[0x08];
+}
+
+uint16_t VIC4::getBottomBorder() const {
+    // $D04A-$D04B (offsets 0x0A-0x0B): bottom border position (12-bit)
+    return ((uint16_t)(m_extRegs[0x0B] & 0x0F) << 8) | m_extRegs[0x0A];
+}
+
+uint16_t VIC4::getTextXPos() const {
+    // $D04C-$D04D (offsets 0x0C-0x0D): text X position (12-bit)
+    return ((uint16_t)(m_extRegs[0x0D] & 0x0F) << 8) | m_extRegs[0x0C];
+}
+
+uint16_t VIC4::getTextYPos() const {
+    // $D04E-$D04F (offsets 0x0E-0x0F): text Y position (12-bit)
+    return ((uint16_t)(m_extRegs[0x0F] & 0x0F) << 8) | m_extRegs[0x0E];
+}
+
+uint16_t VIC4::getSideBorderWidth() const {
+    // $D05C-$D05D (offsets 0x1C-0x1D): side border width (low 6 bits of MSB)
+    return ((uint16_t)(m_extRegs[0x1D] & 0x3F) << 8) | m_extRegs[0x1C];
+}
+
+// --- Palette banks ($D070, offset 0x30) ---
+
+uint8_t VIC4::getSprPalBank() const  { return m_extRegs[0x30] & 0x03; }
+uint8_t VIC4::getBtPalBank() const   { return (m_extRegs[0x30] >> 2) & 0x03; }
+uint8_t VIC4::getAbtPalBank() const  { return (m_extRegs[0x30] >> 4) & 0x03; }
+uint8_t VIC4::getMapEdPal() const    { return (m_extRegs[0x30] >> 6) & 0x03; }
+
+// --- System flags ---
+
+bool VIC4::isVfast() const   { return (d054() & D054_VFAST) != 0; }
+bool VIC4::isPalNtsc() const { return (m_extRegs[0x2F] & 0x80) != 0; } // $D06F bit 7
+
 // ---------------------------------------------------------------------------
 // Full-Colour Mode (FCM) and Nibble-Colour Mode (NCM) rendering
 //
@@ -422,6 +461,105 @@ void VIC4::renderFrame(uint32_t* buffer) {
         return;
     }
 
+    // Check for bitplane mode with 16-colour extensions
+    uint8_t bp16ens = m_extRegs[0x31]; // $D071: 16-colour bitplane enables
+    if ((m_regs[REG_D031] & D031_BPM) && bp16ens) {
+        renderBitplanes16(buffer);
+        renderSpritesV4(buffer);
+        return;
+    }
+
     // Fall back to VIC-III rendering (80-col, bitplane, standard text)
     VIC3::renderFrame(buffer);
+}
+
+// ---------------------------------------------------------------------------
+// 16-colour bitplane rendering ($D071 BP16ENS)
+//
+// Each pair of enabled bitplanes (0+1, 2+3, 4+5, 6+7) forms a 4-bit layer.
+// The lower plane in the pair provides the low 2 bits, the upper provides
+// the high 2 bits, yielding a 4-bit colour index per layer.
+// Layers are composited: higher-numbered layers on top, colour 0 transparent.
+// ---------------------------------------------------------------------------
+
+void VIC4::renderBitplanes16(uint32_t* buf) {
+    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF);
+    for (int i = 0; i < FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
+
+    uint8_t bpEnable = m_regs[REG_BPEN];
+    uint8_t bpComp   = m_regs[0x3B];
+    int bpxOff = m_regs[0x3C];
+    int bpyOff = m_regs[0x3D];
+    uint8_t bp16ens = m_extRegs[0x31]; // $D071
+
+    bool h640 = (m_regs[REG_D031] & D031_H640) != 0;
+    int pixelsPerLine = h640 ? 640 : 320;
+    if (pixelsPerLine > DISPLAY_W) pixelsPerLine = DISPLAY_W;
+
+    uint32_t bpAddrEven[8], bpAddrOdd[8];
+    for (int i = 0; i < 8; ++i) {
+        uint8_t reg = m_regs[0x33 + i];
+        bpAddrEven[i] = (uint32_t)(reg & 0x0F) << 13;
+        bpAddrOdd[i]  = (uint32_t)((reg >> 4) & 0x0F) << 13;
+    }
+
+    int bytesPerRow = pixelsPerLine / 8;
+
+    for (int y = 0; y < DISPLAY_H; ++y) {
+        int srcY = (y + bpyOff) % DISPLAY_H;
+        int fy = DISPLAY_Y + y;
+
+        for (int x = 0; x < pixelsPerLine; ++x) {
+            int srcX = (x + bpxOff) % pixelsPerLine;
+            int byteIdx = srcY * bytesPerRow + (srcX / 8);
+            int bitIdx = 7 - (srcX & 7);
+
+            // Start with background (index 0)
+            uint8_t finalColor = 0;
+
+            // Process 4 pairs of bitplanes (0+1, 2+3, 4+5, 6+7)
+            for (int pair = 0; pair < 4; ++pair) {
+                int bpLo = pair * 2;
+                int bpHi = pair * 2 + 1;
+
+                // Check if this pair is in 16-colour mode
+                if (!(bp16ens & (1 << pair))) {
+                    // Standard mode for this pair — contribute individual bits
+                    for (int sub = 0; sub < 2; ++sub) {
+                        int bp = bpLo + sub;
+                        if (!(bpEnable & (1 << bp))) {
+                            if (bpComp & (1 << bp)) finalColor |= (1 << bp);
+                            continue;
+                        }
+                        uint32_t addr = (srcY & 1) ? bpAddrOdd[bp] : bpAddrEven[bp];
+                        uint8_t byte = dmaPeek(addr + byteIdx);
+                        int bit = (byte >> bitIdx) & 1;
+                        if (bpComp & (1 << bp)) bit ^= 1;
+                        if (bit) finalColor |= (1 << bp);
+                    }
+                } else {
+                    // 16-colour: pair forms a 4-bit nibble (layered, 0 = transparent)
+                    uint8_t nibble = 0;
+                    for (int sub = 0; sub < 2; ++sub) {
+                        int bp = bpLo + sub;
+                        if (!(bpEnable & (1 << bp))) continue;
+                        uint32_t addr = (srcY & 1) ? bpAddrOdd[bp] : bpAddrEven[bp];
+                        uint8_t byte = dmaPeek(addr + byteIdx);
+                        int bit = (byte >> bitIdx) & 1;
+                        if (bpComp & (1 << bp)) bit ^= 1;
+                        if (bit) nibble |= (1 << sub);
+                    }
+                    // Nibble non-zero → overwrite (layer compositing)
+                    if (nibble != 0) {
+                        // Place nibble into the pair's bit position
+                        finalColor = (finalColor & ~(0x03 << (pair * 2))) | (nibble << (pair * 2));
+                    }
+                }
+            }
+
+            int fx = DISPLAY_X + x;
+            if (fx >= 0 && fx < FRAME_W)
+                buf[fy * FRAME_W + fx] = getPaletteRGBA(finalColor);
+        }
+    }
 }

@@ -774,3 +774,137 @@ TEST_CASE(vic4_sprite_pointer_relocation) {
 
     ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
 }
+
+// --- Display geometry accessors ---
+
+TEST_CASE(vic4_border_positions) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // Top border: $D048-$D049
+    f.vic.ioWrite(nullptr, 0xD048, 0x24);
+    f.vic.ioWrite(nullptr, 0xD049, 0x01); // low nibble only
+    ASSERT_EQ(f.vic.getTopBorder(), (uint16_t)0x124);
+
+    // Bottom border: $D04A-$D04B
+    f.vic.ioWrite(nullptr, 0xD04A, 0xC8);
+    f.vic.ioWrite(nullptr, 0xD04B, 0x00);
+    ASSERT_EQ(f.vic.getBottomBorder(), (uint16_t)0xC8);
+
+    // Text X: $D04C-$D04D
+    f.vic.ioWrite(nullptr, 0xD04C, 0x20);
+    f.vic.ioWrite(nullptr, 0xD04D, 0x00);
+    ASSERT_EQ(f.vic.getTextXPos(), (uint16_t)0x20);
+
+    // Text Y: $D04E-$D04F
+    f.vic.ioWrite(nullptr, 0xD04E, 0x33);
+    f.vic.ioWrite(nullptr, 0xD04F, 0x00);
+    ASSERT_EQ(f.vic.getTextYPos(), (uint16_t)0x33);
+
+    // Side border: $D05C-$D05D
+    f.vic.ioWrite(nullptr, 0xD05C, 0x18);
+    f.vic.ioWrite(nullptr, 0xD05D, 0x00);
+    ASSERT_EQ(f.vic.getSideBorderWidth(), (uint16_t)0x18);
+}
+
+// --- Palette banks ---
+
+TEST_CASE(vic4_palette_banks) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // $D070: MAPEDPAL(7-6) | ABTPALSEL(5-4) | BTPALSEL(3-2) | SPRPALSEL(1-0)
+    f.vic.ioWrite(nullptr, 0xD070, 0xE4); // 11 10 01 00
+
+    ASSERT_EQ(f.vic.getSprPalBank(), (uint8_t)0);
+    ASSERT_EQ(f.vic.getBtPalBank(), (uint8_t)1);
+    ASSERT_EQ(f.vic.getAbtPalBank(), (uint8_t)2);
+    ASSERT_EQ(f.vic.getMapEdPal(), (uint8_t)3);
+}
+
+// --- System flags ---
+
+TEST_CASE(vic4_vfast_flag) {
+    Vic4Fixture f;
+    f.unlock();
+
+    ASSERT(!f.vic.isVfast());
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_VFAST);
+    ASSERT(f.vic.isVfast());
+}
+
+TEST_CASE(vic4_pal_ntsc) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // Default = PAL (bit 7 clear)
+    ASSERT(!f.vic.isPalNtsc());
+
+    // Set NTSC
+    f.vic.ioWrite(nullptr, 0xD06F, 0x80);
+    ASSERT(f.vic.isPalNtsc());
+}
+
+// --- 16-colour bitplanes ---
+
+TEST_CASE(vic4_bitplane16_basic) {
+    Vic4Fixture f;
+    f.unlock();
+
+    // Enable BPM
+    f.vic.ioWrite(nullptr, 0xD031, VIC3::D031_BPM);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+
+    // Enable bitplanes 0 and 1
+    f.vic.ioWrite(nullptr, 0xD032, 0x03);
+    // Plane 0 at $0000, plane 1 at $2000
+    f.vic.ioWrite(nullptr, 0xD033, 0x00); // plane 0 even
+    f.vic.ioWrite(nullptr, 0xD034, 0x01); // plane 1 even at $2000
+    f.vic.ioWrite(nullptr, 0xD03B, 0);    // no complement
+    f.vic.ioWrite(nullptr, 0xD03C, 0);
+    f.vic.ioWrite(nullptr, 0xD03D, 0);
+
+    // Enable 16-colour for pair 0 (planes 0+1)
+    f.vic.ioWrite(nullptr, 0xD071, 0x01); // BP16ENS bit 0
+
+    // Plane 0: first byte = 0xFF (all bits set → bit 0 of nibble)
+    f.bus.write8(0x0000, 0xFF);
+    // Plane 1: first byte = 0xFF (all bits set → bit 1 of nibble)
+    f.bus.write8(0x2000, 0xFF);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+    // Both planes set → nibble = 0b11 = 3 → palette index 3
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(3));
+}
+
+TEST_CASE(vic4_bitplane16_transparent) {
+    Vic4Fixture f;
+    f.unlock();
+
+    f.vic.ioWrite(nullptr, 0xD031, VIC3::D031_BPM);
+    f.vic.ioWrite(nullptr, 0xD020, 0x06); // blue border
+
+    f.vic.ioWrite(nullptr, 0xD032, 0x03);
+    f.vic.ioWrite(nullptr, 0xD033, 0x00);
+    f.vic.ioWrite(nullptr, 0xD034, 0x01);
+    f.vic.ioWrite(nullptr, 0xD03B, 0);
+    f.vic.ioWrite(nullptr, 0xD03C, 0);
+    f.vic.ioWrite(nullptr, 0xD03D, 0);
+    f.vic.ioWrite(nullptr, 0xD071, 0x01);
+
+    // Both planes zero → nibble = 0 → colour 0 (palette 0 = black, not border)
+    // In 16-colour bitplane, 0 is still rendered (not transparent in basic mode)
+    f.bus.write8(0x0000, 0x00);
+    f.bus.write8(0x2000, 0x00);
+
+    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+
+    int px = VIC2::DISPLAY_X;
+    int py = VIC2::DISPLAY_Y;
+    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0));
+}
