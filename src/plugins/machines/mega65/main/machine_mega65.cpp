@@ -188,5 +188,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
 
+    // Reset callback: reset all I/O devices, then CPU (so CPU reads
+    // the reset vector after bank controller overlays are in place)
+    desc->onReset = [](MachineDescriptor& d) {
+        if (d.ioRegistry) d.ioRegistry->resetAll();
+        for (auto& slot : d.cpus)
+            if (slot.cpu) slot.cpu->reset();
+    };
+
     return desc;
 }
