@@ -63,10 +63,11 @@ All CPU cores, devices, and machine presets are **dynamically loaded** `.so` mod
 
 Key plugins:
 - **mmemu-plugin-6502.so** — MOS 6502, 6510 CPU cores; 6502 disassembler/assembler
-- **mmemu-plugin-45gs02.so** — MEGA65 45GS02 CPU core
+- **mmemu-plugin-45gs02.so** — MEGA65 45GS02 CPU core (with hypervisor mode)
 - **mmemu-plugin-vic20.so**, **mmemu-plugin-c64.so**, **mmemu-plugin-pet.so** — Machine presets
 - **mmemu-plugin-vic2.so**, **mmemu-plugin-sid6581.so** — Commodore devices
 - **mmemu-plugin-map-mmu.so**, **mmemu-plugin-f018b-dma.so** — MEGA65 peripherals
+- **mmemu-plugin-mega65.so** — MEGA65 machine preset (includes hypervisor registers, HYPPO ROM loading)
 - **mmemu-plugin-cbm-loader.so** — `.prg`, `.crt`, `.d64`, `.g64`, `.t64` file loaders
 - **mmemu-plugin-datasette.so** — Tape (`.tap`) support
 
@@ -96,6 +97,7 @@ mmsim/
 │   │   │   ├── sid6581/           # SID chip (C64)
 │   │   │   ├── f018b_dma/         # DMA controller (MEGA65)
 │   │   │   ├── map_mmu/           # Memory map MMU (MEGA65)
+│   │   │   ├── hypervisor/        # Hypervisor virtualisation registers (MEGA65)
 │   │   │   └── ... (others)
 │   │   └── machines/              # Machine presets
 │   │       ├── vic20/
@@ -238,7 +240,10 @@ The simulator now features a pluggable assembler system with per-machine selecti
 - ✓ C64BankController for ROM banking in C64 compatibility mode
 - ✓ KEY register ($D02F) wired for I/O personality switching
 - ✓ 45GS02: quad immediate modes, decimal mode, full disassembly, 28-bit symbol display
-- Remaining: ROM loading, MEGA65 integration tests
+- ✓ Hypervisor mode: enter/exit, HYPPO ROM loading, virtualisation control registers
+- ✓ Hypervisor registers IOHandler ($D640-$D67F) with SYSCALL traps
+- ✓ F018B DMA overlap-safe copy and `getDeviceInfo()`
+- Remaining: MEGA65 integration tests
 
 See `todo.md` for the full roadmap.
 
@@ -258,4 +263,6 @@ See `todo.md` for the full roadmap.
 | Assembler registry | `src/libtoolchain/main/toolchain_registry.cpp` |
 | Simulator config | `src/libcore/main/sim_config.cpp` (loads `config.json`) |
 | CA45 assembler | `src/plugins/45gs02/main/ca45_assembler.cpp` |
+| Hypervisor regs | `src/plugins/devices/hypervisor/main/hypervisor_regs.cpp` |
+| MEGA65 machine | `src/plugins/machines/mega65/main/machine_mega65.cpp` |
 | MCP server | `src/mcp/main/main.cpp` (includes assembler tools) |

@@ -19,6 +19,7 @@ static const RegDescriptor s_regDescriptors[] = {
 
 MOS45GS02::MOS45GS02() : m_bus(nullptr) {
     memset(&m_state, 0, sizeof(m_state));
+    memset(&m_hyperState, 0, sizeof(m_hyperState));
     MOS45GS02::reset();
 }
 
@@ -26,10 +27,85 @@ void MOS45GS02::reset() {
     m_state.a = 0; m_state.x = 0; m_state.y = 0; m_state.z = 0; m_state.b = 0;
     m_state.sp = 0x01FF; m_state.p = FLAG_I; m_state.cycles = 0;
     m_state.irqLine = 0; m_state.nmiLine = 0; m_state.nmiPrev = 0; m_state.haltLine = 0;
-    if (m_bus) {
+    memset(&m_hyperState, 0, sizeof(m_hyperState));
+
+    if (m_hyperRom) {
+        // MEGA65: enter hypervisor mode at RESET entry point $8100
+        enterHypervisor(0x8100);
+    } else if (m_bus) {
+        // Fallback: standard 6502 reset vector
         uint16_t lo = read8(0xFFFC); uint16_t hi = read8(0xFFFD);
         m_state.pc = lo | (hi << 8);
     }
+}
+
+void MOS45GS02::setHypervisorRom(const uint8_t* data, uint32_t size) {
+    m_hyperRom = data;
+    m_hyperRomSize = size;
+}
+
+void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
+    // Save current CPU state into virtualisation control registers
+    m_hyperState.regA   = m_state.a;
+    m_hyperState.regX   = m_state.x;
+    m_hyperState.regY   = 0; // Y not explicitly listed in save, but preserved
+    m_hyperState.regZ   = m_state.z;
+    m_hyperState.regB   = m_state.b;
+    m_hyperState.spl    = m_state.sp & 0xFF;
+    m_hyperState.sph    = (m_state.sp >> 8) & 0xFF;
+    m_hyperState.pflags = m_state.p;
+    m_hyperState.pc     = m_state.pc;
+
+    // Save MAP state
+    if (m_mapMmu) {
+        MapState ms = m_mapMmu->getMapState();
+        m_hyperState.mapLo0  = (ms.offsets[0] >> 0) & 0xFF;
+        m_hyperState.mapLo1  = (ms.offsets[0] >> 8) & 0xFF;
+        m_hyperState.mapHi0  = (ms.offsets[4] >> 0) & 0xFF;
+        m_hyperState.mapHi1  = (ms.offsets[4] >> 8) & 0xFF;
+        m_hyperState.mapLoMB = ms.enables & 0x0F;
+        m_hyperState.mapHiMB = (ms.enables >> 4) & 0x0F;
+    }
+
+    // Enter hypervisor mode
+    m_state.hypervisor = true;
+    m_state.p |= FLAG_I; // Interrupts disabled
+    m_state.pc = trapAddr;
+
+    // In hypervisor mode: stack at $BE00, zero page at $BF00
+    m_state.sp = 0xBEFF;
+    m_state.b  = 0xBF;  // Base page = $BF00
+
+    // Clear MAP state (hypervisor has flat memory with ROM at $8000)
+    if (m_mapMmu) {
+        MapState clear;
+        memset(&clear, 0, sizeof(clear));
+        m_mapMmu->setMapState(clear);
+    }
+}
+
+void MOS45GS02::exitHypervisor() {
+    // Restore CPU state from virtualisation control registers
+    m_state.a  = m_hyperState.regA;
+    m_state.x  = m_hyperState.regX;
+    m_state.z  = m_hyperState.regZ;
+    m_state.b  = m_hyperState.regB;
+    m_state.sp = m_hyperState.spl | ((uint16_t)m_hyperState.sph << 8);
+    m_state.p  = m_hyperState.pflags;
+    m_state.pc = m_hyperState.pc;
+
+    // Restore MAP state
+    if (m_mapMmu) {
+        MapState ms;
+        memset(&ms, 0, sizeof(ms));
+        ms.offsets[0] = m_hyperState.mapLo0 | ((uint16_t)m_hyperState.mapLo1 << 8);
+        ms.offsets[4] = m_hyperState.mapHi0 | ((uint16_t)m_hyperState.mapHi1 << 8);
+        ms.enables    = m_hyperState.mapLoMB | (m_hyperState.mapHiMB << 4);
+        m_mapMmu->setMapState(ms);
+    }
+
+    // Exit hypervisor mode
+    m_state.hypervisor = false;
 }
 
 const RegDescriptor* MOS45GS02::regDescriptor(int idx) const { return (idx >= 0 && idx < 9) ? &s_regDescriptors[idx] : nullptr; }
@@ -89,8 +165,19 @@ void MOS45GS02::write32_phys(uint32_t physAddr, uint32_t val) {
     write8_phys(physAddr + 3, (uint8_t)((val >> 24) & 0xFF));
 }
 
-uint8_t MOS45GS02::read8(uint16_t addr) { return m_bus ? m_bus->read8(translate(addr)) : 0xFF; }
-void MOS45GS02::write8(uint16_t addr, uint8_t val) { if (m_bus) m_bus->write8(translate(addr), val); }
+uint8_t MOS45GS02::read8(uint16_t addr) {
+    // Hypervisor mode: $8000-$BFFF reads from hypervisor ROM
+    if (m_state.hypervisor && m_hyperRom && addr >= 0x8000 && addr <= 0xBFFF) {
+        uint16_t off = addr - 0x8000;
+        return (off < m_hyperRomSize) ? m_hyperRom[off] : 0xFF;
+    }
+    return m_bus ? m_bus->read8(translate(addr)) : 0xFF;
+}
+void MOS45GS02::write8(uint16_t addr, uint8_t val) {
+    // Hypervisor mode: $8000-$BFFF is ROM (writes ignored)
+    if (m_state.hypervisor && addr >= 0x8000 && addr <= 0xBFFF) return;
+    if (m_bus) m_bus->write8(translate(addr), val);
+}
 uint8_t MOS45GS02::read8_phys(uint32_t physAddr) { return m_bus ? m_bus->read8(physAddr & 0x0FFFFFFF) : 0xFF; }
 void MOS45GS02::write8_phys(uint32_t physAddr, uint8_t val) { if (m_bus) m_bus->write8(physAddr & 0x0FFFFFFF, val); }
 void MOS45GS02::updateNZ(uint8_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x80) m_state.p |= FLAG_N; }

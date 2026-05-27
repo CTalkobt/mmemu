@@ -1,5 +1,6 @@
 #pragma once
 #include "libdevices/main/io_handler.h"
+#include "libdevices/main/device_info.h"
 #include <cstring>
 #include <string>
 #include <vector>
@@ -35,6 +36,7 @@ public:
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void tick(uint64_t cycles) override;
+    void getDeviceInfo(DeviceInfo& out) const override;
 
 private:
     enum DmaOperation {

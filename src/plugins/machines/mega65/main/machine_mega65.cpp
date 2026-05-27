@@ -14,6 +14,8 @@
 #include "plugins/devices/keyboard/main/keyboard_matrix_mega65.h"
 #include "plugins/devices/virtual_iec/main/virtual_iec.h"
 #include "plugins/devices/vic4/main/vic4.h"
+#include "plugins/devices/hypervisor/main/hypervisor_regs.h"
+#include <fstream>
 #include "plugins/devices/sid_pair/main/sid_pair.h"
 #include "plugins/devices/cia6526/main/cia6526.h"
 #include "libdevices/main/shared_signal_line.h"
@@ -88,9 +90,6 @@ MachineDescriptor* Mega65MachineFactory::create() {
     vic4->setDmaBus(physBus);
     vic4->setCharRom(romBuf + 0xD000, 4096);
 
-    // Allocate 1KB colour RAM and wire to VIC4
-    // (VIC4 also has 32KB internal colour RAM, but the VIC-II compatible
-    //  $D800 window reads from this pointer for C64 mode rendering)
     uint8_t* colorRam = new uint8_t[1024];
     std::memset(colorRam, 0, 1024);
     vic4->setColorRam(colorRam);
@@ -185,6 +184,56 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     // Wire MapMmu to CPU so MAP instruction can update mapping state
     cpu->setMapMmu(static_cast<IMapController*>(mmu));
+
+    // -----------------------------------------------------------------------
+    // Load HYPPO Hypervisor ROM (16 KB)
+    // -----------------------------------------------------------------------
+    auto* cpu45 = static_cast<MOS45GS02*>(cpu);
+    uint8_t* hyperRom = nullptr;
+    {
+        hyperRom = new uint8_t[16384];
+        bool hyperLoaded = false;
+
+        // Search paths for HICKUP.M65
+        std::vector<std::string> hyperPaths = {
+            "roms/mega65/HICKUP.M65",
+            "HICKUP.M65",
+        };
+        // Also check xemu standard location
+        const char* home = std::getenv("HOME");
+        if (home) {
+            hyperPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/HICKUP.M65");
+        }
+
+        for (const auto& path : hyperPaths) {
+            std::ifstream f(path, std::ios::binary);
+            if (f.good()) {
+                f.read((char*)hyperRom, 16384);
+                if (f.gcount() == 16384) {
+                    hyperLoaded = true;
+                    fprintf(stderr, "[MEGA65] Loaded HYPPO from: %s\n", path.c_str());
+                    break;
+                }
+            }
+        }
+        if (!hyperLoaded) {
+            fprintf(stderr, "[MEGA65] HYPPO not found, falling back to C64 reset vector\n");
+        }
+
+        if (hyperLoaded) {
+            cpu45->setHypervisorRom(hyperRom, 16384);
+            desc->deleters.push_back([hyperRom]() { delete[] hyperRom; });
+        } else {
+            // No HYPPO — fall back to standard 6502 reset vector
+            delete[] hyperRom;
+            hyperRom = nullptr;
+        }
+
+        // Wire hypervisor registers ($D640-$D67F)
+        auto* hyperRegs = new HypervisorRegs(cpu45);
+        io->registerHandler(hyperRegs);
+        desc->deleters.push_back([hyperRegs]() { delete hyperRegs; });
+    }
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
 

@@ -36,6 +36,24 @@ struct CPU45GS02State {
     uint8_t  nmiLine;
     uint8_t  nmiPrev;
     uint8_t  haltLine;
+
+    // Hypervisor state
+    bool     hypervisor;    // true = hypervisor mode active
+};
+
+/**
+ * Hypervisor virtualisation control registers ($D640-$D67F).
+ * Stores saved CPU state on hypervisor entry; restored on exit ($D67F write).
+ */
+struct HypervisorState {
+    uint8_t  regA, regX, regY, regZ, regB;
+    uint8_t  spl, sph;
+    uint8_t  pflags;
+    uint16_t pc;
+    uint8_t  mapLo0, mapLo1, mapHi0, mapHi1;
+    uint8_t  mapLoMB, mapHiMB;
+    uint8_t  port00, port01;
+    uint8_t  vicMode;
 };
 
 /**
@@ -106,10 +124,24 @@ public:
     IMapController* getMapMmu() const override { return m_mapMmu; }
     void setMapMmu(IMapController* mmu) override { m_mapMmu = mmu; }
 
+    // Hypervisor support
+    bool isHypervisor() const { return m_state.hypervisor; }
+    void setHypervisorRom(const uint8_t* data, uint32_t size);
+    void enterHypervisor(uint16_t trapAddr);
+    void exitHypervisor();
+
+    // Virtualisation control registers ($D640-$D67F)
+    HypervisorState& hyperState() { return m_hyperState; }
+    const HypervisorState& hyperState() const { return m_hyperState; }
+
 private:
-    CPU45GS02State m_state;
-    IBus*          m_bus;
+    CPU45GS02State  m_state;
+    HypervisorState m_hyperState;
+    IBus*           m_bus;
     IMapController* m_mapMmu = nullptr;
+
+    const uint8_t*  m_hyperRom     = nullptr;
+    uint32_t        m_hyperRomSize = 0;
 
     // Helper for address translation (MAP)
     uint32_t translate(uint16_t addr);

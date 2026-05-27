@@ -55,11 +55,26 @@ All notable changes to this project will be documented in this file.
     - Pairs of bitplanes form 4-bit colour nibbles instead of individual bits
 - **MEGA65 Machine Factory**: VIC4 now receives char ROM and colour RAM wiring, fixing C64-mode text rendering
 - **MEGA65 Boot Support**: Machine now boots to C64 KERNAL reset vector ($E4B8) and executes MEGA65 KEY unlock sequence, VIC-III banking, and INTERFACE ROM transition
+- **Hypervisor Mode** (`src/plugins/45gs02/main/cpu45gs02.cpp`):
+    - `enterHypervisor(trapAddr)`: saves full CPU state (A/X/Y/Z/B/SP/P/PC) and MAP state into virtualisation control registers, switches to hypervisor mode with stack at $BE00 and base page at $BF00
+    - `exitHypervisor()`: restores saved CPU and MAP state, returns to user mode
+    - On reset with HYPPO ROM present, CPU enters hypervisor at $8100 instead of reading the standard reset vector
+    - Hypervisor mode maps $8000-$BFFF to HYPPO ROM (reads from ROM, writes ignored)
+- **Hypervisor Virtualisation Registers** (`src/plugins/devices/hypervisor/main/hypervisor_regs.cpp`):
+    - New `HypervisorRegs` IOHandler at $D640-$D67F (64 bytes)
+    - In user mode: writes trigger SYSCALL traps (entry point = $8000 + offset*4)
+    - In hypervisor mode: read/write access to saved CPU state (A, X, Z, B, SP, P, PC, MAP state, port $00/$01, VIC mode)
+    - $D67F write (ENTEREXIT) exits hypervisor mode
+- **HYPPO ROM Loading** (`src/plugins/machines/mega65/main/machine_mega65.cpp`):
+    - Searches for 16KB `HICKUP.M65` in `roms/mega65/`, current directory, and `~/.local/share/xemu-lgb/mega65/`
+    - Falls back to standard C64 reset vector if not found
+- **F018B DMA `getDeviceInfo()`**: Register descriptions (ADDRLSB, ADDRMSB, ADDRBANK, EXECUTE, ADDRMB, ETRIGGER) and runtime state (list address, active flag, enhanced mode, job count)
 
 ### Fixed
 - **MEGA65 ROM offset mapping**: C64 compatibility regions (BASIC, KERNAL, Char ROM) were loaded from wrong offsets in the 128KB ROM file. Corrected per MEGA65 Book Appendix J (C65 Compatibility ROM Layout): BASIC at file $A000, KERNAL at $E000, Char ROM at $D000.
 - **MEGA65 onReset callback**: Machine factory did not set `onReset`, so the CPU was never reset after bus wiring. PC stayed at $0000 instead of reading the reset vector. Added reset callback matching JSON loader pattern.
 - **MCP server onReset**: `createMachineInstance()` did not call `onReset` after setup, leaving newly created machines with PC=$0000. Now calls `onReset` after wiring, matching CLI behavior.
+- **F018B DMA overlapping copy**: `doCopy()` now detects overlapping source/destination regions and copies backward when destination falls within the source range, preventing data corruption during self-overlapping DMA transfers.
 
 ### Changed
 - **VIC-IV now extends VIC-III** (`VIC2 → VIC3 → VIC4`): Palette, personality lock, and VIC-III register handling moved from VIC4 into VIC3. VIC4 retains only VIC-IV specific registers ($D048-$D07F), 32KB internal colour RAM, and MEGA65-specific rendering. Net reduction of 133 lines.

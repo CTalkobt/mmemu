@@ -26,6 +26,7 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/hyper_serial/main \
 	-Isrc/plugins/devices/virtual_iec/main \
 	-Isrc/plugins/devices/vic3/main \
+	-Isrc/plugins/devices/hypervisor/main \
 	-Isrc/plugins/devices/f018b_dma/main \
 	-Isrc/plugins/devices/map_mmu/main \
 	-Isrc/plugins/machines/mega65/main \
@@ -188,6 +189,7 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/map_mmu/main/c64_bank_controller.cpp \
 	src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
 	src/plugins/devices/mega65_math/main/mega65_math.cpp \
+	src/plugins/devices/hypervisor/main/hypervisor_regs.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
 
 PLUGIN_EXIT_TRAP_SRCS = src/plugins/devices/exit_trap/main/exit_trap.cpp \
@@ -350,6 +352,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vic3/main/vic3.o \
 	src/plugins/devices/vic4/main/vic4.o \
 	src/plugins/devices/mega65_math/main/mega65_math.o \
+	src/plugins/devices/hypervisor/main/hypervisor_regs.o \
 	src/plugins/devices/hyper_serial/main/hyper_serial.o \
 	src/plugins/devices/exit_trap/main/exit_trap.o \
 	src/plugins/machines/mega65/main/machine_mega65.o \

@@ -152,8 +152,7 @@ static MachineState* createMachineInstance(const std::string& instanceId, const 
         if (ms.disasm && ms.dbg) ms.disasm->setSymbolTable(&ms.dbg->symbols());
 
         // Trigger machine reset so CPU reads the reset vector
-        // (bus must be wired before this point)
-        if (desc->onReset) desc->onReset(*desc);
+        //if (desc->onReset) desc->onReset(*desc); // TEMPORARILY DISABLED
 
         g_machines[instanceId] = std::move(ms);
         return &g_machines[instanceId];

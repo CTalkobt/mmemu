@@ -97,6 +97,48 @@ Register encoding: `A`/`X` control the lower half, `Y`/`Z` control the upper hal
 
 Physical Address = `vaddr + (offset << 8)` for enabled blocks.
 
+### 3.3 Hypervisor Mode
+
+The 45GS02 supports a privileged **hypervisor mode** used by the MEGA65's HYPPO firmware. When hypervisor mode is active:
+
+- **$8000-$BFFF** is mapped to the 16KB HYPPO ROM (`HICKUP.M65`). Writes to this range are ignored.
+- Stack is relocated to **$BE00** (SP = $BEFF), base page to **$BF00** (B = $BF).
+- Interrupts are disabled (I flag set).
+- MAP state is cleared (flat memory).
+
+#### Entry
+
+- **Reset**: If HYPPO ROM is loaded, reset enters hypervisor at **$8100** instead of reading the standard reset vector.
+- **SYSCALL**: In user mode, writing to **$D640-$D67F** triggers a SYSCALL trap. The trap entry point is `$8000 + offset * 4` (e.g., write to $D640 = trap at $8000, $D641 = $8004, etc.).
+
+On entry, the full CPU state (A, X, Y, Z, B, SP, P, PC) and MAP state are saved into virtualisation control registers.
+
+#### Exit
+
+Writing to **$D67F** (ENTEREXIT register) while in hypervisor mode restores the saved CPU and MAP state and returns to user mode.
+
+#### Virtualisation Control Registers ($D640-$D67F)
+
+In hypervisor mode, these registers provide read/write access to the saved user-mode state:
+
+| Offset | Register | Description |
+|--------|----------|-------------|
+| $00 | REGA | Saved Accumulator |
+| $01 | REGX | Saved X register |
+| $03 | REGZ | Saved Z register |
+| $04 | REGB | Saved Base Page |
+| $05 | SPL | Saved Stack Pointer (low) |
+| $06 | SPH | Saved Stack Pointer (high) |
+| $07 | PFLAGS | Saved Status Flags |
+| $08-$09 | PCL/PCH | Saved Program Counter |
+| $0A-$0D | MAP0-3 | Saved MAP offsets (lo/hi for lower/upper halves) |
+| $0E-$0F | MAPMB | Saved MAP megabyte enables |
+| $10-$11 | PORT00/01 | Saved CPU port registers |
+| $12 | VICMODE | Saved VIC mode |
+| $3F | ENTEREXIT | Write exits hypervisor mode |
+
+In user mode, reads return $FF.
+
 ---
 
 ## 4. Usage in mmsim

@@ -8,6 +8,35 @@ F018bDmaDevice::F018bDmaDevice(uint32_t base)
     std::memset(m_regs, 0, sizeof(m_regs));
 }
 
+void F018bDmaDevice::getDeviceInfo(DeviceInfo& out) const {
+    out.name = m_name;
+    out.baseAddr = m_base;
+    out.addrMask = addrMask();
+
+    auto addReg = [&](const std::string& rname, uint32_t offset, const std::string& desc) {
+        out.registers.push_back({rname, offset, m_regs[offset], desc});
+    };
+
+    addReg("ADDRLSB",  0x00, "DMA list address low byte");
+    addReg("ADDRMSB",  0x01, "DMA list address high byte");
+    addReg("ADDRBANK", 0x02, "DMA list address bank (bits 19:16)");
+    addReg("EXECUTE",  0x03, "DMA execute (write triggers)");
+    addReg("ADDRMB",   0x04, "DMA upper address (bits 27:20)");
+    addReg("ETRIGGER", 0x05, "Enhanced DMA options/trigger");
+    for (uint32_t i = 0x06; i <= 0x0F; ++i) {
+        addReg("RSV_" + std::to_string(i), i, "Reserved");
+    }
+
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "$%07X", m_dmaListAddr);
+    out.state.push_back({"List Address", buf});
+    out.state.push_back({"DMA Active", m_dmaActive ? "true" : "false"});
+    out.state.push_back({"Enhanced Mode", m_enhancedMode ? "true" : "false"});
+    out.state.push_back({"Last Job Count", std::to_string(m_jobs.size())});
+
+    out.dependencies.push_back({"DMA Bus", m_bus ? "connected" : "none"});
+}
+
 void F018bDmaDevice::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
     m_dmaListAddr = 0;
@@ -214,15 +243,32 @@ void F018bDmaDevice::doCopy(uint32_t src, uint32_t dst, uint16_t count, uint16_t
     // srcStep and dstStep are in format: high byte = integer bytes, low byte = 256ths
     // E.g., $0100 = 1.0 bytes, $0080 = 0.5 bytes, $0200 = 2.0 bytes
 
-    uint32_t srcAccum = 0;  // Accumulated address offset (in 256ths)
-    uint32_t dstAccum = 0;
+    // Overlap detection: copy backward if dst is within the source range ahead of src
+    uint32_t srcEnd = src + ((static_cast<uint32_t>(count - 1) * srcStep) >> 8);
+    if (dst > src && dst <= srcEnd) {
+        // Backward copy to avoid overwriting source data
+        uint32_t srcAccum = static_cast<uint32_t>(count - 1) * srcStep;
+        uint32_t dstAccum = static_cast<uint32_t>(count - 1) * dstStep;
 
-    for (uint16_t i = 0; i < count; ++i) {
-        uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
-        m_bus->write8(dst + (dstAccum >> 8), byte);
+        for (uint16_t i = 0; i < count; ++i) {
+            uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
+            m_bus->write8(dst + (dstAccum >> 8), byte);
 
-        srcAccum += srcStep;
-        dstAccum += dstStep;
+            srcAccum -= srcStep;
+            dstAccum -= dstStep;
+        }
+    } else {
+        // Forward copy
+        uint32_t srcAccum = 0;
+        uint32_t dstAccum = 0;
+
+        for (uint16_t i = 0; i < count; ++i) {
+            uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
+            m_bus->write8(dst + (dstAccum >> 8), byte);
+
+            srcAccum += srcStep;
+            dstAccum += dstStep;
+        }
     }
 }
 
