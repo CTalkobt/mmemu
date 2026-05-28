@@ -34,7 +34,15 @@ All notable changes to this project will be documented in this file.
     - `recursive` mode: follows into JSR targets to analyze subroutine internals
     - Reports max call depth (deepest JSR nesting level)
     - Configurable max_instructions limit (default 200, max 5000)
-    - Tool count: 51 → 57
+- **MCP `generate_tests` Tool** (`src/mcp/main/main.cpp`):
+    - Automated test vector generation for 6502 routines
+    - Runs a routine with all combinations of input register values
+    - Captures output registers after routine returns (RTS/RTI/BRK detection via call-depth tracking)
+    - Saves/restores full machine state between test runs
+    - Configurable: input/output registers, test values, max steps per run
+    - Handles nested JSR calls (tracks call depth, only stops at outermost return)
+    - Outputs formatted table with input→output mappings, step count, completion status
+    - Tool count: 51 → 58
 
 ### Fixed
 - **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.

@@ -485,12 +485,87 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": ar_mid})
 
+    # --- 11. generate_tests Tool ---
+    print("\n--- 11. generate_tests Tool ---")
+
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    gt_mid = res["result"]["content"][0]["text"].split('"')[1]
+
+    # Write "double A" routine: ASL A; RTS
+    client.call_tool("write_memory", {
+        "machine_id": gt_mid, "addr": 0x0200, "bytes": [0x0A, 0x60]
+    })
+    client.call_tool("add_symbol", {"machine_id": gt_mid, "label": "DOUBLE", "addr": "$0200"})
+
+    # Test with default values
+    res = client.call_tool("generate_tests", {
+        "machine_id": gt_mid, "addr": "$0200",
+        "input_regs": ["A"], "output_regs": ["A", "P"]
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "Test Vectors" in text and "DOUBLE" in text, f"Missing header: {text[:200]}"
+    assert "6 tests" in text, f"Expected 6 default tests: {text[:200]}"
+    # Verify $01 -> $02 (ASL doubles it)
+    assert "$02" in text, f"Expected $01 -> $02 in output: {text}"
+    # All should complete
+    assert text.count("| Y") >= 6, f"All tests should complete: {text}"
+    print("  ✓ generate_tests basic OK (6 tests, ASL A)")
+
+    # Test with two input registers and custom values
+    # Write A+X routine: STA $02; TXA; ADC $02; RTS
+    client.call_tool("write_memory", {
+        "machine_id": gt_mid, "addr": 0x0300,
+        "bytes": [0x85, 0x02, 0x8A, 0x65, 0x02, 0x60]
+    })
+    res = client.call_tool("generate_tests", {
+        "machine_id": gt_mid, "addr": "$0300",
+        "input_regs": ["A", "X"], "output_regs": ["A"],
+        "values": [0, 1, 255]
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "9 tests" in text, f"Expected 3x3=9 tests: {text[:200]}"
+    assert "A(in)" in text and "X(in)" in text, f"Missing input columns: {text[:300]}"
+    print("  ✓ generate_tests multi-input OK (9 tests, A+X)")
+
+    # Test with subroutine call: the routine calls a sub and returns
+    # Write: JSR $0400; RTS at $0350, and LDA #$42; RTS at $0400
+    client.call_tool("write_memory", {
+        "machine_id": gt_mid, "addr": 0x0350,
+        "bytes": [0x20, 0x00, 0x04, 0x60]  # JSR $0400; RTS
+    })
+    client.call_tool("write_memory", {
+        "machine_id": gt_mid, "addr": 0x0400,
+        "bytes": [0xA9, 0x42, 0x60]  # LDA #$42; RTS
+    })
+    res = client.call_tool("generate_tests", {
+        "machine_id": gt_mid, "addr": "$0350",
+        "input_regs": ["A"], "output_regs": ["A"],
+        "values": [0, 255]
+    })
+    text = res["result"]["content"][0]["text"]
+    # Both tests should output A=$42 regardless of input
+    lines = [l for l in text.split('\n') if '| Y' in l]
+    assert len(lines) == 2, f"Expected 2 completed tests: {text}"
+    for line in lines:
+        assert "$42" in line, f"Subroutine should set A=$42: {line}"
+    print("  ✓ generate_tests with nested JSR OK")
+
+    # Test error: bad register name
+    res = client.call_tool("generate_tests", {
+        "machine_id": gt_mid, "addr": "$0200",
+        "input_regs": ["NONEXISTENT"]
+    })
+    assert "Error" in res["result"]["content"][0]["text"]
+    print("  ✓ generate_tests bad register error OK")
+
+    client.call_tool("destroy_machine", {"machine_id": gt_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")
     print("="*60)
     print(f"Successfully tested {len(machines)} concurrent machine instances")
-    print("with full test suite, diff_file, snapshot, and analyze_routine tools")
+    print("with full test suite, diff_file, snapshot, analyze_routine, and generate_tests")
 
 if __name__ == "__main__":
     try:

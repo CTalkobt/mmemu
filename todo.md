@@ -124,7 +124,10 @@
 [x] `recursive` mode: follows into JSR targets for full call-tree analysis
 [x] Reports max call depth (deepest JSR nesting level)
 [x] Symbol annotations for calls, loops, and I/O addresses
-[x] MCP Tool Count: 51 → 57
+[x] `generate_tests`: automated test vector generation for routines
+[x] Combinatorial input register variation with call-depth-aware execution
+[x] State save/restore between test runs, formatted table output
+[x] MCP Tool Count: 51 → 58
 
 ## Deprioritized
 - Cycle-accurate timing for all opcodes/modes

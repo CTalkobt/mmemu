@@ -868,6 +868,58 @@ Json handleDescribe() {
                 schema);
     }
 
+    // generate_tests — automated test vector generation
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        props.oVal["addr"] = addrProp;
+
+        Json inRegsProp(Json::OBJ);
+        inRegsProp.oVal["type"] = Json("array");
+        inRegsProp.oVal["description"] = Json("Register names to vary as inputs (default: [\"A\"])");
+        Json inRegsItems(Json::OBJ);
+        inRegsItems.oVal["type"] = Json("string");
+        inRegsProp.oVal["items"] = inRegsItems;
+        props.oVal["input_regs"] = inRegsProp;
+
+        Json outRegsProp(Json::OBJ);
+        outRegsProp.oVal["type"] = Json("array");
+        outRegsProp.oVal["description"] = Json("Register names to capture as outputs (default: [\"A\", \"P\"])");
+        Json outRegsItems(Json::OBJ);
+        outRegsItems.oVal["type"] = Json("string");
+        outRegsProp.oVal["items"] = outRegsItems;
+        props.oVal["output_regs"] = outRegsProp;
+
+        Json valuesProp(Json::OBJ);
+        valuesProp.oVal["type"] = Json("array");
+        valuesProp.oVal["description"] = Json(
+            "Test values for each input register (default: [0, 1, 127, 128, 254, 255]). "
+            "All combinations are tested.");
+        Json valItems(Json::OBJ);
+        valItems.oVal["type"] = Json("number");
+        valuesProp.oVal["items"] = valItems;
+        props.oVal["values"] = valuesProp;
+
+        Json maxStepsProp(Json::OBJ);
+        maxStepsProp.oVal["type"] = Json("number");
+        maxStepsProp.oVal["description"] = Json("Max instructions per test run (default: 10000)");
+        props.oVal["max_steps"] = maxStepsProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("addr"));
+        schema.oVal["required"] = req;
+        addTool("generate_tests",
+                "Run a routine with varied register inputs and capture outputs as test vectors. "
+                "Iterates over all combinations of input values, setting input registers, "
+                "running until the routine returns (RTS/RTI/BRK), and recording output registers. "
+                "Returns a table of input→output mappings suitable for regression testing.",
+                schema);
+    }
+
     std::vector<std::string> pluginTools;
     PluginToolRegistry::instance().listTools(pluginTools);
     for (const auto& name : pluginTools) {
@@ -2644,6 +2696,210 @@ Json handleToolsCall(const Json& params) {
                 }
 
                 textItem.oVal["text"] = Json(ss.str());
+            }
+        }
+
+    } else if (name == "generate_tests") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t entryAddr;
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, entryAddr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: addr - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                // Parse input/output register names
+                std::vector<std::string> inputRegs = {"A"};
+                std::vector<std::string> outputRegs = {"A", "P"};
+                if (args.contains("input_regs") && args["input_regs"].type == Json::ARR) {
+                    inputRegs.clear();
+                    for (const auto& r : args["input_regs"].aVal)
+                        inputRegs.push_back(r.sVal);
+                }
+                if (args.contains("output_regs") && args["output_regs"].type == Json::ARR) {
+                    outputRegs.clear();
+                    for (const auto& r : args["output_regs"].aVal)
+                        outputRegs.push_back(r.sVal);
+                }
+
+                // Parse test values
+                std::vector<uint8_t> values = {0, 1, 0x7F, 0x80, 0xFE, 0xFF};
+                if (args.contains("values") && args["values"].type == Json::ARR) {
+                    values.clear();
+                    for (const auto& v : args["values"].aVal)
+                        values.push_back((uint8_t)v.nVal);
+                }
+
+                int maxSteps = args.contains("max_steps") ? (int)args["max_steps"].nVal : 10000;
+                if (maxSteps <= 0) maxSteps = 10000;
+
+                // Validate register names
+                bool regsOk = true;
+                auto findRegIndex = [&](const std::string& regName) -> int {
+                    int rc = ms->cpu->regCount();
+                    for (int i = 0; i < rc; ++i) {
+                        const auto* d = ms->cpu->regDescriptor(i);
+                        if (regName == d->name) return i;
+                    }
+                    return -1;
+                };
+                for (const auto& r : inputRegs) {
+                    if (findRegIndex(r) < 0) {
+                        textItem.oVal["text"] = Json("Error: Unknown input register: " + r);
+                        textItem.oVal["isError"] = Json(true);
+                        regsOk = false;
+                        break;
+                    }
+                }
+                if (regsOk) {
+                    for (const auto& r : outputRegs) {
+                        if (findRegIndex(r) < 0) {
+                            textItem.oVal["text"] = Json("Error: Unknown output register: " + r);
+                            textItem.oVal["isError"] = Json(true);
+                            regsOk = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (regsOk) {
+                    // Compute total combinations
+                    size_t totalTests = 1;
+                    for (size_t i = 0; i < inputRegs.size(); ++i) {
+                        totalTests *= values.size();
+                        if (totalTests > 256) { totalTests = 256; break; }
+                    }
+
+                    // Save full machine state: all registers + memory snapshot
+                    // (We save/restore registers and the memory region the routine might touch)
+                    std::map<int, uint32_t> savedRegs;
+                    int regCount = ms->cpu->regCount();
+                    for (int i = 0; i < regCount; ++i)
+                        savedRegs[i] = ms->cpu->regRead(i);
+
+                    // Save stack page ($0100-$01FF) which the routine will use
+                    std::vector<uint8_t> savedStack(256);
+                    for (int i = 0; i < 256; ++i)
+                        savedStack[i] = ms->bus->peek8(0x0100 + i);
+
+                    SymbolTable* symTab = ms->dbg ? &ms->dbg->symbols() : nullptr;
+
+                    // Run tests
+                    struct TestVector {
+                        std::vector<uint8_t> inputs;
+                        std::vector<uint32_t> outputs;
+                        int steps;
+                        bool completed; // routine returned normally
+                    };
+                    std::vector<TestVector> results;
+
+                    // Iterate over all input combinations
+                    size_t numVals = values.size();
+                    for (size_t combo = 0; combo < totalTests; ++combo) {
+                        // Restore registers
+                        for (auto& [idx, val] : savedRegs)
+                            ms->cpu->regWrite(idx, val);
+                        // Restore stack
+                        for (int i = 0; i < 256; ++i)
+                            ms->bus->write8(0x0100 + i, savedStack[i]);
+
+                        // Decode combination index into per-register values
+                        TestVector tv;
+                        tv.inputs.resize(inputRegs.size());
+                        size_t ci = combo;
+                        for (size_t r = 0; r < inputRegs.size(); ++r) {
+                            tv.inputs[r] = values[ci % numVals];
+                            ci /= numVals;
+                        }
+
+                        // Set input registers
+                        for (size_t r = 0; r < inputRegs.size(); ++r)
+                            ms->cpu->regWriteByName(inputRegs[r].c_str(), tv.inputs[r]);
+
+                        // Set PC
+                        ms->cpu->setPc(entryAddr);
+
+                        // Run until routine returns (RTS/RTI at call depth 0) or max steps
+                        int callDepth = 0;
+                        tv.completed = false;
+                        tv.steps = 0;
+                        for (int s = 0; s < maxSteps; ++s) {
+                            uint8_t op = ms->bus->peek8(ms->cpu->pc());
+                            // Check for routine completion BEFORE stepping
+                            if (op == 0x60 && callDepth == 0) { tv.completed = true; break; } // RTS
+                            if (op == 0x40 && callDepth == 0) { tv.completed = true; break; } // RTI
+                            if (op == 0x00) { tv.completed = true; break; } // BRK
+
+                            if (op == 0x20) callDepth++; // JSR
+                            ms->cpu->step();
+                            if (op == 0x60) callDepth--; // RTS from nested
+                            ++tv.steps;
+                        }
+
+                        // Capture output registers
+                        tv.outputs.resize(outputRegs.size());
+                        for (size_t r = 0; r < outputRegs.size(); ++r)
+                            tv.outputs[r] = ms->cpu->regReadByName(outputRegs[r].c_str());
+
+                        results.push_back(tv);
+                    }
+
+                    // Restore machine state
+                    for (auto& [idx, val] : savedRegs)
+                        ms->cpu->regWrite(idx, val);
+                    for (int i = 0; i < 256; ++i)
+                        ms->bus->write8(0x0100 + i, savedStack[i]);
+
+                    // Build report
+                    std::stringstream ss;
+                    std::string entryLabel;
+                    if (symTab) entryLabel = symTab->getLabel(entryAddr);
+
+                    ss << "=== Test Vectors: $" << toHex(entryAddr, 4);
+                    if (!entryLabel.empty()) ss << " (" << entryLabel << ")";
+                    ss << " ===\n";
+                    ss << results.size() << " tests, inputs: [";
+                    for (size_t i = 0; i < inputRegs.size(); ++i) {
+                        if (i > 0) ss << ", ";
+                        ss << inputRegs[i];
+                    }
+                    ss << "], outputs: [";
+                    for (size_t i = 0; i < outputRegs.size(); ++i) {
+                        if (i > 0) ss << ", ";
+                        ss << outputRegs[i];
+                    }
+                    ss << "]\n\n";
+
+                    // Table header
+                    ss << std::setw(4) << "#" << " |";
+                    for (const auto& r : inputRegs)
+                        ss << std::setw(6) << (r + "(in)") << " |";
+                    for (const auto& r : outputRegs)
+                        ss << std::setw(7) << (r + "(out)") << " |";
+                    ss << " steps | ok\n";
+
+                    // Separator
+                    int colWidth = 5 + (int)inputRegs.size() * 8 + (int)outputRegs.size() * 9 + 14;
+                    ss << std::string(colWidth, '-') << "\n";
+
+                    // Rows
+                    for (size_t i = 0; i < results.size(); ++i) {
+                        const auto& tv = results[i];
+                        ss << std::setw(4) << (i + 1) << " |";
+                        for (size_t r = 0; r < tv.inputs.size(); ++r)
+                            ss << "    $" << toHex(tv.inputs[r], 2) << " |";
+                        for (size_t r = 0; r < tv.outputs.size(); ++r)
+                            ss << "     $" << toHex(tv.outputs[r], 2) << " |";
+                        ss << std::setw(6) << tv.steps << " | "
+                           << (tv.completed ? "Y" : "N") << "\n";
+                    }
+
+                    textItem.oVal["text"] = Json(ss.str());
+                }
             }
         }
 
