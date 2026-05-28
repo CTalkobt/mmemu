@@ -14,13 +14,18 @@ All notable changes to this project will be documented in this file.
     - `CbmSectorDisk` base class with geometry-driven shared logic for directory parsing, file chain reading, disk name/ID extraction, and BAM-based free block counting
     - `DiskImageLoader` now dispatches `.d71`, `.d80`, `.d81`, `.d82` extensions
     - 10 new unit tests: format open/read, geometry validation, size rejection, extension dispatch
-- **MCP `diff_rom` Tool** (`src/mcp/main/main.cpp`):
+- **MCP `diff_file` Tool** (`src/mcp/main/main.cpp`):
     - Compare two ROM image files byte-by-byte
     - Summary: file sizes, changed byte count/percentage, region count
     - 6502 vector table comparison (NMI, RESET, IRQ) with change detection
     - Per-region hex dump with configurable context bytes
     - Optional symbol annotations via `machine_id` (nearest label + offset)
-    - Tool count: 51 → 52
+- **MCP Snapshot Tools** (`src/mcp/main/main.cpp`):
+    - `snapshot_save`: Capture named snapshot of CPU registers and memory (configurable range)
+    - `snapshot_diff`: Compare two snapshots — shows register changes and memory diff regions with symbol annotations
+    - `snapshot_list`: List all saved snapshots for a machine instance
+    - `snapshot_delete`: Remove a snapshot (or all with `"*"`)
+    - Tool count: 51 → 56
 
 ### Fixed
 - **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.

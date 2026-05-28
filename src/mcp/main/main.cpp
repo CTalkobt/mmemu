@@ -123,7 +123,16 @@ struct MachineState {
     }
 };
 
+// Machine state snapshot for diff comparison
+struct MachineSnapshot {
+    std::map<std::string, uint32_t> regs;      // register name → value
+    std::vector<uint8_t> memory;               // flat memory dump
+    uint32_t memBase = 0;                      // base address of memory dump
+    uint32_t memSize = 0;                      // size of memory dump
+};
+
 static std::map<std::string, MachineState> g_machines;
+static std::map<std::string, std::map<std::string, MachineSnapshot>> g_snapshots; // machine_id → name → snapshot
 static std::map<std::string, std::string> g_assemblerOverrides;  // per-instance assembler overrides
 static std::map<std::string, int> g_typeCounters;  // per-type instance counter for auto-generation
 
@@ -691,7 +700,7 @@ Json handleDescribe() {
     getAsmSchema.oVal["required"] = getAsmReq;
     addTool("get_assembler", "Get the current assembler for a machine. Returns the assembler name.", getAsmSchema);
 
-    // diff_rom — compare two ROM files
+    // diff_file — compare two binary files
     {
         Json schema(Json::OBJ);
         schema.oVal["type"] = Json("object");
@@ -699,12 +708,12 @@ Json handleDescribe() {
 
         Json fileAProp(Json::OBJ);
         fileAProp.oVal["type"] = Json("string");
-        fileAProp.oVal["description"] = Json("Path to first ROM file");
+        fileAProp.oVal["description"] = Json("Path to first file");
         props.oVal["file_a"] = fileAProp;
 
         Json fileBProp(Json::OBJ);
         fileBProp.oVal["type"] = Json("string");
-        fileBProp.oVal["description"] = Json("Path to second ROM file");
+        fileBProp.oVal["description"] = Json("Path to second file");
         props.oVal["file_b"] = fileBProp;
 
         Json baseProp(Json::OBJ);
@@ -724,10 +733,105 @@ Json handleDescribe() {
         req.push_back(Json("file_a"));
         req.push_back(Json("file_b"));
         schema.oVal["required"] = req;
-        addTool("diff_rom",
-                "Compare two ROM image files byte-by-byte. Returns a structured diff report "
-                "with changed regions, vector table comparison, and optional symbol annotations. "
-                "Useful for comparing ROM revisions, KERNAL patches, or machine variants.",
+        addTool("diff_file",
+                "Compare two binary files byte-by-byte. Returns a structured diff report "
+                "with changed regions, 6502 vector table comparison (when applicable), "
+                "and optional symbol annotations. "
+                "Useful for comparing ROM revisions, KERNAL patches, or disk images.",
+                schema);
+    }
+
+    // snapshot_save — capture machine state
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+
+        Json nameProp(Json::OBJ);
+        nameProp.oVal["type"] = Json("string");
+        nameProp.oVal["description"] = Json("Name for this snapshot (e.g. \"before\", \"after\")");
+        props.oVal["name"] = nameProp;
+
+        Json rangeProp(Json::OBJ);
+        rangeProp.oVal["type"] = Json("string");
+        rangeProp.oVal["description"] = Json("Memory range to capture (e.g. \"$0000-$FFFF\"). Default: full 16-bit address space.");
+        props.oVal["range"] = rangeProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("name"));
+        schema.oVal["required"] = req;
+        addTool("snapshot_save",
+                "Save a named snapshot of the current machine state (CPU registers and memory). "
+                "Use with snapshot_diff to compare two points in execution.",
+                schema);
+    }
+
+    // snapshot_diff — compare two snapshots
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+
+        Json snapAProp(Json::OBJ);
+        snapAProp.oVal["type"] = Json("string");
+        snapAProp.oVal["description"] = Json("Name of first snapshot");
+        props.oVal["snapshot_a"] = snapAProp;
+
+        Json snapBProp(Json::OBJ);
+        snapBProp.oVal["type"] = Json("string");
+        snapBProp.oVal["description"] = Json("Name of second snapshot");
+        props.oVal["snapshot_b"] = snapBProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("snapshot_a"));
+        req.push_back(Json("snapshot_b"));
+        schema.oVal["required"] = req;
+        addTool("snapshot_diff",
+                "Compare two named snapshots of a machine. Reports register changes "
+                "and memory changes grouped by contiguous region, with symbol annotations.",
+                schema);
+    }
+
+    // snapshot_list — list saved snapshots
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("snapshot_list",
+                "List all saved snapshots for a machine instance.",
+                schema);
+    }
+
+    // snapshot_delete — remove a snapshot
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+
+        Json nameProp(Json::OBJ);
+        nameProp.oVal["type"] = Json("string");
+        nameProp.oVal["description"] = Json("Name of snapshot to delete, or \"*\" to delete all");
+        props.oVal["name"] = nameProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("name"));
+        schema.oVal["required"] = req;
+        addTool("snapshot_delete",
+                "Delete a named snapshot (or all snapshots with \"*\").",
                 schema);
     }
 
@@ -2059,7 +2163,238 @@ Json handleToolsCall(const Json& params) {
             }
             textItem.oVal["text"] = Json(ss.str().empty() ? "(stack empty)\n" : ss.str());
         }
-    } else if (name == "diff_rom") {
+    } else if (name == "snapshot_save") {
+        std::string mid = args["machine_id"].sVal;
+        std::string snapName = args["name"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (snapName.empty()) {
+            textItem.oVal["text"] = Json("Error: Snapshot name cannot be empty");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            MachineSnapshot snap;
+
+            // Capture registers
+            int regCount = ms->cpu->regCount();
+            for (int i = 0; i < regCount; ++i) {
+                const auto* desc = ms->cpu->regDescriptor(i);
+                if (desc->flags & REGFLAG_INTERNAL) continue;
+                snap.regs[desc->name] = ms->cpu->regRead(i);
+            }
+
+            // Determine memory range
+            uint32_t memBase = 0;
+            uint32_t memEnd = 0xFFFF; // default: full 16-bit
+            if (args.contains("range") && !args["range"].sVal.empty()) {
+                std::string range = args["range"].sVal;
+                size_t dash = range.find('-');
+                if (dash != std::string::npos) {
+                    std::string startStr = range.substr(0, dash);
+                    std::string endStr = range.substr(dash + 1);
+                    std::string errMsg;
+                    uint32_t s, e;
+                    if (resolveAddrWithDiagnostic(Json(startStr), ms->dbg, s, errMsg) &&
+                        resolveAddrWithDiagnostic(Json(endStr), ms->dbg, e, errMsg)) {
+                        memBase = s;
+                        memEnd = e;
+                    }
+                }
+            }
+
+            snap.memBase = memBase;
+            snap.memSize = memEnd - memBase + 1;
+            snap.memory.resize(snap.memSize);
+            for (uint32_t i = 0; i < snap.memSize; ++i)
+                snap.memory[i] = ms->bus->peek8(memBase + i);
+
+            size_t nRegs = snap.regs.size();
+            uint32_t nBytes = snap.memSize;
+            g_snapshots[mid][snapName] = std::move(snap);
+
+            std::stringstream ss;
+            ss << "Snapshot \"" << snapName << "\" saved: "
+               << nRegs << " registers, "
+               << nBytes << " bytes ($"
+               << toHex(memBase, 4) << "-$" << toHex(memEnd, 4) << ")";
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "snapshot_diff") {
+        std::string mid = args["machine_id"].sVal;
+        std::string nameA = args["snapshot_a"].sVal;
+        std::string nameB = args["snapshot_b"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (g_snapshots.find(mid) == g_snapshots.end() ||
+                   g_snapshots[mid].find(nameA) == g_snapshots[mid].end()) {
+            textItem.oVal["text"] = Json("Error: Snapshot \"" + nameA + "\" not found");
+            textItem.oVal["isError"] = Json(true);
+        } else if (g_snapshots[mid].find(nameB) == g_snapshots[mid].end()) {
+            textItem.oVal["text"] = Json("Error: Snapshot \"" + nameB + "\" not found");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            const auto& snapA = g_snapshots[mid][nameA];
+            const auto& snapB = g_snapshots[mid][nameB];
+            SymbolTable* symTab = ms->dbg ? &ms->dbg->symbols() : nullptr;
+
+            std::stringstream ss;
+            ss << "=== Snapshot Diff: \"" << nameA << "\" vs \"" << nameB << "\" ===\n\n";
+
+            // Register diff
+            ss << "--- Registers ---\n";
+            int regChanges = 0;
+            for (const auto& [regName, valA] : snapA.regs) {
+                auto it = snapB.regs.find(regName);
+                if (it != snapB.regs.end() && it->second != valA) {
+                    // Determine display width from value magnitude
+                    int width = (valA > 0xFF || it->second > 0xFF) ? 4 : 2;
+                    ss << "  " << regName << ": $" << toHex(valA, width)
+                       << " -> $" << toHex(it->second, width) << "\n";
+                    ++regChanges;
+                }
+            }
+            if (regChanges == 0) ss << "  (no register changes)\n";
+            ss << "\n";
+
+            // Memory diff — find overlapping range
+            uint32_t overlapStart = std::max(snapA.memBase, snapB.memBase);
+            uint32_t overlapEndA = snapA.memBase + snapA.memSize;
+            uint32_t overlapEndB = snapB.memBase + snapB.memSize;
+            uint32_t overlapEnd = std::min(overlapEndA, overlapEndB);
+
+            ss << "--- Memory ---\n";
+            if (overlapStart >= overlapEnd) {
+                ss << "  (no overlapping memory range to compare)\n";
+            } else {
+                // Collect diff regions
+                struct DiffRegion {
+                    uint32_t addr;
+                    uint32_t length;
+                };
+                std::vector<DiffRegion> regions;
+                bool inDiff = false;
+
+                for (uint32_t addr = overlapStart; addr < overlapEnd; ++addr) {
+                    uint8_t a = snapA.memory[addr - snapA.memBase];
+                    uint8_t b = snapB.memory[addr - snapB.memBase];
+                    if (a != b) {
+                        if (!inDiff) {
+                            regions.push_back({addr, 1});
+                            inDiff = true;
+                        } else {
+                            regions.back().length++;
+                        }
+                    } else {
+                        inDiff = false;
+                    }
+                }
+
+                uint32_t totalChanged = 0;
+                for (const auto& r : regions) totalChanged += r.length;
+
+                uint32_t rangeSize = overlapEnd - overlapStart;
+                ss << "  Range: $" << toHex(overlapStart, 4) << "-$"
+                   << toHex(overlapEnd - 1, 4) << " (" << rangeSize << " bytes)\n";
+                ss << "  Changed: " << totalChanged << " byte"
+                   << (totalChanged != 1 ? "s" : "") << " in "
+                   << regions.size() << " region(s)\n\n";
+
+                // Show regions (limit to 50)
+                int shown = 0;
+                for (const auto& r : regions) {
+                    if (shown >= 50) {
+                        ss << "  ... (" << (regions.size() - 50) << " more regions omitted)\n";
+                        break;
+                    }
+
+                    ss << "  $" << toHex(r.addr, 4) << "-$"
+                       << toHex(r.addr + r.length - 1, 4)
+                       << " (" << r.length << " byte" << (r.length > 1 ? "s" : "") << ")";
+
+                    if (symTab) {
+                        uint32_t symOff = 0;
+                        std::string label = symTab->nearest(r.addr, symOff);
+                        if (!label.empty()) {
+                            ss << "  ; " << label;
+                            if (symOff > 0) ss << "+" << symOff;
+                        }
+                    }
+                    ss << "\n";
+
+                    // Show bytes (limit to 16 per region)
+                    uint32_t showLen = std::min(r.length, (uint32_t)16);
+                    ss << "    A: ";
+                    for (uint32_t i = 0; i < showLen; ++i)
+                        ss << toHex(snapA.memory[r.addr + i - snapA.memBase], 2) << " ";
+                    if (r.length > 16) ss << "...";
+                    ss << "\n    B: ";
+                    for (uint32_t i = 0; i < showLen; ++i)
+                        ss << toHex(snapB.memory[r.addr + i - snapB.memBase], 2) << " ";
+                    if (r.length > 16) ss << "...";
+                    ss << "\n\n";
+                    ++shown;
+                }
+
+                if (regions.empty())
+                    ss << "  (no memory changes)\n";
+            }
+
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "snapshot_list") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            auto it = g_snapshots.find(mid);
+            if (it == g_snapshots.end() || it->second.empty()) {
+                textItem.oVal["text"] = Json("No snapshots saved.");
+            } else {
+                std::stringstream ss;
+                for (const auto& [snapName, snap] : it->second) {
+                    ss << "\"" << snapName << "\": "
+                       << snap.regs.size() << " regs, "
+                       << snap.memSize << " bytes ($"
+                       << toHex(snap.memBase, 4) << "-$"
+                       << toHex(snap.memBase + snap.memSize - 1, 4) << ")\n";
+                }
+                textItem.oVal["text"] = Json(ss.str());
+            }
+        }
+
+    } else if (name == "snapshot_delete") {
+        std::string mid = args["machine_id"].sVal;
+        std::string snapName = args["name"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (snapName == "*") {
+            int count = 0;
+            auto it = g_snapshots.find(mid);
+            if (it != g_snapshots.end()) {
+                count = it->second.size();
+                it->second.clear();
+            }
+            textItem.oVal["text"] = Json("Deleted " + std::to_string(count) + " snapshot(s).");
+        } else {
+            auto it = g_snapshots.find(mid);
+            if (it != g_snapshots.end() && it->second.erase(snapName)) {
+                textItem.oVal["text"] = Json("Deleted snapshot \"" + snapName + "\".");
+            } else {
+                textItem.oVal["text"] = Json("Error: Snapshot \"" + snapName + "\" not found");
+                textItem.oVal["isError"] = Json(true);
+            }
+        }
+
+    } else if (name == "diff_file") {
         std::string fileA = args["file_a"].sVal;
         std::string fileB = args["file_b"].sVal;
         uint32_t baseAddr = 0;
@@ -2140,7 +2475,7 @@ Json handleToolsCall(const Json& params) {
             std::stringstream ss;
 
             // Summary
-            ss << "=== ROM Diff Report ===\n";
+            ss << "=== File Diff Report ===\n";
             ss << "File A: " << fileA << " (" << dataA.size() << " bytes)\n";
             ss << "File B: " << fileB << " (" << dataB.size() << " bytes)\n";
             if (dataA.size() != dataB.size())
