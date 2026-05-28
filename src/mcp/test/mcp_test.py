@@ -386,12 +386,87 @@ def run_tests():
     # Cleanup
     client.call_tool("destroy_machine", {"machine_id": snap_mid})
 
+    # --- 10. analyze_routine Tool ---
+    print("\n--- 10. analyze_routine Tool ---")
+
+    # Create a raw6502 machine for analysis tests
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    ar_mid = res["result"]["content"][0]["text"].split('"')[1]
+
+    # Write a program with branches, loops, JSR calls, I/O, and RTS
+    # $0200: JSR $0210      ; call subroutine
+    # $0203: LDX #$05       ; X = 5
+    # $0205: DEX             ; LOOP: X--
+    # $0206: BNE $0205       ; backward branch (loop)
+    # $0208: LDA #$01
+    # $020A: STA $D020       ; write to I/O
+    # $020D: LDA $D012       ; read from I/O
+    # $0210: RTS             ; (also entry of "subroutine" — reused for simplicity)
+    program = [
+        0x20, 0x10, 0x02,  # JSR $0210
+        0xA2, 0x05,        # LDX #$05
+        0xCA,              # DEX
+        0xD0, 0xFD,        # BNE $0205  (offset -3)
+        0xA9, 0x01,        # LDA #$01
+        0x8D, 0x20, 0xD0,  # STA $D020
+        0xAD, 0x12, 0xD0,  # LDA $D012
+        0x60               # RTS
+    ]
+    client.call_tool("write_memory", {
+        "machine_id": ar_mid, "addr": 0x0200, "bytes": program
+    })
+
+    # Add symbols for annotation
+    client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "MAIN", "addr": "$0200"})
+    client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "LOOP", "addr": "$0205"})
+
+    # Analyze the routine
+    res = client.call_tool("analyze_routine", {
+        "machine_id": ar_mid, "addr": "$0200"
+    })
+    text = res["result"]["content"][0]["text"]
+
+    # Verify report structure
+    assert "Routine Analysis" in text, f"Missing header: {text[:100]}"
+    assert "MAIN" in text, f"Missing entry label: {text[:200]}"
+    print("  ✓ analyze_routine header + entry label OK")
+
+    # Verify call detection
+    assert "Calls" in text and "JSR $0210" in text, f"Missing call: {text}"
+    print("  ✓ Call detection OK")
+
+    # Verify loop detection
+    assert "Loops" in text and "0205" in text.lower(), f"Missing loop: {text}"
+    print("  ✓ Loop detection OK")
+
+    # Verify I/O access detection
+    assert "I/O" in text and "D020" in text.upper(), f"Missing I/O write: {text}"
+    assert "D012" in text.upper(), f"Missing I/O read: {text}"
+    print("  ✓ I/O access detection OK")
+
+    # Verify exit detection
+    assert "RTS" in text, f"Missing exit: {text}"
+    print("  ✓ Exit detection OK")
+
+    # Verify control flow summary
+    assert "Branches:" in text and "Calls:" in text, f"Missing control flow: {text}"
+    print("  ✓ Control flow summary OK")
+
+    # Test error: invalid machine
+    res = client.call_tool("analyze_routine", {
+        "machine_id": "nonexistent", "addr": "$0200"
+    })
+    assert "Error" in res["result"]["content"][0]["text"]
+    print("  ✓ Error handling OK")
+
+    client.call_tool("destroy_machine", {"machine_id": ar_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")
     print("="*60)
     print(f"Successfully tested {len(machines)} concurrent machine instances")
-    print("with full test suite, diff_file, and snapshot tools")
+    print("with full test suite, diff_file, snapshot, and analyze_routine tools")
 
 if __name__ == "__main__":
     try:

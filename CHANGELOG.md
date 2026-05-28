@@ -25,7 +25,14 @@ All notable changes to this project will be documented in this file.
     - `snapshot_diff`: Compare two snapshots — shows register changes and memory diff regions with symbol annotations
     - `snapshot_list`: List all saved snapshots for a machine instance
     - `snapshot_delete`: Remove a snapshot (or all with `"*"`)
-    - Tool count: 51 → 56
+- **MCP `analyze_routine` Tool** (`src/mcp/main/main.cpp`):
+    - Control-flow walking disassembler from an entry point
+    - Follows branches (both paths), unconditional jumps; stops at RTS/RTI/BRK
+    - Detects loops (backward branches), subroutine calls (JSR with dedup + count)
+    - Identifies I/O accesses ($D000-$DFFF) as read/write with symbol annotations
+    - Reports indirect jumps (JMP ($xxxx)) as unresolvable exit points
+    - Configurable max_instructions limit (default 200, max 5000)
+    - Tool count: 51 → 57
 
 ### Fixed
 - **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.

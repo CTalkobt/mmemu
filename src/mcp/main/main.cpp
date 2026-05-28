@@ -7,6 +7,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <set>
 
 #include "include/version.h"
 #include "minijson.h"
@@ -832,6 +833,32 @@ Json handleDescribe() {
         schema.oVal["required"] = req;
         addTool("snapshot_delete",
                 "Delete a named snapshot (or all snapshots with \"*\").",
+                schema);
+    }
+
+    // analyze_routine — control-flow analysis from an entry point
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        props.oVal["addr"] = addrProp;
+
+        Json maxProp(Json::OBJ);
+        maxProp.oVal["type"] = Json("number");
+        maxProp.oVal["description"] = Json("Maximum instructions to analyze (default: 200)");
+        props.oVal["max_instructions"] = maxProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("addr"));
+        schema.oVal["required"] = req;
+        addTool("analyze_routine",
+                "Analyze a routine by walking its control flow from an entry point. "
+                "Disassembles instructions, follows branches and jumps, identifies loops "
+                "(backward branches), subroutine calls, I/O accesses, and exit points. "
+                "Returns a structured analysis report with symbol annotations.",
                 schema);
     }
 
@@ -2391,6 +2418,214 @@ Json handleToolsCall(const Json& params) {
             } else {
                 textItem.oVal["text"] = Json("Error: Snapshot \"" + snapName + "\" not found");
                 textItem.oVal["isError"] = Json(true);
+            }
+        }
+
+    } else if (name == "analyze_routine") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->disasm) {
+            textItem.oVal["text"] = Json("Error: No disassembler available for this machine");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t entryAddr;
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["addr"], ms->dbg, entryAddr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: addr - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                int maxInsns = args.contains("max_instructions") ? (int)args["max_instructions"].nVal : 200;
+                if (maxInsns <= 0) maxInsns = 200;
+                if (maxInsns > 5000) maxInsns = 5000;
+
+                SymbolTable* symTab = ms->dbg ? &ms->dbg->symbols() : nullptr;
+                uint32_t addrMask = ms->bus->config().addrMask;
+
+                // Control-flow walk
+                std::set<uint32_t> visited;
+                std::vector<uint32_t> queue;
+                queue.push_back(entryAddr);
+
+                struct CallInfo { uint32_t target; uint32_t from; };
+                struct LoopInfo { uint32_t branchAddr; uint32_t target; };
+                struct IoAccess { uint32_t addr; uint32_t ioAddr; bool isStore; std::string mnemonic; };
+
+                std::vector<CallInfo> calls;
+                std::vector<LoopInfo> loops;
+                std::vector<IoAccess> ioAccesses;
+                std::vector<uint32_t> exits;       // RTS/RTI addresses
+                std::vector<uint32_t> indirectJmps; // JMP ($xxxx) addresses
+                int totalInsns = 0;
+                uint32_t minAddr = entryAddr, maxAddr = entryAddr;
+                int branchCount = 0, jmpCount = 0;
+
+                while (!queue.empty() && totalInsns < maxInsns) {
+                    uint32_t pc = queue.back();
+                    queue.pop_back();
+
+                    while (totalInsns < maxInsns) {
+                        if (visited.count(pc)) break;
+                        visited.insert(pc);
+
+                        DisasmEntry entry;
+                        int bytes = ms->disasm->disasmEntry(ms->bus, pc, entry);
+                        if (bytes <= 0) break;
+
+                        ++totalInsns;
+                        if (pc < minAddr) minAddr = pc;
+                        if (pc + bytes - 1 > maxAddr) maxAddr = pc + bytes - 1;
+
+                        uint8_t opcode = ms->bus->peek8(pc);
+
+                        // Detect I/O accesses (reads/writes to $D000-$DFFF on 16-bit bus)
+                        // Check operand address for absolute and zero-page addressing
+                        if (bytes >= 3) {
+                            uint16_t operandAddr = ms->bus->peek8(pc+1) | (ms->bus->peek8(pc+2) << 8);
+                            if (operandAddr >= 0xD000 && operandAddr <= 0xDFFF) {
+                                bool isStore = (entry.mnemonic.find("ST") == 0);
+                                ioAccesses.push_back({pc, operandAddr, isStore, entry.complete});
+                            }
+                        }
+
+                        if (entry.isReturn) {
+                            exits.push_back(pc);
+                            break;
+                        } else if (entry.isCall) {
+                            calls.push_back({entry.targetAddr & addrMask, pc});
+                            pc = (pc + bytes) & addrMask;
+                        } else if (entry.isBranch) {
+                            ++branchCount;
+                            uint32_t target = entry.targetAddr & addrMask;
+                            uint32_t fallthrough = (pc + bytes) & addrMask;
+
+                            // Backward branch = loop
+                            if (target <= pc) {
+                                loops.push_back({pc, target});
+                            }
+
+                            // Queue the path we don't follow inline
+                            if (!visited.count(target)) queue.push_back(target);
+                            pc = fallthrough;
+                        } else if (opcode == 0x4C) {
+                            // JMP absolute
+                            ++jmpCount;
+                            pc = entry.targetAddr & addrMask;
+                        } else if (opcode == 0x6C) {
+                            // JMP indirect — can't follow statically
+                            indirectJmps.push_back(pc);
+                            break;
+                        } else if (opcode == 0x00) {
+                            // BRK — treat as exit
+                            exits.push_back(pc);
+                            break;
+                        } else {
+                            pc = (pc + bytes) & addrMask;
+                        }
+                    }
+                }
+
+                // Build report
+                std::stringstream ss;
+                std::string entryLabel;
+                if (symTab) entryLabel = symTab->getLabel(entryAddr);
+
+                ss << "=== Routine Analysis: $" << toHex(entryAddr, 4);
+                if (!entryLabel.empty()) ss << " (" << entryLabel << ")";
+                ss << " ===\n";
+                ss << "Size: " << (maxAddr - minAddr + 1) << " bytes ($"
+                   << toHex(minAddr, 4) << "-$" << toHex(maxAddr, 4) << "), "
+                   << totalInsns << " instructions\n";
+                if (totalInsns >= maxInsns)
+                    ss << "NOTE: Analysis truncated at " << maxInsns << " instructions\n";
+                ss << "\n";
+
+                // Calls
+                if (!calls.empty()) {
+                    ss << "--- Calls (" << calls.size() << ") ---\n";
+                    // Deduplicate by target
+                    std::map<uint32_t, int> callCounts;
+                    for (const auto& c : calls) callCounts[c.target]++;
+                    for (const auto& [target, count] : callCounts) {
+                        ss << "  JSR $" << toHex(target, 4);
+                        if (symTab) {
+                            std::string lbl = symTab->getLabel(target);
+                            if (!lbl.empty()) ss << " (" << lbl << ")";
+                        }
+                        if (count > 1) ss << " x" << count;
+                        ss << "\n";
+                    }
+                    ss << "\n";
+                }
+
+                // Loops
+                if (!loops.empty()) {
+                    ss << "--- Loops (" << loops.size() << ") ---\n";
+                    for (const auto& l : loops) {
+                        ss << "  $" << toHex(l.target, 4) << "-$" << toHex(l.branchAddr, 4)
+                           << " (branch at $" << toHex(l.branchAddr, 4) << " -> $"
+                           << toHex(l.target, 4) << ")";
+                        if (symTab) {
+                            std::string lbl = symTab->getLabel(l.target);
+                            if (!lbl.empty()) ss << "  ; " << lbl;
+                        }
+                        ss << "\n";
+                    }
+                    ss << "\n";
+                }
+
+                // I/O accesses
+                if (!ioAccesses.empty()) {
+                    ss << "--- I/O Accesses (" << ioAccesses.size() << ") ---\n";
+                    // Deduplicate by I/O address
+                    std::map<uint32_t, std::pair<bool, bool>> ioMap; // addr → {read, write}
+                    for (const auto& io : ioAccesses) {
+                        auto& rw = ioMap[io.ioAddr];
+                        if (io.isStore) rw.second = true;
+                        else rw.first = true;
+                    }
+                    for (const auto& [ioAddr, rw] : ioMap) {
+                        ss << "  $" << toHex(ioAddr, 4);
+                        if (symTab) {
+                            std::string lbl = symTab->getLabel(ioAddr);
+                            if (!lbl.empty()) ss << " (" << lbl << ")";
+                        }
+                        ss << ": ";
+                        if (rw.first && rw.second) ss << "read+write";
+                        else if (rw.first) ss << "read";
+                        else ss << "write";
+                        ss << "\n";
+                    }
+                    ss << "\n";
+                }
+
+                // Control flow summary
+                ss << "--- Control Flow ---\n";
+                ss << "  Branches: " << branchCount
+                   << ", Jumps: " << jmpCount
+                   << ", Calls: " << calls.size() << "\n";
+                if (!exits.empty()) {
+                    ss << "  Exits: ";
+                    for (size_t i = 0; i < exits.size(); ++i) {
+                        if (i > 0) ss << ", ";
+                        uint8_t op = ms->bus->peek8(exits[i]);
+                        ss << (op == 0x60 ? "RTS" : (op == 0x40 ? "RTI" : "BRK"))
+                           << " at $" << toHex(exits[i], 4);
+                    }
+                    ss << "\n";
+                }
+                if (!indirectJmps.empty()) {
+                    ss << "  Indirect jumps: ";
+                    for (size_t i = 0; i < indirectJmps.size(); ++i) {
+                        if (i > 0) ss << ", ";
+                        ss << "$" << toHex(indirectJmps[i], 4);
+                    }
+                    ss << " (not followed)\n";
+                }
+
+                textItem.oVal["text"] = Json(ss.str());
             }
         }
 

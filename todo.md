@@ -119,7 +119,10 @@
 [x] `snapshot_diff`: compare two snapshots with register and memory diffs
 [x] `snapshot_list`: list saved snapshots for a machine
 [x] `snapshot_delete`: remove snapshots (single or all)
-[x] MCP Tool Count: 51 → 56
+[x] `analyze_routine`: control-flow analysis from entry point
+[x] Follows branches/jumps, detects loops, calls, I/O accesses, exits
+[x] Symbol annotations for calls, loops, and I/O addresses
+[x] MCP Tool Count: 51 → 57
 
 ## Deprioritized
 - Cycle-accurate timing for all opcodes/modes
