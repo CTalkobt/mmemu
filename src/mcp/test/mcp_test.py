@@ -604,6 +604,66 @@ def run_tests():
     if os.path.exists(wav_path):
         os.unlink(wav_path)
 
+    # --- 13. load_sid Tool ---
+    print("\n--- 13. load_sid Tool ---")
+
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    sid_mid = res["result"]["content"][0]["text"].split('"')[1]
+
+    # Create a synthetic PSID file
+    import struct as st
+    sid_path = "/tmp/mcp_test.sid"
+    hdr = bytearray(0x7C)
+    hdr[0:4] = b'PSID'
+    st.pack_into('>H', hdr, 0x04, 2)       # version 2
+    st.pack_into('>H', hdr, 0x06, 0x7C)    # dataOffset
+    st.pack_into('>H', hdr, 0x08, 0)       # loadAddress (in data)
+    st.pack_into('>H', hdr, 0x0A, 0x1000)  # initAddress
+    st.pack_into('>H', hdr, 0x0C, 0x1020)  # playAddress
+    st.pack_into('>H', hdr, 0x0E, 2)       # 2 songs
+    st.pack_into('>H', hdr, 0x10, 1)       # startSong
+    hdr[0x16:0x16+9] = b'MCP Test\x00'
+    hdr[0x36:0x36+7] = b'Tester\x00'
+    hdr[0x56:0x56+5] = b'2026\x00'
+    # SID data: LE load addr + init (RTS) + pad + play (RTS)
+    sid_data = st.pack('<H', 0x1000) + bytes([0x60]) + bytes(0x1020 - 0x1001) + bytes([0x60])
+    with open(sid_path, 'wb') as f:
+        f.write(hdr + sid_data)
+
+    # Load the SID file
+    res = client.call_tool("load_sid", {"machine_id": sid_mid, "file": sid_path})
+    text = res["result"]["content"][0]["text"]
+    assert "PSID v2" in text, f"Missing PSID header: {text[:200]}"
+    assert "MCP Test" in text, f"Missing title: {text[:200]}"
+    assert "Tester" in text, f"Missing author: {text[:200]}"
+    assert "Songs: 2" in text, f"Missing song count: {text[:200]}"
+    assert "Play loop installed" in text, f"Missing play loop: {text[:200]}"
+    print("  ✓ load_sid basic OK")
+
+    # Load with subtune selection
+    res = client.call_tool("load_sid", {"machine_id": sid_mid, "file": sid_path, "subtune": 2})
+    text = res["result"]["content"][0]["text"]
+    assert "subtune 2" in text, f"Subtune not selected: {text[:200]}"
+    print("  ✓ load_sid subtune selection OK")
+
+    # Test error: invalid file
+    res = client.call_tool("load_sid", {"machine_id": sid_mid, "file": "/nonexistent.sid"})
+    assert "Error" in res["result"]["content"][0]["text"]
+    print("  ✓ load_sid missing file error OK")
+
+    # Test error: not a SID file
+    bad_path = "/tmp/mcp_test_bad.sid"
+    with open(bad_path, 'wb') as f:
+        f.write(b'NOT A SID FILE AT ALL')
+    res = client.call_tool("load_sid", {"machine_id": sid_mid, "file": bad_path})
+    assert "Error" in res["result"]["content"][0]["text"]
+    print("  ✓ load_sid bad format error OK")
+
+    client.call_tool("destroy_machine", {"machine_id": sid_mid})
+    for p in [sid_path, bad_path]:
+        if os.path.exists(p):
+            os.unlink(p)
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

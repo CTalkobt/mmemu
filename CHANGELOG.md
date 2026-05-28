@@ -48,7 +48,14 @@ All notable changes to this project will be documented in this file.
     - Supports mono (single SID/VIC) and stereo (dual SID / SidPair)
     - Configurable duration (default 1s, max 60s)
     - Periodic sample pulling during CPU execution to avoid ring buffer overflow
-    - Tool count: 51 → 59
+- **MCP `load_sid` Tool** (`src/mcp/main/main.cpp`):
+    - Load PSID/RSID (.sid) files from the HVSC collection
+    - Parses v1/v2 headers: title, author, copyright, load/init/play addresses, song count
+    - Loads SID data into machine memory at the correct address
+    - Calls init routine with selected subtune in accumulator
+    - Installs play loop at $0002 for use with `record_audio`
+    - Supports subtune selection (1-based, defaults to startSong from header)
+    - Tool count: 51 → 60
 - **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
     - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
     - Full RSP packet framing with checksums and ACK/NAK

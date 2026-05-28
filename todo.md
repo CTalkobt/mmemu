@@ -130,7 +130,9 @@
 [x] `record_audio`: run CPU while recording audio to WAV file
 [x] Auto-detect IAudioOutput, mono/stereo, periodic sample pulling
 [x] 16-bit PCM WAV output with proper RIFF header
-[x] MCP Tool Count: 51 → 59
+[x] `load_sid`: PSID/RSID file loader with init routine execution and play loop
+[x] Subtune selection, metadata extraction, trampoline-based init
+[x] MCP Tool Count: 51 → 60
 
 ## GDB Remote Protocol Server (0.3.2) ✓ COMPLETE
 [x] TCP listener with configurable port (`--gdb-port` CLI flag)
