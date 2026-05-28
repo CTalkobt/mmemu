@@ -1,6 +1,6 @@
 # mmemu — Multi Machine Emulator
 # Top-level Makefile
-.PHONY: all cli gui mcp libs test test-mcp plugins clean man serve cppcheck coverage
+.PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage
 
 all: cli gui mcp plugins
 
@@ -228,6 +228,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 
 CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/cli_interpreter.cpp \
+	src/cli/main/gdb_server.cpp \
 	src/cli/main/plugin_command_registry.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \
@@ -654,12 +655,16 @@ src/mcp/main/main_test.o: src/mcp/main/main.cpp
 %.o: %.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
-test: $(TEST_BIN) plugins test-mega65 test-mcp
+test: $(TEST_BIN) plugins test-mega65 test-mcp test-gdb
 	./$(TEST_BIN)
 
 test-mcp: $(MCP_BIN) plugins
 	@echo "Running MCP integration tests..."
 	python3 src/mcp/test/mcp_test.py
+
+test-gdb: $(CLI_BIN) plugins
+	@echo "Running GDB RSP integration tests..."
+	python3 src/cli/test/test_gdb_server.py
 
 test-mega65: $(CLI_BIN) plugins
 	@echo "Running 45GS02 Validation Suite..."

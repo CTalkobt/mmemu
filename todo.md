@@ -129,6 +129,18 @@
 [x] State save/restore between test runs, formatted table output
 [x] MCP Tool Count: 51 → 58
 
+## GDB Remote Protocol Server (0.3.2) ✓ COMPLETE
+[x] TCP listener with configurable port (`--gdb-port` CLI flag)
+[x] RSP packet framing (checksums, ACK/NAK)
+[x] Register read/write (g/G) with 6502 register mapping
+[x] Memory read/write (m/M) via peek8/write8
+[x] Single step (s) and continue with async Ctrl+C interrupt (c)
+[x] Software breakpoints (Z0/z0) via BreakpointList
+[x] Query support (qSupported, qAttached, thread info)
+[x] Detach (D) and kill (k) commands
+[x] Background thread, coexists with CLI
+[x] 12 Python integration tests (make test-gdb)
+
 ## Deprioritized
 - Cycle-accurate timing for all opcodes/modes
 - I/O stalls and DMA contention simulation

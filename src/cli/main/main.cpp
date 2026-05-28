@@ -1,6 +1,8 @@
 #include <iostream>
 #include <string>
+#include <memory>
 #include "cli_interpreter.h"
+#include "gdb_server.h"
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_command_registry.h"
 #include "include/util/logging.h"
@@ -31,10 +33,11 @@ int main(int argc, char *argv[]) {
         if (arg == "--help" || arg == "-h" || arg == "-?") {
             std::cout << "Usage: mmemu-cli [options]\n"
                       << "Options:\n"
-                      << "  -m, --machine <id>  Create a machine on startup\n"
-                      << "  -i, --mount <path>  Mount a disk/tape/program image\n"
-                      << "  -t, --type <text>   Type text into the machine\n"
-                      << "  -h, -?, --help      Show this help\n";
+                      << "  -m, --machine <id>    Create a machine on startup\n"
+                      << "  -i, --mount <path>    Mount a disk/tape/program image\n"
+                      << "  -t, --type <text>     Type text into the machine\n"
+                      << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
+                      << "  -h, -?, --help        Show this help\n";
             return 0;
         }
     }
@@ -53,7 +56,8 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
     });
 
-    // Process other command line args (machine, mount, type)
+    // Process other command line args (machine, mount, type, gdb)
+    uint16_t gdbPort = 0;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--machine" || arg == "-m") && i + 1 < argc) {
@@ -62,7 +66,23 @@ int main(int argc, char *argv[]) {
             interpreter.processLine("load " + std::string(argv[++i]));
         } else if ((arg == "--type" || arg == "-t") && i + 1 < argc) {
             interpreter.processLine("type " + std::string(argv[++i]));
+        } else if (arg == "--gdb-port" && i + 1 < argc) {
+            gdbPort = std::stoi(argv[++i]);
         }
+    }
+
+    // Start GDB server if requested
+    std::unique_ptr<GdbServer> gdbServer;
+    if (gdbPort > 0 && ctx.cpu && ctx.bus) {
+        gdbServer = std::make_unique<GdbServer>(ctx.cpu, ctx.bus, ctx.dbg);
+        if (gdbServer->start(gdbPort)) {
+            std::cout << "GDB server listening on port " << gdbPort << "\n";
+        } else {
+            std::cerr << "Error: Failed to start GDB server on port " << gdbPort << "\n";
+            gdbServer.reset();
+        }
+    } else if (gdbPort > 0) {
+        std::cerr << "Warning: --gdb-port requires a machine (-m). GDB server not started.\n";
     }
 
     std::cout << "Type 'help' for a list of commands.\n";

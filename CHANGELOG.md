@@ -43,6 +43,17 @@ All notable changes to this project will be documented in this file.
     - Handles nested JSR calls (tracks call depth, only stops at outermost return)
     - Outputs formatted table with input→output mappings, step count, completion status
     - Tool count: 51 → 58
+- **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
+    - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
+    - Full RSP packet framing with checksums and ACK/NAK
+    - Register read/write (`g`/`G`) with 6502 register mapping (A, X, Y, SP, PC, P)
+    - Memory read/write (`m`/`M`) via `peek8`/`write8`
+    - Single step (`s`) and continue with async interrupt (`c` + Ctrl+C detection)
+    - Software breakpoints (`Z0`/`z0`) via `BreakpointList`
+    - Query support (`qSupported`, `qAttached`, thread info)
+    - Detach (`D`) and kill (`k`) commands
+    - Runs in background thread, coexists with CLI
+    - 12 Python integration tests (`make test-gdb`)
 
 ### Fixed
 - **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.

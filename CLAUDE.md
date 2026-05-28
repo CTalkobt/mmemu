@@ -18,9 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`make mcp`** — Build the MCP server (`bin/mmemu-mcp`).
 - **`make plugins`** — Build all `.so` plugin modules in `lib/`.
 - **`make libs`** — Build static archive libraries (for internal development use).
-- **`make test`** — Build and run the complete test suite (~517 tests) plus extended test suites.
+- **`make test`** — Build and run the complete test suite (~517 tests) plus extended test suites (MCP, GDB).
 - **`make test-mega65`** — Run MEGA65 45GS02 cross-validation tests (requires `ca45` assembler).
 - **`make test-mcp`** — Run MCP Python integration tests.
+- **`make test-gdb`** — Run GDB RSP protocol integration tests.
 - **`make man`** — Generate man pages from Markdown documentation (requires `pandoc`).
 - **`make clean`** — Remove all build artifacts.
 - **`make serve`** — Start the MCP server with configuration examples.
@@ -176,6 +177,7 @@ Plugin entry points must use C calling convention: `extern "C" SimPluginManifest
 ```bash
 ./bin/mmemu-cli -m c64              # Start CLI with C64
 ./bin/mmemu-cli -m vic20            # Start CLI with VIC-20
+./bin/mmemu-cli -m c64 --gdb-port 1234  # Start CLI with GDB server
 ./bin/mmemu-gui -m c64              # Start GUI with C64
 
 # CLI commands: step, regs, m (memory), disasm, break, watch, run, sym, etc.
@@ -267,3 +269,4 @@ See `todo.md` for the full roadmap.
 | MEGA65 machine | `src/plugins/machines/mega65/main/machine_mega65.cpp` |
 | MCP server | `src/mcp/main/main.cpp` (58 tools: assembler, snapshots, diff_file, analyze_routine, generate_tests) |
 | Disk image parsers | `src/plugins/cbm-loader/main/cbm_sector_disk.cpp` (D64/D71/D80/D81/D82 base) |
+| GDB server | `src/cli/main/gdb_server.cpp` (RSP protocol, `--gdb-port` CLI flag) |
