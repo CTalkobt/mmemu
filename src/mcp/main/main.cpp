@@ -252,7 +252,17 @@ Json handleDescribe() {
     wmSchema.oVal["required"] = wmReq;
     addTool("write_memory", "Write an array of bytes to memory starting at addr", wmSchema);
 
-    addTool("read_registers", "Read all current CPU registers (A, X, Y, SP, PC, flags). Only machine_id is required.", spcSchema); // reuse machine_id + addr (addr ignored)
+    {
+        Json rrSchema(Json::OBJ);
+        rrSchema.oVal["type"] = Json("object");
+        Json rrProps(Json::OBJ);
+        rrProps.oVal["machine_id"] = midProp;
+        rrSchema.oVal["properties"] = rrProps;
+        Json rrReq(Json::ARR);
+        rrReq.push_back(Json("machine_id"));
+        rrSchema.oVal["required"] = rrReq;
+        addTool("read_registers", "Read all current CPU registers (A, X, Y, SP, PC, flags).", rrSchema);
+    }
 
     Json smSchema(Json::OBJ);
     smSchema.oVal["type"] = Json("object");
@@ -641,7 +651,14 @@ Json handleDescribe() {
     addTool("disable_breakpoint", "Temporarily disable a breakpoint or watchpoint without deleting it", bpIdSchema);
 
     // list_breakpoints
-    addTool("list_breakpoints", "List all breakpoints and watchpoints with their IDs, addresses, types, and enabled status", cmSchema);  // reuse machine_id-only schema
+    {
+        Json lbSchema(Json::OBJ); lbSchema.oVal["type"] = Json("object");
+        Json lbProps(Json::OBJ); lbProps.oVal["machine_id"] = midProp;
+        lbSchema.oVal["properties"] = lbProps;
+        Json lbReq(Json::ARR); lbReq.push_back(Json("machine_id"));
+        lbSchema.oVal["required"] = lbReq;
+        addTool("list_breakpoints", "List all breakpoints and watchpoints with their IDs, addresses, types, and enabled status", lbSchema);
+    }
 
     // get_stack
     Json gsSchema(Json::OBJ); gsSchema.oVal["type"] = Json("object");
@@ -652,7 +669,14 @@ Json handleDescribe() {
     addTool("get_stack", "Read bytes from the CPU stack. count defaults to 8 entries; use 0 for all (SP to $01FF).", gsSchema);
 
     // list_devices
-    addTool("list_devices", "List all IO devices registered in the machine (name, address range)", cmSchema);
+    {
+        Json ldSchema(Json::OBJ); ldSchema.oVal["type"] = Json("object");
+        Json ldProps(Json::OBJ); ldProps.oVal["machine_id"] = midProp;
+        ldSchema.oVal["properties"] = ldProps;
+        Json ldReq(Json::ARR); ldReq.push_back(Json("machine_id"));
+        ldSchema.oVal["required"] = ldReq;
+        addTool("list_devices", "List all IO devices registered in the machine (name, address range)", ldSchema);
+    }
 
     // get_device_info
     Json gdiSchema(Json::OBJ); gdiSchema.oVal["type"] = Json("object");
