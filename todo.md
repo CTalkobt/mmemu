@@ -127,7 +127,10 @@
 [x] `generate_tests`: automated test vector generation for routines
 [x] Combinatorial input register variation with call-depth-aware execution
 [x] State save/restore between test runs, formatted table output
-[x] MCP Tool Count: 51 → 58
+[x] `record_audio`: run CPU while recording audio to WAV file
+[x] Auto-detect IAudioOutput, mono/stereo, periodic sample pulling
+[x] 16-bit PCM WAV output with proper RIFF header
+[x] MCP Tool Count: 51 → 59
 
 ## GDB Remote Protocol Server (0.3.2) ✓ COMPLETE
 [x] TCP listener with configurable port (`--gdb-port` CLI flag)

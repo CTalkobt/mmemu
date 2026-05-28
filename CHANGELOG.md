@@ -42,7 +42,13 @@ All notable changes to this project will be documented in this file.
     - Configurable: input/output registers, test values, max steps per run
     - Handles nested JSR calls (tracks call depth, only stops at outermost return)
     - Outputs formatted table with input→output mappings, step count, completion status
-    - Tool count: 51 → 58
+- **MCP `record_audio` Tool** (`src/mcp/main/main.cpp`):
+    - Run the CPU while recording audio output to a 16-bit PCM WAV file
+    - Auto-detects audio device (SID, VIC-I, POKEY) via `IAudioOutput` interface
+    - Supports mono (single SID/VIC) and stereo (dual SID / SidPair)
+    - Configurable duration (default 1s, max 60s)
+    - Periodic sample pulling during CPU execution to avoid ring buffer overflow
+    - Tool count: 51 → 59
 - **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
     - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
     - Full RSP packet framing with checksums and ACK/NAK

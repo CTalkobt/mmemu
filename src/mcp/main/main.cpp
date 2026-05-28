@@ -29,6 +29,8 @@
 #include "libdebug/main/trace_buffer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
+#include "libdevices/main/iaudio_output.h"
+#include "libdevices/main/io_registry.h"
 #include "imap_controller.h"
 
 static bool resolveAddr(const Json& val, DebugContext* dbg, uint32_t& result) {
@@ -917,6 +919,36 @@ Json handleDescribe() {
                 "Iterates over all combinations of input values, setting input registers, "
                 "running until the routine returns (RTS/RTI/BRK), and recording output registers. "
                 "Returns a table of input→output mappings suitable for regression testing.",
+                schema);
+    }
+
+    // record_audio — run CPU and record audio to WAV file
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+
+        Json fileProp(Json::OBJ);
+        fileProp.oVal["type"] = Json("string");
+        fileProp.oVal["description"] = Json("Output WAV file path");
+        props.oVal["file"] = fileProp;
+
+        Json durProp(Json::OBJ);
+        durProp.oVal["type"] = Json("number");
+        durProp.oVal["description"] = Json("Recording duration in milliseconds (default: 1000)");
+        props.oVal["duration_ms"] = durProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("file"));
+        schema.oVal["required"] = req;
+        addTool("record_audio",
+                "Run the CPU while recording audio output to a WAV file. "
+                "Executes the machine for the specified duration, pulling audio samples "
+                "from the SID/VIC/POKEY device, and saves as 16-bit PCM WAV. "
+                "Supports both mono and stereo (dual SID) output.",
                 schema);
     }
 
@@ -2898,6 +2930,150 @@ Json handleToolsCall(const Json& params) {
                            << (tv.completed ? "Y" : "N") << "\n";
                     }
 
+                    textItem.oVal["text"] = Json(ss.str());
+                }
+            }
+        }
+
+    } else if (name == "record_audio") {
+        std::string mid = args["machine_id"].sVal;
+        std::string filePath = args["file"].sVal;
+        int durationMs = args.contains("duration_ms") ? (int)args["duration_ms"].nVal : 1000;
+        if (durationMs <= 0) durationMs = 1000;
+        if (durationMs > 60000) durationMs = 60000;
+
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            // Find the IAudioOutput device
+            IAudioOutput* audioDev = nullptr;
+            bool isStereo = false;
+            if (ms->machine->ioRegistry) {
+                std::vector<IOHandler*> handlers;
+                ms->machine->ioRegistry->enumerate(handlers);
+                for (auto* h : handlers) {
+                    auto* ao = dynamic_cast<IAudioOutput*>(h);
+                    if (ao) {
+                        audioDev = ao;
+                        // Check if stereo by device name heuristic
+                        std::string devName = h->name();
+                        if (devName.find("SidPair") != std::string::npos ||
+                            devName.find("Pair") != std::string::npos ||
+                            devName.find("Stereo") != std::string::npos) {
+                            isStereo = true;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (!audioDev) {
+                textItem.oVal["text"] = Json("Error: No audio output device found on this machine");
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                int sampleRate = audioDev->nativeSampleRate();
+                if (sampleRate <= 0) sampleRate = 44100;
+                int numChannels = isStereo ? 2 : 1;
+                int totalSamples = (int)((int64_t)sampleRate * durationMs / 1000) * numChannels;
+
+                // Accumulate recorded samples
+                std::vector<float> recorded;
+                recorded.reserve(totalSamples);
+
+                // Calculate CPU cycles to run
+                // Approximate: 1 MHz CPU = 1000 cycles/ms
+                uint32_t clockHz = 985248; // PAL C64 default
+                int64_t totalCycles = (int64_t)clockHz * durationMs / 1000;
+
+                // Run CPU in batches, pulling audio periodically
+                float pullBuf[4096];
+                int64_t cyclesRun = 0;
+                int batchSize = sampleRate / 20; // Pull ~50 times per second
+                if (batchSize < 256) batchSize = 256;
+                int cyclesPerBatch = (int)((int64_t)clockHz * batchSize / sampleRate / numChannels);
+                if (cyclesPerBatch < 100) cyclesPerBatch = 100;
+
+                while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
+                    // Run CPU for a batch
+                    for (int c = 0; c < cyclesPerBatch; ++c) {
+                        if (ms->machine && ms->machine->schedulerStep) {
+                            ms->machine->schedulerStep(*ms->machine);
+                        } else {
+                            ms->cpu->step();
+                        }
+                        ++cyclesRun;
+                    }
+
+                    // Pull available audio samples
+                    int pulled = audioDev->pullSamples(pullBuf, 4096);
+                    for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i) {
+                        recorded.push_back(pullBuf[i]);
+                    }
+                }
+
+                // Final drain
+                while ((int)recorded.size() < totalSamples) {
+                    int pulled = audioDev->pullSamples(pullBuf, 4096);
+                    if (pulled <= 0) break;
+                    for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i) {
+                        recorded.push_back(pullBuf[i]);
+                    }
+                }
+
+                // Convert float32 to 16-bit PCM
+                std::vector<int16_t> pcm(recorded.size());
+                for (size_t i = 0; i < recorded.size(); ++i) {
+                    float s = recorded[i];
+                    if (s > 1.0f) s = 1.0f;
+                    if (s < -1.0f) s = -1.0f;
+                    pcm[i] = (int16_t)(s * 32767.0f);
+                }
+
+                // Write WAV file
+                std::ofstream wav(filePath, std::ios::binary);
+                if (!wav) {
+                    textItem.oVal["text"] = Json("Error: Cannot open file for writing: " + filePath);
+                    textItem.oVal["isError"] = Json(true);
+                } else {
+                    uint32_t dataSize = pcm.size() * 2; // 16-bit = 2 bytes per sample
+                    uint32_t fileSize = 36 + dataSize;
+                    uint16_t bitsPerSample = 16;
+                    uint16_t blockAlign = numChannels * (bitsPerSample / 8);
+                    uint32_t byteRate = sampleRate * blockAlign;
+
+                    // RIFF header
+                    wav.write("RIFF", 4);
+                    wav.write(reinterpret_cast<char*>(&fileSize), 4);
+                    wav.write("WAVE", 4);
+
+                    // fmt chunk
+                    wav.write("fmt ", 4);
+                    uint32_t fmtSize = 16;
+                    wav.write(reinterpret_cast<char*>(&fmtSize), 4);
+                    uint16_t audioFormat = 1; // PCM
+                    uint16_t nc = numChannels;
+                    uint32_t sr = sampleRate;
+                    wav.write(reinterpret_cast<char*>(&audioFormat), 2);
+                    wav.write(reinterpret_cast<char*>(&nc), 2);
+                    wav.write(reinterpret_cast<char*>(&sr), 4);
+                    wav.write(reinterpret_cast<char*>(&byteRate), 4);
+                    wav.write(reinterpret_cast<char*>(&blockAlign), 2);
+                    wav.write(reinterpret_cast<char*>(&bitsPerSample), 2);
+
+                    // data chunk
+                    wav.write("data", 4);
+                    wav.write(reinterpret_cast<char*>(&dataSize), 4);
+                    wav.write(reinterpret_cast<const char*>(pcm.data()), dataSize);
+
+                    float durationActual = (float)recorded.size() / numChannels / sampleRate;
+                    std::stringstream ss;
+                    ss << "Recorded " << std::fixed << std::setprecision(2) << durationActual
+                       << "s of audio to " << filePath << " ("
+                       << (isStereo ? "stereo" : "mono") << ", "
+                       << sampleRate << " Hz, 16-bit PCM, "
+                       << dataSize << " bytes)";
                     textItem.oVal["text"] = Json(ss.str());
                 }
             }

@@ -560,12 +560,54 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": gt_mid})
 
+    # --- 12. record_audio Tool ---
+    print("\n--- 12. record_audio Tool ---")
+
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    ra_mid = res["result"]["content"][0]["text"].split('"')[1]
+
+    # Record 200ms of audio (SID will produce silence since no program is playing)
+    wav_path = "/tmp/mcp_test_audio.wav"
+    res = client.call_tool("record_audio", {
+        "machine_id": ra_mid, "file": wav_path, "duration_ms": 200
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "Recorded" in text and "mono" in text, f"Recording failed: {text}"
+    assert "44100" in text, f"Expected 44100 Hz: {text}"
+    print("  ✓ record_audio basic OK")
+
+    # Verify the WAV file is valid
+    import wave
+    w = wave.open(wav_path, 'rb')
+    assert w.getnchannels() == 1, f"Expected mono, got {w.getnchannels()}"
+    assert w.getframerate() == 44100, f"Expected 44100 Hz, got {w.getframerate()}"
+    assert w.getsampwidth() == 2, f"Expected 16-bit, got {w.getsampwidth()*8}-bit"
+    duration = w.getnframes() / w.getframerate()
+    assert 0.15 < duration < 0.25, f"Expected ~0.2s, got {duration:.2f}s"
+    w.close()
+    print(f"  ✓ WAV file valid ({duration:.2f}s, mono, 44100 Hz, 16-bit)")
+
+    # Test error: no audio device on raw6502
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    raw_mid = res["result"]["content"][0]["text"].split('"')[1]
+    res = client.call_tool("record_audio", {
+        "machine_id": raw_mid, "file": "/tmp/should_not_exist.wav", "duration_ms": 100
+    })
+    assert "Error" in res["result"]["content"][0]["text"]
+    print("  ✓ record_audio no-audio-device error OK")
+
+    client.call_tool("destroy_machine", {"machine_id": ra_mid})
+    client.call_tool("destroy_machine", {"machine_id": raw_mid})
+
+    # Cleanup temp file
+    import os
+    if os.path.exists(wav_path):
+        os.unlink(wav_path)
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")
     print("="*60)
-    print(f"Successfully tested {len(machines)} concurrent machine instances")
-    print("with full test suite, diff_file, snapshot, analyze_routine, and generate_tests")
 
 if __name__ == "__main__":
     try:
