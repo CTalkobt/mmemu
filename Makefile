@@ -133,6 +133,7 @@ PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 PLUGIN_CBMLOADER_SRCS = src/plugins/cbm-loader/main/prg_loader.cpp \
 	src/plugins/cbm-loader/main/crt_parser.cpp \
 	src/plugins/cbm-loader/main/cbm_cart_handler.cpp \
+	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/cbm-loader/main/d64_parser.cpp \
 	src/plugins/cbm-loader/main/g64_parser.cpp \
 	src/plugins/cbm-loader/main/t64_parser.cpp \
@@ -163,6 +164,7 @@ PLUGIN_POKEY_SRCS = src/plugins/devices/pokey/main/pokey.cpp \
 
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
+	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/cbm-loader/main/d64_parser.cpp \
 	src/plugins/cbm-loader/main/t64_parser.cpp \
 	src/plugins/cbm-loader/main/g64_parser.cpp
@@ -259,6 +261,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/c64/test/test_c64_integration.cpp \
 	src/plugins/machines/pet/test/test_pet_integration.cpp \
 	src/plugins/cbm-loader/test/test_cbm_loader.cpp \
+	src/plugins/cbm-loader/test/test_disk_formats.cpp \
 	src/plugins/devices/pet_video/test/test_pet_video.cpp \
 	src/plugins/devices/pia6520/test/test_pia6520.cpp \
 	src/plugins/devices/via6522/test/test_via6522.cpp \
@@ -333,6 +336,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/cbm-loader/main/prg_loader.o \
 	src/plugins/cbm-loader/main/crt_parser.o \
 	src/plugins/cbm-loader/main/cbm_cart_handler.o \
+	src/plugins/cbm-loader/main/cbm_sector_disk.o \
 	src/plugins/cbm-loader/main/d64_parser.o \
 	src/plugins/cbm-loader/main/g64_parser.o \
 	src/plugins/cbm-loader/main/t64_parser.o \
