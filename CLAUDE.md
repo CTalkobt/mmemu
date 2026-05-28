@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **`make mcp`** — Build the MCP server (`bin/mmemu-mcp`).
 - **`make plugins`** — Build all `.so` plugin modules in `lib/`.
 - **`make libs`** — Build static archive libraries (for internal development use).
-- **`make test`** — Build and run the complete test suite (~160 tests) plus extended test suites.
+- **`make test`** — Build and run the complete test suite (~517 tests) plus extended test suites.
 - **`make test-mega65`** — Run MEGA65 45GS02 cross-validation tests (requires `ca45` assembler).
 - **`make test-mcp`** — Run MCP Python integration tests.
 - **`make man`** — Generate man pages from Markdown documentation (requires `pandoc`).
@@ -68,7 +68,7 @@ Key plugins:
 - **mmemu-plugin-vic2.so**, **mmemu-plugin-sid6581.so** — Commodore devices
 - **mmemu-plugin-map-mmu.so**, **mmemu-plugin-f018b-dma.so** — MEGA65 peripherals
 - **mmemu-plugin-mega65.so** — MEGA65 machine preset (includes hypervisor registers, HYPPO ROM loading)
-- **mmemu-plugin-cbm-loader.so** — `.prg`, `.crt`, `.d64`, `.g64`, `.t64` file loaders
+- **mmemu-plugin-cbm-loader.so** — `.prg`, `.crt`, `.d64`, `.d71`, `.d80`, `.d81`, `.d82`, `.g64`, `.t64` file loaders
 - **mmemu-plugin-datasette.so** — Tape (`.tap`) support
 
 ---

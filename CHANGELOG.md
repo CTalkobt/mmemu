@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-05-27
+
+### Added
+- **CBM Disk Image Format Support** (`src/plugins/cbm-loader/`):
+    - D71 (1571 double-sided, 70 tracks, 349,696 bytes)
+    - D80 (8050, 77 tracks, 533,248 bytes)
+    - D81 (1581, 80 tracks, 819,200 bytes — used by MEGA65)
+    - D82 (8250 double-sided, 154 tracks, 1,066,496 bytes)
+    - All formats support error-info variants (appended per-sector error bytes)
+    - `CbmSectorDisk` base class with geometry-driven shared logic for directory parsing, file chain reading, disk name/ID extraction, and BAM-based free block counting
+    - `DiskImageLoader` now dispatches `.d71`, `.d80`, `.d81`, `.d82` extensions
+    - 10 new unit tests: format open/read, geometry validation, size rejection, extension dispatch
+
+### Fixed
+- **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.
+- **D64 getFreeBlocks()**: BAM entry offset was off by 4 bytes (read from sector start instead of skipping the 4-byte header). Fixed via configurable `bamEntryOffset` in geometry.
+- **D64 readFile()**: Removed leftover `std::cerr` debug statements.
+
 ## [0.3.0] - 2026-05-19
 
 ### Added

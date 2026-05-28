@@ -100,6 +100,16 @@
   [x] - Add ca45 backend configuration to example config.json
   [x] - Document assembler backend architecture and how to add new assemblers
 
+## CBM Disk Image Formats (0.3.1) ✓ COMPLETE
+[x] Refactor D64Parser into geometry-driven CbmSectorDisk base class
+[x] D71 (1571 double-sided) parser
+[x] D80 (8050) parser
+[x] D81 (1581) parser — used by MEGA65
+[x] D82 (8250 double-sided) parser
+[x] DiskImageLoader dispatch for all new extensions
+[x] Fix D64 getDiskName (wrong sector), getFreeBlocks (BAM offset), remove debug cerr
+[x] Unit tests for all formats (10 new tests)
+
 ## Deprioritized
 - Cycle-accurate timing for all opcodes/modes
 - I/O stalls and DMA contention simulation
