@@ -110,6 +110,13 @@
 [x] Fix D64 getDiskName (wrong sector), getFreeBlocks (BAM offset), remove debug cerr
 [x] Unit tests for all formats (10 new tests)
 
+## MCP ROM Diffing Tool (0.3.2) ✓ COMPLETE
+[x] `diff_rom` tool: compare two ROM files with structured diff report
+[x] Vector table comparison (NMI, RESET, IRQ)
+[x] Symbol annotation support via machine_id
+[x] Configurable context bytes and base address
+[x] MCP Tool Count: 51 → 52
+
 ## Deprioritized
 - Cycle-accurate timing for all opcodes/modes
 - I/O stalls and DMA contention simulation

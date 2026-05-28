@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.3.1] - 2026-05-27
+## [0.3.2] - 2026-05-27
 
 ### Added
 - **CBM Disk Image Format Support** (`src/plugins/cbm-loader/`):
@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
     - `CbmSectorDisk` base class with geometry-driven shared logic for directory parsing, file chain reading, disk name/ID extraction, and BAM-based free block counting
     - `DiskImageLoader` now dispatches `.d71`, `.d80`, `.d81`, `.d82` extensions
     - 10 new unit tests: format open/read, geometry validation, size rejection, extension dispatch
+- **MCP `diff_rom` Tool** (`src/mcp/main/main.cpp`):
+    - Compare two ROM image files byte-by-byte
+    - Summary: file sizes, changed byte count/percentage, region count
+    - 6502 vector table comparison (NMI, RESET, IRQ) with change detection
+    - Per-region hex dump with configurable context bytes
+    - Optional symbol annotations via `machine_id` (nearest label + offset)
+    - Tool count: 51 → 52
 
 ### Fixed
 - **D64 getDiskName()**: Read disk name from wrong sector (18/1 directory instead of 18/0 BAM). Fixed to use geometry-defined header sector.
