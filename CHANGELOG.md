@@ -31,6 +31,8 @@ All notable changes to this project will be documented in this file.
     - Detects loops (backward branches), subroutine calls (JSR with dedup + count)
     - Identifies I/O accesses ($D000-$DFFF) as read/write with symbol annotations
     - Reports indirect jumps (JMP ($xxxx)) as unresolvable exit points
+    - `recursive` mode: follows into JSR targets to analyze subroutine internals
+    - Reports max call depth (deepest JSR nesting level)
     - Configurable max_instructions limit (default 200, max 5000)
     - Tool count: 51 → 57
 

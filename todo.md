@@ -121,6 +121,8 @@
 [x] `snapshot_delete`: remove snapshots (single or all)
 [x] `analyze_routine`: control-flow analysis from entry point
 [x] Follows branches/jumps, detects loops, calls, I/O accesses, exits
+[x] `recursive` mode: follows into JSR targets for full call-tree analysis
+[x] Reports max call depth (deepest JSR nesting level)
 [x] Symbol annotations for calls, loops, and I/O addresses
 [x] MCP Tool Count: 51 → 57
 

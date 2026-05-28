@@ -265,4 +265,5 @@ See `todo.md` for the full roadmap.
 | CA45 assembler | `src/plugins/45gs02/main/ca45_assembler.cpp` |
 | Hypervisor regs | `src/plugins/devices/hypervisor/main/hypervisor_regs.cpp` |
 | MEGA65 machine | `src/plugins/machines/mega65/main/machine_mega65.cpp` |
-| MCP server | `src/mcp/main/main.cpp` (includes assembler tools) |
+| MCP server | `src/mcp/main/main.cpp` (57 tools: assembler, snapshots, diff_file, analyze_routine) |
+| Disk image parsers | `src/plugins/cbm-loader/main/cbm_sector_disk.cpp` (D64/D71/D80/D81/D82 base) |
