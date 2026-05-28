@@ -849,6 +849,11 @@ Json handleDescribe() {
         maxProp.oVal["description"] = Json("Maximum instructions to analyze (default: 200)");
         props.oVal["max_instructions"] = maxProp;
 
+        Json recProp(Json::OBJ);
+        recProp.oVal["type"] = Json("boolean");
+        recProp.oVal["description"] = Json("Follow into subroutines (JSR targets). Default: false.");
+        props.oVal["recursive"] = recProp;
+
         schema.oVal["properties"] = props;
         Json req(Json::ARR);
         req.push_back(Json("machine_id"));
@@ -858,6 +863,7 @@ Json handleDescribe() {
                 "Analyze a routine by walking its control flow from an entry point. "
                 "Disassembles instructions, follows branches and jumps, identifies loops "
                 "(backward branches), subroutine calls, I/O accesses, and exit points. "
+                "Set recursive=true to also analyze called subroutines. "
                 "Returns a structured analysis report with symbol annotations.",
                 schema);
     }
@@ -2440,14 +2446,16 @@ Json handleToolsCall(const Json& params) {
                 int maxInsns = args.contains("max_instructions") ? (int)args["max_instructions"].nVal : 200;
                 if (maxInsns <= 0) maxInsns = 200;
                 if (maxInsns > 5000) maxInsns = 5000;
+                bool recursive = args.contains("recursive") && args["recursive"].bVal;
 
                 SymbolTable* symTab = ms->dbg ? &ms->dbg->symbols() : nullptr;
                 uint32_t addrMask = ms->bus->config().addrMask;
 
-                // Control-flow walk
+                // Control-flow walk with depth tracking
                 std::set<uint32_t> visited;
-                std::vector<uint32_t> queue;
-                queue.push_back(entryAddr);
+                struct QueueItem { uint32_t pc; int depth; };
+                std::vector<QueueItem> queue;
+                queue.push_back({entryAddr, 0});
 
                 struct CallInfo { uint32_t target; uint32_t from; };
                 struct LoopInfo { uint32_t branchAddr; uint32_t target; };
@@ -2461,10 +2469,14 @@ Json handleToolsCall(const Json& params) {
                 int totalInsns = 0;
                 uint32_t minAddr = entryAddr, maxAddr = entryAddr;
                 int branchCount = 0, jmpCount = 0;
+                int maxDepth = 0;    // deepest call nesting seen
+                int curDepth = 0;    // current call depth during walk
 
                 while (!queue.empty() && totalInsns < maxInsns) {
-                    uint32_t pc = queue.back();
+                    auto item = queue.back();
                     queue.pop_back();
+                    uint32_t pc = item.pc;
+                    curDepth = item.depth;
 
                     while (totalInsns < maxInsns) {
                         if (visited.count(pc)) break;
@@ -2481,7 +2493,6 @@ Json handleToolsCall(const Json& params) {
                         uint8_t opcode = ms->bus->peek8(pc);
 
                         // Detect I/O accesses (reads/writes to $D000-$DFFF on 16-bit bus)
-                        // Check operand address for absolute and zero-page addressing
                         if (bytes >= 3) {
                             uint16_t operandAddr = ms->bus->peek8(pc+1) | (ms->bus->peek8(pc+2) << 8);
                             if (operandAddr >= 0xD000 && operandAddr <= 0xDFFF) {
@@ -2494,7 +2505,13 @@ Json handleToolsCall(const Json& params) {
                             exits.push_back(pc);
                             break;
                         } else if (entry.isCall) {
-                            calls.push_back({entry.targetAddr & addrMask, pc});
+                            uint32_t target = entry.targetAddr & addrMask;
+                            calls.push_back({target, pc});
+                            if (recursive && !visited.count(target)) {
+                                int childDepth = curDepth + 1;
+                                if (childDepth > maxDepth) maxDepth = childDepth;
+                                queue.push_back({target, childDepth});
+                            }
                             pc = (pc + bytes) & addrMask;
                         } else if (entry.isBranch) {
                             ++branchCount;
@@ -2506,8 +2523,7 @@ Json handleToolsCall(const Json& params) {
                                 loops.push_back({pc, target});
                             }
 
-                            // Queue the path we don't follow inline
-                            if (!visited.count(target)) queue.push_back(target);
+                            if (!visited.count(target)) queue.push_back({target, curDepth});
                             pc = fallthrough;
                         } else if (opcode == 0x4C) {
                             // JMP absolute
@@ -2534,10 +2550,12 @@ Json handleToolsCall(const Json& params) {
 
                 ss << "=== Routine Analysis: $" << toHex(entryAddr, 4);
                 if (!entryLabel.empty()) ss << " (" << entryLabel << ")";
+                if (recursive) ss << " [recursive]";
                 ss << " ===\n";
                 ss << "Size: " << (maxAddr - minAddr + 1) << " bytes ($"
                    << toHex(minAddr, 4) << "-$" << toHex(maxAddr, 4) << "), "
                    << totalInsns << " instructions\n";
+                ss << "Max call depth: " << maxDepth << "\n";
                 if (totalInsns >= maxInsns)
                     ss << "NOTE: Analysis truncated at " << maxInsns << " instructions\n";
                 ss << "\n";

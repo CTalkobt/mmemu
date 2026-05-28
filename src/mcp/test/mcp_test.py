@@ -394,22 +394,28 @@ def run_tests():
     ar_mid = res["result"]["content"][0]["text"].split('"')[1]
 
     # Write a program with branches, loops, JSR calls, I/O, and RTS
-    # $0200: JSR $0210      ; call subroutine
-    # $0203: LDX #$05       ; X = 5
-    # $0205: DEX             ; LOOP: X--
-    # $0206: BNE $0205       ; backward branch (loop)
-    # $0208: LDA #$01
-    # $020A: STA $D020       ; write to I/O
-    # $020D: LDA $D012       ; read from I/O
-    # $0210: RTS             ; (also entry of "subroutine" — reused for simplicity)
+    # $0200: JSR $020A       ; call INIT_SCREEN
+    # $0203: JSR $020F       ; call WAIT_RASTER
+    # $0206: STA $D020       ; write to BORDER
+    # $0209: RTS
+    # $020A: LDA #$2A        ; INIT_SCREEN
+    # $020C: STA $02
+    # $020E: RTS
+    # $020F: LDA $D012       ; WAIT_RASTER
+    # $0212: CMP #$80
+    # $0214: BNE $020F       ; loop until raster = $80
+    # $0216: RTS
     program = [
-        0x20, 0x10, 0x02,  # JSR $0210
-        0xA2, 0x05,        # LDX #$05
-        0xCA,              # DEX
-        0xD0, 0xFD,        # BNE $0205  (offset -3)
-        0xA9, 0x01,        # LDA #$01
+        0x20, 0x0A, 0x02,  # JSR $020A
+        0x20, 0x0F, 0x02,  # JSR $020F
         0x8D, 0x20, 0xD0,  # STA $D020
-        0xAD, 0x12, 0xD0,  # LDA $D012
+        0x60,              # RTS
+        0xA9, 0x2A,        # LDA #$2A  (INIT_SCREEN)
+        0x85, 0x02,        # STA $02
+        0x60,              # RTS
+        0xAD, 0x12, 0xD0,  # LDA $D012 (WAIT_RASTER)
+        0xC9, 0x80,        # CMP #$80
+        0xD0, 0xF9,        # BNE $020F (-7)
         0x60               # RTS
     ]
     client.call_tool("write_memory", {
@@ -418,7 +424,8 @@ def run_tests():
 
     # Add symbols for annotation
     client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "MAIN", "addr": "$0200"})
-    client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "LOOP", "addr": "$0205"})
+    client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "INIT_SCREEN", "addr": "$020A"})
+    client.call_tool("add_symbol", {"machine_id": ar_mid, "label": "WAIT_RASTER", "addr": "$020F"})
 
     # Analyze the routine
     res = client.call_tool("analyze_routine", {
@@ -432,16 +439,11 @@ def run_tests():
     print("  ✓ analyze_routine header + entry label OK")
 
     # Verify call detection
-    assert "Calls" in text and "JSR $0210" in text, f"Missing call: {text}"
+    assert "Calls" in text and "JSR $020A" in text, f"Missing call: {text}"
     print("  ✓ Call detection OK")
 
-    # Verify loop detection
-    assert "Loops" in text and "0205" in text.lower(), f"Missing loop: {text}"
-    print("  ✓ Loop detection OK")
-
-    # Verify I/O access detection
+    # Verify I/O access detection (non-recursive only sees MAIN's STA $D020)
     assert "I/O" in text and "D020" in text.upper(), f"Missing I/O write: {text}"
-    assert "D012" in text.upper(), f"Missing I/O read: {text}"
     print("  ✓ I/O access detection OK")
 
     # Verify exit detection
@@ -450,7 +452,29 @@ def run_tests():
 
     # Verify control flow summary
     assert "Branches:" in text and "Calls:" in text, f"Missing control flow: {text}"
-    print("  ✓ Control flow summary OK")
+    assert "Max call depth: 0" in text, f"Non-recursive should have depth 0: {text}"
+    print("  ✓ Control flow summary + depth OK")
+
+    # Test recursive mode — should follow into subroutines
+    res = client.call_tool("analyze_routine", {
+        "machine_id": ar_mid, "addr": "$0200", "recursive": True
+    })
+    rtext = res["result"]["content"][0]["text"]
+    assert "[recursive]" in rtext, f"Missing recursive indicator: {rtext[:200]}"
+    assert "Max call depth: 1" in rtext, f"Recursive depth should be 1: {rtext}"
+    # Recursive should find more instructions than non-recursive
+    # Extract instruction count from both reports
+    import re
+    non_rec_insns = int(re.search(r'(\d+) instructions', text).group(1))
+    rec_insns = int(re.search(r'(\d+) instructions', rtext).group(1))
+    assert rec_insns > non_rec_insns, \
+        f"Recursive ({rec_insns}) should have more instructions than non-recursive ({non_rec_insns})"
+    # Recursive should find WAIT_RASTER's loop and I/O read
+    assert "Loops" in rtext and "020F" in rtext.upper(), \
+        f"Recursive should find WAIT_RASTER loop: {rtext}"
+    assert "D012" in rtext.upper(), \
+        f"Recursive should find I/O read $D012: {rtext}"
+    print(f"  ✓ Recursive mode OK ({non_rec_insns} -> {rec_insns} instructions, depth 1)")
 
     # Test error: invalid machine
     res = client.call_tool("analyze_routine", {
