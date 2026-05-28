@@ -691,6 +691,46 @@ Json handleDescribe() {
     getAsmSchema.oVal["required"] = getAsmReq;
     addTool("get_assembler", "Get the current assembler for a machine. Returns the assembler name.", getAsmSchema);
 
+    // diff_rom — compare two ROM files
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+
+        Json fileAProp(Json::OBJ);
+        fileAProp.oVal["type"] = Json("string");
+        fileAProp.oVal["description"] = Json("Path to first ROM file");
+        props.oVal["file_a"] = fileAProp;
+
+        Json fileBProp(Json::OBJ);
+        fileBProp.oVal["type"] = Json("string");
+        fileBProp.oVal["description"] = Json("Path to second ROM file");
+        props.oVal["file_b"] = fileBProp;
+
+        Json baseProp(Json::OBJ);
+        baseProp.oVal["type"] = Json("string");
+        baseProp.oVal["description"] = Json("Base address for display (e.g. $E000 for KERNAL). Default: $0000");
+        props.oVal["base_addr"] = baseProp;
+
+        props.oVal["machine_id"] = midProp;
+
+        Json ctxProp(Json::OBJ);
+        ctxProp.oVal["type"] = Json("number");
+        ctxProp.oVal["description"] = Json("Context bytes to show around each diff region (default: 0)");
+        props.oVal["context"] = ctxProp;
+
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("file_a"));
+        req.push_back(Json("file_b"));
+        schema.oVal["required"] = req;
+        addTool("diff_rom",
+                "Compare two ROM image files byte-by-byte. Returns a structured diff report "
+                "with changed regions, vector table comparison, and optional symbol annotations. "
+                "Useful for comparing ROM revisions, KERNAL patches, or machine variants.",
+                schema);
+    }
+
     std::vector<std::string> pluginTools;
     PluginToolRegistry::instance().listTools(pluginTools);
     for (const auto& name : pluginTools) {
@@ -2018,6 +2058,190 @@ Json handleToolsCall(const Json& params) {
                 ss << t << " from $" << toHex(e.pushedByPc) << " val: $" << toHex(e.value, 2) << "\n";
             }
             textItem.oVal["text"] = Json(ss.str().empty() ? "(stack empty)\n" : ss.str());
+        }
+    } else if (name == "diff_rom") {
+        std::string fileA = args["file_a"].sVal;
+        std::string fileB = args["file_b"].sVal;
+        uint32_t baseAddr = 0;
+        int context = 0;
+
+        // Optional base address
+        if (args.contains("base_addr") && !args["base_addr"].sVal.empty()) {
+            try {
+                std::string ba = args["base_addr"].sVal;
+                if (ba.size() > 1 && ba[0] == '$')
+                    baseAddr = std::stoul(ba.substr(1), nullptr, 16);
+                else
+                    baseAddr = std::stoul(ba, nullptr, 0);
+            } catch (...) {}
+        }
+
+        // Optional context bytes
+        if (args.contains("context"))
+            context = (int)args["context"].nVal;
+
+        // Optional symbol table from machine
+        SymbolTable* symTab = nullptr;
+        if (args.contains("machine_id") && !args["machine_id"].sVal.empty()) {
+            MachineState* ms = getMachine(args["machine_id"].sVal);
+            if (ms && ms->dbg) symTab = &ms->dbg->symbols();
+        }
+
+        // Read both files
+        auto readFile = [](const std::string& path, std::vector<uint8_t>& out) -> bool {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) return false;
+            f.seekg(0, std::ios::end);
+            size_t sz = f.tellg();
+            f.seekg(0, std::ios::beg);
+            out.resize(sz);
+            f.read(reinterpret_cast<char*>(out.data()), sz);
+            return true;
+        };
+
+        std::vector<uint8_t> dataA, dataB;
+        if (!readFile(fileA, dataA)) {
+            textItem.oVal["text"] = Json("Error: Cannot read file_a: " + fileA);
+            textItem.oVal["isError"] = Json(true);
+        } else if (!readFile(fileB, dataB)) {
+            textItem.oVal["text"] = Json("Error: Cannot read file_b: " + fileB);
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            size_t maxLen = std::max(dataA.size(), dataB.size());
+            size_t minLen = std::min(dataA.size(), dataB.size());
+
+            // Collect diff regions (runs of consecutive changed bytes)
+            struct DiffRegion {
+                uint32_t offset;
+                uint32_t length;
+            };
+            std::vector<DiffRegion> regions;
+            bool inDiff = false;
+
+            for (size_t i = 0; i < maxLen; ++i) {
+                uint8_t a = (i < dataA.size()) ? dataA[i] : 0;
+                uint8_t b = (i < dataB.size()) ? dataB[i] : 0;
+                bool differs = (a != b);
+
+                if (differs && !inDiff) {
+                    regions.push_back({(uint32_t)i, 1});
+                    inDiff = true;
+                } else if (differs && inDiff) {
+                    regions.back().length++;
+                } else {
+                    inDiff = false;
+                }
+            }
+
+            // Count total changed bytes
+            uint32_t totalChanged = 0;
+            for (const auto& r : regions) totalChanged += r.length;
+
+            std::stringstream ss;
+
+            // Summary
+            ss << "=== ROM Diff Report ===\n";
+            ss << "File A: " << fileA << " (" << dataA.size() << " bytes)\n";
+            ss << "File B: " << fileB << " (" << dataB.size() << " bytes)\n";
+            if (dataA.size() != dataB.size())
+                ss << "WARNING: Files differ in size!\n";
+            ss << "Changed: " << totalChanged << " / " << maxLen << " bytes ("
+               << std::fixed << std::setprecision(1)
+               << (maxLen > 0 ? (100.0 * totalChanged / maxLen) : 0.0) << "%)\n";
+            ss << "Regions: " << regions.size() << " contiguous diff region(s)\n\n";
+
+            // Vector table comparison (6502 standard vectors)
+            if (minLen >= 6 && dataA.size() >= 6 && dataB.size() >= 6) {
+                // Check if files are large enough for standard vector locations
+                // Vectors are at the END of the ROM: NMI=$FFFA, RESET=$FFFC, IRQ=$FFFE
+                // Relative to base_addr, offset = 0xFFFA - base_addr (if base covers that range)
+                size_t vecOff = 0;
+                bool hasVectors = false;
+
+                if (baseAddr <= 0xFFFA && baseAddr + dataA.size() >= 0x10000 &&
+                    baseAddr + dataB.size() >= 0x10000) {
+                    vecOff = 0xFFFA - baseAddr;
+                    hasVectors = true;
+                } else if (dataA.size() >= 6 && dataB.size() >= 6) {
+                    // Try end-of-file vectors (common for raw ROM dumps)
+                    vecOff = minLen - 6;
+                    // Only show if the values look like plausible 6502 vectors
+                    uint16_t nmiA = dataA[vecOff] | (dataA[vecOff+1] << 8);
+                    uint16_t rstA = dataA[vecOff+2] | (dataA[vecOff+3] << 8);
+                    if (nmiA >= 0x8000 && rstA >= 0x8000) hasVectors = true;
+                }
+
+                if (hasVectors && vecOff + 6 <= dataA.size() && vecOff + 6 <= dataB.size()) {
+                    ss << "--- Vector Table ---\n";
+                    const char* vecNames[] = {"NMI", "RESET", "IRQ"};
+                    for (int v = 0; v < 3; ++v) {
+                        size_t off = vecOff + v * 2;
+                        uint16_t addrA = dataA[off] | (dataA[off+1] << 8);
+                        uint16_t addrB = dataB[off] | (dataB[off+1] << 8);
+                        ss << vecNames[v] << ": $" << toHex(addrA, 4);
+                        if (addrA != addrB)
+                            ss << " -> $" << toHex(addrB, 4) << " CHANGED";
+                        else
+                            ss << " (unchanged)";
+                        ss << "\n";
+                    }
+                    ss << "\n";
+                }
+            }
+
+            // Diff regions detail (limit output to first 50 regions)
+            int shown = 0;
+            for (const auto& r : regions) {
+                if (shown >= 50) {
+                    ss << "... (" << (regions.size() - 50) << " more regions omitted)\n";
+                    break;
+                }
+
+                uint32_t dispAddr = baseAddr + r.offset;
+                ss << "$" << toHex(dispAddr, 4) << "-$"
+                   << toHex(dispAddr + r.length - 1, 4)
+                   << " (" << r.length << " byte" << (r.length > 1 ? "s" : "") << ")";
+
+                // Symbol annotation
+                if (symTab) {
+                    uint32_t symOff = 0;
+                    std::string label = symTab->nearest(dispAddr, symOff);
+                    if (!label.empty()) {
+                        ss << "  ; " << label;
+                        if (symOff > 0) ss << "+" << symOff;
+                    }
+                }
+                ss << "\n";
+
+                // Show bytes (limit to 16 per region for readability)
+                uint32_t showLen = std::min(r.length, (uint32_t)16);
+                uint32_t ctxStart = (context > 0 && r.offset >= (uint32_t)context)
+                                    ? r.offset - context : r.offset;
+                uint32_t ctxEnd = std::min((uint32_t)maxLen, r.offset + showLen + context);
+
+                ss << "  A: ";
+                for (uint32_t i = ctxStart; i < ctxEnd; ++i) {
+                    if (i == r.offset) ss << "[";
+                    ss << toHex(i < dataA.size() ? dataA[i] : 0, 2);
+                    if (i == r.offset + showLen - 1) ss << "]";
+                    ss << " ";
+                }
+                ss << "\n  B: ";
+                for (uint32_t i = ctxStart; i < ctxEnd; ++i) {
+                    if (i == r.offset) ss << "[";
+                    ss << toHex(i < dataB.size() ? dataB[i] : 0, 2);
+                    if (i == r.offset + showLen - 1) ss << "]";
+                    ss << " ";
+                }
+                if (r.length > 16) ss << "...";
+                ss << "\n\n";
+                ++shown;
+            }
+
+            if (regions.empty())
+                ss << "Files are identical.\n";
+
+            textItem.oVal["text"] = Json(ss.str());
         }
     } else {
         textItem.oVal["text"] = Json("Error: Unknown tool " + name);
