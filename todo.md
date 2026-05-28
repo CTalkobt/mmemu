@@ -100,7 +100,7 @@
   [x] - Add ca45 backend configuration to example config.json
   [x] - Document assembler backend architecture and how to add new assemblers
 
-## CBM Disk Image Formats (0.3.1) ✓ COMPLETE
+## CBM Disk Image Formats (0.3.2) ✓ COMPLETE
 [x] Refactor D64Parser into geometry-driven CbmSectorDisk base class
 [x] D71 (1571 double-sided) parser
 [x] D80 (8050) parser
@@ -110,7 +110,7 @@
 [x] Fix D64 getDiskName (wrong sector), getFreeBlocks (BAM offset), remove debug cerr
 [x] Unit tests for all formats (10 new tests)
 
-## MCP File Diffing & Snapshot Tools (0.3.2) ✓ COMPLETE
+## MCP Analysis & Automation Tools (0.3.2) ✓ COMPLETE
 [x] `diff_file` tool: compare two binary files with structured diff report
 [x] Vector table comparison (NMI, RESET, IRQ)
 [x] Symbol annotation support via machine_id

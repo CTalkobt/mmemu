@@ -221,7 +221,7 @@ The simulator now features a pluggable assembler system with per-machine selecti
 - **MachineDescriptor** includes optional `"assembler"` field (e.g., `"ca45"`, `"kickAssembler"`)
 - **resolveAssembler()** follows 3-level precedence: runtime override → machine-preferred → ISA-default
 - **CA45Assembler** plugin provides MEGA65 45GS02 assembly support
-- **MCP Server** includes `set_assembler` and `get_assembler` tools for runtime override
+- **MCP Server** provides 58 tools including assembler selection, machine snapshots, binary diff, routine analysis, and test vector generation
 
 ### Adding a New Assembler
 
