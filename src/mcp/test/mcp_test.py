@@ -252,12 +252,146 @@ def run_tests():
     assert "Error" in res["result"]["content"][0]["text"]
     print("  ✓ Operations correctly fail on destroyed instances")
 
+    # --- 8. diff_file Tool ---
+    print("\n--- 8. diff_file Tool ---")
+    import tempfile, os
+
+    # Create two test files
+    file_a = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
+    file_b = tempfile.NamedTemporaryFile(delete=False, suffix=".bin")
+    try:
+        data_a = bytearray(256)
+        data_b = bytearray(256)
+        # Make them differ at offset 0x10-0x13
+        for i in range(4):
+            data_a[0x10 + i] = 0xAA
+            data_b[0x10 + i] = 0xBB
+        # Add vectors at end (NMI=$E000, RESET=$E100, IRQ=$E200)
+        import struct
+        data_a[0xFA:] = struct.pack('<HHH', 0xE000, 0xE100, 0xE200)
+        data_b[0xFA:] = struct.pack('<HHH', 0xE000, 0xE150, 0xE200)
+        file_a.write(data_a)
+        file_b.write(data_b)
+        file_a.close()
+        file_b.close()
+
+        # Test diff with differences
+        res = client.call_tool("diff_file", {
+            "file_a": file_a.name,
+            "file_b": file_b.name,
+            "base_addr": "$FF00"
+        })
+        diff_text = res["result"]["content"][0]["text"]
+        assert "Changed: 5 / 256 bytes" in diff_text, f"Diff summary wrong: {diff_text[:200]}"
+        assert "RESET" in diff_text and "CHANGED" in diff_text, f"Vector diff missing: {diff_text[:400]}"
+        print("  ✓ diff_file with differences OK")
+
+        # Test diff identical files
+        res = client.call_tool("diff_file", {
+            "file_a": file_a.name,
+            "file_b": file_a.name
+        })
+        diff_text = res["result"]["content"][0]["text"]
+        assert "Files are identical" in diff_text, f"Identical diff failed: {diff_text[:200]}"
+        print("  ✓ diff_file identical files OK")
+
+        # Test diff missing file
+        res = client.call_tool("diff_file", {
+            "file_a": "/nonexistent/path.bin",
+            "file_b": file_b.name
+        })
+        err_text = res["result"]["content"][0]["text"]
+        assert "Error" in err_text, f"Missing file should error: {err_text[:200]}"
+        print("  ✓ diff_file missing file error OK")
+    finally:
+        os.unlink(file_a.name)
+        os.unlink(file_b.name)
+
+    # --- 9. Snapshot Tools ---
+    print("\n--- 9. Snapshot Tools ---")
+
+    # Create a fresh machine for snapshot tests
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    snap_mid = res["result"]["content"][0]["text"].split('"')[1]
+    print(f"  Created {snap_mid} for snapshot tests")
+
+    # Set up: write a small program at $0200 and set PC there
+    client.call_tool("fill_memory", {
+        "machine_id": snap_mid, "addr": "$0200", "size": "16", "value": "$EA"  # NOP sled
+    })
+    client.call_tool("set_pc", {"machine_id": snap_mid, "addr": "$0200"})
+
+    # snapshot_save — take "before" snapshot
+    res = client.call_tool("snapshot_save", {
+        "machine_id": snap_mid, "name": "before", "range": "$0000-$02FF"
+    })
+    save_text = res["result"]["content"][0]["text"]
+    assert "before" in save_text and "registers" in save_text, f"Save failed: {save_text}"
+    print("  ✓ snapshot_save OK")
+
+    # Modify state: fill memory and step CPU
+    client.call_tool("fill_memory", {
+        "machine_id": snap_mid, "addr": "$0080", "size": "4", "value": "$42"
+    })
+    client.call_tool("step_cpu", {"machine_id": snap_mid, "count": 3})
+
+    # snapshot_save — take "after" snapshot
+    res = client.call_tool("snapshot_save", {
+        "machine_id": snap_mid, "name": "after", "range": "$0000-$02FF"
+    })
+    save_text = res["result"]["content"][0]["text"]
+    assert "after" in save_text, f"Save after failed: {save_text}"
+    print("  ✓ snapshot_save (after changes) OK")
+
+    # snapshot_list
+    res = client.call_tool("snapshot_list", {"machine_id": snap_mid})
+    list_text = res["result"]["content"][0]["text"]
+    assert "before" in list_text and "after" in list_text, f"List failed: {list_text}"
+    print("  ✓ snapshot_list OK")
+
+    # snapshot_diff — should show register and memory changes
+    res = client.call_tool("snapshot_diff", {
+        "machine_id": snap_mid, "snapshot_a": "before", "snapshot_b": "after"
+    })
+    diff_text = res["result"]["content"][0]["text"]
+    assert "Registers" in diff_text, f"Diff missing registers section: {diff_text[:200]}"
+    assert "Memory" in diff_text, f"Diff missing memory section: {diff_text[:200]}"
+    assert "PC:" in diff_text, f"Diff should show PC change: {diff_text[:400]}"
+    assert "$0080" in diff_text, f"Diff should show memory change at $0080: {diff_text[:400]}"
+    print("  ✓ snapshot_diff OK (registers + memory)")
+
+    # snapshot_diff — error on missing snapshot
+    res = client.call_tool("snapshot_diff", {
+        "machine_id": snap_mid, "snapshot_a": "before", "snapshot_b": "nonexistent"
+    })
+    err_text = res["result"]["content"][0]["text"]
+    assert "Error" in err_text, f"Missing snapshot should error: {err_text}"
+    print("  ✓ snapshot_diff missing snapshot error OK")
+
+    # snapshot_delete — delete one
+    res = client.call_tool("snapshot_delete", {"machine_id": snap_mid, "name": "before"})
+    assert "Deleted" in res["result"]["content"][0]["text"]
+    res = client.call_tool("snapshot_list", {"machine_id": snap_mid})
+    list_text = res["result"]["content"][0]["text"]
+    assert "before" not in list_text and "after" in list_text
+    print("  ✓ snapshot_delete (single) OK")
+
+    # snapshot_delete — delete all
+    res = client.call_tool("snapshot_delete", {"machine_id": snap_mid, "name": "*"})
+    assert "Deleted" in res["result"]["content"][0]["text"]
+    res = client.call_tool("snapshot_list", {"machine_id": snap_mid})
+    assert "No snapshots" in res["result"]["content"][0]["text"]
+    print("  ✓ snapshot_delete (all) OK")
+
+    # Cleanup
+    client.call_tool("destroy_machine", {"machine_id": snap_mid})
+
     client.close()
     print("\n" + "="*60)
-    print("ALL MCP MULTI-INSTANCE TESTS PASSED")
+    print("ALL MCP TESTS PASSED")
     print("="*60)
     print(f"Successfully tested {len(machines)} concurrent machine instances")
-    print("with full test suite on each instance")
+    print("with full test suite, diff_file, and snapshot tools")
 
 if __name__ == "__main__":
     try:
