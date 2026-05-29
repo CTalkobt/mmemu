@@ -186,6 +186,22 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         }
         showRegisters();
+    } else if (cmd == "backstep" || cmd == "bs") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        if (!m_ctx.dbg) { m_output("No debug context.\n"); return; }
+        int n = 1;
+        if (ss >> n) {} else { n = 1; }
+        int reversed = 0;
+        for (int i = 0; i < n; ++i) {
+            if (!m_ctx.dbg->reverseStep()) break;
+            ++reversed;
+        }
+        if (reversed == 0) {
+            m_output("No undo history available.\n");
+        } else {
+            m_output("Reversed " + std::to_string(reversed) + " instruction(s).\n");
+            showRegisters();
+        }
     } else if (cmd == "run") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         std::string expr;

@@ -217,6 +217,36 @@ Json handleDescribe() {
     stepSchema.oVal["required"] = stepReq;
     addTool("step_cpu", "Step the CPU by count instructions (default 1). Returns registers after stepping.", stepSchema);
 
+    // reverse_step
+    {
+        Json rsSchema(Json::OBJ); rsSchema.oVal["type"] = Json("object");
+        Json rsProps(Json::OBJ);
+        rsProps.oVal["machine_id"] = midProp;
+        rsProps.oVal["count"] = cntProp;
+        rsSchema.oVal["properties"] = rsProps;
+        Json rsReq(Json::ARR); rsReq.push_back(Json("machine_id"));
+        rsSchema.oVal["required"] = rsReq;
+        addTool("reverse_step",
+                "Step the CPU backward by undoing traced instructions. "
+                "Restores registers and reverses memory writes for each step. "
+                "Limited by trace buffer depth (default 1000 instructions).",
+                rsSchema);
+    }
+
+    // undo_info
+    {
+        Json uiSchema(Json::OBJ); uiSchema.oVal["type"] = Json("object");
+        Json uiProps(Json::OBJ);
+        uiProps.oVal["machine_id"] = midProp;
+        uiSchema.oVal["properties"] = uiProps;
+        Json uiReq(Json::ARR); uiReq.push_back(Json("machine_id"));
+        uiSchema.oVal["required"] = uiReq;
+        addTool("undo_info",
+                "Show undo/time-travel buffer status: entries available for reverse stepping, "
+                "buffer capacity, and memory usage estimate.",
+                uiSchema);
+    }
+
     Json spcSchema(Json::OBJ);
     spcSchema.oVal["type"] = Json("object");
     Json spcProps(Json::OBJ);
@@ -1073,6 +1103,65 @@ Json handleToolsCall(const Json& params) {
             for (int i = 0; i < count; ++i) ms->cpu->step();
             textItem.oVal["text"] = Json("Executed " + std::to_string(count) + " instructions.");
         }
+    } else if (name == "reverse_step") {
+        std::string mid = args["machine_id"].sVal;
+        int count = args.contains("count") ? (int)args["count"].nVal : 1;
+        if (count < 1) count = 1;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->dbg) {
+            textItem.oVal["text"] = Json("Error: No debug context available");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int reversed = 0;
+            for (int i = 0; i < count; ++i) {
+                if (!ms->dbg->reverseStep()) break;
+                ++reversed;
+            }
+            std::stringstream ss;
+            if (reversed == 0) {
+                ss << "No undo history available (trace buffer empty).";
+            } else {
+                ss << "Reversed " << reversed << " instruction" << (reversed > 1 ? "s" : "") << ". ";
+                // Show current registers
+                int regCount = ms->cpu->regCount();
+                for (int i = 0; i < regCount; ++i) {
+                    const auto* desc = ms->cpu->regDescriptor(i);
+                    if (desc->flags & REGFLAG_INTERNAL) continue;
+                    uint32_t val = ms->cpu->regRead(i);
+                    ss << desc->name << ": $"
+                       << toHex(val, desc->width == RegWidth::R16 ? 4 : 2) << "  ";
+                }
+            }
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "undo_info") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->dbg) {
+            textItem.oVal["text"] = Json("Error: No debug context available");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            auto& tb = ms->dbg->trace();
+            std::stringstream ss;
+            ss << "Undo buffer: " << tb.size() << " / " << tb.capacity() << " entries\n";
+            ss << "Reversible steps available: " << tb.size() << "\n";
+            // Estimate memory usage
+            size_t memEst = tb.size() * (sizeof(TraceEntry) + 20); // rough estimate
+            if (memEst > 1024 * 1024) {
+                ss << "Estimated memory: " << (memEst / (1024*1024)) << " MB\n";
+            } else {
+                ss << "Estimated memory: " << (memEst / 1024) << " KB\n";
+            }
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
     } else if (name == "set_pc") {
         std::string mid = args["machine_id"].sVal;
         MachineState* ms = getMachine(mid);

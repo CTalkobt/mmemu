@@ -664,6 +664,71 @@ def run_tests():
         if os.path.exists(p):
             os.unlink(p)
 
+    # --- 14. Time-Travel Debugging (reverse_step, undo_info) ---
+    print("\n--- 14. Time-Travel Debugging ---")
+
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    tt_mid = res["result"]["content"][0]["text"].split('"')[1]
+
+    # Write: LDA #$42; STA $1000; LDA #$99; STA $1001; RTS
+    client.call_tool("write_memory", {
+        "machine_id": tt_mid, "addr": 0x0200,
+        "bytes": [0xA9, 0x42, 0x8D, 0x00, 0x10, 0xA9, 0x99, 0x8D, 0x01, 0x10, 0x60]
+    })
+    client.call_tool("set_pc", {"machine_id": tt_mid, "addr": "$0200"})
+
+    # Step forward 4 instructions (LDA, STA, LDA, STA)
+    client.call_tool("step_cpu", {"machine_id": tt_mid, "count": 4})
+
+    # Verify memory was written
+    res = client.call_tool("read_memory", {"machine_id": tt_mid, "addr": "$1000", "size": "2"})
+    mem_text = res["result"]["content"][0]["text"].lower()
+    assert "42" in mem_text and "99" in mem_text, f"Expected 42 99 in memory: {mem_text}"
+    print("  ✓ Forward execution OK ($1000=42, $1001=99)")
+
+    # Check undo_info
+    res = client.call_tool("undo_info", {"machine_id": tt_mid})
+    info_text = res["result"]["content"][0]["text"]
+    assert "4" in info_text, f"Expected 4 entries in undo buffer: {info_text}"
+    print("  ✓ undo_info OK (4 entries)")
+
+    # Reverse 2 steps (undo STA $1001, LDA #$99)
+    res = client.call_tool("reverse_step", {"machine_id": tt_mid, "count": 2})
+    rev_text = res["result"]["content"][0]["text"]
+    assert "Reversed 2" in rev_text, f"Expected 2 reversed: {rev_text}"
+    assert "A: $42" in rev_text, f"A should be $42 after undo: {rev_text}"
+    print("  ✓ reverse_step OK (2 steps, A=$42)")
+
+    # Verify $1001 was restored (undo of STA $1001)
+    res = client.call_tool("read_memory", {"machine_id": tt_mid, "addr": "$1001", "size": "1"})
+    mem_text = res["result"]["content"][0]["text"].lower()
+    assert "00" in mem_text, f"$1001 should be restored to 00: {mem_text}"
+    print("  ✓ Memory undo OK ($1001 restored to $00)")
+
+    # $1000 should still be $42 (not reversed)
+    res = client.call_tool("read_memory", {"machine_id": tt_mid, "addr": "$1000", "size": "1"})
+    mem_text = res["result"]["content"][0]["text"].lower()
+    assert "42" in mem_text, f"$1000 should still be $42: {mem_text}"
+    print("  ✓ Selective undo OK ($1000 still $42)")
+
+    # Reverse remaining 2 steps
+    res = client.call_tool("reverse_step", {"machine_id": tt_mid, "count": 2})
+    rev_text = res["result"]["content"][0]["text"]
+    assert "Reversed 2" in rev_text
+    # $1000 should now be restored too
+    res = client.call_tool("read_memory", {"machine_id": tt_mid, "addr": "$1000", "size": "1"})
+    mem_text = res["result"]["content"][0]["text"].lower()
+    assert "00" in mem_text, f"$1000 should be restored to 00: {mem_text}"
+    print("  ✓ Full undo OK ($1000 restored to $00)")
+
+    # Try to reverse when buffer is empty
+    res = client.call_tool("reverse_step", {"machine_id": tt_mid, "count": 1})
+    rev_text = res["result"]["content"][0]["text"]
+    assert "No undo" in rev_text or "empty" in rev_text.lower(), f"Should report empty: {rev_text}"
+    print("  ✓ Empty buffer handled OK")
+
+    client.call_tool("destroy_machine", {"machine_id": tt_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

@@ -55,7 +55,15 @@ All notable changes to this project will be documented in this file.
     - Calls init routine with selected subtune in accumulator
     - Installs play loop at $0002 for use with `record_audio`
     - Supports subtune selection (1-based, defaults to startSong from header)
-    - Tool count: 51 → 60
+- **Time-Travel Debugging** (`src/libdebug/main/trace_buffer.h/cpp`):
+    - `TraceEntry` extended with `memWrites` field recording (addr, old_value) for each bus write
+    - `TraceBuffer::reverseStep()` pops the last entry, undoes memory writes in reverse, restores registers
+    - `DebugContext::reverseStep()` convenience method
+    - `CircularBuffer::popBack()` and `back()` methods added
+    - MCP `reverse_step` tool: reverse N instructions with register display
+    - MCP `undo_info` tool: buffer size, capacity, memory estimate
+    - CLI `backstep` / `bs` command for interactive reverse stepping
+    - Tool count: 51 → 62
 - **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
     - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
     - Full RSP packet framing with checksums and ACK/NAK

@@ -174,6 +174,11 @@ void DebugContext::onMemoryWrite(IBus* bus, uint32_t addr, uint8_t before, uint8
         obs->onMemoryWrite(bus, addr, before, after);
     }
 
+    // Record memory write for undo support (time-travel debugging)
+    if (TraceEntry* cur = m_trace.current()) {
+        cur->memWrites.push_back({addr, before});
+    }
+
     if (auto* bp = m_breakpoints.checkWrite(addr, this)) {
         m_lastHitMessage = "Write watchpoint " + std::to_string(bp->id) + " hit at $" + toHex(addr);
         m_cpu->log(SIM_LOG_INFO, m_lastHitMessage.c_str());

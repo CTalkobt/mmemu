@@ -42,6 +42,9 @@ public:
      */
     std::vector<uint32_t> diffSnapshots(int idxA, int idxB);
 
+    /** Reverse one step: undo the last traced instruction (restore registers + memory). */
+    bool reverseStep() { return m_trace.reverseStep(m_cpu, m_bus); }
+
     bool isPaused() const { return m_paused; }
     void resume() { m_resumeSkipAddr = m_lastPausedAddr; m_paused = false; }
     const std::string& lastHitMessage() const { return m_lastHitMessage; }

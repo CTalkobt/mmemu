@@ -132,7 +132,15 @@
 [x] 16-bit PCM WAV output with proper RIFF header
 [x] `load_sid`: PSID/RSID file loader with init routine execution and play loop
 [x] Subtune selection, metadata extraction, trampoline-based init
-[x] MCP Tool Count: 51 → 60
+[x] MCP Tool Count: 51 → 62
+
+## Time-Travel Debugging (0.3.2) ✓ COMPLETE
+[x] TraceEntry extended with memWrites for undo support
+[x] TraceBuffer::reverseStep() — pop, undo memory writes, restore registers
+[x] CircularBuffer::popBack() and back() methods
+[x] MCP `reverse_step` and `undo_info` tools
+[x] CLI `backstep` / `bs` command
+[x] Memory writes captured via onMemoryWrite observer hook
 
 ## GDB Remote Protocol Server (0.3.2) ✓ COMPLETE
 [x] TCP listener with configurable port (`--gdb-port` CLI flag)

@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
     });
     
     // Register built-ins to prevent collisions
-    const char* builtIns[] = {"help", "?", "list", "create", "reset", "step", "setpc", "regs", "m", "f", "copy", "search", "searcha", "findnext", "findprior", "disasm", "asm", "type", "key", "load", "quit", "q", nullptr};
+    const char* builtIns[] = {"help", "?", "list", "create", "reset", "step", "backstep", "bs", "setpc", "regs", "m", "f", "copy", "search", "searcha", "findnext", "findprior", "disasm", "asm", "type", "key", "load", "quit", "q", nullptr};
     for (int i = 0; builtIns[i]; ++i) {
         PluginCommandRegistry::instance().registerBuiltIn(builtIns[i]);
     }
