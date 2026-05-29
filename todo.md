@@ -142,6 +142,13 @@
 [x] CLI `backstep` / `bs` command
 [x] Memory writes captured via onMemoryWrite observer hook
 
+## I/O Register Watch Pane (0.3.2) ✓ COMPLETE
+[x] BitField struct added to DeviceRegister for self-describing bit-field metadata
+[x] RegisterWatchPane: wxGrid with Addr/Name/Hex/Binary/Decoded columns
+[x] Change highlighting (yellow background on value change)
+[x] Device selector dropdown, refresh-on-visible
+[x] VIC-II bit-field annotations: SCR1, SCR2, VMEM, IRQ, IRQEN
+
 ## GDB Remote Protocol Server (0.3.2) ✓ COMPLETE
 [x] TCP listener with configurable port (`--gdb-port` CLI flag)
 [x] RSP packet framing (checksums, ACK/NAK)

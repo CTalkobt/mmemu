@@ -64,6 +64,13 @@ All notable changes to this project will be documented in this file.
     - MCP `undo_info` tool: buffer size, capacity, memory estimate
     - CLI `backstep` / `bs` command for interactive reverse stepping
     - Tool count: 51 → 62
+- **I/O Register Watch Pane** (`src/gui/main/register_watch_pane.h/cpp`):
+    - New "I/O Watch" tab in the GUI notebook
+    - wxGrid showing all registers for the selected device: Address, Name, Hex, Binary, Decoded
+    - Bit-field decoding via new `BitField` struct in `DeviceRegister` (device_info.h)
+    - Change highlighting: cells turn yellow when values change between refreshes
+    - Device selector dropdown, refreshes only when visible (30 FPS timer)
+    - VIC-II registers annotated with bit fields: SCR1 (YSCROLL/RSEL/DEN/BMM/ECM/RST8), SCR2 (XSCROLL/CSEL/MCM), VMEM (CB/VM), IRQ, IRQEN
 - **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
     - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
     - Full RSP packet framing with checksums and ACK/NAK

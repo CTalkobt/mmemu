@@ -445,8 +445,9 @@ void VIC2::getDeviceInfo(DeviceInfo& out) const {
     out.baseAddr = m_baseAddr;
     out.addrMask = addrMask();
 
-    auto addReg = [&](const std::string& name, Reg reg, const std::string& desc = "") {
-        out.registers.push_back({name, (uint32_t)reg, m_regs[reg], desc});
+    auto addReg = [&](const std::string& name, Reg reg, const std::string& desc = "",
+                      std::vector<BitField> bits = {}) {
+        out.registers.push_back({name, (uint32_t)reg, m_regs[reg], desc, std::move(bits)});
     };
 
     addReg("SP0X", SP0X); addReg("SP0Y", SP0Y);
@@ -458,15 +459,26 @@ void VIC2::getDeviceInfo(DeviceInfo& out) const {
     addReg("SP6X", SP6X); addReg("SP6Y", SP6Y);
     addReg("SP7X", SP7X); addReg("SP7Y", SP7Y);
     addReg("MSIGX", MSIGX, "Sprite X MSBs");
-    addReg("SCR1", SCR1, "Control 1");
+    addReg("SCR1", SCR1, "Control 1", {
+        {"YSCROLL", 0, 3}, {"RSEL", 3, 1}, {"DEN", 4, 1},
+        {"BMM", 5, 1}, {"ECM", 6, 1}, {"RST8", 7, 1}
+    });
     addReg("RASTER", RASTER, "Raster counter");
     addReg("LPX", LPX); addReg("LPY", LPY);
     addReg("SPENA", SPENA, "Sprite enable");
-    addReg("SCR2", SCR2, "Control 2");
+    addReg("SCR2", SCR2, "Control 2", {
+        {"XSCROLL", 0, 3}, {"CSEL", 3, 1}, {"MCM", 4, 1}, {"RES", 5, 1}
+    });
     addReg("YXPAND", YXPAND, "Sprite Y expansion");
-    addReg("VMEM", VMEM, "Memory pointers");
-    addReg("IRQ", IRQ, "IRQ status");
-    addReg("IRQEN", IRQEN, "IRQ enable");
+    addReg("VMEM", VMEM, "Memory pointers", {
+        {"CB", 1, 3}, {"VM", 4, 4}
+    });
+    addReg("IRQ", IRQ, "IRQ status", {
+        {"IRST", 0, 1}, {"IMBC", 1, 1}, {"IMMC", 2, 1}, {"ILP", 3, 1}, {"IRQ", 7, 1}
+    });
+    addReg("IRQEN", IRQEN, "IRQ enable", {
+        {"ERST", 0, 1}, {"EMBC", 1, 1}, {"EMMC", 2, 1}, {"ELP", 3, 1}
+    });
     addReg("SPBGPR", SPBGPR, "Sprite-BG priority");
     addReg("SPMC", SPMC, "Sprite multicolor");
     addReg("XXPAND", XXPAND, "Sprite X expansion");

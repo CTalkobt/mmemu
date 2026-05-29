@@ -13,6 +13,7 @@
 #include "stack_pane.h"
 #include "machine_inspector_pane.h"
 #include "device_info_pane.h"
+#include "register_watch_pane.h"
 #include "libdebug/main/debug_context.h"
 #include "dialogs/memory_dialogs.h"
 #include "dialogs/assemble_dialog.h"
@@ -120,6 +121,7 @@ private:
     StackPane*      m_stackPane = nullptr;
     MachineInspectorPane* m_machineInspectorPane = nullptr;
     DeviceInfoPane* m_deviceInfoPane = nullptr;
+    RegisterWatchPane* m_regWatchPane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     wxAuiNotebook*  m_notebook  = nullptr;
 
@@ -556,6 +558,8 @@ MmemuFrame::MmemuFrame()
     m_notebook->AddPage(m_machineInspectorPane, "Machine");
     m_deviceInfoPane = new DeviceInfoPane(m_notebook);
     m_notebook->AddPage(m_deviceInfoPane, "Devices");
+    m_regWatchPane = new RegisterWatchPane(m_notebook);
+    m_notebook->AddPage(m_regWatchPane, "I/O Watch");
     m_cartPane = new CartridgePane(m_notebook);
     m_notebook->AddPage(m_cartPane, "Cartridge");
     m_bpPane = new BreakpointPane(m_notebook);
@@ -647,6 +651,7 @@ void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
         m_cartPane->SetBus(m_bus);
         m_machineInspectorPane->setMachine(m_machine);
         m_deviceInfoPane->setMachine(m_machine);
+        m_regWatchPane->setMachine(m_machine);
         if (m_machine->onReset) m_machine->onReset(*m_machine);
         PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
         SetTitle("mmemu - " + m_machine->displayName);
@@ -731,6 +736,7 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
             m_cartPane->SetBus(m_bus);
             m_machineInspectorPane->setMachine(m_machine);
             m_deviceInfoPane->setMachine(m_machine);
+            m_regWatchPane->setMachine(m_machine);
 
             // Show/hide MEGA65 status pane based on machine type
             {
@@ -1246,6 +1252,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_machineInspectorPane->refreshValues();
         if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
             m_deviceInfoPane->refreshValues();
+        if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
+            m_regWatchPane->refreshValues();
         if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
             m_mega65StatusPane->RefreshValues();
     }
