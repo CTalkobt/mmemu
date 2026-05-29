@@ -283,6 +283,85 @@ TEST_CASE(d82_open_dir_read) {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-sector file chain test
+// ---------------------------------------------------------------------------
+
+TEST_CASE(d64_multi_sector_chain) {
+    const char* path = "test_d64_chain.d64";
+    {
+        std::vector<uint8_t> img(174848, 0);
+
+        // BAM sector (18/0): point to dir at 18/1
+        uint32_t bamOff = sectorOffset(s_d64Spt, 18, 0);
+        img[bamOff] = 18;
+        img[bamOff + 1] = 1;
+
+        // Directory at 18/1: one file starting at track 1, sector 0
+        uint32_t dirOff = sectorOffset(s_d64Spt, 18, 1);
+        img[dirOff] = 0;      // end of dir chain
+        img[dirOff + 1] = 0xFF;
+        img[dirOff + 2] = 0x82; // PRG
+        img[dirOff + 3] = 1;    // start track
+        img[dirOff + 4] = 0;    // start sector
+        const char* name = "BIGFILE";
+        std::memcpy(&img[dirOff + 5], name, 7);
+        for (int i = 12; i < 21; ++i) img[dirOff + i] = 0xA0;
+        img[dirOff + 30] = 3; // 3 blocks
+
+        // Sector 1: track 1, sector 0 -> next: track 1, sector 1
+        uint32_t s0 = sectorOffset(s_d64Spt, 1, 0);
+        img[s0] = 1;       // next track
+        img[s0 + 1] = 1;   // next sector
+        // 254 data bytes (load addr + data)
+        img[s0 + 2] = 0x01; // load addr lo ($0801)
+        img[s0 + 3] = 0x08; // load addr hi
+        for (int i = 4; i < 256; ++i) img[s0 + i] = 0xAA;
+
+        // Sector 2: track 1, sector 1 -> next: track 1, sector 2
+        uint32_t s1 = sectorOffset(s_d64Spt, 1, 1);
+        img[s1] = 1;       // next track
+        img[s1 + 1] = 2;   // next sector
+        for (int i = 2; i < 256; ++i) img[s1 + i] = 0xBB;
+
+        // Sector 3: track 1, sector 2 -> end (last sector)
+        uint32_t s2 = sectorOffset(s_d64Spt, 1, 2);
+        img[s2] = 0;       // end of chain
+        img[s2 + 1] = 50;  // 49 data bytes (indices 2..50)
+        for (int i = 2; i <= 50; ++i) img[s2 + i] = 0xCC;
+
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<char*>(img.data()), img.size());
+    }
+
+    D64Parser parser;
+    ASSERT(parser.open(path));
+
+    auto dir = parser.getDirectory();
+    ASSERT(dir.size() == 1);
+    ASSERT(dir[0].filename == "BIGFILE");
+
+    std::vector<uint8_t> data;
+    ASSERT(parser.readFile("BIGFILE", data));
+
+    // Expected size: 254 (sector 0) + 254 (sector 1) + 49 (sector 2) = 557 bytes
+    ASSERT(data.size() == 557);
+
+    // Check load address
+    ASSERT(data[0] == 0x01);
+    ASSERT(data[1] == 0x08);
+
+    // Check sector boundaries
+    ASSERT(data[2] == 0xAA);     // first sector data
+    ASSERT(data[253] == 0xAA);   // last byte of first sector
+    ASSERT(data[254] == 0xBB);   // first byte of second sector
+    ASSERT(data[507] == 0xBB);   // last byte of second sector
+    ASSERT(data[508] == 0xCC);   // first byte of third sector
+    ASSERT(data[556] == 0xCC);   // last byte of third sector
+
+    fs::remove(path);
+}
+
+// ---------------------------------------------------------------------------
 // DiskImageLoader extension dispatch
 // ---------------------------------------------------------------------------
 

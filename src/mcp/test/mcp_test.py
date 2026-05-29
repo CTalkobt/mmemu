@@ -729,6 +729,117 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": tt_mid})
 
+    # --- 15. Edge Case Tests ---
+    print("\n--- 15. Edge Case Tests ---")
+
+    # diff_file: different-sized files
+    fa = "/tmp/mcp_edge_a.bin"
+    fb = "/tmp/mcp_edge_b.bin"
+    with open(fa, 'wb') as f: f.write(bytes([0xAA] * 100))
+    with open(fb, 'wb') as f: f.write(bytes([0xAA] * 50 + [0xBB] * 50 + [0xCC] * 20))
+    res = client.call_tool("diff_file", {"file_a": fa, "file_b": fb})
+    text = res["result"]["content"][0]["text"]
+    assert "differ in size" in text.lower() or "WARNING" in text, f"Should warn about size: {text[:200]}"
+    assert "Changed:" in text, f"Should show changes: {text[:200]}"
+    print("  ✓ diff_file different-sized files OK")
+    os.unlink(fa); os.unlink(fb)
+
+    # generate_tests: routine that never returns (infinite loop)
+    res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+    edge_mid = res["result"]["content"][0]["text"].split('"')[1]
+    # Write: JMP $0200 (infinite loop)
+    client.call_tool("write_memory", {
+        "machine_id": edge_mid, "addr": 0x0200, "bytes": [0x4C, 0x00, 0x02]
+    })
+    res = client.call_tool("generate_tests", {
+        "machine_id": edge_mid, "addr": "$0200",
+        "input_regs": ["A"], "output_regs": ["A"],
+        "values": [0], "max_steps": 100
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "| N" in text, f"Non-returning routine should show ok=N: {text}"
+    print("  ✓ generate_tests non-returning routine OK")
+
+    # analyze_routine: BRK termination
+    client.call_tool("write_memory", {
+        "machine_id": edge_mid, "addr": 0x0300,
+        "bytes": [0xA9, 0x42, 0x00]  # LDA #$42; BRK
+    })
+    res = client.call_tool("analyze_routine", {
+        "machine_id": edge_mid, "addr": "$0300"
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "BRK" in text, f"Should detect BRK exit: {text}"
+    print("  ✓ analyze_routine BRK termination OK")
+
+    # analyze_routine: max_instructions truncation
+    # Write a long NOP sled
+    client.call_tool("fill_memory", {
+        "machine_id": edge_mid, "addr": "$0400", "size": "200", "value": "$EA"
+    })
+    res = client.call_tool("analyze_routine", {
+        "machine_id": edge_mid, "addr": "$0400", "max_instructions": 5
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "truncated" in text.lower(), f"Should note truncation: {text}"
+    assert "5 instructions" in text, f"Should show 5 instructions: {text}"
+    print("  ✓ analyze_routine truncation OK")
+
+    # analyze_routine: JMP indirect
+    client.call_tool("write_memory", {
+        "machine_id": edge_mid, "addr": 0x0500,
+        "bytes": [0x6C, 0x00, 0x10]  # JMP ($1000)
+    })
+    res = client.call_tool("analyze_routine", {
+        "machine_id": edge_mid, "addr": "$0500"
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "Indirect" in text or "indirect" in text, f"Should note indirect jump: {text}"
+    print("  ✓ analyze_routine JMP indirect OK")
+
+    # load_sid: RSID magic
+    import struct as st
+    rsid_path = "/tmp/mcp_edge_rsid.sid"
+    hdr = bytearray(0x7C)
+    hdr[0:4] = b'RSID'
+    st.pack_into('>H', hdr, 0x04, 2)
+    st.pack_into('>H', hdr, 0x06, 0x7C)
+    st.pack_into('>H', hdr, 0x0A, 0x1000)
+    st.pack_into('>H', hdr, 0x0E, 1)
+    st.pack_into('>H', hdr, 0x10, 1)
+    hdr[0x16:0x16+5] = b'RSID\x00'
+    sid_data = st.pack('<H', 0x1000) + bytes([0x60])
+    with open(rsid_path, 'wb') as f:
+        f.write(hdr + sid_data)
+    res = client.call_tool("load_sid", {"machine_id": edge_mid, "file": rsid_path})
+    text = res["result"]["content"][0]["text"]
+    assert "RSID v2" in text, f"Should accept RSID: {text[:200]}"
+    print("  ✓ load_sid RSID magic OK")
+    os.unlink(rsid_path)
+
+    # load_sid: playAddress=0 (CIA-driven)
+    cia_path = "/tmp/mcp_edge_cia.sid"
+    hdr2 = bytearray(0x7C)
+    hdr2[0:4] = b'PSID'
+    st.pack_into('>H', hdr2, 0x04, 2)
+    st.pack_into('>H', hdr2, 0x06, 0x7C)
+    st.pack_into('>H', hdr2, 0x0A, 0x1000)
+    st.pack_into('>H', hdr2, 0x0C, 0x0000)  # play=0
+    st.pack_into('>H', hdr2, 0x0E, 1)
+    st.pack_into('>H', hdr2, 0x10, 1)
+    hdr2[0x16:0x16+4] = b'CIA\x00'
+    sid_data2 = st.pack('<H', 0x1000) + bytes([0x60])
+    with open(cia_path, 'wb') as f:
+        f.write(hdr2 + sid_data2)
+    res = client.call_tool("load_sid", {"machine_id": edge_mid, "file": cia_path})
+    text = res["result"]["content"][0]["text"]
+    assert "CIA" in text or "timer" in text.lower() or "No play address" in text, \
+        f"Should note CIA-driven: {text[:200]}"
+    print("  ✓ load_sid playAddress=0 (CIA-driven) OK")
+    os.unlink(cia_path)
+
+    client.call_tool("destroy_machine", {"machine_id": edge_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")
