@@ -142,6 +142,12 @@
 [x] CLI `backstep` / `bs` command
 [x] Memory writes captured via onMemoryWrite observer hook
 
+## GUI Back Step & Trace Pane (0.3.2) ✓ COMPLETE
+[x] "Back Step" toolbar button + Shift+F11 menu shortcut
+[x] Trace buffer display pane with instruction list
+[x] Right-click "Rewind to here" context menu
+[x] All panes refresh after reverse step
+
 ## I/O Register Watch Pane (0.3.2) ✓ COMPLETE
 [x] BitField struct added to DeviceRegister for self-describing bit-field metadata
 [x] RegisterWatchPane: wxGrid with Addr/Name/Hex/Binary/Decoded columns

@@ -213,6 +213,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/machine_inspector_pane.cpp \
 	src/gui/main/device_info_pane.cpp \
 	src/gui/main/register_watch_pane.cpp \
+	src/gui/main/trace_pane.cpp \
 	src/gui/main/screen_pane.cpp \
         src/gui/main/tape_pane.cpp \
         src/gui/main/drive_status_pane.cpp \

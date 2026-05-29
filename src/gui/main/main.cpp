@@ -14,6 +14,7 @@
 #include "machine_inspector_pane.h"
 #include "device_info_pane.h"
 #include "register_watch_pane.h"
+#include "trace_pane.h"
 #include "libdebug/main/debug_context.h"
 #include "dialogs/memory_dialogs.h"
 #include "dialogs/assemble_dialog.h"
@@ -55,6 +56,7 @@ public:
 private:
     void OnLoadMachine(wxCommandEvent& event);
     void OnStep(wxCommandEvent& event);
+    void OnBackStep(wxCommandEvent& event);
     void OnRun(wxCommandEvent& event);
     void OnPause(wxCommandEvent& event);
     void OnReset(wxCommandEvent& event);
@@ -122,6 +124,7 @@ private:
     MachineInspectorPane* m_machineInspectorPane = nullptr;
     DeviceInfoPane* m_deviceInfoPane = nullptr;
     RegisterWatchPane* m_regWatchPane = nullptr;
+    TracePane* m_tracePane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     wxAuiNotebook*  m_notebook  = nullptr;
 
@@ -467,6 +470,7 @@ MmemuFrame::MmemuFrame()
     
     auto* menuControl = new wxMenu;
     menuControl->Append(ID_STEP, "Step\tF11");
+    menuControl->Append(ID_BACKSTEP, "Back Step\tShift-F11");
     menuControl->Append(ID_RUN, "Run\tF5");
     menuControl->Append(ID_PAUSE, "Pause\tF6");
     menuControl->AppendSeparator();
@@ -511,6 +515,7 @@ MmemuFrame::MmemuFrame()
     auto* toolBar = CreateToolBar();
     toolBar->AddTool(ID_LOAD_MACHINE, "Machine", wxArtProvider::GetBitmap(wxART_NEW));
     toolBar->AddSeparator();
+    toolBar->AddTool(ID_BACKSTEP, "Back Step", wxArtProvider::GetBitmap(wxART_GO_BACK));
     toolBar->AddTool(ID_STEP, "Step", wxArtProvider::GetBitmap(wxART_GO_FORWARD));
     toolBar->AddTool(ID_RUN, "Run", wxArtProvider::GetBitmap(wxART_GO_FORWARD));
     toolBar->AddTool(ID_PAUSE, "Pause", wxArtProvider::GetBitmap(wxART_QUIT));
@@ -560,6 +565,8 @@ MmemuFrame::MmemuFrame()
     m_notebook->AddPage(m_deviceInfoPane, "Devices");
     m_regWatchPane = new RegisterWatchPane(m_notebook);
     m_notebook->AddPage(m_regWatchPane, "I/O Watch");
+    m_tracePane = new TracePane(m_notebook);
+    m_notebook->AddPage(m_tracePane, "Trace");
     m_cartPane = new CartridgePane(m_notebook);
     m_notebook->AddPage(m_cartPane, "Cartridge");
     m_bpPane = new BreakpointPane(m_notebook);
@@ -581,6 +588,8 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_TOOL, &MmemuFrame::OnLoadMachine, this, ID_LOAD_MACHINE);
     Bind(wxEVT_MENU, &MmemuFrame::OnStep, this, ID_STEP);
     Bind(wxEVT_TOOL, &MmemuFrame::OnStep, this, ID_STEP);
+    Bind(wxEVT_MENU, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
+    Bind(wxEVT_TOOL, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
     Bind(wxEVT_MENU, &MmemuFrame::OnRun, this, ID_RUN);
     Bind(wxEVT_TOOL, &MmemuFrame::OnRun, this, ID_RUN);
     Bind(wxEVT_MENU, &MmemuFrame::OnPause, this, ID_PAUSE);
@@ -652,6 +661,8 @@ void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
         m_machineInspectorPane->setMachine(m_machine);
         m_deviceInfoPane->setMachine(m_machine);
         m_regWatchPane->setMachine(m_machine);
+        m_tracePane->SetDebugContext(m_dbg);
+        m_tracePane->SetCPU(m_cpu);
         if (m_machine->onReset) m_machine->onReset(*m_machine);
         PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
         SetTitle("mmemu - " + m_machine->displayName);
@@ -737,6 +748,8 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
             m_machineInspectorPane->setMachine(m_machine);
             m_deviceInfoPane->setMachine(m_machine);
             m_regWatchPane->setMachine(m_machine);
+            m_tracePane->SetDebugContext(m_dbg);
+            m_tracePane->SetCPU(m_cpu);
 
             // Show/hide MEGA65 status pane based on machine type
             {
@@ -805,6 +818,19 @@ void MmemuFrame::OnStep(wxCommandEvent& event) {
         m_disasmPane->RefreshValues(m_cpu->pc());
         m_stackPane->RefreshValues();
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
+    }
+}
+
+void MmemuFrame::OnBackStep(wxCommandEvent& event) {
+    (void)event;
+    if (m_dbg && m_dbg->reverseStep()) {
+        m_regPane->RefreshValues();
+        m_disasmPane->RefreshValues(m_cpu->pc());
+        m_stackPane->RefreshValues();
+        for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
+        SetStatusText("Reversed 1 instruction.");
+    } else {
+        SetStatusText("No undo history available.");
     }
 }
 
@@ -1254,6 +1280,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_deviceInfoPane->refreshValues();
         if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
             m_regWatchPane->refreshValues();
+        if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
+            m_tracePane->RefreshValues();
         if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
             m_mega65StatusPane->RefreshValues();
     }

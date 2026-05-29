@@ -71,6 +71,13 @@ All notable changes to this project will be documented in this file.
     - Change highlighting: cells turn yellow when values change between refreshes
     - Device selector dropdown, refreshes only when visible (30 FPS timer)
     - VIC-II registers annotated with bit fields: SCR1 (YSCROLL/RSEL/DEN/BMM/ECM/RST8), SCR2 (XSCROLL/CSEL/MCM), VMEM (CB/VM), IRQ, IRQEN
+- **GUI Back Step & Trace Pane** (`src/gui/main/main.cpp`, `trace_pane.h/cpp`):
+    - "Back Step" toolbar button (back arrow icon) and menu item (Shift+F11)
+    - Calls `DebugContext::reverseStep()` and refreshes all panes
+    - New "Trace" notebook tab showing instruction trace buffer as a list
+    - Columns: #, PC, Instruction, A, X, Y, SP
+    - Right-click "Rewind to here" context menu: repeatedly reverse-steps until the selected trace entry is reached
+    - Status bar shows rewind progress
 - **GDB Remote Serial Protocol Server** (`src/cli/main/gdb_server.h/cpp`):
     - TCP listener on configurable port (`--gdb-port <port>` CLI flag)
     - Full RSP packet framing with checksums and ACK/NAK
