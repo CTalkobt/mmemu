@@ -10,13 +10,21 @@
  *
  * Register map (base $D700, 16 bytes):
  *
- *   $D700        DMA list address low byte
- *   $D701        DMA list address high byte
- *   $D702        DMA list address bank byte (bits 19:16)
- *   $D703        DMA execute register — ANY write triggers execution
- *   $D704        DMA upper address byte (bits 27:20)
- *   $D705        Enhanced DMA options (reserved)
+ *   $D700        ADDRLSBTRIG  — DMA list address low byte; write triggers DMA
+ *   $D701        ADDRMSHTRIG  — DMA list address high byte; write triggers DMA
+ *   $D702        ADDRBANKTRIG — DMA list address bank (bits 19:16); write triggers DMA
+ *   $D703        EN018B (bit 0), NOMBWRAP (bit 1) — control flags, NO trigger
+ *   $D704        ADDRMB       — DMA list upper address (bits 27:20), no trigger
+ *   $D705        ETRIG        — Enhanced DMA trigger; write triggers enhanced DMA
  *   $D706-$D70F  Reserved
+ *
+ * F018 DMA job list format (11 bytes per job):
+ *   Byte 0:      Command (bits 1:0 = operation, bit 2 = chain)
+ *   Bytes 1-2:   Count (16-bit LE)
+ *   Bytes 3-5:   Source address (24-bit LE)
+ *   Bytes 6-8:   Destination address (24-bit LE)
+ *   Byte 9:      Sub-command / modulo control
+ *   Byte 10:     Modulo value
  */
 class F018bDmaDevice : public IOHandler {
 public:
@@ -48,10 +56,11 @@ private:
 
     struct DmaJob {
         uint8_t command;        // Byte 0: operation, chain, interrupt, enhanced flags
-        uint16_t count;         // Bytes 1–2: transfer size
-        uint32_t srcAddr;       // Bytes 3–5: source address (24-bit)
-        uint32_t dstAddr;       // Bytes 6–8: destination address (24-bit)
-        uint8_t chainByte;      // Byte 9: 0 = end, 4 = chain to next job
+        uint16_t count;         // Bytes 1-2: transfer size
+        uint32_t srcAddr;       // Bytes 3-5: source address (24-bit)
+        uint32_t dstAddr;       // Bytes 6-8: destination address (24-bit)
+        uint8_t subCommand;     // Byte 9: sub-command / modulo control
+        uint8_t modulo;         // Byte 10: modulo value
         uint16_t srcSkipRate;   // Source fractional step rate ($0100 = 1.0 byte)
         uint16_t dstSkipRate;   // Destination fractional step rate
     };

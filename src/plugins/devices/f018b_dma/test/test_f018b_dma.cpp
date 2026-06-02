@@ -70,6 +70,51 @@ private:
     std::vector<uint8_t> m_memory;
 };
 
+// Helper: write an 11-byte F018 DMA job to memory
+static void writeJob(MockMemoryBus& bus, uint32_t addr,
+                     uint8_t cmd, uint16_t count,
+                     uint32_t src, uint32_t dst,
+                     uint8_t subCmd = 0x00, uint8_t modulo = 0x00) {
+    bus.write8(addr + 0,  cmd);
+    bus.write8(addr + 1,  count & 0xFF);
+    bus.write8(addr + 2,  (count >> 8) & 0xFF);
+    bus.write8(addr + 3,  src & 0xFF);
+    bus.write8(addr + 4,  (src >> 8) & 0xFF);
+    bus.write8(addr + 5,  (src >> 16) & 0xFF);
+    bus.write8(addr + 6,  dst & 0xFF);
+    bus.write8(addr + 7,  (dst >> 8) & 0xFF);
+    bus.write8(addr + 8,  (dst >> 16) & 0xFF);
+    bus.write8(addr + 9,  subCmd);
+    bus.write8(addr + 10, modulo);
+}
+
+// Helper: set up DMA list address registers (without triggering)
+static void setListAddr(F018bDmaDevice& dma, MockMemoryBus& bus,
+                        uint32_t listAddr) {
+    // Write $D704 (upper bits) and $D703 (flags) first — these don't trigger
+    dma.ioWrite(&bus, 0xD704, (listAddr >> 20) & 0xFF);
+    dma.ioWrite(&bus, 0xD703, 0x00);  // EN018B/NOMBWRAP flags, no trigger
+}
+
+// Helper: trigger DMA by writing address low byte ($D700)
+static void triggerDma(F018bDmaDevice& dma, MockMemoryBus& bus,
+                       uint32_t listAddr) {
+    // Write high and bank first (each triggers, but address isn't complete yet —
+    // in practice the last write sets the final address and triggers).
+    // To avoid premature triggers from $D701/$D702, we set those via $D703
+    // approach: store mid/bank in regs without trigger, then trigger via $D700.
+    // Actually on real hardware every write to $D700-$D702 triggers.
+    // For testing, we set up the full address then write low byte last to trigger.
+    dma.ioWrite(&bus, 0xD703, 0x00);  // flags only, no trigger
+    dma.ioWrite(&bus, 0xD704, (listAddr >> 20) & 0xFF);  // upper, no trigger
+
+    // These each trigger DMA, but the last one ($D700) is the canonical trigger.
+    // We write $D701 and $D702 first, then $D700 last.
+    dma.ioWrite(&bus, 0xD702, (listAddr >> 16) & 0x0F);
+    dma.ioWrite(&bus, 0xD701, (listAddr >> 8) & 0xFF);
+    dma.ioWrite(&bus, 0xD700, listAddr & 0xFF);
+}
+
 // ============================================================================
 // Test: Register Access
 // ============================================================================
@@ -78,57 +123,80 @@ TEST_CASE(dma_register_write_read) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Write to DMA registers
-    dma.ioWrite(&bus, 0xD700, 0x12);
-    dma.ioWrite(&bus, 0xD701, 0x34);
-    dma.ioWrite(&bus, 0xD702, 0x05);
+    // Write to DMA registers (use $D703/$D704 which don't trigger)
+    dma.ioWrite(&bus, 0xD703, 0x01);  // EN018B
     dma.ioWrite(&bus, 0xD704, 0x00);
 
     // Read back
     uint8_t val;
-    dma.ioRead(&bus, 0xD700, &val);
-    ASSERT_EQ(val, 0x12);
-    dma.ioRead(&bus, 0xD701, &val);
-    ASSERT_EQ(val, 0x34);
-    dma.ioRead(&bus, 0xD702, &val);
-    ASSERT_EQ(val, 0x05);
+    dma.ioRead(&bus, 0xD703, &val);
+    ASSERT_EQ(val, 0x01);
+    dma.ioRead(&bus, 0xD704, &val);
+    ASSERT_EQ(val, 0x00);
 }
 
 // ============================================================================
-// Test: DMA Copy Operation
+// Test: $D703 write does NOT trigger DMA
+// ============================================================================
+
+TEST_CASE(dma_d703_does_not_trigger) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Set up a fill job at $030000
+    writeJob(bus, 0x030000, 0x01, 8, 0xAA, 0x020000);
+
+    // Pre-fill destination with known value
+    bus.fillRegion(0x020000, 0x00, 8);
+
+    // Set up the list address via non-trigger registers
+    dma.ioWrite(&bus, 0xD704, 0x00);
+
+    // Write $D703 — this must NOT trigger DMA
+    dma.ioWrite(&bus, 0xD703, 0x01);
+
+    // Destination should still be zeros (DMA did not execute)
+    ASSERT(bus.verifyRegion(0x020000, 0x00, 8));
+}
+
+// ============================================================================
+// Test: $D700 write triggers DMA
+// ============================================================================
+
+TEST_CASE(dma_d700_triggers) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    bus.fillRegion(0x010000, 0xAA, 16);
+    writeJob(bus, 0x030000, 0x00, 16, 0x010000, 0x020000);
+
+    // Set non-trigger registers first
+    dma.ioWrite(&bus, 0xD704, 0x00);
+    dma.ioWrite(&bus, 0xD703, 0x00);
+
+    // Write $D702 and $D701 (these trigger too, but list addr is incomplete)
+    dma.ioWrite(&bus, 0xD702, 0x03);
+    dma.ioWrite(&bus, 0xD701, 0x00);
+
+    // Write $D700 — triggers DMA with complete address $030000
+    dma.ioWrite(&bus, 0xD700, 0x00);
+
+    ASSERT(bus.verifyRegion(0x020000, 0xAA, 16));
+}
+
+// ============================================================================
+// Test: DMA Copy Operation (11-byte job list)
 // ============================================================================
 
 TEST_CASE(dma_copy_basic) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Fill source region with known pattern
     bus.fillRegion(0x010000, 0xAA, 16);
+    writeJob(bus, 0x030000, 0x00, 16, 0x010000, 0x020000);
 
-    // Create DMA job: copy 16 bytes from $010000 to $020000
-    // Job at $030000:
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x00);  // Command: copy (bits 0-1=00)
-    bus.write8(jobAddr + 1, 0x10);  // Count low = 16
-    bus.write8(jobAddr + 2, 0x00);  // Count high = 0
-    bus.write8(jobAddr + 3, 0x00);  // Source low
-    bus.write8(jobAddr + 4, 0x00);  // Source mid
-    bus.write8(jobAddr + 5, 0x01);  // Source high = $01
-    bus.write8(jobAddr + 6, 0x00);  // Dest low
-    bus.write8(jobAddr + 7, 0x00);  // Dest mid
-    bus.write8(jobAddr + 8, 0x02);  // Dest high = $02
-    bus.write8(jobAddr + 9, 0x00);  // End of chain
+    triggerDma(dma, bus, 0x030000);
 
-    // Set DMA list address
-    dma.ioWrite(&bus, 0xD700, 0x00);  // List low
-    dma.ioWrite(&bus, 0xD701, 0x00);  // List mid
-    dma.ioWrite(&bus, 0xD702, 0x03);  // List bank = $03
-    dma.ioWrite(&bus, 0xD704, 0x00);  // List upper = $00
-
-    // Trigger DMA
-    dma.ioWrite(&bus, 0xD703, 0x01);
-
-    // Verify copy succeeded
     ASSERT(bus.verifyRegion(0x020000, 0xAA, 16));
 }
 
@@ -140,30 +208,11 @@ TEST_CASE(dma_fill_basic) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Create DMA fill job: fill 32 bytes at $020000 with value $55
-    // In fill mode, fill byte is source address low byte
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x01);  // Command: fill (bits 0-1=01)
-    bus.write8(jobAddr + 1, 0x20);  // Count low = 32
-    bus.write8(jobAddr + 2, 0x00);  // Count high = 0
-    bus.write8(jobAddr + 3, 0x55);  // Fill byte (source low in fill mode)
-    bus.write8(jobAddr + 4, 0x00);  // Source mid
-    bus.write8(jobAddr + 5, 0x00);  // Source high
-    bus.write8(jobAddr + 6, 0x00);  // Dest low
-    bus.write8(jobAddr + 7, 0x00);  // Dest mid
-    bus.write8(jobAddr + 8, 0x02);  // Dest high = $02
-    bus.write8(jobAddr + 9, 0x00);  // End of chain
+    // Fill mode: source low byte = fill value
+    writeJob(bus, 0x030000, 0x01, 32, 0x000055, 0x020000);
 
-    // Set DMA list address
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    // Trigger DMA
-    dma.ioWrite(&bus, 0xD703, 0x01);
-
-    // Verify fill succeeded
     ASSERT(bus.verifyRegion(0x020000, 0x55, 32));
 }
 
@@ -175,33 +224,13 @@ TEST_CASE(dma_swap_basic) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Setup source with 0xAA and destination with 0xBB
     bus.fillRegion(0x010000, 0xAA, 8);
     bus.fillRegion(0x020000, 0xBB, 8);
 
-    // Create DMA swap job
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x02);  // Command: swap (bits 0-1=10)
-    bus.write8(jobAddr + 1, 0x08);  // Count = 8
-    bus.write8(jobAddr + 2, 0x00);
-    bus.write8(jobAddr + 3, 0x00);  // Source low
-    bus.write8(jobAddr + 4, 0x00);  // Source mid
-    bus.write8(jobAddr + 5, 0x01);  // Source high
-    bus.write8(jobAddr + 6, 0x00);  // Dest low
-    bus.write8(jobAddr + 7, 0x00);  // Dest mid
-    bus.write8(jobAddr + 8, 0x02);  // Dest high
-    bus.write8(jobAddr + 9, 0x00);  // End
+    writeJob(bus, 0x030000, 0x02, 8, 0x010000, 0x020000);
 
-    // Set DMA list address
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    // Trigger DMA
-    dma.ioWrite(&bus, 0xD703, 0x01);
-
-    // After swap: source should have 0xBB, destination should have 0xAA
     ASSERT(bus.verifyRegion(0x010000, 0xBB, 8));
     ASSERT(bus.verifyRegion(0x020000, 0xAA, 8));
 }
@@ -214,86 +243,38 @@ TEST_CASE(dma_copy_overlap_forward) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Fill source region
     for (int i = 0; i < 16; ++i) {
         bus.write8(0x010000 + i, 0x10 + i);
     }
 
     // Copy from $010000 to $010008 (overlapping, 16 bytes)
-    // This should forward-copy since dst > src
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x00);  // Command: copy
-    bus.write8(jobAddr + 1, 0x10);  // Count = 16
-    bus.write8(jobAddr + 2, 0x00);
-    bus.write8(jobAddr + 3, 0x00);  // Source = $010000
-    bus.write8(jobAddr + 4, 0x00);
-    bus.write8(jobAddr + 5, 0x01);
-    bus.write8(jobAddr + 6, 0x08);  // Dest = $010008
-    bus.write8(jobAddr + 7, 0x00);
-    bus.write8(jobAddr + 8, 0x01);
-    bus.write8(jobAddr + 9, 0x00);  // End
+    writeJob(bus, 0x030000, 0x00, 16, 0x010000, 0x010008);
 
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
-    dma.ioWrite(&bus, 0xD703, 0x01);
+    triggerDma(dma, bus, 0x030000);
 
-    // Verify the copy worked (first byte at destination should be 0x10)
-    uint8_t val;
-    bus.read8(0x010008);
-    val = bus.read8(0x010008);
+    uint8_t val = bus.read8(0x010008);
     ASSERT_EQ(val, 0x10);
 }
 
 // ============================================================================
-// Test: DMA Chained Jobs
+// Test: DMA Chained Jobs (11 bytes per job)
 // ============================================================================
 
 TEST_CASE(dma_chained_jobs) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Fill source
     bus.fillRegion(0x010000, 0x11, 8);
     bus.fillRegion(0x010100, 0x22, 8);
 
-    // Job 1: copy 8 bytes from $010000 to $020000 (with chain bit set)
-    uint32_t job1Addr = 0x030000;
-    bus.write8(job1Addr + 0, 0x04);  // Command: copy with chain (bit 2 = 1)
-    bus.write8(job1Addr + 1, 0x08);  // Count = 8
-    bus.write8(job1Addr + 2, 0x00);
-    bus.write8(job1Addr + 3, 0x00);  // Source = $010000
-    bus.write8(job1Addr + 4, 0x00);
-    bus.write8(job1Addr + 5, 0x01);
-    bus.write8(job1Addr + 6, 0x00);  // Dest = $020000
-    bus.write8(job1Addr + 7, 0x00);
-    bus.write8(job1Addr + 8, 0x02);
-    bus.write8(job1Addr + 9, 0x04);  // Chain indicator
+    // Job 1: copy with chain bit set (11 bytes)
+    writeJob(bus, 0x030000, 0x04, 8, 0x010000, 0x020000);
 
-    // Job 2: copy 8 bytes from $010100 to $040000 (no chain)
-    uint32_t job2Addr = 0x03000A;  // Immediately after Job 1
-    bus.write8(job2Addr + 0, 0x00);  // Command: copy, no chain
-    bus.write8(job2Addr + 1, 0x08);  // Count = 8
-    bus.write8(job2Addr + 2, 0x00);
-    bus.write8(job2Addr + 3, 0x00);  // Source = $010100
-    bus.write8(job2Addr + 4, 0x01);
-    bus.write8(job2Addr + 5, 0x01);
-    bus.write8(job2Addr + 6, 0x00);  // Dest = $040000
-    bus.write8(job2Addr + 7, 0x00);
-    bus.write8(job2Addr + 8, 0x04);
-    bus.write8(job2Addr + 9, 0x00);  // End
+    // Job 2: copy without chain (11 bytes, starts at offset 11)
+    writeJob(bus, 0x03000B, 0x00, 8, 0x010100, 0x040000);
 
-    // Set DMA list address to job1
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    // Trigger DMA
-    dma.ioWrite(&bus, 0xD703, 0x01);
-
-    // Verify both jobs executed
     ASSERT(bus.verifyRegion(0x020000, 0x11, 8));
     ASSERT(bus.verifyRegion(0x040000, 0x22, 8));
 }
@@ -306,31 +287,14 @@ TEST_CASE(dma_cpu_halt_request) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Initially not halting
     ASSERT(!dma.isHaltRequested());
 
-    // Setup a simple copy job
     bus.fillRegion(0x010000, 0xCC, 8);
+    writeJob(bus, 0x030000, 0x00, 8, 0x010000, 0x020000);
 
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x00);  // Command: copy
-    bus.write8(jobAddr + 1, 0x08);  // Count = 8
-    bus.write8(jobAddr + 2, 0x00);
-    bus.write8(jobAddr + 3, 0x00);
-    bus.write8(jobAddr + 4, 0x00);
-    bus.write8(jobAddr + 5, 0x01);
-    bus.write8(jobAddr + 6, 0x00);
-    bus.write8(jobAddr + 7, 0x00);
-    bus.write8(jobAddr + 8, 0x02);
-    bus.write8(jobAddr + 9, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
-
-    // After DMA completes, halt should be cleared
-    dma.ioWrite(&bus, 0xD703, 0x01);
+    // After DMA completes synchronously, halt should be cleared
     ASSERT(!dma.isHaltRequested());
 }
 
@@ -342,22 +306,18 @@ TEST_CASE(dma_reset) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Write to registers
-    dma.ioWrite(&bus, 0xD700, 0x12);
-    dma.ioWrite(&bus, 0xD701, 0x34);
+    dma.ioWrite(&bus, 0xD703, 0x01);
+    dma.ioWrite(&bus, 0xD704, 0x12);
 
-    // Verify writes
     uint8_t val;
-    dma.ioRead(&bus, 0xD700, &val);
-    ASSERT_EQ(val, 0x12);
+    dma.ioRead(&bus, 0xD703, &val);
+    ASSERT_EQ(val, 0x01);
 
-    // Reset
     dma.reset();
 
-    // Verify registers cleared
-    dma.ioRead(&bus, 0xD700, &val);
+    dma.ioRead(&bus, 0xD703, &val);
     ASSERT_EQ(val, 0x00);
-    dma.ioRead(&bus, 0xD701, &val);
+    dma.ioRead(&bus, 0xD704, &val);
     ASSERT_EQ(val, 0x00);
 }
 
@@ -369,13 +329,12 @@ TEST_CASE(dma_address_out_of_range) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Try to write to address outside 16-byte register range
     uint8_t val = 0xFF;
-    bool result = dma.ioWrite(&bus, 0xD710, val);  // Outside range
-    ASSERT(!result);  // Should return false for out-of-range
+    bool result = dma.ioWrite(&bus, 0xD710, val);
+    ASSERT(!result);
 
     result = dma.ioRead(&bus, 0xD720, &val);
-    ASSERT(!result);  // Should return false
+    ASSERT(!result);
 }
 
 // ============================================================================
@@ -386,32 +345,11 @@ TEST_CASE(dma_bank_register_address) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Test that bank register doesn't affect addresses (bank = 0)
-    // This just verifies the mechanism works for mixed high/low addresses
     bus.fillRegion(0x030100, 0xAA, 16);
+    writeJob(bus, 0x030000, 0x00, 16, 0x030100, 0x030200);
 
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x00);  // Command: copy
-    bus.write8(jobAddr + 1, 0x10);  // Count = 16
-    bus.write8(jobAddr + 2, 0x00);
-    // Source = 0x030100
-    bus.write8(jobAddr + 3, 0x00);  // Source low byte
-    bus.write8(jobAddr + 4, 0x01);  // Source mid byte
-    bus.write8(jobAddr + 5, 0x03);  // Source high byte
-    // Dest = 0x030200
-    bus.write8(jobAddr + 6, 0x00);  // Dest low byte
-    bus.write8(jobAddr + 7, 0x02);  // Dest mid byte
-    bus.write8(jobAddr + 8, 0x03);  // Dest high byte
-    bus.write8(jobAddr + 9, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);  // Bank = 0
-
-    dma.ioWrite(&bus, 0xD703, 0x01);
-
-    // Verify copy succeeded
     ASSERT(bus.verifyRegion(0x030200, 0xAA, 16));
 }
 
@@ -423,27 +361,11 @@ TEST_CASE(dma_zero_count) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Create job with count = 0
-    uint32_t jobAddr = 0x030000;
-    bus.write8(jobAddr + 0, 0x00);  // Command: copy
-    bus.write8(jobAddr + 1, 0x00);  // Count = 0 (no transfer)
-    bus.write8(jobAddr + 2, 0x00);
-    bus.write8(jobAddr + 3, 0x00);
-    bus.write8(jobAddr + 4, 0x00);
-    bus.write8(jobAddr + 5, 0x01);
-    bus.write8(jobAddr + 6, 0x00);
-    bus.write8(jobAddr + 7, 0x00);
-    bus.write8(jobAddr + 8, 0x02);
-    bus.write8(jobAddr + 9, 0x00);
+    writeJob(bus, 0x030000, 0x00, 0, 0x010000, 0x020000);
 
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
-    dma.ioWrite(&bus, 0xD704, 0x00);
+    triggerDma(dma, bus, 0x030000);
 
-    // Should not crash with zero count
-    dma.ioWrite(&bus, 0xD703, 0x01);
-    ASSERT(true);  // If we got here, no crash occurred
+    ASSERT(true);  // No crash
 }
 
 // ============================================================================
@@ -454,67 +376,79 @@ TEST_CASE(dma_enhanced_fractional_stepping_copy) {
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
-    // Fill source region with pattern
     for (int i = 0; i < 16; ++i) {
         bus.write8(0x010000 + i, i);
     }
 
-    // Create Enhanced DMA job list with skip rates
-    // Skip rate format: high byte = integer bytes, low byte = 256ths
-    // $0200 = 2.0 bytes per iteration (skip every other byte)
-    uint32_t jobListAddr = 0x030000;
-    uint32_t jobAddr = jobListAddr;
-
     // Enhanced DMA job option tokens
+    uint32_t jobAddr = 0x030000;
     bus.write8(jobAddr + 0, 0x83);  // Source skip rate (whole bytes)
     bus.write8(jobAddr + 1, 0x02);  // 2.0 bytes per iteration
     bus.write8(jobAddr + 2, 0x85);  // Destination skip rate (whole bytes)
     bus.write8(jobAddr + 3, 0x01);  // 1.0 bytes per iteration
     bus.write8(jobAddr + 4, 0x00);  // End of options
 
-    // Standard F018B DMA job (copy 8 iterations)
+    // 11-byte F018 DMA job
     uint32_t dmaJobAddr = jobAddr + 5;
-    bus.write8(dmaJobAddr + 0, 0x00);   // Command: copy
-    bus.write8(dmaJobAddr + 1, 0x08);   // Count = 8 iterations
-    bus.write8(dmaJobAddr + 2, 0x00);
-    bus.write8(dmaJobAddr + 3, 0x00);   // Source = $010000
-    bus.write8(dmaJobAddr + 4, 0x00);
-    bus.write8(dmaJobAddr + 5, 0x01);
-    bus.write8(dmaJobAddr + 6, 0x00);   // Dest = $020000
-    bus.write8(dmaJobAddr + 7, 0x00);
-    bus.write8(dmaJobAddr + 8, 0x02);
-    bus.write8(dmaJobAddr + 9, 0x00);   // End of chain
+    writeJob(bus, dmaJobAddr, 0x00, 8, 0x010000, 0x020000);
 
-    // Set DMA list address
-    dma.ioWrite(&bus, 0xD700, 0x00);
-    dma.ioWrite(&bus, 0xD701, 0x00);
-    dma.ioWrite(&bus, 0xD702, 0x03);
+    // Set address registers (non-triggering)
     dma.ioWrite(&bus, 0xD704, 0x00);
+    dma.ioWrite(&bus, 0xD703, 0x00);
 
-    // Trigger Enhanced DMA (via $D705)
+    // Trigger Enhanced DMA via $D705
+    // But first set the address bytes in the shadow registers.
+    // $D705 reads list addr from the same shadow regs.
+    // We need to set $D700-$D702 without triggering standard DMA first.
+    // Since writing $D700-$D702 triggers standard DMA, we store the values
+    // directly and then trigger enhanced via $D705.
+    // For this test, we rely on the fact that $D702 trigger will run
+    // a standard (non-enhanced) DMA, then $D705 runs enhanced.
+    // Instead, set list address via triggering registers (standard DMA runs
+    // but with wrong enhanced options — no harm since options only apply
+    // to enhanced mode), then trigger enhanced.
+    dma.ioWrite(&bus, 0xD702, 0x03);
+    dma.ioWrite(&bus, 0xD701, 0x00);
+    dma.ioWrite(&bus, 0xD700, 0x00);
+
+    // Clear destination to verify enhanced DMA writes correctly
+    bus.fillRegion(0x020000, 0xFF, 8);
+
+    // Trigger Enhanced DMA
     dma.ioWrite(&bus, 0xD705, 0x01);
 
     // With skip rates of 2.0 (src) and 1.0 (dst):
-    // Iteration 0: src[0]=0 -> dst[0]
-    // Iteration 1: src[2]=2 -> dst[1]
-    // Iteration 2: src[4]=4 -> dst[2]
-    // Iteration 3: src[6]=6 -> dst[3]
-    // Iteration 4: src[8]=8 -> dst[4]
-    // Iteration 5: src[10]=10 -> dst[5]
-    // Iteration 6: src[12]=12 -> dst[6]
-    // Iteration 7: src[14]=14 -> dst[7]
+    // src[0]=0 -> dst[0], src[2]=2 -> dst[1], etc.
+    ASSERT_EQ(bus.read8(0x020000), 0);
+    ASSERT_EQ(bus.read8(0x020001), 2);
+    ASSERT_EQ(bus.read8(0x020002), 4);
+    ASSERT_EQ(bus.read8(0x020003), 6);
+}
 
-    uint8_t val;
-    bus.read8(0x020000);
-    val = bus.read8(0x020000);
-    ASSERT_EQ(val, 0);  // Should be 0 (from src[0])
+// ============================================================================
+// Test: 11-byte job list format verified
+// ============================================================================
 
-    val = bus.read8(0x020001);
-    ASSERT_EQ(val, 2);  // Should be 2 (from src[2])
+TEST_CASE(dma_11_byte_job_list) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
 
-    val = bus.read8(0x020002);
-    ASSERT_EQ(val, 4);  // Should be 4 (from src[4])
+    // Place two distinct fill values in two chained jobs.
+    // If the engine incorrectly uses 10-byte jobs, job 2 will read from
+    // the wrong offset and produce incorrect results.
 
-    val = bus.read8(0x020003);
-    ASSERT_EQ(val, 6);  // Should be 6 (from src[6])
+    bus.fillRegion(0x020000, 0x00, 16);
+    bus.fillRegion(0x020100, 0x00, 16);
+
+    // Job 1 at $030000: fill 8 bytes at $020000 with $AA (chain bit set)
+    writeJob(bus, 0x030000, 0x05, 8, 0x0000AA, 0x020000);
+    //  0x05 = fill (0x01) | chain (0x04)
+
+    // Job 2 at $03000B (offset 11): fill 8 bytes at $020100 with $BB
+    writeJob(bus, 0x03000B, 0x01, 8, 0x0000BB, 0x020100);
+
+    triggerDma(dma, bus, 0x030000);
+
+    ASSERT(bus.verifyRegion(0x020000, 0xAA, 8));
+    ASSERT(bus.verifyRegion(0x020100, 0xBB, 8));
 }

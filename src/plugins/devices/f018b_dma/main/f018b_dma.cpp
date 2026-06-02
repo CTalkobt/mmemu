@@ -17,12 +17,12 @@ void F018bDmaDevice::getDeviceInfo(DeviceInfo& out) const {
         out.registers.push_back({rname, offset, m_regs[offset], desc});
     };
 
-    addReg("ADDRLSB",  0x00, "DMA list address low byte");
-    addReg("ADDRMSB",  0x01, "DMA list address high byte");
-    addReg("ADDRBANK", 0x02, "DMA list address bank (bits 19:16)");
-    addReg("EXECUTE",  0x03, "DMA execute (write triggers)");
-    addReg("ADDRMB",   0x04, "DMA upper address (bits 27:20)");
-    addReg("ETRIGGER", 0x05, "Enhanced DMA options/trigger");
+    addReg("ADDRLSBTRIG",  0x00, "DMA list addr low; write triggers DMA");
+    addReg("ADDRMSHTRIG",  0x01, "DMA list addr high; write triggers DMA");
+    addReg("ADDRBANKTRIG", 0x02, "DMA list addr bank (bits 19:16); write triggers DMA");
+    addReg("EN018B",       0x03, "EN018B (bit 0), NOMBWRAP (bit 1) — no trigger");
+    addReg("ADDRMB",       0x04, "DMA upper address (bits 27:20) — no trigger");
+    addReg("ETRIG",        0x05, "Enhanced DMA trigger");
     for (uint32_t i = 0x06; i <= 0x0F; ++i) {
         addReg("RSV_" + std::to_string(i), i, "Reserved");
     }
@@ -58,12 +58,14 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     m_regs[offset] = val;
     m_bus = bus;  // Cache the bus reference for DMA operations
 
-    // Write to $D703 triggers standard DMA execution
-    if (offset == 0x03) {
+    // $D700-$D702: writing any trigger register sets the address byte AND triggers DMA
+    if (offset <= 0x02) {
         m_enhancedMode = false;
         executeDma();
     }
-    // Write to $D705 triggers Enhanced DMA execution
+    // $D703: EN018B/NOMBWRAP control flags — does NOT trigger DMA
+    // $D704: upper address bits — does NOT trigger DMA
+    // $D705: Enhanced DMA trigger
     else if (offset == 0x05) {
         m_enhancedMode = true;
         executeDma();
@@ -167,40 +169,43 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
             parseJobOptions(currentAddr, job);
         }
 
-        // Read job descriptor (10 bytes for standard format)
+        // Read job descriptor (11 bytes for F018/F018B format)
         // Byte 0: command
         job.command = m_bus->read8(currentAddr + 0);
 
-        // Bytes 1–2: count (16-bit little-endian)
+        // Bytes 1-2: count (16-bit little-endian)
         uint8_t count_lo = m_bus->read8(currentAddr + 1);
         uint8_t count_hi = m_bus->read8(currentAddr + 2);
         job.count = count_lo | (count_hi << 8);
 
-        // Bytes 3–5: source address (24-bit little-endian)
+        // Bytes 3-5: source address (24-bit little-endian)
         uint8_t src_lo = m_bus->read8(currentAddr + 3);
         uint8_t src_mid = m_bus->read8(currentAddr + 4);
         uint8_t src_hi = m_bus->read8(currentAddr + 5);
         job.srcAddr = src_lo | (src_mid << 8) | (src_hi << 16);
 
-        // Bytes 6–8: destination address (24-bit little-endian)
+        // Bytes 6-8: destination address (24-bit little-endian)
         uint8_t dst_lo = m_bus->read8(currentAddr + 6);
         uint8_t dst_mid = m_bus->read8(currentAddr + 7);
         uint8_t dst_hi = m_bus->read8(currentAddr + 8);
         job.dstAddr = dst_lo | (dst_mid << 8) | (dst_hi << 16);
 
-        // Byte 9: chain/end byte
-        job.chainByte = m_bus->read8(currentAddr + 9);
+        // Byte 9: sub-command / modulo control
+        job.subCommand = m_bus->read8(currentAddr + 9);
+
+        // Byte 10: modulo value
+        job.modulo = m_bus->read8(currentAddr + 10);
 
         m_jobs.push_back(job);
 
-        // Check chain bit (bit 2 of command)
+        // Check chain bit (bit 2 of command byte)
         bool hasChain = (job.command & 0x04) != 0;
         if (!hasChain) {
             break;  // End of job chain
         }
 
-        // Move to next job (10-byte descriptor)
-        currentAddr += 10;
+        // Move to next job (11-byte descriptor)
+        currentAddr += 11;
     }
 
     return !m_jobs.empty();
