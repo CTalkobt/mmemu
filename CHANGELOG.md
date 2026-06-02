@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+Version format: `MAJOR.MINOR.PATCH.GITHASH` (e.g., `0.4.0.abc1234`).
+The canonical version is defined in the `VERSION` file at the repository root.
+
+## [0.4.0] - Unreleased
+
+### Changed
+- **Version tracking**: Single source of truth in `VERSION` file; Makefile reads it to generate `version.h`. Version format changed from `MAJOR.MINOR.PATCH-GITHASH` to `MAJOR.MINOR.PATCH.GITHASH`.
+
 ## [0.3.2] - 2026-05-28
 
 ### Added
@@ -227,7 +235,7 @@ All notable changes to this project will be documented in this file.
 - **Build System**:
     - Added `make cppcheck` target for static analysis of the codebase.
     - Fixed several One Definition Rule (ODR) violations in test suites by using anonymous namespaces for mock classes.
-- **Version string**: Build system generates `version.h` with git hash (displayed as `0.2.0-<hash>`).
+- **Version string**: Build system generates `version.h` with git hash.
 
 ### Changed
 - Suppressed "Registering machine:" and plugin load messages to spdlog debug level.
@@ -238,7 +246,7 @@ All notable changes to this project will be documented in this file.
 - EOM incorrectly clearing MAP state.
 - GUI plugin pane manager segfault on window destroy in test environment.
 
-## [0.8.1-dev] - 2026-05-09
+## [0.1.2-dev] - 2026-05-09
 
 ### Added
 - **Pluggable Assembler Infrastructure**:
@@ -276,7 +284,7 @@ All notable changes to this project will be documented in this file.
 - **ToolchainRegistry**: Now supports both ISA-based and name-based assembler factories
 - **MachineState (MCP)**: Added `IAssembler* assem` field; global `g_assemblerOverrides` map for per-machine runtime selection
 
-## [0.8.0-dev] - 2026-05-07
+## [0.1.1-dev] - 2026-05-07
 
 ### Added
 - **Phase 19: Sparse Memory and Memory Management Unit (MEGA65)**:

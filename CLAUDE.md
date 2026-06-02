@@ -214,7 +214,7 @@ The evaluator resolves symbols at expression-parse time. Symbols are auto-loaded
 
 ---
 
-## Assembler Infrastructure (0.8.1)
+## Assembler Infrastructure
 
 The simulator now features a pluggable assembler system with per-machine selection:
 
