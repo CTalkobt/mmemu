@@ -17,13 +17,14 @@ void F018bDmaDevice::getDeviceInfo(DeviceInfo& out) const {
         out.registers.push_back({rname, offset, m_regs[offset], desc});
     };
 
-    addReg("ADDRLSBTRIG",  0x00, "DMA list addr low; write triggers DMA");
-    addReg("ADDRMSHTRIG",  0x01, "DMA list addr high; write triggers DMA");
-    addReg("ADDRBANKTRIG", 0x02, "DMA list addr bank (bits 19:16); write triggers DMA");
-    addReg("EN018B",       0x03, "EN018B (bit 0), NOMBWRAP (bit 1) — no trigger");
-    addReg("ADDRMB",       0x04, "DMA upper address (bits 27:20) — no trigger");
-    addReg("ETRIG",        0x05, "Enhanced DMA trigger");
-    for (uint32_t i = 0x06; i <= 0x0F; ++i) {
+    addReg("ADDRLSBTRIG",  0x00, "DMA list addr LSB; write triggers C65-compat DMA");
+    addReg("ADDRMSB",      0x01, "DMA list addr high (bits 15:8)");
+    addReg("ADDRBANK",     0x02, "DMA list addr bank (bits 22:16); resets ADDRMB");
+    addReg("EN018B",       0x03, "EN018B (bit 0), NOMBWRAP (bit 1)");
+    addReg("ADDRMB",       0x04, "DMA upper address (bits 27:20)");
+    addReg("ETRIG",        0x05, "Enhanced DMA trigger (flat 28-bit addr)");
+    addReg("ETRIGMAPD",    0x06, "Enhanced DMA trigger (MAP'd 16-bit addr)");
+    for (uint32_t i = 0x07; i <= 0x0F; ++i) {
         addReg("RSV_" + std::to_string(i), i, "Reserved");
     }
 
@@ -58,14 +59,18 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     m_regs[offset] = val;
     m_bus = bus;  // Cache the bus reference for DMA operations
 
-    // $D700-$D702: writing any trigger register sets the address byte AND triggers DMA
-    if (offset <= 0x02) {
+    // $D702: writing ADDRBANK resets ADDRMB ($D704) to zero for compatibility
+    // (programs that predate the megabyte register don't set it)
+    if (offset == 0x02) {
+        m_regs[0x04] = 0x00;
+    }
+
+    // $D700: ADDRLSBTRIG — write triggers C65-compatible DMA execution
+    if (offset == 0x00) {
         m_enhancedMode = false;
         executeDma();
     }
-    // $D703: EN018B/NOMBWRAP control flags — does NOT trigger DMA
-    // $D704: upper address bits — does NOT trigger DMA
-    // $D705: Enhanced DMA trigger
+    // $D705: ETRIG — write triggers Enhanced DMA (flat 28-bit address)
     else if (offset == 0x05) {
         m_enhancedMode = true;
         executeDma();
@@ -159,6 +164,12 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
     const uint32_t MAX_JOBS = 256;  // Safety limit
     uint32_t currentAddr = listAddr;
 
+    // EN018B (bit 0 of $D703) selects job list format:
+    //   0 = F018  (11 bytes): no Command MSB, modulo at bytes 9-10
+    //   1 = F018B (12 bytes): Command MSB at byte 9, modulo at bytes 10-11
+    bool f018b = (m_regs[0x03] & 0x01) != 0;
+    uint32_t jobSize = f018b ? 12 : 11;
+
     for (uint32_t jobIdx = 0; jobIdx < MAX_JOBS; ++jobIdx) {
         DmaJob job = {};
         job.srcSkipRate = 0x0100;  // Default: 1.0 bytes per iteration
@@ -169,43 +180,54 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
             parseJobOptions(currentAddr, job);
         }
 
-        // Read job descriptor (11 bytes for F018/F018B format)
-        // Byte 0: command
-        job.command = m_bus->read8(currentAddr + 0);
+        // Byte 0: command LSB
+        job.commandLsb = m_bus->read8(currentAddr + 0);
 
         // Bytes 1-2: count (16-bit little-endian)
         uint8_t count_lo = m_bus->read8(currentAddr + 1);
         uint8_t count_hi = m_bus->read8(currentAddr + 2);
         job.count = count_lo | (count_hi << 8);
 
-        // Bytes 3-5: source address (24-bit little-endian)
+        // Bytes 3-4: source address LSB/MSB
+        // Byte 5: source BANK (lower nibble = bits 19:16) and FLAGS (upper nibble)
         uint8_t src_lo = m_bus->read8(currentAddr + 3);
         uint8_t src_mid = m_bus->read8(currentAddr + 4);
-        uint8_t src_hi = m_bus->read8(currentAddr + 5);
-        job.srcAddr = src_lo | (src_mid << 8) | (src_hi << 16);
+        uint8_t src_bankflags = m_bus->read8(currentAddr + 5);
+        job.srcAddr = src_lo | (src_mid << 8) | ((src_bankflags & 0x0F) << 16);
+        job.srcFlags = (src_bankflags >> 4) & 0x0F;
 
-        // Bytes 6-8: destination address (24-bit little-endian)
+        // Bytes 6-7: destination address LSB/MSB
+        // Byte 8: destination BANK (lower nibble) and FLAGS (upper nibble)
         uint8_t dst_lo = m_bus->read8(currentAddr + 6);
         uint8_t dst_mid = m_bus->read8(currentAddr + 7);
-        uint8_t dst_hi = m_bus->read8(currentAddr + 8);
-        job.dstAddr = dst_lo | (dst_mid << 8) | (dst_hi << 16);
+        uint8_t dst_bankflags = m_bus->read8(currentAddr + 8);
+        job.dstAddr = dst_lo | (dst_mid << 8) | ((dst_bankflags & 0x0F) << 16);
+        job.dstFlags = (dst_bankflags >> 4) & 0x0F;
 
-        // Byte 9: sub-command / modulo control
-        job.subCommand = m_bus->read8(currentAddr + 9);
-
-        // Byte 10: modulo value
-        job.modulo = m_bus->read8(currentAddr + 10);
+        if (f018b) {
+            // F018B: byte 9 = Command MSB, bytes 10-11 = modulo
+            job.commandMsb = m_bus->read8(currentAddr + 9);
+            uint8_t mod_lo = m_bus->read8(currentAddr + 10);
+            uint8_t mod_hi = m_bus->read8(currentAddr + 11);
+            job.modulo = mod_lo | (mod_hi << 8);
+        } else {
+            // F018: no Command MSB (implicitly 0), bytes 9-10 = modulo
+            job.commandMsb = 0x00;
+            uint8_t mod_lo = m_bus->read8(currentAddr + 9);
+            uint8_t mod_hi = m_bus->read8(currentAddr + 10);
+            job.modulo = mod_lo | (mod_hi << 8);
+        }
 
         m_jobs.push_back(job);
 
-        // Check chain bit (bit 2 of command byte)
-        bool hasChain = (job.command & 0x04) != 0;
+        // Check chain bit (bit 2 of command LSB)
+        bool hasChain = (job.commandLsb & 0x04) != 0;
         if (!hasChain) {
             break;  // End of job chain
         }
 
-        // Move to next job (11-byte descriptor)
-        currentAddr += 11;
+        // Move to next job
+        currentAddr += jobSize;
     }
 
     return !m_jobs.empty();
@@ -214,7 +236,7 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
 void F018bDmaDevice::processJob(const DmaJob& job) {
     if (!m_bus) return;
 
-    uint8_t op = job.command & 0x03;  // Bits 1:0 = operation
+    uint8_t op = job.commandLsb & 0x03;  // Bits 1:0 = operation
 
     // Extend 24-bit addresses to 28-bit using upper bank from $D704
     uint32_t bankHigh = static_cast<uint32_t>(m_regs[0x04]) << 20;

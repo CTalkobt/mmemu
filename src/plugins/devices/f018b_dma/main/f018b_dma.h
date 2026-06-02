@@ -10,21 +10,29 @@
  *
  * Register map (base $D700, 16 bytes):
  *
- *   $D700        ADDRLSBTRIG  — DMA list address low byte; write triggers DMA
- *   $D701        ADDRMSHTRIG  — DMA list address high byte; write triggers DMA
- *   $D702        ADDRBANKTRIG — DMA list address bank (bits 19:16); write triggers DMA
- *   $D703        EN018B (bit 0), NOMBWRAP (bit 1) — control flags, NO trigger
+ *   $D700        ADDRLSBTRIG  — DMA list address LSB; write triggers C65-compat DMA
+ *   $D701        ADDRMSB      — DMA list address high byte (bits 15:8), no trigger
+ *   $D702        ADDRBANK     — DMA list address bank (bits 22:16), no trigger
+ *                               Writing resets $D704 (ADDRMB) to zero.
+ *   $D703        EN018B (bit 0), NOMBWRAP (bit 1) — control flags, no trigger
  *   $D704        ADDRMB       — DMA list upper address (bits 27:20), no trigger
- *   $D705        ETRIG        — Enhanced DMA trigger; write triggers enhanced DMA
- *   $D706-$D70F  Reserved
+ *   $D705        ETRIG        — Enhanced DMA trigger (28-bit flat address)
+ *   $D706        ETRIGMAPD    — Enhanced DMA trigger (MAP'd 16-bit address)
+ *   $D707-$D70F  Reserved
  *
- * F018 DMA job list format (11 bytes per job):
- *   Byte 0:      Command (bits 1:0 = operation, bit 2 = chain)
+ * F018 DMA job list format (11 bytes per job, EN018B=0):
+ *   Byte 0:      Command LSB (bits 1:0 = operation, bit 2 = chain)
  *   Bytes 1-2:   Count (16-bit LE)
- *   Bytes 3-5:   Source address (24-bit LE)
- *   Bytes 6-8:   Destination address (24-bit LE)
- *   Byte 9:      Sub-command / modulo control
- *   Byte 10:     Modulo value
+ *   Bytes 3-4:   Source address LSB/MSB
+ *   Byte 5:      Source address BANK and FLAGS
+ *   Bytes 6-7:   Destination address LSB/MSB
+ *   Byte 8:      Destination address BANK and FLAGS
+ *   Bytes 9-10:  Modulo (16-bit LE)
+ *
+ * F018B DMA job list format (12 bytes per job, EN018B=1):
+ *   Bytes 0-8:   Same as F018
+ *   Byte 9:      Command MSB (addressing modes, reserved)
+ *   Bytes 10-11: Modulo (16-bit LE)
  */
 class F018bDmaDevice : public IOHandler {
 public:
@@ -55,12 +63,14 @@ private:
     };
 
     struct DmaJob {
-        uint8_t command;        // Byte 0: operation, chain, interrupt, enhanced flags
+        uint8_t commandLsb;     // Byte 0: operation (1:0), chain (2), yield (3), minterm (7:4)
+        uint8_t commandMsb;     // F018B byte 9: src addr mode (9:8), dst addr mode (11:10)
         uint16_t count;         // Bytes 1-2: transfer size
-        uint32_t srcAddr;       // Bytes 3-5: source address (24-bit)
-        uint32_t dstAddr;       // Bytes 6-8: destination address (24-bit)
-        uint8_t subCommand;     // Byte 9: sub-command / modulo control
-        uint8_t modulo;         // Byte 10: modulo value
+        uint32_t srcAddr;       // Bytes 3-5: source address (20-bit: 16-bit addr + 4-bit bank)
+        uint8_t srcFlags;       // Upper nibble of source BANK+FLAGS byte
+        uint32_t dstAddr;       // Bytes 6-8: dest address (20-bit: 16-bit addr + 4-bit bank)
+        uint8_t dstFlags;       // Upper nibble of dest BANK+FLAGS byte
+        uint16_t modulo;        // Modulo value (16-bit LE)
         uint16_t srcSkipRate;   // Source fractional step rate ($0100 = 1.0 byte)
         uint16_t dstSkipRate;   // Destination fractional step rate
     };
