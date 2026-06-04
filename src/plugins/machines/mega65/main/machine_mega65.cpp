@@ -189,6 +189,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Load HYPPO Hypervisor ROM (16 KB)
     // -----------------------------------------------------------------------
     auto* cpu45 = static_cast<MOS45GS02*>(cpu);
+
+    // KEY register: block personality changes while in hypervisor mode
+    keyReg->setHypervisorCheck([cpu45]() { return cpu45->isHypervisor(); });
+
     uint8_t* hyperRom = nullptr;
     {
         hyperRom = new uint8_t[16384];

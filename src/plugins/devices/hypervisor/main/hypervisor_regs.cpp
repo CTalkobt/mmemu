@@ -43,7 +43,18 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     uint8_t off = addr & 0x3F;
 
     if (!m_cpu->isHypervisor()) {
-        // User mode: write to $D640-$D67F triggers SYSCALL trap
+        // User mode: write to $D640-$D67F triggers SYSCALL trap.
+        // Validate that the opcode at current PC is NOP ($EA) or CLV ($B8).
+        // This matches real MEGA65 hardware behavior — the STA $D640+n
+        // instruction must be followed by NOP or CLV for the trap to fire.
+        IBus* cpuBus = m_cpu->getDataBus();
+        if (cpuBus) {
+            uint8_t nextOp = cpuBus->peek8(m_cpu->pc());
+            if (nextOp != 0xEA && nextOp != 0xB8) {
+                return true;  // Silently ignore invalid trap sequence
+            }
+        }
+
         // SYSCALL number = offset (0-63), entry point = $8000 + off*4
         uint16_t trapAddr = 0x8000 + (uint16_t)off * 4;
         m_cpu->enterHypervisor(trapAddr);

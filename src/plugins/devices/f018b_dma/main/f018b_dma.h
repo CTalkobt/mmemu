@@ -33,6 +33,9 @@
  *   Bytes 0-8:   Same as F018
  *   Byte 9:      Command MSB (addressing modes, reserved)
  *   Bytes 10-11: Modulo (16-bit LE)
+ *
+ * Execution model: DMA processes one byte per tick() call (cycle-by-cycle).
+ * While active, isHaltRequested() returns true to halt the CPU.
  */
 class F018bDmaDevice : public IOHandler {
 public:
@@ -75,13 +78,14 @@ private:
         uint16_t dstSkipRate;   // Destination fractional step rate
     };
 
-    void executeDma();
+    // Job list management
+    void startDma();
     bool fetchJobList(uint32_t listAddr);
     void parseJobOptions(uint32_t& addr, DmaJob& job);
-    void processJob(const DmaJob& job);
-    void doCopy(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep);
-    void doFill(uint32_t dst, uint16_t count, uint8_t fillByte, uint16_t dstStep);
-    void doSwap(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep);
+
+    // Per-byte tick state
+    void beginJob(size_t jobIdx);
+    void tickOneByte();
 
     uint32_t m_base;
     std::string m_name{"F018B DMA"};
@@ -91,4 +95,17 @@ private:
     bool m_dmaActive;           // Set during execution; CPU halts while true
     bool m_enhancedMode;        // Enhanced DMA Jobs mode (triggered via $D705)
     std::vector<DmaJob> m_jobs; // Fetched job chain
+
+    // Cycle-by-cycle execution state
+    size_t   m_currentJob;      // Index into m_jobs
+    uint16_t m_bytesRemaining;  // Bytes left in current job
+    uint32_t m_srcAccum;        // Source address accumulator (fractional, in 256ths)
+    uint32_t m_dstAccum;        // Dest address accumulator (fractional, in 256ths)
+    uint32_t m_srcBase;         // Physical source base address for current job
+    uint32_t m_dstBase;         // Physical dest base address for current job
+    uint16_t m_srcStep;         // Source step rate for current job
+    uint16_t m_dstStep;         // Dest step rate for current job
+    uint8_t  m_fillByte;        // Fill byte for fill operations
+    DmaOperation m_currentOp;   // Current operation type
+    bool     m_backward;        // Copy direction (overlap-safe)
 };

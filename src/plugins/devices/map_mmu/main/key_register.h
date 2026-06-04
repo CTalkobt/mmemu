@@ -37,6 +37,9 @@ public:
         m_personalityCallback = cb;
     }
 
+    // Hypervisor guard: KEY writes are ignored while in hypervisor mode
+    void setHypervisorCheck(std::function<bool()> fn) { m_isHypervisor = fn; }
+
     IopersonalityMode getCurrentPersonality() const { return m_currentPersonality; }
 
 private:
@@ -47,6 +50,7 @@ private:
     uint8_t m_lastWritten;
     IopersonalityMode m_currentPersonality;
     std::function<void(IopersonalityMode)> m_personalityCallback;
+    std::function<bool()> m_isHypervisor;
 
     // Check if (first, second) forms a valid knock sequence
     bool isValidSequence(uint8_t first, uint8_t second, IopersonalityMode& mode) const;

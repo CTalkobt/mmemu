@@ -65,11 +65,15 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
         m_hyperState.mapHi1  = (ms.offsets[4] >> 8) & 0xFF;
         m_hyperState.mapLoMB = ms.enables & 0x0F;
         m_hyperState.mapHiMB = (ms.enables >> 4) & 0x0F;
+        m_hyperState.megabyteLow  = ms.megabyteLow;
+        m_hyperState.megabyteHigh = ms.megabyteHigh;
     }
 
     // Enter hypervisor mode
     m_state.hypervisor = true;
-    m_state.p |= FLAG_I; // Interrupts disabled
+    m_state.p |= FLAG_I;  // Interrupts disabled
+    m_state.p |= FLAG_E;  // 8-bit stack mode (stack pinned to B page)
+    m_state.p &= ~FLAG_D; // Clear decimal mode
     m_state.pc = trapAddr;
 
     // In hypervisor mode: stack at $BE00, zero page at $BF00
@@ -101,6 +105,8 @@ void MOS45GS02::exitHypervisor() {
         ms.offsets[0] = m_hyperState.mapLo0 | ((uint16_t)m_hyperState.mapLo1 << 8);
         ms.offsets[4] = m_hyperState.mapHi0 | ((uint16_t)m_hyperState.mapHi1 << 8);
         ms.enables    = m_hyperState.mapLoMB | (m_hyperState.mapHiMB << 4);
+        ms.megabyteLow  = m_hyperState.megabyteLow;
+        ms.megabyteHigh = m_hyperState.megabyteHigh;
         m_mapMmu->setMapState(ms);
     }
 
@@ -235,15 +241,19 @@ void MOS45GS02::doSbc8(uint8_t v) {
 void MOS45GS02::push8(uint8_t v) {
     write8(m_state.sp, v);
     if (m_state.p & FLAG_E) {
+        // 8-bit stack mode: wrap within base page (B register)
         m_state.sp = ((uint16_t)m_state.b << 8) | ((m_state.sp - 1) & 0xFF);
     } else {
+        // 16-bit stack mode: full 16-bit decrement (page crossing is natural)
         m_state.sp--;
     }
 }
 uint8_t MOS45GS02::pull8() {
     if (m_state.p & FLAG_E) {
+        // 8-bit stack mode: wrap within base page (B register)
         m_state.sp = ((uint16_t)m_state.b << 8) | ((m_state.sp + 1) & 0xFF);
     } else {
+        // 16-bit stack mode: full 16-bit increment (page crossing is natural)
         m_state.sp++;
     }
     return read8(m_state.sp);
@@ -1199,32 +1209,41 @@ int MOS45GS02::step() {
             m_state.cycles++; break;
         }
         case 0x5C: { // MAP - Set memory mapping
-            // MEGA65 MAP register encoding:
-            //   Lower 32KB: mb_offset = ((X & 0x0F) << 8) | A   (12-bit)
-            //                enables  = (X >> 4) & 0x0F  (blocks 0-3)
-            //   Upper 32KB: mb_offset = ((Z & 0x0F) << 8) | Y   (12-bit)
-            //                enables  = (Z >> 4) & 0x0F  (blocks 4-7)
+            // MEGA65 MAP register encoding (two modes per half):
             //
-            // Physical address for an enabled block b:
-            //   phys = vaddr + (mb_offset << 8)
+            // Normal mode (X != 0x0F):
+            //   Lower 32KB: offset = ((X & 0x0F) << 8) | A
+            //                enables = (X >> 4) & 0x0F  (blocks 0-3)
             //
-            // MapMmu stores per-block absolute offsets where:
-            //   phys = (stored_offset << 8) | (vaddr & 0x1FFF)
-            // So: stored_offset = (block_base >> 8) + mb_offset
+            // Megabyte select mode (X == 0x0F):
+            //   megabyte_low = A << 20  (selects 1MB-aligned base for lower 32KB)
+            //   (offset and enables unchanged)
+            //
+            // Same logic for upper half with Z/Y instead of X/A.
             if (m_mapMmu) {
-                MapState state = {};
+                MapState state = m_mapMmu->getMapState();
 
-                uint32_t loOff = ((m_state.x & 0x0F) << 8) | m_state.a;
-                uint32_t hiOff = ((m_state.z & 0x0F) << 8) | m_state.y;
+                // Lower 32KB
+                if (m_state.x == 0x0F) {
+                    // Megabyte select: A chooses which 1MB region
+                    state.megabyteLow = (uint32_t)m_state.a << 20;
+                } else {
+                    uint32_t loOff = ((m_state.x & 0x0F) << 8) | m_state.a;
+                    for (int i = 0; i < 4; i++)
+                        state.offsets[i] = (i * 0x20) + loOff;
+                    state.enables = (state.enables & 0xF0) | ((m_state.x >> 4) & 0x0F);
+                }
 
-                // Compute per-block absolute offsets
-                for (int i = 0; i < 4; i++)
-                    state.offsets[i] = (i * 0x20) + loOff;
-                for (int i = 4; i < 8; i++)
-                    state.offsets[i] = (i * 0x20) + hiOff;
-
-                // Enable bits: X[7:4] for lower half, Z[7:4] for upper half
-                state.enables = ((m_state.x >> 4) & 0x0F) | (((m_state.z >> 4) & 0x0F) << 4);
+                // Upper 32KB
+                if (m_state.z == 0x0F) {
+                    // Megabyte select: Y chooses which 1MB region
+                    state.megabyteHigh = (uint32_t)m_state.y << 20;
+                } else {
+                    uint32_t hiOff = ((m_state.z & 0x0F) << 8) | m_state.y;
+                    for (int i = 4; i < 8; i++)
+                        state.offsets[i] = (i * 0x20) + hiOff;
+                    state.enables = (state.enables & 0x0F) | (((m_state.z >> 4) & 0x0F) << 4);
+                }
 
                 m_mapMmu->setMapState(state);
             }

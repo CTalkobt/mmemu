@@ -4,7 +4,11 @@
 #include <cstring>
 
 F018bDmaDevice::F018bDmaDevice(uint32_t base)
-    : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false), m_enhancedMode(false) {
+    : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false),
+      m_enhancedMode(false), m_currentJob(0), m_bytesRemaining(0),
+      m_srcAccum(0), m_dstAccum(0), m_srcBase(0), m_dstBase(0),
+      m_srcStep(0x0100), m_dstStep(0x0100), m_fillByte(0),
+      m_currentOp(DMA_COPY), m_backward(false) {
     std::memset(m_regs, 0, sizeof(m_regs));
 }
 
@@ -43,6 +47,8 @@ void F018bDmaDevice::reset() {
     m_dmaListAddr = 0;
     m_dmaActive = false;
     m_jobs.clear();
+    m_currentJob = 0;
+    m_bytesRemaining = 0;
 }
 
 bool F018bDmaDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
@@ -68,22 +74,155 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     // $D700: ADDRLSBTRIG — write triggers C65-compatible DMA execution
     if (offset == 0x00) {
         m_enhancedMode = false;
-        executeDma();
+        startDma();
     }
     // $D705: ETRIG — write triggers Enhanced DMA (flat 28-bit address)
     else if (offset == 0x05) {
         m_enhancedMode = true;
-        executeDma();
+        startDma();
     }
 
     return true;
 }
 
 void F018bDmaDevice::tick(uint64_t /*cycles*/) {
-    // DMA execution happens synchronously in ioWrite; tick is a no-op
-    // If async execution is needed in the future, execute chained jobs here
-    // and clear m_dmaActive when complete.
+    if (!m_dmaActive) return;
+    tickOneByte();
 }
+
+// ---------------------------------------------------------------------------
+// DMA initiation: fetch job list, set up first job
+// ---------------------------------------------------------------------------
+
+void F018bDmaDevice::startDma() {
+    if (!m_bus) return;
+
+    // Assemble 28-bit DMA list address from registers
+    uint32_t addr_low = m_regs[0x00];
+    uint32_t addr_mid = m_regs[0x01];
+    uint32_t addr_bank = m_regs[0x02];
+    uint32_t addr_upper = m_regs[0x04];
+
+    m_dmaListAddr = (addr_low) | (addr_mid << 8) | ((addr_bank & 0x0F) << 16) | (addr_upper << 20);
+    m_dmaListAddr &= 0x0FFFFFFF;
+
+    m_jobs.clear();
+    if (!fetchJobList(m_dmaListAddr)) return;
+
+    m_dmaActive = true;
+    m_currentJob = 0;
+    beginJob(0);
+}
+
+// ---------------------------------------------------------------------------
+// Begin executing a specific job in the chain
+// ---------------------------------------------------------------------------
+
+void F018bDmaDevice::beginJob(size_t jobIdx) {
+    if (jobIdx >= m_jobs.size()) {
+        m_dmaActive = false;
+        return;
+    }
+
+    const DmaJob& job = m_jobs[jobIdx];
+    m_currentJob = jobIdx;
+    m_bytesRemaining = job.count;
+    m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
+
+    // Extend 24-bit addresses to 28-bit using upper bank from $D704
+    uint32_t bankHigh = static_cast<uint32_t>(m_regs[0x04]) << 20;
+    m_srcBase = (job.srcAddr & 0x0FFFFF) | bankHigh;
+    m_dstBase = (job.dstAddr & 0x0FFFFF) | bankHigh;
+
+    m_srcStep = job.srcSkipRate ? job.srcSkipRate : 0x0100;
+    m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
+    m_fillByte = job.srcAddr & 0xFF;  // For fill ops
+
+    // Overlap detection for copy: go backward if dst is within src range
+    m_backward = false;
+    if (m_currentOp == DMA_COPY && m_bytesRemaining > 0) {
+        uint32_t srcEnd = m_srcBase + ((static_cast<uint32_t>(m_bytesRemaining - 1) * m_srcStep) >> 8);
+        if (m_dstBase > m_srcBase && m_dstBase <= srcEnd) {
+            m_backward = true;
+        }
+    }
+
+    if (m_backward) {
+        m_srcAccum = static_cast<uint32_t>(m_bytesRemaining - 1) * m_srcStep;
+        m_dstAccum = static_cast<uint32_t>(m_bytesRemaining - 1) * m_dstStep;
+    } else {
+        m_srcAccum = 0;
+        m_dstAccum = 0;
+    }
+
+    if (m_bytesRemaining == 0) {
+        // Zero-length job: advance to next
+        if (m_currentJob + 1 < m_jobs.size()) {
+            beginJob(m_currentJob + 1);
+        } else {
+            m_dmaActive = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Process one byte of the current DMA operation
+// ---------------------------------------------------------------------------
+
+void F018bDmaDevice::tickOneByte() {
+    if (!m_bus || m_bytesRemaining == 0) {
+        m_dmaActive = false;
+        return;
+    }
+
+    uint32_t srcAddr = m_srcBase + (m_srcAccum >> 8);
+    uint32_t dstAddr = m_dstBase + (m_dstAccum >> 8);
+
+    switch (m_currentOp) {
+        case DMA_COPY: {
+            uint8_t byte = m_bus->read8(srcAddr);
+            m_bus->write8(dstAddr, byte);
+            break;
+        }
+        case DMA_FILL: {
+            m_bus->write8(dstAddr, m_fillByte);
+            break;
+        }
+        case DMA_SWAP: {
+            uint8_t srcByte = m_bus->read8(srcAddr);
+            uint8_t dstByte = m_bus->read8(dstAddr);
+            m_bus->write8(srcAddr, dstByte);
+            m_bus->write8(dstAddr, srcByte);
+            break;
+        }
+        case DMA_MIX:
+            // Mix operation not yet implemented
+            break;
+    }
+
+    if (m_backward) {
+        m_srcAccum -= m_srcStep;
+        m_dstAccum -= m_dstStep;
+    } else {
+        m_srcAccum += m_srcStep;
+        m_dstAccum += m_dstStep;
+    }
+
+    m_bytesRemaining--;
+
+    if (m_bytesRemaining == 0) {
+        // Current job done — advance to next in chain
+        if (m_currentJob + 1 < m_jobs.size()) {
+            beginJob(m_currentJob + 1);
+        } else {
+            m_dmaActive = false;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Job list parsing (unchanged from original)
+// ---------------------------------------------------------------------------
 
 void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
     if (!m_bus) return;
@@ -92,112 +231,62 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
         uint8_t option = m_bus->read8(addr);
         addr++;
 
-        // End of job option list
         if (option == 0x00) break;
 
-        // Options with MSB set take a 1-byte argument
         if (option & 0x80) {
             uint8_t arg = m_bus->read8(addr);
             addr++;
 
             switch (option) {
-                case 0x82:  // Source skip rate (256ths of bytes) - fractional part
+                case 0x82:
                     job.srcSkipRate = (job.srcSkipRate & 0xFF00) | arg;
                     break;
-                case 0x83:  // Source skip rate (whole bytes) - integer part
+                case 0x83:
                     job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8);
                     break;
-                case 0x84:  // Destination skip rate (256ths of bytes) - fractional part
+                case 0x84:
                     job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg;
                     break;
-                case 0x85:  // Destination skip rate (whole bytes) - integer part
+                case 0x85:
                     job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8);
                     break;
-                // Other options are ignored for now (line drawing, etc.)
                 default:
                     break;
             }
         }
-        // Options without MSB are no-argument tokens
     }
-}
-
-void F018bDmaDevice::executeDma() {
-    if (!m_bus) {
-        // Bus not available yet, will be set via ioWrite
-        return;
-    }
-
-    // Assemble 28-bit DMA list address from registers
-    // $D700 = low byte, $D701 = high byte, $D702 = bits 19:16, $D704 = bits 27:20
-    uint32_t addr_low = m_regs[0x00];           // $D700, bits 7:0
-    uint32_t addr_mid = m_regs[0x01];           // $D701, bits 15:8
-    uint32_t addr_bank = m_regs[0x02];          // $D702, bits 19:16 (lower 4 bits)
-    uint32_t addr_upper = m_regs[0x04];         // $D704, bits 27:20
-
-    m_dmaListAddr = (addr_low) | (addr_mid << 8) | ((addr_bank & 0x0F) << 16) | (addr_upper << 20);
-    m_dmaListAddr &= 0x0FFFFFFF;  // Mask to 28-bit address space
-
-    // Fetch and parse job list
-    m_jobs.clear();
-    if (!fetchJobList(m_dmaListAddr)) {
-        // Debug: job list fetch failed
-        return;
-    }
-
-    // Set DMA active flag (CPU will halt via isHaltRequested())
-    m_dmaActive = true;
-
-    // Execute all chained jobs
-    for (const auto& job : m_jobs) {
-        processJob(job);
-    }
-
-    // Clear DMA active flag when complete
-    m_dmaActive = false;
 }
 
 bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
     if (!m_bus) return false;
 
-    // Read jobs from memory until we encounter a job without the chain bit set
-    const uint32_t MAX_JOBS = 256;  // Safety limit
+    const uint32_t MAX_JOBS = 256;
     uint32_t currentAddr = listAddr;
 
-    // EN018B (bit 0 of $D703) selects job list format:
-    //   0 = F018  (11 bytes): no Command MSB, modulo at bytes 9-10
-    //   1 = F018B (12 bytes): Command MSB at byte 9, modulo at bytes 10-11
     bool f018b = (m_regs[0x03] & 0x01) != 0;
     uint32_t jobSize = f018b ? 12 : 11;
 
     for (uint32_t jobIdx = 0; jobIdx < MAX_JOBS; ++jobIdx) {
         DmaJob job = {};
-        job.srcSkipRate = 0x0100;  // Default: 1.0 bytes per iteration
+        job.srcSkipRate = 0x0100;
         job.dstSkipRate = 0x0100;
 
-        // Parse job option tokens if in enhanced mode
         if (m_enhancedMode) {
             parseJobOptions(currentAddr, job);
         }
 
-        // Byte 0: command LSB
         job.commandLsb = m_bus->read8(currentAddr + 0);
 
-        // Bytes 1-2: count (16-bit little-endian)
         uint8_t count_lo = m_bus->read8(currentAddr + 1);
         uint8_t count_hi = m_bus->read8(currentAddr + 2);
         job.count = count_lo | (count_hi << 8);
 
-        // Bytes 3-4: source address LSB/MSB
-        // Byte 5: source BANK (lower nibble = bits 19:16) and FLAGS (upper nibble)
         uint8_t src_lo = m_bus->read8(currentAddr + 3);
         uint8_t src_mid = m_bus->read8(currentAddr + 4);
         uint8_t src_bankflags = m_bus->read8(currentAddr + 5);
         job.srcAddr = src_lo | (src_mid << 8) | ((src_bankflags & 0x0F) << 16);
         job.srcFlags = (src_bankflags >> 4) & 0x0F;
 
-        // Bytes 6-7: destination address LSB/MSB
-        // Byte 8: destination BANK (lower nibble) and FLAGS (upper nibble)
         uint8_t dst_lo = m_bus->read8(currentAddr + 6);
         uint8_t dst_mid = m_bus->read8(currentAddr + 7);
         uint8_t dst_bankflags = m_bus->read8(currentAddr + 8);
@@ -205,13 +294,11 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
         job.dstFlags = (dst_bankflags >> 4) & 0x0F;
 
         if (f018b) {
-            // F018B: byte 9 = Command MSB, bytes 10-11 = modulo
             job.commandMsb = m_bus->read8(currentAddr + 9);
             uint8_t mod_lo = m_bus->read8(currentAddr + 10);
             uint8_t mod_hi = m_bus->read8(currentAddr + 11);
             job.modulo = mod_lo | (mod_hi << 8);
         } else {
-            // F018: no Command MSB (implicitly 0), bytes 9-10 = modulo
             job.commandMsb = 0x00;
             uint8_t mod_lo = m_bus->read8(currentAddr + 9);
             uint8_t mod_hi = m_bus->read8(currentAddr + 10);
@@ -220,109 +307,11 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
 
         m_jobs.push_back(job);
 
-        // Check chain bit (bit 2 of command LSB)
         bool hasChain = (job.commandLsb & 0x04) != 0;
-        if (!hasChain) {
-            break;  // End of job chain
-        }
+        if (!hasChain) break;
 
-        // Move to next job
         currentAddr += jobSize;
     }
 
     return !m_jobs.empty();
-}
-
-void F018bDmaDevice::processJob(const DmaJob& job) {
-    if (!m_bus) return;
-
-    uint8_t op = job.commandLsb & 0x03;  // Bits 1:0 = operation
-
-    // Extend 24-bit addresses to 28-bit using upper bank from $D704
-    uint32_t bankHigh = static_cast<uint32_t>(m_regs[0x04]) << 20;
-    uint32_t srcPhys = (job.srcAddr & 0x0FFFFF) | bankHigh;
-    uint32_t dstPhys = (job.dstAddr & 0x0FFFFF) | bankHigh;
-
-    // Use default 1.0 byte stepping if not set by options
-    uint16_t srcStep = job.srcSkipRate ? job.srcSkipRate : 0x0100;
-    uint16_t dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
-
-    switch (op) {
-        case DMA_COPY:
-            doCopy(srcPhys, dstPhys, job.count, srcStep, dstStep);
-            break;
-        case DMA_FILL:
-            // Fill byte is the low byte of the source address
-            doFill(dstPhys, job.count, job.srcAddr & 0xFF, dstStep);
-            break;
-        case DMA_SWAP:
-            doSwap(srcPhys, dstPhys, job.count, srcStep, dstStep);
-            break;
-        case DMA_MIX:
-            // Mix operation not yet implemented
-            break;
-    }
-}
-
-void F018bDmaDevice::doCopy(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep) {
-    if (!m_bus || count == 0) return;
-
-    // srcStep and dstStep are in format: high byte = integer bytes, low byte = 256ths
-    // E.g., $0100 = 1.0 bytes, $0080 = 0.5 bytes, $0200 = 2.0 bytes
-
-    // Overlap detection: copy backward if dst is within the source range ahead of src
-    uint32_t srcEnd = src + ((static_cast<uint32_t>(count - 1) * srcStep) >> 8);
-    if (dst > src && dst <= srcEnd) {
-        // Backward copy to avoid overwriting source data
-        uint32_t srcAccum = static_cast<uint32_t>(count - 1) * srcStep;
-        uint32_t dstAccum = static_cast<uint32_t>(count - 1) * dstStep;
-
-        for (uint16_t i = 0; i < count; ++i) {
-            uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
-            m_bus->write8(dst + (dstAccum >> 8), byte);
-
-            srcAccum -= srcStep;
-            dstAccum -= dstStep;
-        }
-    } else {
-        // Forward copy
-        uint32_t srcAccum = 0;
-        uint32_t dstAccum = 0;
-
-        for (uint16_t i = 0; i < count; ++i) {
-            uint8_t byte = m_bus->read8(src + (srcAccum >> 8));
-            m_bus->write8(dst + (dstAccum >> 8), byte);
-
-            srcAccum += srcStep;
-            dstAccum += dstStep;
-        }
-    }
-}
-
-void F018bDmaDevice::doFill(uint32_t dst, uint16_t count, uint8_t fillByte, uint16_t dstStep) {
-    if (!m_bus || count == 0) return;
-
-    uint32_t dstAccum = 0;  // Accumulated address offset (in 256ths)
-
-    for (uint16_t i = 0; i < count; ++i) {
-        m_bus->write8(dst + (dstAccum >> 8), fillByte);
-        dstAccum += dstStep;
-    }
-}
-
-void F018bDmaDevice::doSwap(uint32_t src, uint32_t dst, uint16_t count, uint16_t srcStep, uint16_t dstStep) {
-    if (!m_bus || count == 0) return;
-
-    uint32_t srcAccum = 0;  // Accumulated address offset (in 256ths)
-    uint32_t dstAccum = 0;
-
-    for (uint16_t i = 0; i < count; ++i) {
-        uint8_t srcByte = m_bus->read8(src + (srcAccum >> 8));
-        uint8_t dstByte = m_bus->read8(dst + (dstAccum >> 8));
-        m_bus->write8(src + (srcAccum >> 8), dstByte);
-        m_bus->write8(dst + (dstAccum >> 8), srcByte);
-
-        srcAccum += srcStep;
-        dstAccum += dstStep;
-    }
 }

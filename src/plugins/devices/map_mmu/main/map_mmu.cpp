@@ -24,7 +24,9 @@ uint32_t MapMmu::translate(uint32_t vaddr) const {
 
     if (m_mapState.enables & (1 << block)) {
         uint32_t offset = m_mapState.offsets[block] & 0xFFFFF;  // 20-bit offset
-        return ((offset << 8) | (vaddr & 0x1FFF)) & m_physBus->config().addrMask;
+        uint32_t megabyte = (block < 4) ? m_mapState.megabyteLow
+                                        : m_mapState.megabyteHigh;
+        return (megabyte + (offset << 8) + (vaddr & 0x1FFF)) & m_physBus->config().addrMask;
     }
 
     return vaddr;  // Passthrough: physical address = virtual address (C64 mode)

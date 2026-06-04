@@ -53,6 +53,11 @@ bool KeyRegister::ioWrite(IBus* bus, uint32_t addr, uint8_t val)
     if (addr != 0xD02F) return false;
     m_lastWritten = val;
 
+    // In hypervisor mode, KEY writes are accepted but do not change personality
+    if (m_isHypervisor && m_isHypervisor()) {
+        return true;
+    }
+
     if (m_state == KeyState::WAITING_FIRST) {
         // Store first byte and wait for second
         m_firstByte = val;

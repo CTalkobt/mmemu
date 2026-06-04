@@ -94,13 +94,16 @@ void SparseMemoryBus::write8(uint32_t addr, uint8_t val) {
     const SparseRegion* region = findRegion(addr);
     if (region) {
         if (!region->writable) {
-            if (m_observer) {
-                m_observer->onMemoryWrite(this, addr, before, val);
-            }
-            return;  // ROM: write ignored
+            // ROM write-through: write to underlying RAM page, not the ROM overlay.
+            // Reads still come from the ROM region; writes go to RAM underneath.
+            uint32_t pageAddr = getPageAddr(addr);
+            uint32_t offset = getPageOffset(addr);
+            uint8_t* page = allocatePage(pageAddr);
+            page[offset] = val;
+        } else {
+            // Writable region: write to underlying data (const_cast needed here)
+            const_cast<uint8_t*>(region->data)[addr - region->base] = val;
         }
-        // Writable region: write to underlying data (const_cast needed here)
-        const_cast<uint8_t*>(region->data)[addr - region->base] = val;
     } else {
         uint32_t pageAddr = getPageAddr(addr);
         uint32_t offset = getPageOffset(addr);

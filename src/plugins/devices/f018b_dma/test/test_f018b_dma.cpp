@@ -109,6 +109,7 @@ static void writeJobF018B(MockMemoryBus& bus, uint32_t addr,
 
 // Helper: set up DMA list address registers and trigger via $D700
 // Writes $D704, $D702, $D701 (non-triggering), then $D700 (triggers).
+// After triggering, pumps tick() until DMA completes.
 static void triggerDma(F018bDmaDevice& dma, MockMemoryBus& bus,
                        uint32_t listAddr) {
     dma.ioWrite(&bus, 0xD704, (listAddr >> 20) & 0xFF);  // ADDRMB, no trigger
@@ -117,6 +118,11 @@ static void triggerDma(F018bDmaDevice& dma, MockMemoryBus& bus,
     dma.ioWrite(&bus, 0xD704, (listAddr >> 20) & 0xFF);
     dma.ioWrite(&bus, 0xD701, (listAddr >> 8) & 0xFF);   // ADDRMSB, no trigger
     dma.ioWrite(&bus, 0xD700, listAddr & 0xFF);           // ADDRLSBTRIG — triggers DMA
+
+    // Pump tick() until DMA completes (cycle-by-cycle execution)
+    for (int i = 0; i < 1000000 && dma.isHaltRequested(); ++i) {
+        dma.tick(1);
+    }
 }
 
 // Helper: set up address and trigger Enhanced DMA via $D705
@@ -126,6 +132,11 @@ static void triggerEnhancedDma(F018bDmaDevice& dma, MockMemoryBus& bus,
     dma.ioWrite(&bus, 0xD704, (listAddr >> 20) & 0xFF);
     dma.ioWrite(&bus, 0xD701, (listAddr >> 8) & 0xFF);
     dma.ioWrite(&bus, 0xD705, listAddr & 0xFF);  // ETRIG — triggers enhanced DMA
+
+    // Pump tick() until DMA completes
+    for (int i = 0; i < 1000000 && dma.isHaltRequested(); ++i) {
+        dma.tick(1);
+    }
 }
 
 // ============================================================================
@@ -205,6 +216,11 @@ TEST_CASE(dma_d700_triggers) {
 
     // Write $D700 — triggers DMA
     dma.ioWrite(&bus, 0xD700, 0x00);
+
+    // Pump tick() until DMA completes
+    for (int i = 0; i < 1000000 && dma.isHaltRequested(); ++i) {
+        dma.tick(1);
+    }
 
     ASSERT(bus.verifyRegion(0x020000, 0xAA, 16));
 }
@@ -411,7 +427,7 @@ TEST_CASE(dma_cpu_halt_request) {
 
     triggerDma(dma, bus, 0x030000);
 
-    // After DMA completes synchronously, halt should be cleared
+    // After DMA completes (ticks pumped by triggerDma), halt should be cleared
     ASSERT(!dma.isHaltRequested());
 }
 
