@@ -16,6 +16,7 @@
 #include "plugins/devices/vic4/main/vic4.h"
 #include "plugins/devices/hypervisor/main/hypervisor_regs.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
+#include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
 #include "plugins/devices/sid_pair/main/sid_pair.h"
 #include "plugins/devices/cia6526/main/cia6526.h"
@@ -81,6 +82,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
     auto* sdcard   = new SdCardDevice(0xD680);
+    auto* ioStub   = new Mega65IoStub();
     auto* kbd      = new KbdMega65();
     auto* cia1     = new CIA6526("CIA1", 0xDC00);
     auto* cia2     = new CIA6526("CIA2", 0xDD00);
@@ -137,6 +139,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(cia2);
     io->registerHandler(exitTrap);
     io->registerHandler(sdcard);
+    io->registerHandler(ioStub);  // Catch-all for $D600-$D6FF and colour RAM $D800-$DBFF
     io->registerHandler(kbd); // For discovery via IKeyboardMatrix interface
     desc->ioRegistry = io;
 
@@ -252,6 +255,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         };
         const char* home = std::getenv("HOME");
         if (home) {
+            sdPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/mega65.img");
             sdPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/mega65_sd.img");
             sdPaths.push_back(std::string(home) + "/.local/share/mmsim/mega65.img");
         }
