@@ -42,6 +42,11 @@ void MOS45GS02::reset() {
 void MOS45GS02::setHypervisorRom(const uint8_t* data, uint32_t size) {
     m_hyperRom = data;
     m_hyperRomSize = size;
+    // Create writable copy — hypervisor RAM is read-write (HYPPO uses it for
+    // stack at $BE00, base page at $BF00, and scratch variables)
+    delete[] m_hyperRam;
+    m_hyperRam = new uint8_t[size];
+    memcpy(m_hyperRam, data, size);
 }
 
 void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
@@ -172,16 +177,20 @@ void MOS45GS02::write32_phys(uint32_t physAddr, uint32_t val) {
 }
 
 uint8_t MOS45GS02::read8(uint16_t addr) {
-    // Hypervisor mode: $8000-$BFFF reads from hypervisor ROM
-    if (m_state.hypervisor && m_hyperRom && addr >= 0x8000 && addr <= 0xBFFF) {
+    // Hypervisor mode: $8000-$BFFF reads from hypervisor RAM
+    if (m_state.hypervisor && m_hyperRam && addr >= 0x8000 && addr <= 0xBFFF) {
         uint16_t off = addr - 0x8000;
-        return (off < m_hyperRomSize) ? m_hyperRom[off] : 0xFF;
+        return (off < m_hyperRomSize) ? m_hyperRam[off] : 0xFF;
     }
     return m_bus ? m_bus->read8(translate(addr)) : 0xFF;
 }
 void MOS45GS02::write8(uint16_t addr, uint8_t val) {
-    // Hypervisor mode: $8000-$BFFF is ROM (writes ignored)
-    if (m_state.hypervisor && addr >= 0x8000 && addr <= 0xBFFF) return;
+    // Hypervisor mode: $8000-$BFFF writes to hypervisor RAM
+    if (m_state.hypervisor && m_hyperRam && addr >= 0x8000 && addr <= 0xBFFF) {
+        uint16_t off = addr - 0x8000;
+        if (off < m_hyperRomSize) m_hyperRam[off] = val;
+        return;
+    }
     if (m_bus) m_bus->write8(translate(addr), val);
 }
 uint8_t MOS45GS02::read8_phys(uint32_t physAddr) { return m_bus ? m_bus->read8(physAddr & 0x0FFFFFFF) : 0xFF; }

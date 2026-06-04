@@ -63,7 +63,7 @@ struct HypervisorState {
 class MOS45GS02 : public ICore {
 public:
     MOS45GS02();
-    virtual ~MOS45GS02() {}
+    virtual ~MOS45GS02() { delete[] m_hyperRam; }
 
     // ISA identification
     const char* isaName()     const override { return "45GS02"; }
@@ -142,6 +142,7 @@ private:
     IMapController* m_mapMmu = nullptr;
 
     const uint8_t*  m_hyperRom     = nullptr;
+    uint8_t*        m_hyperRam     = nullptr;  // writable copy for hypervisor mode
     uint32_t        m_hyperRomSize = 0;
 
     // Helper for address translation (MAP)
