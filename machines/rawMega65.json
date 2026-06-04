@@ -5,7 +5,7 @@
       "displayName": "Raw MEGA65 (45GS02 / RAM only)",
       "_note": "No ROMs are loaded, so $E000-$FFFF is flat RAM. If a MapMmu is used, its default C64 banking ($01=$37, HIRAM set) will translate $E000-$FFFF to $002E000+ (KERNAL ROM space). All frontends must read/write through the CPU data bus (not the physical bus) to ensure consistent address translation.",
       "assembler": "ca45",
-      "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 28 },
+      "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
       "cpu": { "type": "45GS02", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "hyper_serial", "name": "HyperSerial", "baseAddr": "0xD6C0" },
