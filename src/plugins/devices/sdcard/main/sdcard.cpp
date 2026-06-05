@@ -124,6 +124,16 @@ void SdCardDevice::executeCommand(uint8_t cmd) {
             m_status |= SD_ST_EXT_BUS;
             break;
 
+        case 0x53: // Read SD card identification / CSD
+            // HYPPO checks buffer[$71] for value $01 to confirm SD card presence.
+            // Fill buffer with a plausible SDHC card identification response.
+            std::memset(m_sectorBuf, 0, 512);
+            m_sectorBuf[0x71] = 0x01; // Card type: SDHC
+            break;
+
+        case 0x57: // Write SD card config (ignored in emulation)
+            break;
+
         default:
             // Unknown command — not an error, just ignored
             break;

@@ -53,6 +53,88 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------
+    // Load BRAM contents (flash menu, freezer, onboarding) into physical RAM.
+    // On real hardware these live in FPGA Block RAM, pre-loaded at synthesis.
+    // We load from files at the same physical addresses HYPPO expects:
+    //   $012000  Freezer       (FREEZER.M65)
+    //   $040000  Onboarding    (not currently used)
+    //   $050000  Flash utility (mflash.prg, loaded without PRG header)
+    // Persistent BRAM: saved to roms/mega65/bram.bin on exit if modified.
+    // -----------------------------------------------------------------------
+    {
+        struct BramEntry { uint32_t addr; uint32_t maxSize; const char* name; };
+        BramEntry bramFiles[] = {
+            { 0x012000, 56*1024, "FREEZER.M65" },
+            { 0x050000, 64*1024, "mflash.prg" },
+        };
+
+        // Try persistent BRAM file first
+        bool bramLoaded = false;
+        std::string bramPath = "roms/mega65/bram.bin";
+        {
+            std::ifstream bf(bramPath, std::ios::binary);
+            if (bf.good()) {
+                // BRAM file format: [addr32][size32][data...] repeated
+                while (bf.good() && !bf.eof()) {
+                    uint32_t addr, size;
+                    bf.read((char*)&addr, 4);
+                    bf.read((char*)&size, 4);
+                    if (!bf.good() || size == 0 || size > 256*1024) break;
+                    std::vector<uint8_t> tmp(size);
+                    bf.read((char*)tmp.data(), size);
+                    if (bf.good()) {
+                        for (uint32_t i = 0; i < size; i++)
+                            physBus->write8(addr + i, tmp[i]);
+                        bramLoaded = true;
+                    }
+                }
+                if (bramLoaded)
+                    fprintf(stderr, "[MEGA65] Loaded persistent BRAM from: %s\n", bramPath.c_str());
+            }
+        }
+
+        // If no persistent BRAM, load from individual files
+        if (!bramLoaded) {
+            std::vector<std::string> searchDirs = { "roms/mega65/", "" };
+            const char* home = std::getenv("HOME");
+            if (home) {
+                searchDirs.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/");
+                searchDirs.push_back(std::string(home) + "/.local/share/mmsim/");
+            }
+
+            for (auto& entry : bramFiles) {
+                for (const auto& dir : searchDirs) {
+                    std::string path = dir + entry.name;
+                    std::ifstream f(path, std::ios::binary);
+                    if (!f.good()) continue;
+
+                    f.seekg(0, std::ios::end);
+                    size_t fileSize = f.tellg();
+                    f.seekg(0);
+
+                    // PRG files: skip 2-byte load address header
+                    size_t skip = 0;
+                    std::string ext = path.substr(path.rfind('.') + 1);
+                    if (ext == "prg" || ext == "PRG") skip = 2;
+
+                    if (skip) f.seekg(skip);
+                    size_t dataSize = fileSize - skip;
+                    if (dataSize > entry.maxSize) dataSize = entry.maxSize;
+
+                    std::vector<uint8_t> tmp(dataSize);
+                    f.read((char*)tmp.data(), dataSize);
+                    for (size_t i = 0; i < dataSize; i++)
+                        physBus->write8(entry.addr + i, tmp[i]);
+
+                    fprintf(stderr, "[MEGA65] Loaded BRAM %s (%zuB) at $%06X from: %s\n",
+                            entry.name, dataSize, entry.addr, path.c_str());
+                    break;
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Create MapMmu (virtual address translator)
     // -----------------------------------------------------------------------
     auto* mmu = new MapMmu("mmu", physBus);
@@ -232,6 +314,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
         if (hyperLoaded) {
             cpu45->setHypervisorRom(hyperRom, 16384);
+            // Also map hypervisor RAM into physical bus at $0FFF8000-$0FFFBFFF
+            // so DMA can read the job lists embedded in HYPPO code.
+            for (uint32_t i = 0; i < 16384; i++)
+                physBus->write8(0x0FFF8000 + i, hyperRom[i]);
             desc->deleters.push_back([hyperRom]() { delete[] hyperRom; });
         } else {
             // No HYPPO — fall back to standard 6502 reset vector
@@ -266,6 +352,20 @@ MachineDescriptor* Mega65MachineFactory::create() {
             }
         }
     }
+
+    // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
+    // When DMA is active, tick devices without stepping the CPU (CPU is halted).
+    desc->schedulerStep = [dma](MachineDescriptor& d) -> int {
+        if (dma->isHaltRequested()) {
+            // DMA active: tick devices (processes one DMA byte), CPU stays halted
+            if (d.ioRegistry) d.ioRegistry->tickAll(1);
+            return 1;
+        }
+        auto* cpu = d.cpus[0].cpu;
+        int cycles = cpu->step();
+        if (d.ioRegistry) d.ioRegistry->tickAll(1);
+        return cycles;
+    };
 
     // Reset callback: reset all I/O devices, then CPU (so CPU reads
     // the reset vector after bank controller overlays are in place)

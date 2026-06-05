@@ -97,8 +97,9 @@ void F018bDmaDevice::tick(uint64_t /*cycles*/) {
 void F018bDmaDevice::startDma() {
     if (!m_bus) return;
 
-    // Assemble 28-bit DMA list address from registers
-    uint32_t addr_low = m_regs[0x00];
+    // Assemble 28-bit DMA list address from registers.
+    // For ETRIG ($D705), the low byte comes from $D705 (regs[5]), not $D700.
+    uint32_t addr_low = m_enhancedMode ? m_regs[0x05] : m_regs[0x00];
     uint32_t addr_mid = m_regs[0x01];
     uint32_t addr_bank = m_regs[0x02];
     uint32_t addr_upper = m_regs[0x04];
