@@ -77,7 +77,7 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
     // Enter hypervisor mode
     m_state.hypervisor = true;
     m_state.p |= FLAG_I;  // Interrupts disabled
-    m_state.p |= FLAG_E;  // 8-bit stack mode (stack pinned to B page)
+    m_state.p &= ~FLAG_E; // 16-bit stack mode (HYPPO sets SEE itself when needed)
     m_state.p &= ~FLAG_D; // Clear decimal mode
     m_state.pc = trapAddr;
 
