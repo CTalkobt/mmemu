@@ -84,6 +84,18 @@ public:
     void setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
                     std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn);
 
+    /**
+     * Set hypervisor overlay so debugger reads see the hypervisor ROM/RAM
+     * at $8000-$BFFF when the CPU is in hypervisor mode.
+     *
+     * @param isActive  Returns true when hypervisor mode is active
+     * @param ram       Writable copy of hypervisor ROM (CPU may modify it)
+     * @param base      Virtual address base (typically 0x8000)
+     * @param size      Size in bytes (typically 16384)
+     */
+    void setHypervisorOverlay(std::function<bool()> isActive,
+                              uint8_t* ram, uint16_t base, uint32_t size);
+
 private:
     std::string m_name;
     BusConfig   m_config;
@@ -92,6 +104,12 @@ private:
 
     std::function<bool(IBus*, uint32_t, uint8_t*)> m_ioRead;
     std::function<bool(IBus*, uint32_t, uint8_t)>  m_ioWrite;
+
+    // Hypervisor overlay (visible to debugger when hypervisor mode is active)
+    std::function<bool()> m_hyperActive;
+    uint8_t*  m_hyperRam  = nullptr;
+    uint16_t  m_hyperBase = 0;
+    uint32_t  m_hyperSize = 0;
 
     uint32_t translate(uint32_t vaddr) const;
 };

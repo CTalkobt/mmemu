@@ -319,6 +319,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
             for (uint32_t i = 0; i < 16384; i++)
                 physBus->write8(0x0FFF8000 + i, hyperRom[i]);
             desc->deleters.push_back([hyperRom]() { delete[] hyperRom; });
+
+            // Wire hypervisor overlay into MapMmu so debugger reads see
+            // HYPPO code at $8000-$BFFF when CPU is in hypervisor mode
+            mmu->setHypervisorOverlay(
+                [cpu45]() { return cpu45->isHypervisor(); },
+                cpu45->hyperRam(), 0x8000, 16384);
         } else {
             // No HYPPO — fall back to standard 6502 reset vector
             delete[] hyperRom;

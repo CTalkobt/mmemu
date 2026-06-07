@@ -135,6 +135,10 @@ public:
     HypervisorState& hyperState() { return m_hyperState; }
     const HypervisorState& hyperState() const { return m_hyperState; }
 
+    // Access hypervisor RAM (writable copy) for bus overlay
+    uint8_t* hyperRam() const { return m_hyperRam; }
+    uint32_t hyperRomSize() const { return m_hyperRomSize; }
+
 private:
     CPU45GS02State  m_state;
     HypervisorState m_hyperState;
