@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "mmemu": {
-      "command": "/home/duck/m65/inpg/mmsim/bin/mmemu-mcp",
-      "cwd": "/home/duck/m65/inpg/mmsim",
+      "command": "/home/duck/m65/in_devel/ai6502/mmsim/bin/mmemu-mcp",
+      "cwd": "/home/duck/m65/in_devel/ai6502/mmsim",
       "description": "MEGA65 Multi-Machine Emulator MCP Server"
     }
   }

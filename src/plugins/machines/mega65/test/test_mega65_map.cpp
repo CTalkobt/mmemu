@@ -688,14 +688,14 @@ TEST_CASE(mega65_b_register_stack_page) {
 
     for (int i = 0; i < 5; i++) f.cpu.step();
 
-    // After SEE, push8 should constrain SP to B-page ($03xx)
-    // SP started at $01FF. After SEE, push writes to current SP then decrements within B-page.
-    // push8 writes to SP=$01FF, then SP = (B<<8) | ((SP-1) & 0xFF) = $03FE
+    // After SEE, push8 wraps SP within current stack page (SPH, set via TYS),
+    // not the B register page. SP started at $01FF, so it stays on page $01.
+    // push8 writes to SP=$01FF, then SP = ($01 << 8) | ((0xFF-1) & 0xFF) = $01FE
     uint16_t sp = (uint16_t)f.cpu.sp();
-    ASSERT_EQ(sp >> 8, 0x03);   // Stack page is B
+    ASSERT_EQ(sp >> 8, 0x01);   // Stack page is SPH (unchanged)
     ASSERT_EQ(sp & 0xFF, 0xFE); // Decremented once
 
-    // Value $42 should be at $01FF (where PHA wrote before page switch)
+    // Value $42 should be at $01FF (where PHA wrote)
     ASSERT_EQ(f.physBus.read8(0x01FF), 0x42);
 }
 

@@ -102,8 +102,8 @@ bool VIC3::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
         return true;
     }
 
-    // $D080-$D0FF: mirrors or unused
-    if (offset >= 0x0080 && offset <= 0x00FF) {
+    // $D0A0-$D0FF: mirrors or unused ($D080-$D09F reserved for F011 FDC)
+    if (offset >= 0x00A0 && offset <= 0x00FF) {
         *val = 0xFF;
         return true;
     }
@@ -173,7 +173,12 @@ bool VIC3::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     }
 
     // $D048-$D07F: reserved / VIC-IV range
-    if (offset >= 0x0048 && offset <= 0x00FF) {
+    if (offset >= 0x0048 && offset <= 0x007F) {
+        return true; // Ignore
+    }
+
+    // $D0A0-$D0FF: mirrors or unused ($D080-$D09F reserved for F011 FDC)
+    if (offset >= 0x00A0 && offset <= 0x00FF) {
         return true; // Ignore
     }
 

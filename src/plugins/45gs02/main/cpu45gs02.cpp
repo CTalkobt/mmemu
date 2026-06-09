@@ -250,8 +250,8 @@ void MOS45GS02::doSbc8(uint8_t v) {
 void MOS45GS02::push8(uint8_t v) {
     write8(m_state.sp, v);
     if (m_state.p & FLAG_E) {
-        // 8-bit stack mode: wrap within base page (B register)
-        m_state.sp = ((uint16_t)m_state.b << 8) | ((m_state.sp - 1) & 0xFF);
+        // 8-bit stack mode: wrap within current stack page (SPH, set via TYS)
+        m_state.sp = (m_state.sp & 0xFF00) | ((m_state.sp - 1) & 0xFF);
     } else {
         // 16-bit stack mode: full 16-bit decrement (page crossing is natural)
         m_state.sp--;
@@ -259,8 +259,8 @@ void MOS45GS02::push8(uint8_t v) {
 }
 uint8_t MOS45GS02::pull8() {
     if (m_state.p & FLAG_E) {
-        // 8-bit stack mode: wrap within base page (B register)
-        m_state.sp = ((uint16_t)m_state.b << 8) | ((m_state.sp + 1) & 0xFF);
+        // 8-bit stack mode: wrap within current stack page (SPH, set via TYS)
+        m_state.sp = (m_state.sp & 0xFF00) | ((m_state.sp + 1) & 0xFF);
     } else {
         // 16-bit stack mode: full 16-bit increment (page crossing is natural)
         m_state.sp++;

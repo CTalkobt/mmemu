@@ -330,8 +330,8 @@ TEST_CASE(vic3_unused_ranges) {
     f.vic.ioRead(nullptr, 0xD07F, &val);
     ASSERT_EQ(val, (uint8_t)0xFF);
 
-    // $D080-$D0FF returns $FF
-    f.vic.ioRead(nullptr, 0xD080, &val);
+    // $D0A0-$D0FF returns $FF ($D080-$D09F is F011 FDC, not claimed by VIC3)
+    f.vic.ioRead(nullptr, 0xD0A0, &val);
     ASSERT_EQ(val, (uint8_t)0xFF);
 }
 
