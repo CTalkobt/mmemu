@@ -1,3 +1,4 @@
+#include <chrono>
 #include <wx/wx.h>
 #include <wx/splitter.h>
 #include <wx/notebook.h>
@@ -1253,8 +1254,10 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
     if (m_running && m_machine && m_machine->schedulerStep) {
         // ~1 MHz VIC-20 at 30 fps needs ~33 333 cycles per frame.
         // Use schedulerStep so the IO registry (VIC, VIA) is ticked each instruction.
+        // Time-box to 25ms to keep the UI responsive even during slow boot sequences.
         const int CYCLES_PER_FRAME = 33333;
         int ran = 0;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
         while (ran < CYCLES_PER_FRAME) {
             ran += m_machine->schedulerStep(*m_machine);
             if (m_dbg && m_dbg->isPaused()) {
@@ -1263,6 +1266,9 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 if (m_bpPane) m_bpPane->RefreshValues();
                 break;
             }
+            // Yield to UI every 25ms to prevent freeze during heavy boot/DMA
+            if ((ran & 0xFF) == 0 && std::chrono::steady_clock::now() >= deadline)
+                break;
         }
     }
 

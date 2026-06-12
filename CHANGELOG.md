@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Fixed
+- **45GS02 E-flag stack wrapping**: In 8-bit stack mode (E flag set), `push8`/`pull8` incorrectly wrapped the stack pointer within the B (base page) register instead of the current stack page (SPH, set via TYS). This caused corrupted return addresses during HYPPO boot where B=$BF and SPH=$BE are intentionally different pages.
+- **VIC3 shadowed F011 FDC range**: VIC3 claimed $D080-$D09F and returned $FF, blocking HYPPO's F011 FDC register polling at $D086. Narrowed VIC3 to $D0A0-$D0FF, leaving $D080-$D09F free for the FDC.
+- **SD card command $53 (flash read)**: Was returning a hardcoded CSD identification response; real MEGA65 uses $53 as a sector read from flash. Changed to read from the mounted SD card image, enabling HYPPO to load C65 ROMs during boot.
+- **F018B DMA: CPU halts permanently after DMA job** (fixes #45): The 45GS02 `haltLine` flag was latched on when the bus requested halt (DMA active) and never cleared when the bus released. CPU now re-checks bus halt status each step and clears `haltLine` when DMA completes.
+- **45GS02 BRK instruction**: BRK was a no-op that set `haltLine`, halting the CPU. Now properly implemented as a software interrupt: pushes PC+2 and flags (with B flag set), vectors through $FFFE/$FFFF, sets I flag and clears D flag.
+- **`isProgramEnd` false positives during DMA**: Removed bus halt check from `isProgramEnd`; `haltLine` alone is sufficient since the scheduler handles transient DMA halts without calling `step()`.
+- **MCP `step_cpu` tool**: Now uses `schedulerStep` when available, ensuring DMA ticks are processed during stepping (matching CLI and GUI behavior).
+
 ### Changed
 - **Version tracking**: Single source of truth in `VERSION` file; Makefile reads it to generate `version.h`. Version format changed from `MAJOR.MINOR.PATCH-GITHASH` to `MAJOR.MINOR.PATCH.GITHASH`.
 
