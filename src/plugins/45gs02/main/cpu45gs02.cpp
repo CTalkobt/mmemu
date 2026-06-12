@@ -271,8 +271,8 @@ void MOS45GS02::push16(uint16_t v) { push8(v >> 8); push8(v & 0xFF); }
 uint16_t MOS45GS02::pull16() { uint8_t l = pull8(); uint8_t h = pull8(); return l | (h << 8); }
 
 int MOS45GS02::step() {
-    if (m_state.haltLine) return 1;
     if (m_bus && m_bus->isHaltRequested()) { m_state.haltLine = 1; return 1; }
+    m_state.haltLine = 0;
 
     // NMI handling (edge-sensitive: triggers on 0→1 transition)
     if (m_state.nmiLine && !m_state.nmiPrev) {
@@ -426,7 +426,19 @@ int MOS45GS02::step() {
     auto doEor32 = [&](uint32_t v) { uint32_t q = regRead(8) ^ v; regWrite(8, q); updateNZ32(q); m_state.cycles += 4; };
 
     switch (op) {
-        case 0x00: m_state.haltLine = 1; break; // BRK
+        case 0x00: { // BRK — software interrupt
+            m_state.pc++; // BRK skips signature byte
+            push8((uint8_t)(m_state.pc >> 8));
+            push8((uint8_t)(m_state.pc & 0xFF));
+            push8(m_state.p | FLAG_B | FLAG_E);
+            m_state.p |= FLAG_I;
+            m_state.p &= ~FLAG_D;
+            uint8_t lo = read8(0xFFFE);
+            uint8_t hi = read8(0xFFFF);
+            m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+            m_state.cycles += 7;
+            break;
+        }
         case 0x02: m_state.p &= ~FLAG_E; break; // CLE
         case 0x03: m_state.p |=  FLAG_E; break; // SEE
         case 0x0B: m_state.y = (uint8_t)((m_state.sp >> 8) & 0xFF); updateNZ(m_state.y); break; // TSY
@@ -1651,8 +1663,10 @@ void MOS45GS02::loadState(const uint8_t* buf) { memcpy(&m_state, buf, sizeof(m_s
 int MOS45GS02::isCallAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return (op == 0x20 || op == 0x22 || op == 0x23) ? 3 : 0; }
 bool MOS45GS02::isReturnAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return op == 0x60 || op == 0x40 || op == 0x62; }
 bool MOS45GS02::isProgramEnd(IBus* bus) {
+    // haltLine is set by step() when the bus requests halt (e.g. ExitTrap).
+    // Transient DMA halts are handled by the scheduler (step() is not called),
+    // so haltLine is only set for permanent halts.
     if (m_state.haltLine) return true;
-    if (bus && bus->isHaltRequested()) return true;
 
     // Check for RTS/RTI/RTN on empty stack (SP at initial value)
     if (m_state.sp == 0x01FF && bus) {
