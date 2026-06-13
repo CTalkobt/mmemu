@@ -16,6 +16,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **45GS02 BRK instruction**: BRK was a no-op that set `haltLine`, halting the CPU. Now properly implemented as a software interrupt: pushes PC+2 and flags (with B flag set), vectors through $FFFE/$FFFF, sets I flag and clears D flag.
 - **`isProgramEnd` false positives during DMA**: Removed bus halt check from `isProgramEnd`; `haltLine` alone is sufficient since the scheduler handles transient DMA halts without calling `step()`.
 - **MCP `step_cpu` tool**: Now uses `schedulerStep` when available, ensuring DMA ticks are processed during stepping (matching CLI and GUI behavior).
+- **Physical bus routing for 32-bit addressing**: The 45GS02's `write8_phys`/`read8_phys` routed through MapMmu, which masked 28-bit addresses to 16 bits. HYPPO's flash read loop (`STA [$18],Z` writing to physical `$0005_8000+`) was truncated to `$8000`, overwriting hypervisor RAM. Now routes directly to SparseMemoryBus via `IMapController::getPhysBus()`.
+- **DMA bus clobbered by ioWrite**: The F018B DMA device's `m_bus` was overwritten on every register write, replacing the physical bus (set via `setDmaBus`) with the MapMmu. 28-bit DMA addresses were truncated to 16 bits.
+- **DMA megabyte option zero value**: Enhanced DMA option `$80 $00` (srcMB=0) was treated as "not set" because zero is falsy. Added explicit `srcMBset`/`dstMBset` flags. Chained jobs now inherit megabyte settings.
+- **C65 ROM banking via $D030**: Added all four ROM banking regions (ROM8/ROMA/ROMC/ROME) using ioRead interception instead of SparseMemoryBus overlays. Overlays were permanently removed when CPU port changed HIRAM. The MEGA65 KERNAL reset at `$E4B8` sets `$D030=$20` (ROMC) and jumps to `$C800` — the MEGA65 extended KERNAL.
+- **BRK with uninitialized IRQ vector** (fixes #51): BRK now properly detected as program end when IRQ vector ($FFFE/$FFFF) is `$0000` or `$FFFF`, preventing infinite BRK loops on rawMega65.
+
+### Added
+- **MCP `run_until` tool**: Run the CPU until a condition expression becomes true, with configurable report output (regs, disasm, stack, mem). Supports compound conditions with `&&`, `||`.
+- **Expression evaluator logical operators**: Added `&&` (logical AND) and `||` (logical OR) at lowest precedence.
 
 ### Changed
 - **Version tracking**: Single source of truth in `VERSION` file; Makefile reads it to generate `version.h`. Version format changed from `MAJOR.MINOR.PATCH-GITHASH` to `MAJOR.MINOR.PATCH.GITHASH`.
