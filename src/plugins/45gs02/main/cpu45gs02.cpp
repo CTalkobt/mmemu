@@ -980,7 +980,16 @@ int MOS45GS02::step() {
         case 0x98: m_state.a = m_state.y; updateNZ(m_state.a); break;
         case 0x4B: m_state.z = m_state.a; updateNZ(m_state.z); break;
         case 0x6B: m_state.a = m_state.z; updateNZ(m_state.a); break;
-        case 0x5B: m_state.b = m_state.a; updateNZ(m_state.b); break;
+        case 0x5B: // TAB
+            m_state.b = m_state.a; updateNZ(m_state.b);
+            // MEGA65 HYPPO cold boot: TAB with A=0 in hypervisor mode is an
+            // implicit exit (HYPPO sets B=$00 to leave hypervisor base page).
+            // The $8000-$BFFF overlay must be removed so mflash/ROM code can
+            // access RAM and C65 ROM at those addresses.
+            if (m_state.hypervisor && m_state.b == 0x00) {
+                m_state.hypervisor = false;
+            }
+            break;
         case 0x7B: m_state.a = m_state.b; updateNZ(m_state.a); break;
         case 0xBA: m_state.x = (uint8_t)(m_state.sp & 0xFF); updateNZ(m_state.x); break;
         case 0x9A: m_state.sp = (m_state.sp & 0xFF00) | m_state.x; break;

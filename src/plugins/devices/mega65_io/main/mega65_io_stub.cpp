@@ -31,6 +31,16 @@ void Mega65IoStub::reset() {
 }
 
 bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
+    // F011 FDC registers $D080-$D09F (stub — no real floppy emulation)
+    if (addr >= 0xD080 && addr <= 0xD09F) {
+        uint8_t off = addr & 0x1F;
+        switch (off) {
+            case 0x02: *val = 0x00; return true; // Status A: not busy, no errors
+            case 0x03: *val = 0x08; return true; // Status B: disk inserted
+            default:   *val = 0x00; return true;
+        }
+    }
+
     // Colour RAM $D800-$DBFF
     if (addr >= 0xD800 && addr <= 0xDBFF) {
         *val = m_colorRam[addr - 0xD800];
@@ -67,6 +77,10 @@ bool Mega65IoStub::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         if (addr >= 0xD680 && addr <= 0xD693) return false; // SdCardDevice
 
         uint8_t off = addr & 0xFF;
+
+        // $D610: keyboard buffer — write clears (returns 0 on next read)
+        if (addr == 0xD610) { m_regs[off] = 0x00; return true; }
+
         m_regs[off] = val;
         return true;
     }
