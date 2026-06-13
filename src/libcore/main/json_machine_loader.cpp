@@ -516,7 +516,9 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             bus->setIoLowBase(io->lowestHandlerBase());
         }
     }
-    // SparseMemoryBus: I/O hooks will be wired via MapMmu if present (see mapMmu section below)
+    // SparseMemoryBus machines: MapMmu and I/O hooks are wired by the
+    // machine's plugin factory (not the generic loader), since MapMmu is
+    // a plugin-level class.
 
     // -----------------------------------------------------------------------
     // Step 7 / Phase 3 Step 13 — Signal lines

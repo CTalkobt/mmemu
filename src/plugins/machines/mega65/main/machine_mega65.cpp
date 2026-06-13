@@ -25,8 +25,45 @@
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
 #include <cstring>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
+
+// Load mega65.json config, return empty object on failure
+static json loadMega65Config() {
+    std::vector<std::string> paths = {
+        "machines/mega65.json",
+        PathUtil::findResource("machines/mega65.json"),
+    };
+    for (const auto& p : paths) {
+        std::ifstream f(p);
+        if (!f.good()) continue;
+        try {
+            json doc = json::parse(f);
+            if (doc.contains("machines") && doc["machines"].is_array() && !doc["machines"].empty())
+                return doc["machines"][0];
+        } catch (...) {}
+    }
+    return json::object();
+}
+
+// Search for a file in a list of paths, expanding ~ to $HOME
+static std::string findFile(const json& paths, const std::string& fallback = "") {
+    const char* home = std::getenv("HOME");
+    for (const auto& p : paths) {
+        std::string path = p.get<std::string>();
+        if (path.size() > 1 && path[0] == '~' && path[1] == '/') {
+            if (home) path = std::string(home) + path.substr(1);
+            else continue;
+        }
+        std::ifstream f(path, std::ios::binary);
+        if (f.good()) return path;
+    }
+    return fallback;
+}
 
 MachineDescriptor* Mega65MachineFactory::create() {
+    json cfg = loadMega65Config();
     auto* desc = new MachineDescriptor();
 
     desc->machineId    = "mega65";
@@ -43,13 +80,21 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Load MEGA65 ROM (128 KB) into physical Banks 2-3 ($020000-$03FFFF)
     // -----------------------------------------------------------------------
     uint8_t* romBuf = new uint8_t[128 * 1024];
-    if (romLoad("roms/mega65/mega65.rom", romBuf, 128 * 1024)) {
-        physBus->addRomOverlay(0x020000, 128 * 1024, romBuf);
-    } else {
-        // Fallback: Fill with $FF if ROM is missing so emulator doesn't crash
-        std::memset(romBuf, 0xFF, 128 * 1024);
-        physBus->addRomOverlay(0x020000, 128 * 1024, romBuf);
+    std::memset(romBuf, 0xFF, 128 * 1024);
+    {
+        // Find mega65.rom from JSON config or fallback paths
+        json romPaths = json::array({"roms/mega65/mega65.rom"});
+        if (cfg.contains("roms")) {
+            for (const auto& r : cfg["roms"]) {
+                if (r.value("label", "") == "mega65rom" && r.contains("paths"))
+                    romPaths = r["paths"];
+            }
+        }
+        std::string romPath = findFile(romPaths, "roms/mega65/mega65.rom");
+        if (!romPath.empty())
+            romLoad(romPath.c_str(), romBuf, 128 * 1024);
     }
+    physBus->addRomOverlay(0x020000, 128 * 1024, romBuf);
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------
@@ -62,11 +107,24 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Persistent BRAM: saved to roms/mega65/bram.bin on exit if modified.
     // -----------------------------------------------------------------------
     {
-        struct BramEntry { uint32_t addr; uint32_t maxSize; const char* name; };
-        BramEntry bramFiles[] = {
-            { 0x012000, 56*1024, "FREEZER.M65" },
-            { 0x050000, 64*1024, "mflash.prg" },
-        };
+        struct BramEntry { uint32_t addr; uint32_t maxSize; std::string name;
+                           json searchPaths; };
+        std::vector<BramEntry> bramFiles;
+
+        // Load BRAM entries from JSON config or use defaults
+        if (cfg.contains("bram") && cfg["bram"].is_array()) {
+            for (const auto& b : cfg["bram"]) {
+                BramEntry e;
+                e.addr = b.contains("physAddr") ? (uint32_t)std::stoul(b["physAddr"].get<std::string>(), nullptr, 0) : 0;
+                e.maxSize = b.value("maxSize", 65536);
+                e.name = b.value("name", "");
+                e.searchPaths = b.contains("paths") ? b["paths"] : json::array();
+                bramFiles.push_back(e);
+            }
+        } else {
+            bramFiles.push_back({0x012000, 56*1024, "FREEZER.M65", json::array()});
+            bramFiles.push_back({0x050000, 64*1024, "mflash.prg", json::array()});
+        }
 
         // Try persistent BRAM file first
         bool bramLoaded = false;
@@ -95,41 +153,39 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
         // If no persistent BRAM, load from individual files
         if (!bramLoaded) {
-            std::vector<std::string> searchDirs = { "roms/mega65/", "" };
-            const char* home = std::getenv("HOME");
-            if (home) {
-                searchDirs.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/");
-                searchDirs.push_back(std::string(home) + "/.local/share/mmsim/");
-            }
-
             for (auto& entry : bramFiles) {
-                for (const auto& dir : searchDirs) {
-                    std::string path = dir + entry.name;
-                    std::ifstream f(path, std::ios::binary);
-                    if (!f.good()) continue;
-
-                    f.seekg(0, std::ios::end);
-                    size_t fileSize = f.tellg();
-                    f.seekg(0);
-
-                    // PRG files: skip 2-byte load address header
-                    size_t skip = 0;
-                    std::string ext = path.substr(path.rfind('.') + 1);
-                    if (ext == "prg" || ext == "PRG") skip = 2;
-
-                    if (skip) f.seekg(skip);
-                    size_t dataSize = fileSize - skip;
-                    if (dataSize > entry.maxSize) dataSize = entry.maxSize;
-
-                    std::vector<uint8_t> tmp(dataSize);
-                    f.read((char*)tmp.data(), dataSize);
-                    for (size_t i = 0; i < dataSize; i++)
-                        physBus->write8(entry.addr + i, tmp[i]);
-
-                    fprintf(stderr, "[MEGA65] Loaded BRAM %s (%zuB) at $%06X from: %s\n",
-                            entry.name, dataSize, entry.addr, path.c_str());
-                    break;
+                // Build search paths: JSON paths first, then fallback dirs
+                json paths = entry.searchPaths;
+                if (paths.empty()) {
+                    paths.push_back("roms/mega65/" + entry.name);
+                    paths.push_back("~/.local/share/xemu-lgb/mega65/" + entry.name);
+                    paths.push_back("~/.local/share/mmsim/" + entry.name);
                 }
+                std::string path = findFile(paths);
+                if (path.empty()) continue;
+                std::ifstream f(path, std::ios::binary);
+                if (!f.good()) continue;
+
+                f.seekg(0, std::ios::end);
+                size_t fileSize = f.tellg();
+                f.seekg(0);
+
+                // PRG files: skip 2-byte load address header
+                size_t skip = 0;
+                std::string ext = path.substr(path.rfind('.') + 1);
+                if (ext == "prg" || ext == "PRG") skip = 2;
+
+                if (skip) f.seekg(skip);
+                size_t dataSize = fileSize - skip;
+                if (dataSize > entry.maxSize) dataSize = entry.maxSize;
+
+                std::vector<uint8_t> tmp(dataSize);
+                f.read((char*)tmp.data(), dataSize);
+                for (size_t i = 0; i < dataSize; i++)
+                    physBus->write8(entry.addr + i, tmp[i]);
+
+                fprintf(stderr, "[MEGA65] Loaded BRAM %s (%zuB) at $%06X from: %s\n",
+                        entry.name.c_str(), dataSize, entry.addr, path.c_str());
             }
         }
     }
@@ -301,25 +357,23 @@ MachineDescriptor* Mega65MachineFactory::create() {
         hyperRom = new uint8_t[16384];
         bool hyperLoaded = false;
 
-        // Search paths for HICKUP.M65
-        std::vector<std::string> hyperPaths = {
-            "roms/mega65/HICKUP.M65",
-            "HICKUP.M65",
-        };
-        // Also check xemu standard location
-        const char* home = std::getenv("HOME");
-        if (home) {
-            hyperPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/HICKUP.M65");
+        // Search paths for HICKUP.M65 — from JSON config or defaults
+        json hyperPathsJson = json::array({"roms/mega65/HICKUP.M65", "HICKUP.M65",
+                                           "~/.local/share/xemu-lgb/mega65/HICKUP.M65"});
+        if (cfg.contains("roms")) {
+            for (const auto& r : cfg["roms"]) {
+                if (r.value("label", "") == "hyppo" && r.contains("paths"))
+                    hyperPathsJson = r["paths"];
+            }
         }
-
-        for (const auto& path : hyperPaths) {
-            std::ifstream f(path, std::ios::binary);
+        std::string hyperPath = findFile(hyperPathsJson);
+        if (!hyperPath.empty()) {
+            std::ifstream f(hyperPath, std::ios::binary);
             if (f.good()) {
                 f.read((char*)hyperRom, 16384);
                 if (f.gcount() == 16384) {
                     hyperLoaded = true;
-                    fprintf(stderr, "[MEGA65] Loaded HYPPO from: %s\n", path.c_str());
-                    break;
+                    fprintf(stderr, "[MEGA65] Loaded HYPPO from: %s\n", hyperPath.c_str());
                 }
             }
         }
@@ -354,30 +408,23 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
 
-    // Try to auto-mount SD card image
+    // Try to auto-mount SD card image — paths from JSON or defaults
     {
-        std::vector<std::string> sdPaths = {
-            "roms/mega65/mega65.img",
-            "roms/mega65/sdcard.img",
-        };
-        const char* home = std::getenv("HOME");
-        if (home) {
-            sdPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/mega65.img");
-            sdPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/mega65_sd.img");
-            sdPaths.push_back(std::string(home) + "/.local/share/mmsim/mega65.img");
-        }
-        bool mounted = false;
-        for (const auto& path : sdPaths) {
-            if (sdcard->mountImage(path)) {
-                fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", path.c_str());
-                mounted = true;
-                break;
-            }
-        }
-        if (!mounted) {
+        json sdPathsJson = json::array({
+            "roms/mega65/mega65.img", "roms/mega65/sdcard.img",
+            "~/.local/share/xemu-lgb/mega65/mega65.img",
+            "~/.local/share/xemu-lgb/mega65/mega65_sd.img",
+            "~/.local/share/mmsim/mega65.img"
+        });
+        if (cfg.contains("sdcard") && cfg["sdcard"].contains("paths"))
+            sdPathsJson = cfg["sdcard"]["paths"];
+
+        std::string sdPath = findFile(sdPathsJson);
+        if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
+            fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", sdPath.c_str());
+        } else {
             fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HYPPO will not load C65 ROMs.\n");
-            fprintf(stderr, "[MEGA65]   Searched: roms/mega65/mega65.img, ~/.local/share/xemu-lgb/mega65/mega65.img\n");
-            fprintf(stderr, "[MEGA65]   Copy or symlink a MEGA65 SD card image to one of these locations.\n");
+            fprintf(stderr, "[MEGA65]   Configure paths in machines/mega65.json or copy an image to roms/mega65/\n");
         }
     }
 
