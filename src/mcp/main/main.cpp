@@ -1124,13 +1124,17 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
         } else {
+            int ran = 0;
             for (int i = 0; i < count; ++i) {
                 if (ms->machine && ms->machine->schedulerStep)
                     ms->machine->schedulerStep(*ms->machine);
                 else
                     ms->cpu->step();
+                ++ran;
+                if (ms->dbg && ms->dbg->isPaused()) break;
+                if (ms->cpu->isProgramEnd(ms->bus)) break;
             }
-            textItem.oVal["text"] = Json("Executed " + std::to_string(count) + " instructions.");
+            textItem.oVal["text"] = Json("Executed " + std::to_string(ran) + " instructions.");
         }
     } else if (name == "reverse_step") {
         std::string mid = args["machine_id"].sVal;

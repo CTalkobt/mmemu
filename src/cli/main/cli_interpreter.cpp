@@ -184,6 +184,8 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             } else {
                 m_ctx.cpu->step();
             }
+            if (m_ctx.dbg && m_ctx.dbg->isPaused()) break;
+            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
         }
         showRegisters();
     } else if (cmd == "backstep" || cmd == "bs") {
