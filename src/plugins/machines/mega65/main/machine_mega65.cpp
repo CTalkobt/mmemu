@@ -351,11 +351,18 @@ MachineDescriptor* Mega65MachineFactory::create() {
             sdPaths.push_back(std::string(home) + "/.local/share/xemu-lgb/mega65/mega65_sd.img");
             sdPaths.push_back(std::string(home) + "/.local/share/mmsim/mega65.img");
         }
+        bool mounted = false;
         for (const auto& path : sdPaths) {
             if (sdcard->mountImage(path)) {
                 fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", path.c_str());
+                mounted = true;
                 break;
             }
+        }
+        if (!mounted) {
+            fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HYPPO will not load C65 ROMs.\n");
+            fprintf(stderr, "[MEGA65]   Searched: roms/mega65/mega65.img, ~/.local/share/xemu-lgb/mega65/mega65.img\n");
+            fprintf(stderr, "[MEGA65]   Copy or symlink a MEGA65 SD card image to one of these locations.\n");
         }
     }
 
