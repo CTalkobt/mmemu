@@ -60,17 +60,43 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         return true;
     }
 
-    // C65 ROM banking via $D030 (VIC-III) takes priority over C64 $01 port.
+    // C65 ROM banking via $D030 (VIC-III) and C64 $01 port.
     // MAP block mapping overrides both — if block is MAP'd, ROM is not visible.
+    // The C65 ROM is a flat 128KB image; CPU address maps 1:1 to file offset.
     uint8_t d030val = d030();
 
-    // BASIC ROM: $A000-$BFFF
-    //   C65: $D030 bit 4 (ROMA) set
-    //   C64: HIRAM=1 && LORAM=1
-    if (addr >= 0xA000 && addr <= 0xBFFF && m_basicRom && !isBlockMapped(5)) {
+    // $D030 ROM banking regions (C65/MEGA65):
+    //   ROM8  (bit 3): $8000-$9FFF → rom offset $8000
+    //   ROMA  (bit 4): $A000-$BFFF → rom offset $A000
+    //   ROMC  (bit 5): $C000-$CFFF → rom offset $C000
+    //   ROME  (bit 7): $E000-$FFFF → rom offset $E000
+
+    // ROM8: $8000-$9FFF (block 4)
+    if (addr >= 0x8000 && addr <= 0x9FFF && !isBlockMapped(4)) {
+        if (d030val & 0x08) {
+            uint32_t off = addr - 0x8000;
+            if (m_fullRom && off + 0x8000 < m_fullRomSize)
+                { *val = m_fullRom[off + 0x8000]; return true; }
+        }
+    }
+
+    // BASIC / ROMA: $A000-$BFFF (block 5)
+    if (addr >= 0xA000 && addr <= 0xBFFF && !isBlockMapped(5)) {
         if ((d030val & 0x10) || (hiram() && loram())) {
             uint32_t off = addr - 0xA000;
-            if (off < m_basicSize) { *val = m_basicRom[off]; return true; }
+            if (m_fullRom && off + 0xA000 < m_fullRomSize)
+                { *val = m_fullRom[off + 0xA000]; return true; }
+            if (m_basicRom && off < m_basicSize)
+                { *val = m_basicRom[off]; return true; }
+        }
+    }
+
+    // ROMC: $C000-$CFFF (block 6, lower half)
+    if (addr >= 0xC000 && addr <= 0xCFFF && !isBlockMapped(6)) {
+        if (d030val & 0x20) {
+            uint32_t off = addr - 0xC000;
+            if (m_fullRom && off + 0xC000 < m_fullRomSize)
+                { *val = m_fullRom[off + 0xC000]; return true; }
         }
     }
 
@@ -83,13 +109,14 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         }
     }
 
-    // KERNAL ROM: $E000-$FFFF
-    //   C65: $D030 bit 7 (ROME) set
-    //   C64: HIRAM=1
-    if (addr >= 0xE000 && addr <= 0xFFFF && m_kernalRom && !isBlockMapped(7)) {
+    // KERNAL / ROME: $E000-$FFFF (block 7)
+    if (addr >= 0xE000 && addr <= 0xFFFF && !isBlockMapped(7)) {
         if ((d030val & 0x80) || hiram()) {
             uint32_t off = addr - 0xE000;
-            if (off < m_kernalSize) { *val = m_kernalRom[off]; return true; }
+            if (m_fullRom && off + 0xE000 < m_fullRomSize)
+                { *val = m_fullRom[off + 0xE000]; return true; }
+            if (m_kernalRom && off < m_kernalSize)
+                { *val = m_kernalRom[off]; return true; }
         }
     }
 

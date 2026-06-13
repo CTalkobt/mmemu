@@ -48,6 +48,9 @@ public:
     /** Set the MapMmu so we can check MAP enable state. */
     void setMapMmu(MapMmu* mmu) { m_mapMmu = mmu; }
 
+    /** Set full C65 ROM (128KB) for $D030 ROM banking. */
+    void setFullRom(const uint8_t* data, uint32_t size) { m_fullRom = data; m_fullRomSize = size; }
+
     /** Set callback to query VIC-III $D030 register for C65 ROM banking. */
     void setD030Query(std::function<uint8_t()> fn) { m_d030Query = std::move(fn); }
 
@@ -73,6 +76,7 @@ private:
     const uint8_t* m_basicRom  = nullptr;  uint32_t m_basicSize  = 0;
     const uint8_t* m_kernalRom = nullptr;  uint32_t m_kernalSize = 0;
     const uint8_t* m_charRom   = nullptr;  uint32_t m_charSize   = 0;
+    const uint8_t* m_fullRom   = nullptr;  uint32_t m_fullRomSize = 0;
 
     bool hiram()  const { return (effectivePort() >> 1) & 1; }
     bool loram()  const { return  effectivePort()       & 1; }

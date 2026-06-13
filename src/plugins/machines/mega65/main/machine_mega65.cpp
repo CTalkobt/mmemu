@@ -151,6 +151,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     //   CPU $A000-$BFFF (BASIC)  = phys $02A000 = file offset $A000
     //   CPU $D000-$DFFF (Char)   = phys $02D000 = file offset $D000
     //   CPU $E000-$FFFF (KERNAL) = phys $02E000 = file offset $E000
+    bankCtrl->setFullRom(romBuf, 128 * 1024);
     bankCtrl->setBasicRom (romBuf + 0xA000, 8192);
     bankCtrl->setKernalRom(romBuf + 0xE000, 8192);
     bankCtrl->setCharRom  (romBuf + 0xD000, 4096);
