@@ -1,0 +1,113 @@
+{
+  "machines": [
+    {
+      "id": "mega65",
+      "displayName": "MEGA65",
+      "licenseClass": "proprietary",
+      "assembler": "ca45",
+      "_note": "Complex machine — uses C++ factory for SparseMemoryBus, MapMmu, hypervisor. This JSON provides configurable paths and I/O defaults.",
+
+      "roms": [
+        {
+          "label": "mega65rom",
+          "description": "C65/MEGA65 ROM (128KB) — loaded at physical $020000-$03FFFF",
+          "size": 131072,
+          "paths": [
+            "roms/mega65/mega65.rom",
+            "~/.local/share/xemu-lgb/mega65/mega65.rom",
+            "~/.local/share/mmsim/mega65.rom"
+          ]
+        },
+        {
+          "label": "hyppo",
+          "description": "HYPPO Hypervisor ROM (16KB) — loaded into hypervisor RAM at $8000-$BFFF",
+          "size": 16384,
+          "paths": [
+            "roms/mega65/HICKUP.M65",
+            "HICKUP.M65",
+            "~/.local/share/xemu-lgb/mega65/HICKUP.M65"
+          ]
+        }
+      ],
+
+      "bram": [
+        {
+          "label": "freezer",
+          "description": "Freezer program — loaded at physical $012000",
+          "physAddr": "0x012000",
+          "maxSize": 57344,
+          "name": "FREEZER.M65",
+          "paths": [
+            "roms/mega65/FREEZER.M65",
+            "~/.local/share/xemu-lgb/mega65/FREEZER.M65",
+            "~/.local/share/mmsim/FREEZER.M65"
+          ]
+        },
+        {
+          "label": "mflash",
+          "description": "Flash menu utility — loaded at physical $050000 (PRG header stripped)",
+          "physAddr": "0x050000",
+          "maxSize": 65536,
+          "name": "mflash.prg",
+          "paths": [
+            "roms/mega65/mflash.prg",
+            "~/.local/share/xemu-lgb/mega65/mflash.prg",
+            "~/.local/share/mmsim/mflash.prg"
+          ]
+        }
+      ],
+
+      "sdcard": {
+        "description": "SD card image — required for HYPPO to load C65 ROMs during boot",
+        "paths": [
+          "roms/mega65/mega65.img",
+          "roms/mega65/sdcard.img",
+          "~/.local/share/xemu-lgb/mega65/mega65.img",
+          "~/.local/share/xemu-lgb/mega65/mega65_sd.img",
+          "~/.local/share/mmsim/mega65.img"
+        ]
+      },
+
+      "ioDefaults": {
+        "$D600": { "value": "0x80", "description": "UART status — bit 7 = READY" },
+        "$D610": { "value": "0x00", "description": "Keyboard buffer — write-to-clear" },
+        "$D629": { "value": "0x03", "description": "Model ID — MEGA65 R3" },
+        "$D630": { "value": "0x00", "description": "FPGA date stamp low" },
+        "$D631": { "value": "0x08", "description": "FPGA date stamp high (~2025)" },
+        "$D632": { "value": "0x4D", "description": "FPGA firmware ID 'M'" },
+        "$D633": { "value": "0x4D", "description": "FPGA firmware ID 'M'" },
+        "$D634": { "value": "0x53", "description": "FPGA firmware ID 'S'" },
+        "$D635": { "value": "0x4D", "description": "FPGA firmware ID 'M'" },
+        "$D67F": { "value": "0x55", "description": "Hypervisor status — 'U' (user mode)" },
+        "$D6C5": { "value": "0x01", "description": "FPGA reconfigured flag — bit 0 set" }
+      },
+
+      "fdcDefaults": {
+        "$D082": { "value": "0x00", "description": "F011 Status A — not busy" },
+        "$D083": { "value": "0x08", "description": "F011 Status B — disk inserted" }
+      },
+
+      "flashDefaults": {
+        "sector0": {
+          "description": "Flash ID response for cmd $53 sector 0",
+          "byte_0x71": "0x01",
+          "note": "HYPPO checks $DE71 == $01 for card presence"
+        },
+        "otherSectors": {
+          "fillByte": "0xFF",
+          "description": "Empty flash — no bitstream/ROM data"
+        }
+      },
+
+      "workarounds": {
+        "stackReturnAddr": {
+          "physAddr_low": "0x0200",
+          "physAddr_high": "0x0201",
+          "value_low": "0xD8",
+          "value_high": "0xA4",
+          "description": "return_from_flashmenu-1 ($A4D8) for mflash RTS — compensates for mflash.prg not using JMP ($CF80) callback"
+        }
+      }
+    }
+  ]
+}
