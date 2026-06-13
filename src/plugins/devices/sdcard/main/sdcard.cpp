@@ -124,11 +124,15 @@ void SdCardDevice::executeCommand(uint8_t cmd) {
             m_status |= SD_ST_EXT_BUS;
             break;
 
-        case 0x53: { // Flash read — reads sector from SD image (same as cmd $02)
+        case 0x53: { // Flash read — reads from QSPI flash (emulated via SD image)
             uint32_t sector = m_regs[0x01] | (m_regs[0x02] << 8) |
                               (m_regs[0x03] << 16) | (m_regs[0x04] << 24);
-            if (!readSector(sector)) {
-                // If no image mounted, fill with $FF (xemu behavior)
+            if (sector == 0) {
+                // Sector 0: HYPPO reads flash ID/CSD to confirm card presence.
+                // Buffer[$71] must be $01 for HYPPO to proceed with ROM loading.
+                std::memset(m_sectorBuf, 0, 512);
+                m_sectorBuf[0x71] = 0x01; // Card type: SDHC
+            } else if (!readSector(sector)) {
                 std::memset(m_sectorBuf, 0xFF, 512);
             }
             break;
