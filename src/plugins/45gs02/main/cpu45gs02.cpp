@@ -1683,6 +1683,15 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
         if (op == 0x60 || op == 0x40 || op == 0x62) return true; // RTS, RTI, RTN
     }
 
+    // Check for BRK with no valid IRQ handler (uninitialized vector)
+    if (bus) {
+        uint8_t op = bus->peek8(m_state.pc);
+        if (op == 0x00) {
+            uint16_t irqVec = bus->peek8(0xFFFE) | ((uint16_t)bus->peek8(0xFFFF) << 8);
+            if (irqVec == 0x0000 || irqVec == 0xFFFF) return true;
+        }
+    }
+
     // Check for JMP * (infinite loop at current PC)
     if (bus) {
         uint32_t addr = m_state.pc;
