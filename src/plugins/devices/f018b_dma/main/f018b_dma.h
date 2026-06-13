@@ -78,6 +78,8 @@ private:
         uint16_t dstSkipRate;   // Destination fractional step rate
         uint8_t srcMB;          // Enhanced: source megabyte (option $80)
         uint8_t dstMB;          // Enhanced: destination megabyte (option $81)
+        bool srcMBset;          // True if srcMB was explicitly set via option $80
+        bool dstMBset;          // True if dstMB was explicitly set via option $81
         bool useF018A;          // Enhanced: per-job F018A revision flag (option $0A)
     };
 

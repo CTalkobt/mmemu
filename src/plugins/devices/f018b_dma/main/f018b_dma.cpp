@@ -63,7 +63,7 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     if (offset >= 16) return false;
 
     m_regs[offset] = val;
-    m_bus = bus;  // Cache the bus reference for DMA operations
+    if (!m_bus) m_bus = bus;  // Use explicit DMA bus if set, fall back to I/O bus
 
     // $D702: writing ADDRBANK resets ADDRMB ($D704) to zero for compatibility
     // (programs that predate the megabyte register don't set it)
@@ -132,10 +132,10 @@ void F018bDmaDevice::beginJob(size_t jobIdx) {
 
     // Extend 20-bit addresses to 28-bit using megabyte from enhanced options
     // or falling back to the $D704 register
-    uint32_t srcMB = m_enhancedMode && job.srcMB ? (uint32_t)job.srcMB << 20
-                                                 : (uint32_t)m_regs[0x04] << 20;
-    uint32_t dstMB = m_enhancedMode && job.dstMB ? (uint32_t)job.dstMB << 20
-                                                 : (uint32_t)m_regs[0x04] << 20;
+    uint32_t srcMB = (m_enhancedMode && job.srcMBset) ? (uint32_t)job.srcMB << 20
+                                                      : (uint32_t)m_regs[0x04] << 20;
+    uint32_t dstMB = (m_enhancedMode && job.dstMBset) ? (uint32_t)job.dstMB << 20
+                                                      : (uint32_t)m_regs[0x04] << 20;
     m_srcBase = (job.srcAddr & 0x0FFFFF) | srcMB;
     m_dstBase = (job.dstAddr & 0x0FFFFF) | dstMB;
 
@@ -244,8 +244,8 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
             addr++;
 
             switch (option) {
-                case 0x80: job.srcMB = arg; break;        // Source megabyte
-                case 0x81: job.dstMB = arg; break;        // Destination megabyte
+                case 0x80: job.srcMB = arg; job.srcMBset = true; break;
+                case 0x81: job.dstMB = arg; job.dstMBset = true; break;
                 case 0x82: job.srcSkipRate = (job.srcSkipRate & 0xFF00) | arg; break;
                 case 0x83: job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8); break;
                 case 0x84: job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg; break;
@@ -274,14 +274,25 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
 
     bool f018b_default = (m_regs[0x03] & 0x01) != 0;
 
+    // Enhanced DMA options carry forward across chained jobs
+    uint8_t inheritSrcMB = 0; bool inheritSrcMBset = false;
+    uint8_t inheritDstMB = 0; bool inheritDstMBset = false;
+
     for (uint32_t jobIdx = 0; jobIdx < MAX_JOBS; ++jobIdx) {
         DmaJob job = {};
         job.srcSkipRate = 0x0100;
         job.dstSkipRate = 0x0100;
+        // Inherit megabyte settings from previous jobs in the chain
+        job.srcMB = inheritSrcMB; job.srcMBset = inheritSrcMBset;
+        job.dstMB = inheritDstMB; job.dstMBset = inheritDstMBset;
 
         if (m_enhancedMode) {
             parseJobOptions(currentAddr, job);
         }
+
+        // Update inherited values for next chained job
+        if (job.srcMBset) { inheritSrcMB = job.srcMB; inheritSrcMBset = true; }
+        if (job.dstMBset) { inheritDstMB = job.dstMB; inheritDstMBset = true; }
 
         job.commandLsb = m_bus->read8(currentAddr + 0);
 
