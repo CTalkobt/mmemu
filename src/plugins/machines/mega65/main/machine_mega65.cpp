@@ -172,6 +172,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* joy1     = new Joystick();
     auto* joy2     = new Joystick();
 
+    // Wire $D030 ROM banking query from VIC3 to bank controller
+    bankCtrl->setD030Query([vic4]() -> uint8_t {
+        uint8_t val = 0;
+        vic4->ioRead(nullptr, 0xD030, &val);
+        return val;
+    });
+
     dma->setDmaBus(physBus);
     vic4->setDmaBus(physBus);
     vic4->setCharRom(romBuf + 0xD000, 4096);

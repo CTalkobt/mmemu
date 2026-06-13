@@ -38,19 +38,11 @@ bool C64BankController::isBlockMapped(int block) const {
 }
 
 void C64BankController::updateOverlays() {
-    // BASIC ROM: $A000-$BFFF (blocks 5) — visible when HIRAM=1 && LORAM=1 && block not MAP'd
-    if (hiram() && loram() && m_basicRom && !isBlockMapped(5)) {
-        m_physBus->addRomOverlay(0x00A000, m_basicSize, m_basicRom);
-    } else {
-        m_physBus->removeRomOverlay(0x00A000);
-    }
+    // BASIC ROM overlay handled via ioRead() — see above.
 
-    // KERNAL ROM: $E000-$FFFF (block 7) — visible when HIRAM=1 && block not MAP'd
-    if (hiram() && m_kernalRom && !isBlockMapped(7)) {
-        m_physBus->addRomOverlay(0x00E000, m_kernalSize, m_kernalRom);
-    } else {
-        m_physBus->removeRomOverlay(0x00E000);
-    }
+    // KERNAL and BASIC ROM overlays are now handled via ioRead() interception,
+    // not SparseMemoryBus overlays.  This ensures bank switching (changing $01)
+    // doesn't destroy ROM data — reads dynamically select ROM vs RAM.
 
     // Note: Char ROM at $D000 is NOT managed via overlays because it conflicts
     // with I/O handlers. It's served via ioRead() when CHAREN=0.
@@ -68,6 +60,20 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         return true;
     }
 
+    // C65 ROM banking via $D030 (VIC-III) takes priority over C64 $01 port.
+    // MAP block mapping overrides both — if block is MAP'd, ROM is not visible.
+    uint8_t d030val = d030();
+
+    // BASIC ROM: $A000-$BFFF
+    //   C65: $D030 bit 4 (ROMA) set
+    //   C64: HIRAM=1 && LORAM=1
+    if (addr >= 0xA000 && addr <= 0xBFFF && m_basicRom && !isBlockMapped(5)) {
+        if ((d030val & 0x10) || (hiram() && loram())) {
+            uint32_t off = addr - 0xA000;
+            if (off < m_basicSize) { *val = m_basicRom[off]; return true; }
+        }
+    }
+
     // Character ROM: $D000-$DFFF when HIRAM=1 && CHAREN=0 && block 6 not MAP'd
     if (addr >= 0xD000 && addr <= 0xDFFF) {
         if (hiram() && !charen() && m_charRom && !isBlockMapped(6)) {
@@ -75,7 +81,16 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             *val = m_charRom[off];
             return true;
         }
-        // CHAREN=1 or HIRAM=0: fall through to I/O handlers or RAM
+    }
+
+    // KERNAL ROM: $E000-$FFFF
+    //   C65: $D030 bit 7 (ROME) set
+    //   C64: HIRAM=1
+    if (addr >= 0xE000 && addr <= 0xFFFF && m_kernalRom && !isBlockMapped(7)) {
+        if ((d030val & 0x80) || hiram()) {
+            uint32_t off = addr - 0xE000;
+            if (off < m_kernalSize) { *val = m_kernalRom[off]; return true; }
+        }
     }
 
     return false;

@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include <cstdint>
+#include <functional>
 
 class SparseMemoryBus;
 class MapMmu;
@@ -47,6 +48,9 @@ public:
     /** Set the MapMmu so we can check MAP enable state. */
     void setMapMmu(MapMmu* mmu) { m_mapMmu = mmu; }
 
+    /** Set callback to query VIC-III $D030 register for C65 ROM banking. */
+    void setD030Query(std::function<uint8_t()> fn) { m_d030Query = std::move(fn); }
+
     // IOHandler interface
     const char* name()     const override { return "C64BankCtrl"; }
     uint32_t    baseAddr() const override { return 0x0000; }
@@ -77,4 +81,7 @@ private:
 
     bool isBlockMapped(int block) const;
     void updateOverlays();
+
+    std::function<uint8_t()> m_d030Query;
+    uint8_t d030() const { return m_d030Query ? m_d030Query() : 0; }
 };
