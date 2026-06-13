@@ -26,7 +26,8 @@ void Mega65IoStub::reset() {
     m_regs[0x29] = 0x03;
 
     // $D6C5: FPGA reconfiguration status — bit 0 = FPGA has been configured
-    // MegaFlash checks this to decide whether to boot normally or show menu
+    // HYPPO's dont_launch_flash_menu checks this to branch to
+    // fpga_has_been_reconfigured path (normalboot → go64)
     m_regs[0xC5] = 0x01;
 
     // $D67F: Hypervisor status — 'U' (user mode) or 'H' (hypervisor)
