@@ -21,6 +21,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **DMA megabyte option zero value**: Enhanced DMA option `$80 $00` (srcMB=0) was treated as "not set" because zero is falsy. Added explicit `srcMBset`/`dstMBset` flags. Chained jobs now inherit megabyte settings.
 - **C65 ROM banking via $D030**: Added all four ROM banking regions (ROM8/ROMA/ROMC/ROME) using ioRead interception instead of SparseMemoryBus overlays. Overlays were permanently removed when CPU port changed HIRAM. The MEGA65 KERNAL reset at `$E4B8` sets `$D030=$20` (ROMC) and jumps to `$C800` — the MEGA65 extended KERNAL.
 - **BRK with uninitialized IRQ vector** (fixes #51): BRK now properly detected as program end when IRQ vector ($FFFE/$FFFF) is `$0000` or `$FFFF`, preventing infinite BRK loops on rawMega65.
+- **Implicit hypervisor exit**: HYPPO's cold boot sets B=$00 via TAB without writing to $D67F. Now detects TAB with A=0 in hypervisor mode as implicit exit, clearing the $8000-$BFFF overlay so mflash and ROM code can access their own data.
+- **Keyboard buffer $D610**: Write-to-clear semantics. mflash's keyboard flush loop wrote then read $D610, getting back the non-zero value it wrote, causing infinite loop.
+- **F011 FDC stubs ($D080-$D09F)**: Status A ($D082) now returns 0 (not busy) instead of $FF. mflash polled $D082 bit 7 and hung when it read $FF (always busy).
 
 ### Added
 - **MCP `run_until` tool**: Run the CPU until a condition expression becomes true, with configurable report output (regs, disasm, stack, mem). Supports compound conditions with `&&`, `||`.
