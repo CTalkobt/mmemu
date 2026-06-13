@@ -25,6 +25,10 @@ void Mega65IoStub::reset() {
     // $D629: Model ID — MEGA65 R3 = $03
     m_regs[0x29] = 0x03;
 
+    // $D6C5: FPGA reconfiguration status — bit 0 = FPGA has been configured
+    // MegaFlash checks this to decide whether to boot normally or show menu
+    m_regs[0xC5] = 0x01;
+
     // $D67F: Hypervisor status — 'U' (user mode) or 'H' (hypervisor)
     // This is handled by HypervisorRegs, but as fallback return 'U'
     m_regs[0x7F] = 'U';

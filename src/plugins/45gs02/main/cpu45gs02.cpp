@@ -1682,9 +1682,13 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
     if (m_state.haltLine) return true;
 
     // Check for RTS/RTI/RTN on empty stack (SP at initial value)
+    // Only treat as program end if the return address is also uninitialized.
     if (m_state.sp == 0x01FF && bus) {
         uint8_t op = bus->peek8(m_state.pc);
-        if (op == 0x60 || op == 0x40 || op == 0x62) return true; // RTS, RTI, RTN
+        if (op == 0x60 || op == 0x40 || op == 0x62) {
+            uint16_t retAddr = bus->peek8(0x0200) | ((uint16_t)bus->peek8(0x0201) << 8);
+            if (retAddr == 0x0000 || retAddr == 0xFFFF) return true;
+        }
     }
 
     // Check for BRK with no valid IRQ handler (uninitialized vector)

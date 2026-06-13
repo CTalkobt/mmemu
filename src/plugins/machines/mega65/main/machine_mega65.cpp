@@ -381,6 +381,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
     }
 
+    // Workaround: our mflash.prg doesn't use the $CF80 HYPPO callback.
+    // It exits via RTS which pops from $0200/$0201.  Place the
+    // return_from_flashmenu address ($A4D9-1 = $A4D8) there so the
+    // RTS returns to HYPPO's boot continuation.
+    physBus->write8(0x0200, 0xD8);  // return_from_flashmenu - 1, low byte
+    physBus->write8(0x0201, 0xA4);  // high byte
+
     // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
     // When DMA is active, tick devices without stepping the CPU (CPU is halted).
     desc->schedulerStep = [dma](MachineDescriptor& d) -> int {
