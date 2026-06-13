@@ -193,8 +193,17 @@ void MOS45GS02::write8(uint16_t addr, uint8_t val) {
     }
     if (m_bus) m_bus->write8(translate(addr), val);
 }
-uint8_t MOS45GS02::read8_phys(uint32_t physAddr) { return m_bus ? m_bus->read8(physAddr & 0x0FFFFFFF) : 0xFF; }
-void MOS45GS02::write8_phys(uint32_t physAddr, uint8_t val) { if (m_bus) m_bus->write8(physAddr & 0x0FFFFFFF, val); }
+uint8_t MOS45GS02::read8_phys(uint32_t physAddr) {
+    // 32-bit physical access bypasses MapMmu overlay (hypervisor RAM, I/O hooks).
+    // Route directly to the physical bus when MapMmu is in use.
+    IBus* phys = m_mapMmu ? m_mapMmu->getPhysBus() : nullptr;
+    return (phys ? phys : m_bus) ? (phys ? phys : m_bus)->read8(physAddr & 0x0FFFFFFF) : 0xFF;
+}
+void MOS45GS02::write8_phys(uint32_t physAddr, uint8_t val) {
+    IBus* phys = m_mapMmu ? m_mapMmu->getPhysBus() : nullptr;
+    if (phys) phys->write8(physAddr & 0x0FFFFFFF, val);
+    else if (m_bus) m_bus->write8(physAddr & 0x0FFFFFFF, val);
+}
 void MOS45GS02::updateNZ(uint8_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x80) m_state.p |= FLAG_N; }
 void MOS45GS02::updateNZ16(uint16_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x8000) m_state.p |= FLAG_N; }
 void MOS45GS02::updateNZ32(uint32_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x80000000) m_state.p |= FLAG_N; }

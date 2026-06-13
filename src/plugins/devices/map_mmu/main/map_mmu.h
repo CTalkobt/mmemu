@@ -63,6 +63,10 @@ public:
     void     write8(uint32_t addr, uint8_t val) override;
     uint8_t  peek8(uint32_t addr) override;
 
+    // Direct physical bus access — bypasses MAP translation and hypervisor overlay.
+    // Used by 45GS02 for 32-bit indirect long addressing (NOP prefix).
+    IBus* getPhysBus() const override;
+
     void reset() override;
 
     size_t stateSize()             const override;

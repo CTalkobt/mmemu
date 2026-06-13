@@ -124,15 +124,17 @@ void SdCardDevice::executeCommand(uint8_t cmd) {
             m_status |= SD_ST_EXT_BUS;
             break;
 
-        case 0x53: { // Flash read — reads from QSPI flash (emulated via SD image)
+        case 0x53: { // Flash read — QSPI flash emulation
+            // Real MEGA65 reads from QSPI flash (bitstream, ROMs, chargen).
+            // We don't emulate flash storage; ROMs are loaded from files at init.
+            // Sector 0: return flash ID with card presence flag at $DE71.
+            // All other sectors: return $FF (default flash state), matching xemu.
             uint32_t sector = m_regs[0x01] | (m_regs[0x02] << 8) |
                               (m_regs[0x03] << 16) | (m_regs[0x04] << 24);
             if (sector == 0) {
-                // Sector 0: HYPPO reads flash ID/CSD to confirm card presence.
-                // Buffer[$71] must be $01 for HYPPO to proceed with ROM loading.
                 std::memset(m_sectorBuf, 0, 512);
                 m_sectorBuf[0x71] = 0x01; // Card type: SDHC
-            } else if (!readSector(sector)) {
+            } else {
                 std::memset(m_sectorBuf, 0xFF, 512);
             }
             break;

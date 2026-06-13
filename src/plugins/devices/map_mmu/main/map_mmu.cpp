@@ -107,6 +107,8 @@ void MapMmu::write8(uint32_t addr, uint8_t val) {
     }
 }
 
+IBus* MapMmu::getPhysBus() const { return m_physBus; }
+
 void MapMmu::setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
                         std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn)
 {

@@ -2,8 +2,9 @@
 
 #include <cstdint>
 
-// Forward declare MapState struct (defined in MapMmu)
+// Forward declarations
 struct MapState;
+class IBus;
 
 /**
  * Interface for controllers that manage memory mapping via the MAP instruction.
@@ -22,4 +23,8 @@ public:
 
     // Reset MAP state to default (all blocks disabled)
     virtual void clearMapState() = 0;
+
+    // Access the underlying physical bus (bypasses MAP translation and overlays).
+    // Used for 32-bit indirect long addressing. Returns nullptr if not available.
+    virtual IBus* getPhysBus() const { return nullptr; }
 };
