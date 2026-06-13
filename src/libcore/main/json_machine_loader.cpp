@@ -5,6 +5,7 @@
 #include "libcore/main/core_registry.h"
 #include "libcore/main/rom_loader.h"
 #include "libmem/main/memory_bus.h"
+#include "libmem/main/sparse_memory_bus.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/device_registry.h"
 #include "libdevices/main/isignal_line.h"
@@ -171,18 +172,30 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Step 3 — Bus
     // -----------------------------------------------------------------------
-    FlatMemoryBus* bus = nullptr;
+    FlatMemoryBus*   bus      = nullptr;  // non-null for FlatMemoryBus machines (C64, VIC-20, etc.)
+    SparseMemoryBus* physBus  = nullptr;  // non-null for SparseMemoryBus machines (MEGA65)
+    IBus*            cpuBus   = nullptr;  // the bus the CPU sees (may be MapMmu or FlatMemoryBus)
     std::map<std::string, IBus*> busPtrs;
 
     if (spec.contains("bus")) {
-        std::cerr << "[JsonMachineLoader] spec contains 'bus' field\n" << std::flush;
         const auto& busSpec = spec["bus"];
-        std::string busName = busSpec.value("name",     "system");
+        std::string busType  = busSpec.value("type", "FlatMemoryBus");
+        std::string busName  = busSpec.value("name", "system");
         int         addrBits = busSpec.value("addrBits", 16);
-        bus = new FlatMemoryBus(busName, addrBits);
-        desc->buses.push_back({busName, bus});
-        busPtrs[busName] = bus;
-        std::cerr << "[JsonMachineLoader] Created bus: " << busName << " (" << desc->buses.size() << " buses total)\n" << std::flush;
+
+        if (busType == "SparseMemoryBus") {
+            physBus = new SparseMemoryBus(busName, addrBits);
+            cpuBus  = physBus;
+            desc->buses.push_back({busName, physBus});
+            busPtrs[busName] = physBus;
+        } else {
+            bus    = new FlatMemoryBus(busName, addrBits);
+            cpuBus = bus;
+            desc->buses.push_back({busName, bus});
+            busPtrs[busName] = bus;
+        }
+        std::cerr << "[JsonMachineLoader] Created bus: " << busName
+                  << " (type=" << busType << ", " << addrBits << "-bit)\n" << std::flush;
     } else {
         std::cerr << "[JsonMachineLoader] ERROR: No 'bus' field in spec for " << desc->machineId << "\n" << std::flush;
     }
@@ -203,8 +216,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             std::cerr << "[JsonMachineLoader] CPU created successfully\n" << std::flush;
             std::string dataBusName = cpuSpec.value("dataBus", "system");
             std::string codeBusName = cpuSpec.value("codeBus", "system");
-            IBus* dataBus = busPtrs.count(dataBusName) ? busPtrs[dataBusName] : bus;
-            IBus* codeBus = busPtrs.count(codeBusName) ? busPtrs[codeBusName] : bus;
+            IBus* dataBus = busPtrs.count(dataBusName) ? busPtrs[dataBusName] : cpuBus;
+            IBus* codeBus = busPtrs.count(codeBusName) ? busPtrs[codeBusName] : cpuBus;
             cpu->setDataBus(dataBus);
             cpu->setCodeBus(codeBus);
             desc->cpus.push_back({"main", cpu, dataBus, codeBus, nullptr, true, 1});
@@ -243,11 +256,10 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             if (!path.empty())
                 romLoad(PathUtil::findResource(path).c_str(), ptr, (size_t)size);
 
-            if (bus && romSpec.contains("overlayAddr") &&
-                !romSpec["overlayAddr"].is_null()) {
-                uint32_t addr = hexStrToU32(
-                    romSpec["overlayAddr"].get<std::string>());
-                bus->addOverlay(addr, (uint32_t)size, ptr, writable);
+            if (romSpec.contains("overlayAddr") && !romSpec["overlayAddr"].is_null()) {
+                uint32_t addr = hexStrToU32(romSpec["overlayAddr"].get<std::string>());
+                if (bus)     bus->addOverlay(addr, (uint32_t)size, ptr, writable);
+                if (physBus) physBus->addRomOverlay(addr, (uint32_t)size, ptr);
             }
         }
     }
@@ -337,11 +349,16 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             if (!devPtrs.count(devName)) continue;
             IOHandler* dev = devPtrs[devName];
 
-            // DMA bus — wraps the main system bus, bypasses I/O hooks
-            if (devSpec.contains("dmaBus") && !devSpec["dmaBus"].is_null() && bus) {
-                auto* dmaBus = new DmaBus(bus);
-                dev->setDmaBus(dmaBus);
-                desc->deleters.push_back([dmaBus]() { delete dmaBus; });
+            // DMA bus — for SparseMemoryBus, use physical bus directly;
+            // for FlatMemoryBus, wrap to bypass I/O hooks.
+            if (devSpec.contains("dmaBus") && !devSpec["dmaBus"].is_null()) {
+                if (physBus) {
+                    dev->setDmaBus(physBus);
+                } else if (bus) {
+                    auto* dmaBus = new DmaBus(bus);
+                    dev->setDmaBus(dmaBus);
+                    desc->deleters.push_back([dmaBus]() { delete dmaBus; });
+                }
             }
 
             // Color RAM buffer wiring (passBufTo on inline_color_ram)
@@ -350,7 +367,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             }
 
             // RAM data for PLA banking
-            if (devSpec.value("ramData", "") == "system" && bus) {
+            if (devSpec.value("ramData", "") == "system" && bus) {  // FlatMemoryBus only
                 dev->setRamData(bus->rawData());
             }
 
@@ -463,6 +480,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Step 6 — Bus I/O hook (with optional mirror ranges)
     // -----------------------------------------------------------------------
+    // FlatMemoryBus: set I/O hooks directly on the bus
     if (bus) {
         if (mirrors.empty()) {
             bus->setIoHooks(
@@ -483,7 +501,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     return io->dispatchWrite(b, a, v);
                 });
         }
-        
+
         bus->setHaltCheck([io]() {
             if (!io) return false;
             std::vector<IOHandler*> handlers;
@@ -498,6 +516,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             bus->setIoLowBase(io->lowestHandlerBase());
         }
     }
+    // SparseMemoryBus: I/O hooks will be wired via MapMmu if present (see mapMmu section below)
 
     // -----------------------------------------------------------------------
     // Step 7 / Phase 3 Step 13 — Signal lines

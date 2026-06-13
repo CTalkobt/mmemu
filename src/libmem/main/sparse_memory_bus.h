@@ -7,11 +7,14 @@
 #include <string>
 #include <cstdint>
 
+#ifndef WRITELOGENTRY_DEFINED
+#define WRITELOGENTRY_DEFINED
 struct WriteLogEntry {
     uint32_t address;
     uint8_t  before;
     uint8_t  after;
 };
+#endif
 
 struct SparseRegion {
     uint32_t base;

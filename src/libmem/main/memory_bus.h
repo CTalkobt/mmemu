@@ -9,11 +9,14 @@
 /**
  * Entry in the write log.
  */
+#ifndef WRITELOGENTRY_DEFINED
+#define WRITELOGENTRY_DEFINED
 struct WriteLogEntry {
     uint32_t address;
     uint8_t  before;
     uint8_t  after;
 };
+#endif
 
 /**
  * ROM Overlay mapping.
