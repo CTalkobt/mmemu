@@ -610,6 +610,30 @@ Json handleDescribe() {
     runSchema.oVal["required"] = runReq;
     addTool("run_cpu", "Run the CPU until a breakpoint is hit, the program ends (BRK/RTS to empty stack), or max_steps is reached (default 10000000)", runSchema);
 
+    // run_until
+    {
+        Json ruSchema(Json::OBJ); ruSchema.oVal["type"] = Json("object");
+        Json ruProps(Json::OBJ);
+        ruProps.oVal["machine_id"] = midProp;
+        Json condProp(Json::OBJ); condProp.oVal["type"] = Json("string");
+        condProp.oVal["description"] = Json("Expression that stops execution when it evaluates to non-zero. "
+            "Supports registers (A, X, Y, Z, SP, PC, B, P), hex ($FF), comparisons (==, !=, <, >, <=, >=), "
+            "arithmetic (+, -, *, /, %, <<, >>), bitwise (&, |), logical (&&, ||, !), and symbols. "
+            "Examples: 'PC >= $FFFF', 'SP >> 8 == $FF', 'PC < $0800 || PC > $9FFF', 'A == $42 && X != 0'");
+        ruProps.oVal["condition"] = condProp;
+        Json msProp(Json::OBJ); msProp.oVal["type"] = Json("integer");
+        msProp.oVal["description"] = Json("Maximum instructions to execute before stopping (default 10000000)");
+        ruProps.oVal["max_steps"] = msProp;
+        Json rptProp(Json::OBJ); rptProp.oVal["type"] = Json("string");
+        rptProp.oVal["description"] = Json("Comma-separated report items: regs, disasm, stack, mem:ADDR:SIZE (e.g. 'regs,disasm,mem:$0400:32'). Default: regs");
+        ruProps.oVal["report"] = rptProp;
+        ruSchema.oVal["properties"] = ruProps;
+        Json ruReq(Json::ARR); ruReq.push_back(Json("machine_id")); ruReq.push_back(Json("condition"));
+        ruSchema.oVal["required"] = ruReq;
+        addTool("run_until", "Run the CPU until a condition expression becomes true, a breakpoint hits, program ends, or max_steps is reached. "
+            "Returns registers, disassembly, and optional memory dumps. Much more efficient than repeated step/check cycles.", ruSchema);
+    }
+
     // disassemble
     Json daSchema(Json::OBJ); daSchema.oVal["type"] = Json("object");
     Json daProps(Json::OBJ); daProps.oVal["machine_id"] = midProp; daProps.oVal["addr"] = addrProp; daProps.oVal["count"] = cntProp;
@@ -2217,6 +2241,97 @@ Json handleToolsCall(const Json& params) {
                    << toHex(val, desc->width == RegWidth::R16 ? 4 : 2) << "  ";
             }
             textItem.oVal["text"] = Json(ss.str());
+        }
+    } else if (name == "run_until") {
+        std::string mid = args["machine_id"].sVal;
+        std::string condition = args["condition"].sVal;
+        int maxSteps = args.contains("max_steps") ? (int)args["max_steps"].nVal : 10000000;
+        std::string reportSpec = args.contains("report") ? args["report"].sVal : "regs";
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            // Validate the condition expression first
+            uint32_t testResult = 0;
+            if (!ExpressionEvaluator::evaluate(condition, ms->dbg, testResult)) {
+                textItem.oVal["text"] = Json("Error: Invalid condition expression: " + condition);
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                ms->dbg->resume();
+                int steps = 0;
+                bool conditionMet = false;
+                std::string stopReason;
+
+                // Check condition every 256 steps for performance
+                while (steps < maxSteps) {
+                    if (ms->machine && ms->machine->schedulerStep)
+                        ms->machine->schedulerStep(*ms->machine);
+                    else
+                        ms->cpu->step();
+                    ++steps;
+
+                    if (ms->dbg->isPaused()) { stopReason = "Breakpoint hit"; break; }
+                    if (ms->cpu->isProgramEnd(ms->bus)) { stopReason = "Program ended"; break; }
+
+                    if ((steps & 0xFF) == 0 || steps < 16) {
+                        uint32_t condVal = 0;
+                        ExpressionEvaluator::evaluate(condition, ms->dbg, condVal);
+                        if (condVal != 0) { conditionMet = true; stopReason = "Condition met: " + condition; break; }
+                    }
+                }
+                if (stopReason.empty()) stopReason = "Stopped after " + std::to_string(maxSteps) + " steps";
+
+                std::stringstream ss;
+                ss << stopReason << " (steps=" << steps << ", cycles=" << ms->cpu->cycles() << ")\n";
+
+                // Parse report spec and generate output
+                std::istringstream rptStream(reportSpec);
+                std::string item;
+                while (std::getline(rptStream, item, ',')) {
+                    // trim whitespace
+                    while (!item.empty() && item[0] == ' ') item.erase(0, 1);
+                    while (!item.empty() && item.back() == ' ') item.pop_back();
+
+                    if (item == "regs") {
+                        int regCount = ms->cpu->regCount();
+                        for (int i = 0; i < regCount; ++i) {
+                            const auto* rd = ms->cpu->regDescriptor(i);
+                            if (rd->flags & REGFLAG_INTERNAL) continue;
+                            uint32_t val = ms->cpu->regRead(i);
+                            ss << rd->name << ": $" << toHex(val, rd->width == RegWidth::R16 ? 4 : 2) << "  ";
+                        }
+                        ss << "\n";
+                    } else if (item == "disasm") {
+                        uint32_t pc = ms->cpu->pc();
+                        for (int i = 0; i < 10; ++i) {
+                            char buf[64];
+                            int bytes = ms->disasm->disasmOne(ms->bus, pc, buf, sizeof(buf));
+                            ss << toHex(pc, 4) << ": " << buf << "\n";
+                            pc += bytes ? bytes : 1;
+                        }
+                    } else if (item == "stack") {
+                        ss << "SP=$" << toHex(ms->cpu->sp(), 4) << "\n";
+                    } else if (item.substr(0, 4) == "mem:") {
+                        // Parse mem:ADDR:SIZE
+                        auto parts = item.substr(4);
+                        auto colonPos = parts.find(':');
+                        if (colonPos != std::string::npos) {
+                            uint32_t addr = 0, size = 16;
+                            ExpressionEvaluator::evaluate(parts.substr(0, colonPos), ms->dbg, addr);
+                            ExpressionEvaluator::evaluate(parts.substr(colonPos + 1), ms->dbg, size);
+                            if (size > 256) size = 256;
+                            ss << toHex(addr, 4) << ": ";
+                            for (uint32_t j = 0; j < size; ++j) {
+                                ss << toHex(ms->bus->peek8(addr + j), 2) << " ";
+                                if ((j & 15) == 15 && j + 1 < size) ss << "\n" << toHex(addr + j + 1, 4) << ": ";
+                            }
+                            ss << "\n";
+                        }
+                    }
+                }
+                textItem.oVal["text"] = Json(ss.str());
+            }
         }
     } else if (name == "disassemble") {
         std::string mid = args["machine_id"].sVal;

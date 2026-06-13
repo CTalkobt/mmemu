@@ -42,6 +42,8 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
 
     struct OpInfo { std::string s; int precedence; };
     static const std::vector<OpInfo> binOps = {
+        {"||", 0},
+        {"&&", 0},
         {"==", 1}, {"!=", 1}, {"<=", 1}, {">=", 1}, {"<",  1}, {">",  1},
         {"|",  2},
         {"&",  3}, {"<<", 3}, {">>", 3},
@@ -102,7 +104,9 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
     if (opPos != std::string::npos) {
         double a, b;
         if (evaluate(expr.substr(0, opPos), dbg, a, defaultBase) && evaluate(expr.substr(opPos + opStr.length()), dbg, b, defaultBase)) {
-            if (opStr == "==") result = (double)(a == b);
+            if (opStr == "||") result = (double)(a != 0 || b != 0);
+            else if (opStr == "&&") result = (double)(a != 0 && b != 0);
+            else if (opStr == "==") result = (double)(a == b);
             else if (opStr == "!=") result = (double)(a != b);
             else if (opStr == "<=") result = (double)(a <= b);
             else if (opStr == ">=") result = (double)(a >= b);
