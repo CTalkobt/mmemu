@@ -76,6 +76,9 @@ private:
         uint16_t modulo;        // Modulo value (16-bit LE)
         uint16_t srcSkipRate;   // Source fractional step rate ($0100 = 1.0 byte)
         uint16_t dstSkipRate;   // Destination fractional step rate
+        uint8_t srcMB;          // Enhanced: source megabyte (option $80)
+        uint8_t dstMB;          // Enhanced: destination megabyte (option $81)
+        bool useF018A;          // Enhanced: per-job F018A revision flag (option $0A)
     };
 
     // Job list management

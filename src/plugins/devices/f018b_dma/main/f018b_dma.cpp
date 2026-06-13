@@ -130,10 +130,14 @@ void F018bDmaDevice::beginJob(size_t jobIdx) {
     m_bytesRemaining = job.count;
     m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
 
-    // Extend 24-bit addresses to 28-bit using upper bank from $D704
-    uint32_t bankHigh = static_cast<uint32_t>(m_regs[0x04]) << 20;
-    m_srcBase = (job.srcAddr & 0x0FFFFF) | bankHigh;
-    m_dstBase = (job.dstAddr & 0x0FFFFF) | bankHigh;
+    // Extend 20-bit addresses to 28-bit using megabyte from enhanced options
+    // or falling back to the $D704 register
+    uint32_t srcMB = m_enhancedMode && job.srcMB ? (uint32_t)job.srcMB << 20
+                                                 : (uint32_t)m_regs[0x04] << 20;
+    uint32_t dstMB = m_enhancedMode && job.dstMB ? (uint32_t)job.dstMB << 20
+                                                 : (uint32_t)m_regs[0x04] << 20;
+    m_srcBase = (job.srcAddr & 0x0FFFFF) | srcMB;
+    m_dstBase = (job.dstAddr & 0x0FFFFF) | dstMB;
 
     m_srcStep = job.srcSkipRate ? job.srcSkipRate : 0x0100;
     m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
@@ -235,24 +239,28 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
         if (option == 0x00) break;
 
         if (option & 0x80) {
+            // Options $80-$FF: parameterized (consume one argument byte)
             uint8_t arg = m_bus->read8(addr);
             addr++;
 
             switch (option) {
-                case 0x82:
-                    job.srcSkipRate = (job.srcSkipRate & 0xFF00) | arg;
-                    break;
-                case 0x83:
-                    job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8);
-                    break;
-                case 0x84:
-                    job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg;
-                    break;
-                case 0x85:
-                    job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8);
-                    break;
-                default:
-                    break;
+                case 0x80: job.srcMB = arg; break;        // Source megabyte
+                case 0x81: job.dstMB = arg; break;        // Destination megabyte
+                case 0x82: job.srcSkipRate = (job.srcSkipRate & 0xFF00) | arg; break;
+                case 0x83: job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8); break;
+                case 0x84: job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg; break;
+                case 0x85: job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8); break;
+                case 0x86: /* transparent byte value — not yet used */ break;
+                default:   break;
+            }
+        } else {
+            // Options $01-$7F: single-byte flags (no argument)
+            switch (option) {
+                case 0x06: /* disable transparency */ break;
+                case 0x07: /* enable transparency */ break;
+                case 0x0A: job.useF018A = true; break;    // Use F018A revision
+                case 0x0B: job.useF018A = false; break;   // Use F018B revision
+                default:   break;
             }
         }
     }
@@ -264,8 +272,7 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
     const uint32_t MAX_JOBS = 256;
     uint32_t currentAddr = listAddr;
 
-    bool f018b = (m_regs[0x03] & 0x01) != 0;
-    uint32_t jobSize = f018b ? 12 : 11;
+    bool f018b_default = (m_regs[0x03] & 0x01) != 0;
 
     for (uint32_t jobIdx = 0; jobIdx < MAX_JOBS; ++jobIdx) {
         DmaJob job = {};
@@ -293,6 +300,10 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
         uint8_t dst_bankflags = m_bus->read8(currentAddr + 8);
         job.dstAddr = dst_lo | (dst_mid << 8) | ((dst_bankflags & 0x0F) << 16);
         job.dstFlags = (dst_bankflags >> 4) & 0x0F;
+
+        // Per-job revision: enhanced option $0A/$0B overrides register $D703
+        bool f018b = job.useF018A ? false : f018b_default;
+        uint32_t jobSize = f018b ? 12 : 11;
 
         if (f018b) {
             job.commandMsb = m_bus->read8(currentAddr + 9);
