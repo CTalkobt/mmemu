@@ -60,6 +60,9 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         return true;
     }
 
+    // In hypervisor mode, ROM banking is disabled — hypervisor sees raw RAM.
+    if (inHypervisor()) return false;
+
     // C65 ROM banking via $D030 (VIC-III) and C64 $01 port.
     // MAP block mapping overrides both — if block is MAP'd, ROM is not visible.
     // The C65 ROM is a flat 128KB image; CPU address maps 1:1 to file offset.

@@ -54,6 +54,9 @@ public:
     /** Set callback to query VIC-III $D030 register for C65 ROM banking. */
     void setD030Query(std::function<uint8_t()> fn) { m_d030Query = std::move(fn); }
 
+    /** Set callback to check if CPU is in hypervisor mode. */
+    void setHypervisorQuery(std::function<bool()> fn) { m_hyperQuery = std::move(fn); }
+
     // IOHandler interface
     const char* name()     const override { return "C64BankCtrl"; }
     uint32_t    baseAddr() const override { return 0x0000; }
@@ -87,5 +90,7 @@ private:
     void updateOverlays();
 
     std::function<uint8_t()> m_d030Query;
+    std::function<bool()>    m_hyperQuery;
     uint8_t d030() const { return m_d030Query ? m_d030Query() : 0; }
+    bool inHypervisor() const { return m_hyperQuery ? m_hyperQuery() : false; }
 };

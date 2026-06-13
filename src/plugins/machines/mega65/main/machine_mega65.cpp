@@ -180,6 +180,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
         return val;
     });
 
+    // Hypervisor query wired after CPU creation (see below)
+
     dma->setDmaBus(physBus);
     vic4->setDmaBus(physBus);
     vic4->setCharRom(romBuf + 0xD000, 4096);
@@ -288,6 +290,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     // KEY register: block personality changes while in hypervisor mode
     keyReg->setHypervisorCheck([cpu45]() { return cpu45->isHypervisor(); });
+
+    // Wire hypervisor mode query (ROM banking disabled in hypervisor mode)
+    bankCtrl->setHypervisorQuery([cpu45]() -> bool {
+        return cpu45->isHypervisor();
+    });
 
     uint8_t* hyperRom = nullptr;
     {

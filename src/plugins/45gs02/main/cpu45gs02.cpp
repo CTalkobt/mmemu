@@ -94,6 +94,8 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
 }
 
 void MOS45GS02::exitHypervisor() {
+    fprintf(stderr, "[HYPER-EXIT] PC=$%04X returnPC=$%04X cycles=%llu\n",
+            m_state.pc, m_hyperState.pc, (unsigned long long)m_state.cycles);
     // Restore CPU state from virtualisation control registers
     m_state.a  = m_hyperState.regA;
     m_state.x  = m_hyperState.regX;
@@ -1296,15 +1298,6 @@ int MOS45GS02::step() {
         default: m_state.haltLine = 1; break;
     }
 
-    // Implicit hypervisor exit: if PC leaves $8000-$BFFF during hypervisor mode,
-    // the CPU has transitioned to user code. HYPPO's cold boot does JMP $080D
-    // from $AD9E without writing to $D67F — the virtualisation registers at
-    // $D640-$D67E were already set up by JSR $9E98 at $AD70 (or the $ADA1 path).
-    // Clear the hypervisor flag so the $8000-$BFFF overlay deactivates,
-    // allowing mflash and ROM code to access their data at those addresses.
-    if (m_state.hypervisor && (m_state.pc < 0x8000 || m_state.pc > 0xBFFF)) {
-        m_state.hypervisor = false;
-    }
 
     return 1;
 }
