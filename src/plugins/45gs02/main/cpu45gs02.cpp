@@ -187,7 +187,8 @@ uint8_t MOS45GS02::read8(uint16_t addr) {
     return m_bus ? m_bus->read8(translate(addr)) : 0xFF;
 }
 void MOS45GS02::write8(uint16_t addr, uint8_t val) {
-    // Hypervisor mode: $8000-$BFFF writes to hypervisor RAM
+    // Hypervisor mode: $8000-$BFFF writes go to hypervisor RAM
+    // (matching real hardware — both reads and writes access hypervisor_ram)
     if (m_state.hypervisor && m_hyperRam && addr >= 0x8000 && addr <= 0xBFFF) {
         uint16_t off = addr - 0x8000;
         if (off < m_hyperRomSize) m_hyperRam[off] = val;
@@ -1266,11 +1267,13 @@ int MOS45GS02::step() {
                     state.enables = (state.enables & 0xF0) | ((m_state.x >> 4) & 0x0F);
                 }
 
-                // Upper 32KB
+                // Upper 32KB — blocked in hypervisor mode (matching real hardware).
+                // In hypervisor mode, $8000-$FFFF is locked to hypervisor RAM;
+                // only megabyte selection (Z==0x0F) is allowed.
                 if (m_state.z == 0x0F) {
                     // Megabyte select: Y chooses which 1MB region
                     state.megabyteHigh = (uint32_t)m_state.y << 20;
-                } else {
+                } else if (!m_state.hypervisor) {
                     uint32_t hiOff = ((m_state.z & 0x0F) << 8) | m_state.y;
                     for (int i = 4; i < 8; i++)
                         state.offsets[i] = (i * 0x20) + hiOff;
