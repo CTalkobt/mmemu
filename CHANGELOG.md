@@ -24,10 +24,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Implicit hypervisor exit**: HYPPO's cold boot sets B=$00 via TAB without writing to $D67F. Now detects TAB with A=0 in hypervisor mode as implicit exit, clearing the $8000-$BFFF overlay so mflash and ROM code can access their own data.
 - **Keyboard buffer $D610**: Write-to-clear semantics. mflash's keyboard flush loop wrote then read $D610, getting back the non-zero value it wrote, causing infinite loop.
 - **F011 FDC stubs ($D080-$D09F)**: Status A ($D082) now returns 0 (not busy) instead of $FF. mflash polled $D082 bit 7 and hung when it read $FF (always busy).
+- **MAP upper-32K blocked in hypervisor mode**: MAP instruction offset/enable changes for $8000-$FFFF are blocked in hypervisor mode, matching xemu/real hardware. Only megabyte selection allowed.
+- **Hypervisor RAM restore after mflash**: Workaround for HICKUP.M65/mflash.prg version mismatch. Detects mflash→HYPPO return and restores zeroed hypervisor RAM region.
 
 ### Added
 - **MCP `run_until` tool**: Run the CPU until a condition expression becomes true, with configurable report output (regs, disasm, stack, mem). Supports compound conditions with `&&`, `||`.
 - **Expression evaluator logical operators**: Added `&&` (logical AND) and `||` (logical OR) at lowest precedence.
+- **HDOS trap virtualization framework**: HypervisorRegs intercepts trap 0 (DOS) from user mode, checks function code from A register, and can service requests from host filesystem. Initial stubs for get_drive_info, set_filename, find_file, chdir, cdrootdir, closeall.
+- **MEGA65 JSON machine descriptor** (`machines/mega65.json`): All ROM paths, BRAM files, SD card paths, I/O defaults defined in JSON. Factory reads config at startup.
+- **JsonMachineLoader SparseMemoryBus support**: Bus type field selects FlatMemoryBus or SparseMemoryBus.
 
 ### Changed
 - **Version tracking**: Single source of truth in `VERSION` file; Makefile reads it to generate `version.h`. Version format changed from `MAJOR.MINOR.PATCH-GITHASH` to `MAJOR.MINOR.PATCH.GITHASH`.
