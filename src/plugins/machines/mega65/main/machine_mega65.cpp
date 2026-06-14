@@ -404,6 +404,49 @@ MachineDescriptor* Mega65MachineFactory::create() {
         auto* hyperRegs = new HypervisorRegs(cpu45);
         io->registerHandler(hyperRegs);
         desc->deleters.push_back([hyperRegs]() { delete hyperRegs; });
+
+        // HDOS trap virtualization — intercept DOS traps for host filesystem access
+        hyperRegs->setHdosTrapHandler([](uint8_t func, MOS45GS02* cpu) -> bool {
+            auto& h = cpu->hyperState();
+
+            // Set carry flag in saved P to indicate success/failure
+            auto setCarry = [&](bool success) {
+                if (success) h.pflags |= 0x01; // set C
+                else         h.pflags &= ~0x01; // clear C
+            };
+
+            switch (func >> 1) {
+                case 0x00: // Get default drive info
+                    h.regA = 0x00; // no error
+                    setCarry(true);
+                    return true;
+
+                case 0x06: // Set current filename
+                    setCarry(true);
+                    return true;
+
+                case 0x09: // Find file
+                    h.regA = 0xFF; // file not found
+                    setCarry(false);
+                    return true;
+
+                case 0x0C: // chdir
+                    setCarry(true);
+                    return true;
+
+                case 0x1E: // cdrootdir
+                    setCarry(true);
+                    return true;
+
+                case 0x11: // closeall
+                    setCarry(true);
+                    return true;
+
+                default:
+                    // Not virtualized — let HYPPO handle it
+                    return false;
+            }
+        });
     }
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});

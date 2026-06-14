@@ -2,6 +2,8 @@
 
 #include "libdevices/main/io_handler.h"
 #include "plugins/45gs02/main/cpu45gs02.h"
+#include <functional>
+#include <string>
 
 /**
  * MEGA65 Hypervisor Virtualisation Control Registers ($D640-$D67F).
@@ -9,6 +11,10 @@
  * In user mode: writes to $D640-$D67F trigger SYSCALL traps.
  * In hypervisor mode: these are read/write registers for saved CPU state.
  * Writing to $D67F (ENTEREXIT) exits hypervisor mode.
+ *
+ * HDOS trap virtualization: when enabled, trap 0 (DOS) intercepts
+ * function calls and services them from the host filesystem, bypassing
+ * HYPPO's SD card code entirely.
  */
 class HypervisorRegs : public IOHandler {
 public:
@@ -27,7 +33,15 @@ public:
     void reset() override {}
     void tick(uint64_t) override {}
 
+    /// Set HDOS trap handler. Called with function code (from A register).
+    /// Returns true if the function was virtualized (caller should exit hypervisor).
+    using HdosTrapFn = std::function<bool(uint8_t func, MOS45GS02* cpu)>;
+    void setHdosTrapHandler(HdosTrapFn fn) { m_hdosTrap = std::move(fn); }
+
 private:
     MOS45GS02* m_cpu;
     std::string m_name = "HypervisorRegs";
+    HdosTrapFn m_hdosTrap;
+
+    bool handleDosTrap();
 };
