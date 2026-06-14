@@ -478,9 +478,17 @@ MachineDescriptor* Mega65MachineFactory::create() {
     physBus->write8(0x0200, 0xD8);  // return_from_flashmenu - 1, low byte
     physBus->write8(0x0201, 0xA4);  // high byte
 
+    // Workaround: mflash.prg zeros hypervisor RAM $9AFF-$A406 (workspace clear).
+    // Our HICKUP.M65 has critical code (sdwaitawhile) at $A126 in that range.
+    // After mflash returns to HYPPO (return_from_flashmenu at $A4D9), detect the
+    // re-entry (B changes from $00 back to $BF) and restore the zeroed region.
+    struct HyperRestoreState { bool done; uint8_t lastB; uint8_t* rom; uint32_t size; };
+    auto* hyperRestore = new HyperRestoreState{false, 0xBF, hyperRom, hyperRom ? 16384u : 0u};
+    desc->deleters.push_back([hyperRestore]() { delete hyperRestore; });
+
     // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
     // When DMA is active, tick devices without stepping the CPU (CPU is halted).
-    desc->schedulerStep = [dma](MachineDescriptor& d) -> int {
+    desc->schedulerStep = [dma, cpu45, hyperRestore](MachineDescriptor& d) -> int {
         if (dma->isHaltRequested()) {
             // DMA active: tick devices (processes one DMA byte), CPU stays halted
             if (d.ioRegistry) d.ioRegistry->tickAll(1);
@@ -489,6 +497,28 @@ MachineDescriptor* Mega65MachineFactory::create() {
         auto* cpu = d.cpus[0].cpu;
         int cycles = cpu->step();
         if (d.ioRegistry) d.ioRegistry->tickAll(1);
+
+        // Detect mflash→HYPPO return: B transitions from $00 to $BF
+        if (!hyperRestore->done && hyperRestore->rom) {
+            uint8_t curB = cpu45->regRead(4); // B register
+            if (hyperRestore->lastB == 0x00 && curB == 0xBF) {
+                // Restore zeroed hypervisor RAM from original ROM
+                uint8_t* hram = cpu45->hyperRam();
+                if (hram) {
+                    uint32_t start = 0x9AFF - 0x8000;  // zeroed range start
+                    uint32_t end   = 0xA406 - 0x8000;  // zeroed range end
+                    if (end <= hyperRestore->size) {
+                        for (uint32_t i = start; i <= end; i++)
+                            hram[i] = hyperRestore->rom[i];
+                        fprintf(stderr, "[MEGA65] Restored hypervisor RAM $%04X-$%04X after mflash\n",
+                                (unsigned)(start + 0x8000), (unsigned)(end + 0x8000));
+                    }
+                }
+                hyperRestore->done = true;
+            }
+            hyperRestore->lastB = curB;
+        }
+
         return cycles;
     };
 
