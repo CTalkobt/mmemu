@@ -507,6 +507,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
             }
         }
 
+        // Workaround: skip ColdStartDOS ($C84D: JSR $CC3D).
+        // The DOS init crashes because the MAP'd DOS ROM code at $8000
+        // doesn't match our ROM file layout, or the dos_cold vector is wrong.
+        // Skipping it lets the KERNAL continue to BASIC cold start.
+        // TODO: fix DOS ROM mapping or implement HDOS traps (#52).
+        if (!cpu45->isHypervisor() && cpu45->pc() == 0xC84D) {
+            cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
+        }
+
         // Detect mflash→HYPPO return: B transitions from $00 to $BF
         if (!hyperRestore->done && hyperRestore->rom) {
             uint8_t curB = cpu45->regRead(4); // B register
