@@ -75,21 +75,21 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
 
     // $D704: ADDRMB should also set the upper 3 bits of ADDRBANK, since on HW they share a register.
     if (offset == 0x04) {
-	m_regs[0x02] = (m_regs[0x02] & 0x8F) | ((val & 0x07) << 4);
+        m_regs[0x02] = (m_regs[0x02] & 0x8F) | ((val & 0x07) << 4);
     }
 
     // $D700: ADDRLSBTRIG — write triggers C65-compatible DMA execution, clears ADDRMB.7-3
     if (offset == 0x00) {
         m_enhancedMode = false;
         m_regs[0x04] &= 0x07;
-	m_regs[0x05] = val; // update ETRIG's value to match
+        m_regs[0x05] = val; // update ETRIG's value to match
         startDma();
     }
 
     // $D705: ETRIG — write triggers Enhanced DMA (flat 28-bit address)
     else if (offset == 0x05) {
         m_enhancedMode = true;
-	m_regs[0x00] = val; // update ADDRLSBTRIG's value to match
+        m_regs[0x00] = val; // update ADDRLSBTRIG's value to match
         startDma();
     }
 
@@ -144,11 +144,11 @@ void F018bDmaDevice::beginJob(size_t jobIdx) {
     m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
 
     if (m_currentOp == DMA_MIX || m_currentOp == DMA_SWAP) {
-	std::cerr << "F018B/WARN: Attempted to use unsupported DMA operation "
-		  << m_currentOp << ", aborting chain\n";
-	m_dmaActive = false;
-	m_jobs.clear();
-	return;
+        std::cerr << "F018B/WARN: Attempted to use unsupported DMA operation "
+                  << m_currentOp << ", aborting chain\n";
+        m_dmaActive = false;
+        m_jobs.clear();
+        return;
     }
 
     // Extend 20-bit addresses to 28-bit using megabyte from enhanced options
@@ -221,7 +221,7 @@ void F018bDmaDevice::tickOneByte() {
         //    m_bus->write8(dstAddr, srcByte);
         //    break;
         //}
-	    break; // Swap also isn't implemented
+            break; // Swap also isn't implemented
         case DMA_MIX:
             // Mix operation not yet implemented
             break;
