@@ -2,6 +2,8 @@
 #include "libmem/main/ibus.h"
 #include "include/mmemu_plugin_api.h"
 #include <cstring>
+#include <iomanip>
+#include <iostream>
 
 F018bDmaDevice::F018bDmaDevice(uint32_t base)
     : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false),
@@ -65,20 +67,29 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     m_regs[offset] = val;
     if (!m_bus) m_bus = bus;  // Use explicit DMA bus if set, fall back to I/O bus
 
-    // $D702: writing ADDRBANK resets ADDRMB ($D704) to zero for compatibility
-    // (programs that predate the megabyte register don't set it)
+    // $D702: ADDRBANK clears ADDRMB's upper 5 bits, and updates the lower bits of ADDRMB
+    //  to match ADDRBANK's upper 3 bits, since on HW they share a register.
     if (offset == 0x02) {
-        m_regs[0x04] = 0x00;
+        m_regs[0x04] = (val & 0x70) >> 4;
     }
 
-    // $D700: ADDRLSBTRIG — write triggers C65-compatible DMA execution
+    // $D704: ADDRMB should also set the upper 3 bits of ADDRBANK, since on HW they share a register.
+    if (offset == 0x04) {
+	m_regs[0x02] = (m_regs[0x02] & 0x8F) | ((val & 0x07) << 4);
+    }
+
+    // $D700: ADDRLSBTRIG — write triggers C65-compatible DMA execution, clears ADDRMB.7-3
     if (offset == 0x00) {
         m_enhancedMode = false;
+        m_regs[0x04] &= 0x07;
+	m_regs[0x05] = val; // update ETRIG's value to match
         startDma();
     }
+
     // $D705: ETRIG — write triggers Enhanced DMA (flat 28-bit address)
     else if (offset == 0x05) {
         m_enhancedMode = true;
+	m_regs[0x00] = val; // update ADDRLSBTRIG's value to match
         startDma();
     }
 
@@ -101,10 +112,12 @@ void F018bDmaDevice::startDma() {
     // For ETRIG ($D705), the low byte comes from $D705 (regs[5]), not $D700.
     uint32_t addr_low = m_enhancedMode ? m_regs[0x05] : m_regs[0x00];
     uint32_t addr_mid = m_regs[0x01];
-    uint32_t addr_bank = m_regs[0x02];
-    uint32_t addr_upper = m_regs[0x04];
-
-    m_dmaListAddr = (addr_low) | (addr_mid << 8) | ((addr_bank & 0x0F) << 16) | (addr_upper << 20);
+    uint32_t addr_bank = m_regs[0x02] & 0x7F; // exclude I/O flag
+    uint32_t addr_upper = m_regs[0x04] >> 3; // drop lower 3 bits since they overlap
+    bool list_withio = m_regs[0x02] & 0x80; // withio isn't implemented on HW
+    
+    m_dmaListAddr = (addr_low) | (addr_mid << 8) | (addr_bank << 16) | (addr_upper << 23);
+    std::cerr << std::hex << std::setw(8) << m_dmaListAddr << " / " << list_withio << '\n';
     m_dmaListAddr &= 0x0FFFFFFF;
 
     m_jobs.clear();
@@ -129,6 +142,14 @@ void F018bDmaDevice::beginJob(size_t jobIdx) {
     m_currentJob = jobIdx;
     m_bytesRemaining = job.count;
     m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
+
+    if (m_currentOp == DMA_MIX || m_currentOp == DMA_SWAP) {
+	std::cerr << "F018B/WARN: Attempted to use unsupported DMA operation "
+		  << m_currentOp << ", aborting chain\n";
+	m_dmaActive = false;
+	m_jobs.clear();
+	return;
+    }
 
     // Extend 20-bit addresses to 28-bit using megabyte from enhanced options
     // or falling back to the $D704 register
@@ -193,13 +214,14 @@ void F018bDmaDevice::tickOneByte() {
             m_bus->write8(dstAddr, m_fillByte);
             break;
         }
-        case DMA_SWAP: {
-            uint8_t srcByte = m_bus->read8(srcAddr);
-            uint8_t dstByte = m_bus->read8(dstAddr);
-            m_bus->write8(srcAddr, dstByte);
-            m_bus->write8(dstAddr, srcByte);
-            break;
-        }
+        case DMA_SWAP: //{
+        //    uint8_t srcByte = m_bus->read8(srcAddr);
+        //    uint8_t dstByte = m_bus->read8(dstAddr);
+        //    m_bus->write8(srcAddr, dstByte);
+        //    m_bus->write8(dstAddr, srcByte);
+        //    break;
+        //}
+	    break; // Swap also isn't implemented
         case DMA_MIX:
             // Mix operation not yet implemented
             break;
