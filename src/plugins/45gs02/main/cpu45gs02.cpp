@@ -94,8 +94,6 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
 }
 
 void MOS45GS02::exitHypervisor() {
-    fprintf(stderr, "[HYPER-EXIT] PC=$%04X returnPC=$%04X cycles=%llu\n",
-            m_state.pc, m_hyperState.pc, (unsigned long long)m_state.cycles);
     // Restore CPU state from virtualisation control registers
     m_state.a  = m_hyperState.regA;
     m_state.x  = m_hyperState.regX;
