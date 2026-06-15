@@ -493,6 +493,20 @@ MachineDescriptor* Mega65MachineFactory::create() {
         int cycles = cpu->step();
         if (d.ioRegistry) d.ioRegistry->tickAll(1);
 
+        // Workaround: mflash exits via RTS on empty stack (SP=$01FF).
+        // Write return_from_flashmenu address just before ANY RTS
+        // in mflash range that would pop from $0200/$0201.
+        if (!hyperRestore->done && cpu45->isHypervisor() &&
+            cpu45->sp() == 0x01FF && cpu45->regRead(4) == 0x00 &&
+            cpu45->pc() >= 0x0800 && cpu45->pc() < 0x8000) {
+            IBus* pb = d.buses[0].bus;
+            uint8_t op = pb->peek8(cpu45->pc());
+            if (op == 0x60) {  // RTS
+                pb->write8(0x0200, 0xD8);
+                pb->write8(0x0201, 0xA4);
+            }
+        }
+
         // Detect mflash→HYPPO return: B transitions from $00 to $BF
         if (!hyperRestore->done && hyperRestore->rom) {
             uint8_t curB = cpu45->regRead(4); // B register

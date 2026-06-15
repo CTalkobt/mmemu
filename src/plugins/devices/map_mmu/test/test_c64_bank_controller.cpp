@@ -68,9 +68,12 @@ TEST_CASE(bank_ctrl_kernal_visible_default) {
     bc.setKernalRom(kernal, 8192);
     bc.reset();  // HIRAM=1 by default
 
-    // KERNAL overlay should be active at physical $E000
-    ASSERT_EQ(bus.read8(0x00E000), 0xE0);
-    ASSERT_EQ(bus.read8(0x00E001), 0xE1);
+    // KERNAL visible via ioRead (not bus overlay — banking is dynamic)
+    uint8_t val = 0;
+    ASSERT(bc.ioRead(nullptr, 0xE000, &val));
+    ASSERT_EQ(val, 0xE0);
+    ASSERT(bc.ioRead(nullptr, 0xE001, &val));
+    ASSERT_EQ(val, 0xE1);
 }
 
 TEST_CASE(bank_ctrl_kernal_hidden_hiram0) {
