@@ -178,6 +178,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         int n = 1;
         if (ss >> n) {} else { n = 1; }
+        if (m_ctx.dbg) m_ctx.dbg->resume();  // clear any prior breakpoint pause
         for (int i = 0; i < n; ++i) {
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);

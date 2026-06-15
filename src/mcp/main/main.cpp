@@ -1124,6 +1124,7 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
         } else {
+            if (ms->dbg) ms->dbg->resume();  // clear any prior breakpoint pause
             int ran = 0;
             for (int i = 0; i < count; ++i) {
                 if (ms->machine && ms->machine->schedulerStep)
