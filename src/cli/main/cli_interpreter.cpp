@@ -208,13 +208,18 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "run") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         std::string expr;
+        bool breakpointOnly = false;
         if (ss >> expr) {
-            uint32_t addr;
-            if (parseAddr(expr, addr)) {
-                m_ctx.cpu->setPc(addr);
+            if (expr == "breakpoint") {
+                breakpointOnly = true;
             } else {
-                m_output("Error: Invalid address '" + expr + "'\n");
-                return;
+                uint32_t addr;
+                if (parseAddr(expr, addr)) {
+                    m_ctx.cpu->setPc(addr);
+                } else {
+                    m_output("Error: Invalid address '" + expr + "'\n");
+                    return;
+                }
             }
         } else if (m_ctx.lastLoadAddr != 0) {
             m_ctx.cpu->setPc(m_ctx.lastLoadAddr);
@@ -227,7 +232,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             } else {
                 m_ctx.cpu->step();
             }
-            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
+            if (!breakpointOnly && m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
         }
         showRegisters();
     } else if (cmd == "load") {

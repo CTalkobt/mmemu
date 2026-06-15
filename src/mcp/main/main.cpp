@@ -212,6 +212,9 @@ Json handleDescribe() {
     Json stepProps(Json::OBJ);
     stepProps.oVal["machine_id"] = midProp;
     stepProps.oVal["count"] = cntProp;
+    Json ipeProp(Json::OBJ); ipeProp.oVal["type"] = Json("boolean");
+    ipeProp.oVal["description"] = Json("If true, ignore program-end detection (BRK, RTS on empty stack). Use for full-machine debugging.");
+    stepProps.oVal["ignore_program_end"] = ipeProp;
     stepSchema.oVal["properties"] = stepProps;
     Json stepReq(Json::ARR); stepReq.push_back(Json("machine_id"));
     stepSchema.oVal["required"] = stepReq;
@@ -390,7 +393,7 @@ Json handleDescribe() {
     stSchema.oVal["type"] = Json("object");
     Json stProps(Json::OBJ);
     stProps.oVal["machine_id"] = midProp;
-    Json filterProp(Json::OBJ); filterProp.oVal["type"] = Json("string"); filterProp.oVal["description"] = Json("Trace filter mode: all, instructions, breakpoints, memory");
+    Json filterProp(Json::OBJ); filterProp.oVal["type"] = Json("string"); filterProp.oVal["description"] = Json("Trace filter mode: all, instructions, breakpoints, memory, calls");
     stProps.oVal["filter"] = filterProp;
     stSchema.oVal["properties"] = stProps;
     Json stReq(Json::ARR); stReq.push_back(Json("machine_id")); stReq.push_back(Json("filter"));
@@ -605,6 +608,7 @@ Json handleDescribe() {
     Json runProps(Json::OBJ); runProps.oVal["machine_id"] = midProp;
     Json maxStepsProp(Json::OBJ); maxStepsProp.oVal["type"] = Json("integer"); maxStepsProp.oVal["description"] = Json("Maximum instructions to execute before stopping (default 10000000)");
     runProps.oVal["max_steps"] = maxStepsProp;
+    runProps.oVal["ignore_program_end"] = ipeProp;
     runSchema.oVal["properties"] = runProps;
     Json runReq(Json::ARR); runReq.push_back(Json("machine_id"));
     runSchema.oVal["required"] = runReq;
@@ -627,6 +631,7 @@ Json handleDescribe() {
         Json rptProp(Json::OBJ); rptProp.oVal["type"] = Json("string");
         rptProp.oVal["description"] = Json("Comma-separated report items: regs, disasm, stack, mem:ADDR:SIZE (e.g. 'regs,disasm,mem:$0400:32'). Default: regs");
         ruProps.oVal["report"] = rptProp;
+        ruProps.oVal["ignore_program_end"] = ipeProp;
         ruSchema.oVal["properties"] = ruProps;
         Json ruReq(Json::ARR); ruReq.push_back(Json("machine_id")); ruReq.push_back(Json("condition"));
         ruSchema.oVal["required"] = ruReq;
@@ -677,6 +682,9 @@ Json handleDescribe() {
     // set_breakpoint
     Json sbpSchema(Json::OBJ); sbpSchema.oVal["type"] = Json("object");
     Json sbpProps(Json::OBJ); sbpProps.oVal["machine_id"] = midProp; sbpProps.oVal["addr"] = addrProp;
+    Json bpCondProp(Json::OBJ); bpCondProp.oVal["type"] = Json("string");
+    bpCondProp.oVal["description"] = Json("Expression that must be true for the breakpoint to fire. Supports registers, comparisons, logical operators.");
+    sbpProps.oVal["condition"] = bpCondProp;
     sbpSchema.oVal["properties"] = sbpProps;
     Json sbpReq(Json::ARR); sbpReq.push_back(Json("machine_id")); sbpReq.push_back(Json("addr"));
     sbpSchema.oVal["required"] = sbpReq;
@@ -1133,7 +1141,8 @@ Json handleToolsCall(const Json& params) {
                     ms->cpu->step();
                 ++ran;
                 if (ms->dbg && ms->dbg->isPaused()) break;
-                if (ms->cpu->isProgramEnd(ms->bus)) break;
+                bool ignPE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
+                if (!ignPE && ms->cpu->isProgramEnd(ms->bus)) break;
             }
             textItem.oVal["text"] = Json("Executed " + std::to_string(ran) + " instructions.");
         }
@@ -1506,13 +1515,37 @@ Json handleToolsCall(const Json& params) {
             size_t limit = args.contains("limit") ? (size_t)args["limit"].nVal : buf.size();
             limit = std::min(limit, buf.size());
 
-            std::stringstream ss;
-            ss << "Trace buffer: " << buf.size() << " entries\n";
-            ss << "Showing " << limit << " most recent:\n\n";
+            // Helper: check if a trace entry is a call/return instruction
+            auto isCallOrReturn = [](const std::string& mn) -> bool {
+                if (mn.empty()) return false;
+                // Check mnemonic prefix (e.g. "JSR $1234", "BSR $1234", "RTS", "RTI", "RTN #$02")
+                if (mn.size() >= 3) {
+                    std::string pfx = mn.substr(0, 3);
+                    if (pfx == "JSR" || pfx == "BSR" || pfx == "RTS" || pfx == "RTI" || pfx == "RTN")
+                        return true;
+                }
+                return false;
+            };
 
-            size_t start = (buf.size() > limit) ? (buf.size() - limit) : 0;
-            for (size_t i = start; i < buf.size(); i++) {
-                const TraceEntry& e = buf.at(i);
+            std::stringstream ss;
+            ss << "Trace buffer: " << buf.size() << " entries (filter: " << ms->traceFilter << ")\n";
+
+            // Collect entries matching filter, up to limit, from most recent
+            std::vector<size_t> indices;
+            for (size_t i = buf.size(); i > 0 && indices.size() < limit; --i) {
+                size_t idx = i - 1;
+                if (ms->traceFilter == "calls") {
+                    if (!isCallOrReturn(buf.at(idx).mnemonic)) continue;
+                }
+                // Other filters (instructions, breakpoints, memory) pass all for now
+                indices.push_back(idx);
+            }
+            std::reverse(indices.begin(), indices.end());
+
+            ss << "Showing " << indices.size() << " entries:\n\n";
+
+            for (size_t idx : indices) {
+                const TraceEntry& e = buf.at(idx);
                 ss << std::hex << std::setw(4) << std::setfill('0') << e.addr << ": " << e.mnemonic;
                 if (!e.regs.empty()) {
                     ss << " | ";
@@ -1548,11 +1581,11 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
         } else {
-            if (filterStr == "all" || filterStr == "instructions" || filterStr == "breakpoints" || filterStr == "memory") {
+            if (filterStr == "all" || filterStr == "instructions" || filterStr == "breakpoints" || filterStr == "memory" || filterStr == "calls") {
                 ms->traceFilter = filterStr;
                 textItem.oVal["text"] = Json("Trace filter set to: " + filterStr);
             } else {
-                textItem.oVal["text"] = Json("Error: Invalid filter (valid: all, instructions, breakpoints, memory)");
+                textItem.oVal["text"] = Json("Error: Invalid filter (valid: all, instructions, breakpoints, memory, calls)");
                 textItem.oVal["isError"] = Json(true);
             }
         }
@@ -2222,6 +2255,7 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
         } else {
+            bool ignPE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
             ms->dbg->resume();
             int steps = 0;
             while (!ms->dbg->isPaused() && steps < maxSteps) {
@@ -2230,7 +2264,7 @@ Json handleToolsCall(const Json& params) {
                 } else {
                     ms->cpu->step();
                 }
-                if (ms->cpu->isProgramEnd(ms->bus)) break;
+                if (!ignPE && ms->cpu->isProgramEnd(ms->bus)) break;
                 ++steps;
             }
             std::stringstream ss;
@@ -2263,6 +2297,7 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("Error: Invalid condition expression: " + condition);
                 textItem.oVal["isError"] = Json(true);
             } else {
+                bool ignPE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
                 ms->dbg->resume();
                 int steps = 0;
                 bool conditionMet = false;
@@ -2277,7 +2312,7 @@ Json handleToolsCall(const Json& params) {
                     ++steps;
 
                     if (ms->dbg->isPaused()) { stopReason = "Breakpoint hit"; break; }
-                    if (ms->cpu->isProgramEnd(ms->bus)) { stopReason = "Program ended"; break; }
+                    if (!ignPE && ms->cpu->isProgramEnd(ms->bus)) { stopReason = "Program ended"; break; }
 
                     if ((steps & 0xFF) == 0 || steps < 16) {
                         uint32_t condVal = 0;
@@ -2453,7 +2488,13 @@ Json handleToolsCall(const Json& params) {
             uint32_t addr;
             if (resolveAddr(args["addr"], ms->dbg, addr)) {
                 int id = ms->dbg->breakpoints().add(addr, BreakpointType::EXEC);
-                textItem.oVal["text"] = Json("Breakpoint " + std::to_string(id) + " set at $" + toHex(addr));
+                if (args.contains("condition") && !args["condition"].sVal.empty()) {
+                    ms->dbg->breakpoints().setCondition(id, args["condition"].sVal);
+                }
+                std::string msg = "Breakpoint " + std::to_string(id) + " set at $" + toHex(addr);
+                if (args.contains("condition") && !args["condition"].sVal.empty())
+                    msg += " if " + args["condition"].sVal;
+                textItem.oVal["text"] = Json(msg);
             } else {
                 textItem.oVal["text"] = Json("Error: Invalid address expression");
                 textItem.oVal["isError"] = Json(true);
