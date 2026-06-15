@@ -383,10 +383,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
         if (hyperLoaded) {
             cpu45->setHypervisorRom(hyperRom, 16384);
-            // Also map hypervisor RAM into physical bus at $0FFF8000-$0FFFBFFF
-            // so DMA can read the job lists embedded in HYPPO code.
-            for (uint32_t i = 0; i < 16384; i++)
-                physBus->write8(0x0FFF8000 + i, hyperRom[i]);
+            // Map hypervisor RAM as a writable region on the physical bus at
+            // $0FFF8000-$0FFFBFFF. This uses the SAME buffer as m_hyperRam,
+            // so DMA writes to $0FFF8000+ (e.g. longpeek results) are visible
+            // to the CPU via the hypervisor overlay at $8000-$BFFF.
+            physBus->addRegion(0x0FFF8000, 16384, cpu45->hyperRam(), true);
             desc->deleters.push_back([hyperRom]() { delete[] hyperRom; });
 
             // Wire hypervisor overlay into MapMmu so debugger reads see
