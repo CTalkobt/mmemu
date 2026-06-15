@@ -472,12 +472,6 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
     }
 
-    // Workaround: our mflash.prg doesn't use the $CF80 HYPPO callback.
-    // It exits via RTS which pops from $0200/$0201.  Place the
-    // return_from_flashmenu address ($A4D9-1 = $A4D8) there so the
-    // RTS returns to HYPPO's boot continuation.
-    physBus->write8(0x0200, 0xD8);  // return_from_flashmenu - 1, low byte
-    physBus->write8(0x0201, 0xA4);  // high byte
 
     // Workaround: mflash.prg zeros hypervisor RAM $9AFF-$A406 (workspace clear).
     // Our HICKUP.M65 has critical code (sdwaitawhile) at $A126 in that range.

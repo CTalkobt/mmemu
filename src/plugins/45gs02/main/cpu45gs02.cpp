@@ -1679,18 +1679,20 @@ void MOS45GS02::loadState(const uint8_t* buf) { memcpy(&m_state, buf, sizeof(m_s
 int MOS45GS02::isCallAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return (op == 0x20 || op == 0x22 || op == 0x23) ? 3 : 0; }
 bool MOS45GS02::isReturnAt(IBus* bus, uint32_t addr) { uint8_t op = bus->peek8(addr); return op == 0x60 || op == 0x40 || op == 0x62; }
 bool MOS45GS02::isProgramEnd(IBus* bus) {
+    // Never treat hypervisor mode as program end — the hypervisor runs
+    // continuously and manages its own control flow.
+    if (m_state.hypervisor) return false;
+
     // haltLine is set by step() when the bus requests halt (e.g. ExitTrap).
-    // Transient DMA halts are handled by the scheduler (step() is not called),
-    // so haltLine is only set for permanent halts.
     if (m_state.haltLine) return true;
 
     // Check for RTS/RTI/RTN on empty stack (SP at initial value)
-    // Only treat as program end if the return address is also uninitialized.
+    // Skip this check if IRQ vector is set (full machine with ROM, not a test program).
     if (m_state.sp == 0x01FF && bus) {
-        uint8_t op = bus->peek8(m_state.pc);
-        if (op == 0x60 || op == 0x40 || op == 0x62) {
-            uint16_t retAddr = bus->peek8(0x0200) | ((uint16_t)bus->peek8(0x0201) << 8);
-            if (retAddr == 0x0000 || retAddr == 0xFFFF) return true;
+        uint16_t irqVec = bus->peek8(0xFFFE) | ((uint16_t)bus->peek8(0xFFFF) << 8);
+        if (irqVec == 0x0000 || irqVec == 0xFFFF) {
+            uint8_t op = bus->peek8(m_state.pc);
+            if (op == 0x60 || op == 0x40 || op == 0x62) return true;
         }
     }
 
