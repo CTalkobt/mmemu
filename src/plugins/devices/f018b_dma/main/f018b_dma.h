@@ -60,9 +60,9 @@ public:
 private:
     enum DmaOperation {
         DMA_COPY = 0,
-        DMA_FILL = 1,
-        DMA_SWAP = 2,
-        DMA_MIX  = 3
+        DMA_SWAP = 1, // not implemented on HW
+        DMA_MIX  = 2, // not implemented on HW
+	DMA_FILL = 3
     };
 
     struct DmaJob {
