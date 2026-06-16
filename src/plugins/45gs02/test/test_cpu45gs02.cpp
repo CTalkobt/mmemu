@@ -296,3 +296,60 @@ TEST_CASE(gs02_dec_a) {
     ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x00);
     ASSERT(t.cpu.regRead(7) & 0x02); // Z set
 }
+
+TEST_CASE(gs02_lbeq_offset_base) {
+    // 16-bit branch offset is relative to PC+1 (not PC+2)
+    // Verified against xemu _BRA16 and gs4510.vhdl B16TakeBranch
+    TestFixture t;
+    // LBEQ at $0202 with offset $0010:
+    // After opcode fetch pc=$0203, then pc += 1 + $0010 = $0214
+    t.pokeProgram(0x0200, {
+        0xA9, 0x00,        // LDA #$00 (set Z flag)
+        0xF3, 0x10, 0x00   // LBEQ +$0010
+    });
+    t.poke(0x0214, 0xA9);  // LDA #$42 at target
+    t.poke(0x0215, 0x42);
+    t.step(3);  // LDA #$00, LBEQ, LDA #$42
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0216);  // PC past LDA #$42
+    ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x42);     // A = $42
+}
+
+TEST_CASE(gs02_lbeq_not_taken) {
+    TestFixture t;
+    // LBEQ at $0202: not taken, falls through to $0205
+    t.pokeProgram(0x0200, {
+        0xA9, 0x01,        // $0200: LDA #$01 (Z clear)
+        0xF3, 0x10, 0x00,  // $0202: LBEQ +$0010 (not taken)
+        0xA9, 0x99         // $0205: LDA #$99
+    });
+    t.step(3);
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0207);  // PC past LDA #$99
+    ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x99);     // A = $99
+}
+
+TEST_CASE(gs02_lbne_offset_base) {
+    TestFixture t;
+    // LBNE at $0202 with offset $0010: target = $0203 + 1 + $0010 = $0214
+    t.pokeProgram(0x0200, {
+        0xA9, 0x01,        // LDA #$01 (Z clear)
+        0xD3, 0x10, 0x00   // LBNE +$0010
+    });
+    t.poke(0x0214, 0xA9);
+    t.poke(0x0215, 0x55);
+    t.step(3);
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0216);
+    ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x55);
+}
+
+TEST_CASE(gs02_lbra_offset_base) {
+    TestFixture t;
+    // LBRA at $0200 with offset $0010: target = $0201 + 1 + $0010 = $0212
+    t.pokeProgram(0x0200, {
+        0x83, 0x10, 0x00   // LBRA +$0010
+    });
+    t.poke(0x0212, 0xA9);  // LDA #$77 at target $0212
+    t.poke(0x0213, 0x77);
+    t.step(2);
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0214);
+    ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x77);
+}
