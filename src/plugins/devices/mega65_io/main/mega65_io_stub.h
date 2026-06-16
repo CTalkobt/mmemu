@@ -37,6 +37,9 @@ public:
     void reset() override;
     void tick(uint64_t) override {}
 
+    /// Access the colour RAM buffer (1KB, shared with VIC4 for rendering)
+    uint8_t* colorRam() { return m_colorRam; }
+
 private:
     uint8_t m_regs[256];     // Shadow for $D600-$D6FF
     uint8_t m_colorRam[1024]; // Colour RAM $D800-$DBFF

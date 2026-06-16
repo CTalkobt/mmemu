@@ -242,10 +242,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
     vic4->setDmaBus(physBus);
     vic4->setCharRom(romBuf + 0xD000, 4096);
 
-    uint8_t* colorRam = new uint8_t[1024];
-    std::memset(colorRam, 0, 1024);
-    vic4->setColorRam(colorRam);
-    desc->deleters.push_back([colorRam]() { delete[] colorRam; });
+    // Share colour RAM between VIC4 and Mega65IoStub.
+    // The IOStub handles CPU reads/writes at $D800-$DBFF;
+    // the VIC4 reads from the same buffer for rendering.
+    // CRAM2K ($D030 bit 0) controls whether 1KB or 2KB is exposed.
+    vic4->setColorRam(ioStub->colorRam());
     
     // Wire keyboard to CIA1
     cia1->setPortADevice(kbd->getPort(0)); // CIA1 Port A drives columns
