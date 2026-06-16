@@ -114,7 +114,8 @@ private:
     uint16_t m_dstStep;         // Dest step rate for current job
     uint8_t  m_fillByte;        // Fill byte for fill operations
     DmaOperation m_currentOp;   // Current operation type
-    bool     m_backward;        // Copy direction (overlap-safe)
+    bool     m_srcDir;          // Source direction: false=forward, true=backward
+    bool     m_dstDir;          // Dest direction: false=forward, true=backward
 
     // Inherited enhanced options across chained jobs
     uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;

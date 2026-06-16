@@ -10,7 +10,7 @@ F018bDmaDevice::F018bDmaDevice(uint32_t base)
       m_enhancedMode(false), m_hasChain(false), m_bytesRemaining(0),
       m_srcAccum(0), m_dstAccum(0), m_srcBase(0), m_dstBase(0),
       m_srcStep(0x0100), m_dstStep(0x0100), m_fillByte(0),
-      m_currentOp(DMA_COPY), m_backward(false),
+      m_currentOp(DMA_COPY), m_srcDir(false), m_dstDir(false),
       m_inheritSrcMB(0), m_inheritSrcMBset(false),
       m_inheritDstMB(0), m_inheritDstMBset(false) {
     std::memset(m_regs, 0, sizeof(m_regs));
@@ -224,22 +224,19 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
     m_fillByte = job.srcAddr & 0xFF;  // For fill ops
 
-    // Overlap detection for copy: go backward if dst is within src range
-    m_backward = false;
-    if (m_currentOp == DMA_COPY && m_bytesRemaining > 0) {
-        uint32_t srcEnd = m_srcBase + ((static_cast<uint32_t>(m_bytesRemaining - 1) * m_srcStep) >> 8);
-        if (m_dstBase > m_srcBase && m_dstBase <= srcEnd) {
-            m_backward = true;
-        }
+    // Direction from command/bank bytes — NO auto-reverse.
+    // F018B: src direction = cmd bit 4, dst direction = cmd bit 5
+    // F018A: src direction = src_bank bit 6, dst direction = dst_bank bit 6
+    if (f018b) {
+        m_srcDir = (job.commandLsb & 0x10) != 0;
+        m_dstDir = (job.commandLsb & 0x20) != 0;
+    } else {
+        m_srcDir = (job.srcFlags & 0x04) != 0;   // srcFlags = bank>>4, bit 6 = srcFlags bit 2
+        m_dstDir = (job.dstFlags & 0x04) != 0;
     }
 
-    if (m_backward) {
-        m_srcAccum = static_cast<uint32_t>(m_bytesRemaining - 1) * m_srcStep;
-        m_dstAccum = static_cast<uint32_t>(m_bytesRemaining - 1) * m_dstStep;
-    } else {
-        m_srcAccum = 0;
-        m_dstAccum = 0;
-    }
+    m_srcAccum = 0;
+    m_dstAccum = 0;
 
     // Zero-length job: chain immediately if possible
     if (m_bytesRemaining == 0) {
@@ -283,13 +280,11 @@ void F018bDmaDevice::tickOneByte() {
             break; // Mix not implemented
     }
 
-    if (m_backward) {
-        m_srcAccum -= m_srcStep;
-        m_dstAccum -= m_dstStep;
-    } else {
-        m_srcAccum += m_srcStep;
-        m_dstAccum += m_dstStep;
-    }
+    if (m_srcDir) m_srcAccum -= m_srcStep;
+    else          m_srcAccum += m_srcStep;
+
+    if (m_dstDir) m_dstAccum -= m_dstStep;
+    else          m_dstAccum += m_dstStep;
 
     m_bytesRemaining--;
 

@@ -342,6 +342,33 @@ TEST_CASE(dma_copy_overlap_forward) {
 }
 
 // ============================================================================
+// Test: Fill-by-copy trick — overlapping forward copy repeats pattern (#57)
+// ============================================================================
+
+TEST_CASE(dma_fill_by_copy_trick) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Write a single byte at $010000
+    bus.write8(0x010000, 0x42);
+    // Rest is zeros
+    bus.fillRegion(0x010001, 0x00, 15);
+
+    // Copy 16 bytes from $010000 to $010001 (overlapping forward, no direction bits)
+    // With auto-reverse this would copy backward, preserving zeros.
+    // Without auto-reverse (correct), each byte reads the previously-written value,
+    // producing: $42 $42 $42 $42 ... (fill-by-copy pattern)
+    writeJobF018(bus, 0x030000, 0x00, 16, 0x010000, 0x010001);
+
+    triggerDma(dma, bus, 0x030000);
+
+    // All 17 bytes ($010000-$010010) should now be $42
+    for (int i = 0; i < 17; ++i) {
+        ASSERT_EQ(bus.read8(0x010000 + i), 0x42);
+    }
+}
+
+// ============================================================================
 // Test: F018 Chained Jobs (11 bytes per job)
 // ============================================================================
 
