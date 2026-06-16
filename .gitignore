@@ -25,3 +25,12 @@ src/include/version.h
 roms/mega65/mega65.rom
 MEGA65.ROM
 coverage/
+
+# exclude emacs backup files from git
+\#*#
+.#*
+*~
+
+# exclude compiledb and clangd cache
+compile_commands.json
+.cache/

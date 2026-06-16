@@ -2,6 +2,8 @@
 #include "../main/f018b_dma.h"
 #include "libmem/main/ibus.h"
 #include <cstring>
+#include <iomanip>
+#include <iostream>
 #include <vector>
 
 /**
@@ -568,4 +570,53 @@ TEST_CASE(dma_bank_flags_masking) {
     // Source should resolve to bank 1 ($010000), dst to bank 2 ($020000)
     // Flags in upper nibble should NOT corrupt the address
     ASSERT(bus.verifyRegion(0x020000, 0xDD, 8));
+}
+
+
+// ============================================================================
+// Test: DMA list address register combination
+// ============================================================================
+
+TEST_CASE(dma_check_list_address_register_combination) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    uint32_t test_addr = 0x12345678;
+    const uint32_t EXPECTED_ADDR = 0;
+    
+    dma.ioWrite(&bus, 0xD702, (test_addr >> 16) & 0xFF);
+    dma.ioWrite(&bus, 0xD704, (test_addr >> 24) & 0xFF);
+    dma.ioWrite(&bus, 0xD701, (test_addr >> 8) & 0xFF);
+    // Don't write $D700 since this isn't testing if it actually triggers yet
+
+    uint32_t dma_list_addr = 0x00000000;
+    
+    const auto get_dma_list_addr = [&dma, &bus]() -> uint32_t {
+	uint8_t read_value = 0;
+	uint32_t list_addr = 0x00000000;
+	dma.ioRead(&bus, 0xD700, &read_value);
+	list_addr |= read_value;
+	dma.ioRead(&bus, 0xD701, &read_value);
+	list_addr |= read_value << 8;
+	dma.ioRead(&bus, 0xD702, &read_value);
+        list_addr |= read_value << 16;
+	dma.ioRead(&bus, 0xD704, &read_value);
+	list_addr |= read_value << 24;
+	return list_addr;
+    };
+
+    dma_list_addr = get_dma_list_addr();
+    std::cerr << std::hex << std::setw(8) << dma_list_addr << '\n';
+    dma.ioWrite(&bus, 0xD705, 0x00);
+
+    dma.ioWrite(&bus, 0xD702, 0xAA);
+    dma_list_addr = get_dma_list_addr();
+    std::cerr << std::hex << std::setw(8) << dma_list_addr << '\n';
+    dma.ioWrite(&bus, 0xD705, 0x00);
+    
+    dma.ioWrite(&bus, 0xD704, 0x55);
+    dma_list_addr = get_dma_list_addr();
+    std::cerr << std::hex << std::setw(8) << dma_list_addr << '\n';
+    dma.ioWrite(&bus, 0xD705, 0x00);
+    dma.ioWrite(&bus, 0xD700, 0x00);
 }
