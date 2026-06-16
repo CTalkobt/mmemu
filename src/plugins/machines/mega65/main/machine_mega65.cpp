@@ -518,6 +518,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
         // TODO: fix DOS ROM mapping or implement HDOS traps (#52).
         if (!cpu45->isHypervisor() && cpu45->pc() == 0xC84D) {
             cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
+
+            // Initialize DOS zero-page variables that ColdStartDOS would set.
+            // Without these, CLALL ($FFE7) crashes because the DOS handler at
+            // $CBxx reads uninitialized pointers from $6C-$72.
+            IBus* mb = d.cpus[0].dataBus;
+            for (uint16_t a = 0x6C; a <= 0x72; a++)
+                mb->write8(a, 0x00);
         }
 
         // Detect mflash→HYPPO return: B transitions from $00 to $BF
