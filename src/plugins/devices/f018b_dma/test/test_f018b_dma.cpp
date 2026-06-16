@@ -756,3 +756,96 @@ TEST_CASE(dma_chain_self_modify) {
     // $03000E first, then job 2 reads it, so fill byte = $42.
     ASSERT(bus.verifyRegion(0x020000, 0x42, 4));
 }
+
+// ============================================================================
+// Test: F018B bank byte bits 6:4 add to megabyte (#59)
+// ============================================================================
+
+TEST_CASE(dma_f018b_bank_bits_add_to_mb) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Source at physical $0120_0000 (MB=1, bank nibble=2, addr=$0000)
+    // In F018B, bank byte bits 6:4 are ADDED to the megabyte register.
+    // With MB option $80=$01 and bank byte bits 6:4 = 0, bank 3:0 = 2:
+    //   addr(27:20) = $01 + 0 = $01, addr(19:16) = 2 → physical $0120000
+    // But with bank byte = $22 (bits 6:4 = 2, bits 3:0 = 2):
+    //   addr(27:20) = $01 + 2 = $03, addr(19:16) = 2 → physical $0320000
+
+    bus.fillRegion(0x0100000, 0xAA, 4);  // MB=1, bank=0 → $0100000
+    bus.fillRegion(0x0300000, 0xBB, 4);  // MB=3, bank=0 → $0300000 (MB=1 + bank bits 2)
+
+    // Enhanced DMA job with option $80 $01 (src MB=1), $81 $00 (dst MB=0)
+    uint32_t ja = 0x030000;
+    bus.write8(ja++, 0x80); bus.write8(ja++, 0x01);  // src MB = 1
+    bus.write8(ja++, 0x81); bus.write8(ja++, 0x00);  // dst MB = 0
+    bus.write8(ja++, 0x00);                           // end of options
+
+    // F018B 12-byte job: copy 4 bytes
+    // src: lo=0, mid=0, bank_flags=$20 (bits 6:4=2, bits 3:0=0)
+    //   → MB = 1+2 = 3, bank = 0 → physical $0300000
+    // dst: lo=0, mid=0, bank_flags=$02 (bits 6:4=0, bits 3:0=2)
+    //   → MB = 0+0 = 0, bank = 2 → physical $0020000
+    bus.write8(ja++, 0x00);  // cmd: copy
+    bus.write8(ja++, 0x04);  // count lo
+    bus.write8(ja++, 0x00);  // count hi
+    bus.write8(ja++, 0x00);  // src lo
+    bus.write8(ja++, 0x00);  // src mid
+    bus.write8(ja++, 0x20);  // src bank: bits 6:4=2, bits 3:0=0
+    bus.write8(ja++, 0x00);  // dst lo
+    bus.write8(ja++, 0x00);  // dst mid
+    bus.write8(ja++, 0x02);  // dst bank: bits 6:4=0, bits 3:0=2
+    bus.write8(ja++, 0x00);  // cmd MSB
+    bus.write8(ja++, 0x00);  // modulo lo
+    bus.write8(ja++, 0x00);  // modulo hi
+
+    // Clear destination
+    bus.fillRegion(0x020000, 0x00, 4);
+
+    dma.ioWrite(&bus, 0xD703, 0x01);  // EN018B=1
+    triggerEnhancedDma(dma, bus, 0x030000);
+
+    // src address = MB(1+2=3):bank(0):$0000 = $0300000
+    // dst address = MB(0+0=0):bank(2):$0000 = $0020000
+    ASSERT(bus.verifyRegion(0x020000, 0xBB, 4));
+}
+
+// ============================================================================
+// Test: F018A bank byte bits 6:4 are flags, not address (#59)
+// ============================================================================
+
+TEST_CASE(dma_f018a_bank_bits_are_flags) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // In F018A mode, bank byte bits 6:4 are direction/modulo/hold flags.
+    // They should NOT be added to the megabyte address.
+    // Source at bank 1 ($010000) with direction bit set (bit 6 = 1).
+    // Bank byte = $41 (bit 6=1 direction, bits 3:0=1)
+
+    bus.fillRegion(0x010000, 0xCC, 4);
+
+    uint32_t ja = 0x030000;
+    // F018 11-byte job (EN018B=0): copy 4 bytes
+    bus.write8(ja + 0, 0x00);  // cmd: copy
+    bus.write8(ja + 1, 0x04);  // count lo
+    bus.write8(ja + 2, 0x00);  // count hi
+    bus.write8(ja + 3, 0x00);  // src lo
+    bus.write8(ja + 4, 0x00);  // src mid
+    bus.write8(ja + 5, 0x41);  // src bank: bit 6=1(dir), bits 3:0=1 (bank 1)
+    bus.write8(ja + 6, 0x00);  // dst lo
+    bus.write8(ja + 7, 0x00);  // dst mid
+    bus.write8(ja + 8, 0x02);  // dst bank: bits 3:0=2
+    bus.write8(ja + 9, 0x00);  // modulo lo
+    bus.write8(ja + 10, 0x00); // modulo hi
+
+    bus.fillRegion(0x020000, 0x00, 4);
+
+    // EN018B=0 (F018A mode, default)
+    triggerDma(dma, bus, 0x030000);
+
+    // Source: MB=0, bank=1 → $010000 (NOT $010000 + bit6 added to MB)
+    // But direction=1 means backward: reads $010000, $00FFFF, $00FFFE, $00FFFD
+    // First byte should still be $CC from $010000
+    ASSERT_EQ(bus.read8(0x020000), 0xCC);
+}
