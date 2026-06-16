@@ -123,6 +123,9 @@ void F018bDmaDevice::startDma() {
     m_jobs.clear();
     if (!fetchJobList(m_dmaListAddr)) return;
 
+    // Sync registers from updated list address (fetchJobList advances m_dmaListAddr)
+    syncListAddrToRegs();
+
     m_dmaActive = true;
     m_currentJob = 0;
     beginJob(0);
@@ -288,6 +291,18 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
     }
 }
 
+// Sync m_dmaListAddr back to the register shadow so ioRead reflects the
+// current list pointer position (matching gs4510.vhdl reg_dmagic_addr).
+void F018bDmaDevice::syncListAddrToRegs() {
+    m_regs[0x00] = m_dmaListAddr & 0xFF;
+    m_regs[0x05] = m_dmaListAddr & 0xFF;         // ETRIG mirrors LSB
+    m_regs[0x01] = (m_dmaListAddr >> 8) & 0xFF;
+    // ADDRBANK holds bits 22:16 plus I/O flag in bit 7; preserve the I/O flag
+    m_regs[0x02] = (m_regs[0x02] & 0x80) | ((m_dmaListAddr >> 16) & 0x7F);
+    // ADDRMB holds bits 27:20; also sync shared bits with ADDRBANK
+    m_regs[0x04] = (m_dmaListAddr >> 20) & 0xFF;
+}
+
 bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
     if (!m_bus) return false;
 
@@ -350,13 +365,16 @@ bool F018bDmaDevice::fetchJobList(uint32_t listAddr) {
             job.modulo = mod_lo | (mod_hi << 8);
         }
 
+        currentAddr += jobSize;
         m_jobs.push_back(job);
 
         bool hasChain = (job.commandLsb & 0x04) != 0;
         if (!hasChain) break;
-
-        currentAddr += jobSize;
     }
+
+    // Update m_dmaListAddr to reflect bytes consumed from the list.
+    // On real hardware, reg_dmagic_addr increments with each byte read.
+    m_dmaListAddr = currentAddr & 0x0FFFFFFF;
 
     return !m_jobs.empty();
 }

@@ -87,6 +87,7 @@ private:
     void startDma();
     bool fetchJobList(uint32_t listAddr);
     void parseJobOptions(uint32_t& addr, DmaJob& job);
+    void syncListAddrToRegs();
 
     // Per-byte tick state
     void beginJob(size_t jobIdx);
