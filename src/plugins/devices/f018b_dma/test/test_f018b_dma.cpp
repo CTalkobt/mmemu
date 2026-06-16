@@ -696,3 +696,36 @@ TEST_CASE(dma_list_addr_advances_chained) {
     // Two F018 jobs: 11 + 11 = 22 bytes → should be $030016
     ASSERT_EQ(readAddr, 0x030016);
 }
+
+// ============================================================================
+// Test: Self-modifying DMA chain — job 1 modifies job 2's list data (#55)
+// ============================================================================
+
+TEST_CASE(dma_chain_self_modify) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Job 1 at $030000: copy 1 byte from $040000 to $03000E (job 2's fill value)
+    // Job 2 at $03000B: fill 4 bytes at $020000 with whatever fill byte is set
+    //
+    // Job 2's source LSB (fill byte) is at $03000E (offset 3 in job 2).
+    // Initially set to $00, but job 1 copies $42 there before job 2 executes.
+
+    bus.write8(0x040000, 0x42);  // Source data for job 1
+
+    // Job 1: copy 1 byte from $040000 to $03000E, with chain bit
+    writeJobF018(bus, 0x030000, 0x04, 1, 0x040000, 0x03000E);
+
+    // Job 2: fill 4 bytes at $020000. Fill byte = src LSB = initially $00.
+    writeJobF018(bus, 0x03000B, 0x03, 4, 0x000000, 0x020000);
+
+    // Clear destination
+    bus.fillRegion(0x020000, 0xFF, 4);
+
+    triggerDma(dma, bus, 0x030000);
+
+    // With read-all-first: job 2 would have been parsed before job 1 ran,
+    // so fill byte = $00. With read→execute→chain: job 1 writes $42 to
+    // $03000E first, then job 2 reads it, so fill byte = $42.
+    ASSERT(bus.verifyRegion(0x020000, 0x42, 4));
+}

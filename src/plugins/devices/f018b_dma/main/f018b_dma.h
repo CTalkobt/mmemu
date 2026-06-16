@@ -35,6 +35,8 @@
  *   Bytes 10-11: Modulo (16-bit LE)
  *
  * Execution model: DMA processes one byte per tick() call (cycle-by-cycle).
+ * Jobs are read one at a time: read→execute→if chained, read next from
+ * current list address. This matches gs4510.vhdl behavior.
  * While active, isHaltRequested() returns true to halt the CPU.
  */
 class F018bDmaDevice : public IOHandler {
@@ -83,27 +85,26 @@ private:
         bool useF018A;          // Enhanced: per-job F018A revision flag (option $0A)
     };
 
-    // Job list management
+    // Read one job from m_dmaListAddr, set up execution state.
+    // Returns false if the job is unsupported (swap/mix).
     void startDma();
-    bool fetchJobList(uint32_t listAddr);
+    bool fetchAndBeginNextJob();
     void parseJobOptions(uint32_t& addr, DmaJob& job);
     void syncListAddrToRegs();
 
-    // Per-byte tick state
-    void beginJob(size_t jobIdx);
+    // Per-byte tick
     void tickOneByte();
 
     uint32_t m_base;
     std::string m_name{"F018B DMA"};
     IBus* m_bus;
     uint8_t m_regs[16];         // Register shadow: $D700–$D70F
-    uint32_t m_dmaListAddr;     // 28-bit pointer to job list
+    uint32_t m_dmaListAddr;     // 28-bit pointer into job list (advances as bytes are read)
     bool m_dmaActive;           // Set during execution; CPU halts while true
     bool m_enhancedMode;        // Enhanced DMA Jobs mode (triggered via $D705)
-    std::vector<DmaJob> m_jobs; // Fetched job chain
 
-    // Cycle-by-cycle execution state
-    size_t   m_currentJob;      // Index into m_jobs
+    // Current job state
+    bool     m_hasChain;        // Current job's chain bit — read next job when done
     uint16_t m_bytesRemaining;  // Bytes left in current job
     uint32_t m_srcAccum;        // Source address accumulator (fractional, in 256ths)
     uint32_t m_dstAccum;        // Dest address accumulator (fractional, in 256ths)
@@ -114,4 +115,8 @@ private:
     uint8_t  m_fillByte;        // Fill byte for fill operations
     DmaOperation m_currentOp;   // Current operation type
     bool     m_backward;        // Copy direction (overlap-safe)
+
+    // Inherited enhanced options across chained jobs
+    uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;
+    uint8_t  m_inheritDstMB;    bool m_inheritDstMBset;
 };
