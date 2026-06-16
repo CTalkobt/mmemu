@@ -211,12 +211,13 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
         return false;
     }
 
-    // Extend 20-bit addresses to 28-bit using megabyte from enhanced options
-    // or falling back to the $D704 register
-    uint32_t srcMB = (m_enhancedMode && job.srcMBset) ? (uint32_t)job.srcMB << 20
-                                                      : (uint32_t)m_regs[0x04] << 20;
-    uint32_t dstMB = (m_enhancedMode && job.dstMBset) ? (uint32_t)job.dstMB << 20
-                                                      : (uint32_t)m_regs[0x04] << 20;
+    // Extend 20-bit addresses to 28-bit using megabyte from enhanced options.
+    // Per gs4510.vhdl, reg_dmagic_src_mb/dst_mb default to $00 and are only
+    // set by enhanced options $80/$81 (or hypervisor regs). They persist
+    // across chained jobs and reset to $00 when the chain completes.
+    // $D704 is the LIST address megabyte, not the transfer megabyte.
+    uint32_t srcMB = (uint32_t)m_inheritSrcMB << 20;
+    uint32_t dstMB = (uint32_t)m_inheritDstMB << 20;
     m_srcBase = (job.srcAddr & 0x0FFFFF) | srcMB;
     m_dstBase = (job.dstAddr & 0x0FFFFF) | dstMB;
 
