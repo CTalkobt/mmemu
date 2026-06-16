@@ -105,7 +105,7 @@ private:
 
     // Current job state
     bool     m_hasChain;        // Current job's chain bit — read next job when done
-    uint16_t m_bytesRemaining;  // Bytes left in current job
+    uint32_t m_bytesRemaining;  // Bytes left in current job (count 0 = 65536)
     uint32_t m_srcAccum;        // Source address accumulator (fractional, in 256ths)
     uint32_t m_dstAccum;        // Dest address accumulator (fractional, in 256ths)
     uint32_t m_srcBase;         // Physical source base address for current job
@@ -116,6 +116,8 @@ private:
     DmaOperation m_currentOp;   // Current operation type
     bool     m_srcDir;          // Source direction: false=forward, true=backward
     bool     m_dstDir;          // Dest direction: false=forward, true=backward
+    bool     m_srcHold;         // Source hold: address doesn't change
+    bool     m_dstHold;         // Dest hold: address doesn't change
 
     // Inherited enhanced options across chained jobs
     uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;

@@ -201,7 +201,8 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_hasChain = (job.commandLsb & 0x04) != 0;
 
     // Set up execution state from job
-    m_bytesRemaining = job.count;
+    // Per gs4510.vhdl: count of 0 means 65536 bytes
+    m_bytesRemaining = job.count ? job.count : 0x10000;
     m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
 
     if (m_currentOp == DMA_MIX || m_currentOp == DMA_SWAP) {
@@ -232,15 +233,19 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
     m_fillByte = job.srcAddr & 0xFF;  // For fill ops
 
-    // Direction from command/bank bytes — NO auto-reverse.
-    // F018B: src direction = cmd bit 4, dst direction = cmd bit 5
-    // F018A: src direction = src_bank bit 6, dst direction = dst_bank bit 6
+    // Direction and hold from command/bank bytes — NO auto-reverse.
+    // F018B: direction from cmd bits 4/5, hold from subcmd (commandMsb) bits 1/3
+    // F018A: direction from bank bit 6, hold from bank bit 4
     if (f018b) {
-        m_srcDir = (job.commandLsb & 0x10) != 0;
-        m_dstDir = (job.commandLsb & 0x20) != 0;
+        m_srcDir  = (job.commandLsb & 0x10) != 0;
+        m_dstDir  = (job.commandLsb & 0x20) != 0;
+        m_srcHold = (job.commandMsb & 0x02) != 0;  // subcmd bit 1
+        m_dstHold = (job.commandMsb & 0x08) != 0;  // subcmd bit 3
     } else {
-        m_srcDir = (job.srcFlags & 0x04) != 0;   // srcFlags = bank>>4, bit 6 = srcFlags bit 2
-        m_dstDir = (job.dstFlags & 0x04) != 0;
+        m_srcDir  = (job.srcFlags & 0x04) != 0;    // bank bit 6
+        m_dstDir  = (job.dstFlags & 0x04) != 0;
+        m_srcHold = (job.srcFlags & 0x01) != 0;    // bank bit 4
+        m_dstHold = (job.dstFlags & 0x01) != 0;
     }
 
     m_srcAccum = 0;
@@ -288,11 +293,14 @@ void F018bDmaDevice::tickOneByte() {
             break; // Mix not implemented
     }
 
-    if (m_srcDir) m_srcAccum -= m_srcStep;
-    else          m_srcAccum += m_srcStep;
-
-    if (m_dstDir) m_dstAccum -= m_dstStep;
-    else          m_dstAccum += m_dstStep;
+    if (!m_srcHold) {
+        if (m_srcDir) m_srcAccum -= m_srcStep;
+        else          m_srcAccum += m_srcStep;
+    }
+    if (!m_dstHold) {
+        if (m_dstDir) m_dstAccum -= m_dstStep;
+        else          m_dstAccum += m_dstStep;
+    }
 
     m_bytesRemaining--;
 
@@ -303,6 +311,9 @@ void F018bDmaDevice::tickOneByte() {
                 m_dmaActive = false;
             }
         } else {
+            // Last job in chain: reset enhanced options (dmagic_reset_options)
+            m_inheritSrcMB = 0; m_inheritSrcMBset = false;
+            m_inheritDstMB = 0; m_inheritDstMBset = false;
             m_dmaActive = false;
         }
     }

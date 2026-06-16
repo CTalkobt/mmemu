@@ -849,3 +849,114 @@ TEST_CASE(dma_f018a_bank_bits_are_flags) {
     // First byte should still be $CC from $010000
     ASSERT_EQ(bus.read8(0x020000), 0xCC);
 }
+
+// ============================================================================
+// Test: Count of 0 means 65536 bytes (#60 item 1)
+// ============================================================================
+
+TEST_CASE(dma_count_zero_means_64k) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Fill source with pattern
+    for (int i = 0; i < 256; ++i)
+        bus.write8(0x010000 + i, (uint8_t)i);
+
+    // F018 fill job with count=0 (should mean 65536)
+    writeJobF018(bus, 0x030000, 0x03, 0, 0x0000AA, 0x020000);
+
+    // Clear first few bytes of destination to verify they get filled
+    bus.fillRegion(0x020000, 0x00, 256);
+
+    triggerDma(dma, bus, 0x030000);
+
+    // Verify fill happened (0xAA across the range)
+    ASSERT_EQ(bus.read8(0x020000), 0xAA);
+    ASSERT_EQ(bus.read8(0x02FFFF), 0xAA);
+    // Byte just past 64KB should NOT be filled
+    ASSERT_EQ(bus.read8(0x030000 + 11), bus.read8(0x030000 + 11));  // unchanged (list data)
+}
+
+// ============================================================================
+// Test: Source hold flag — address doesn't advance (#60 item 4)
+// ============================================================================
+
+TEST_CASE(dma_source_hold) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Write different values at sequential source addresses
+    bus.write8(0x010000, 0x42);
+    bus.write8(0x010001, 0x43);
+    bus.write8(0x010002, 0x44);
+    bus.write8(0x010003, 0x45);
+
+    // F018B copy with source hold: subcmd (byte 9) bit 1 = src_hold
+    // cmd=0x00 (copy), subcmd=0x02 (src_hold=1)
+    uint32_t ja = 0x030000;
+    bus.write8(ja + 0, 0x00);  // cmd: copy
+    bus.write8(ja + 1, 0x04);  // count=4
+    bus.write8(ja + 2, 0x00);
+    bus.write8(ja + 3, 0x00);  // src lo
+    bus.write8(ja + 4, 0x00);  // src mid
+    bus.write8(ja + 5, 0x01);  // src bank=1
+    bus.write8(ja + 6, 0x00);  // dst lo
+    bus.write8(ja + 7, 0x00);  // dst mid
+    bus.write8(ja + 8, 0x02);  // dst bank=2
+    bus.write8(ja + 9, 0x02);  // subcmd: bit 1 = src_hold
+    bus.write8(ja + 10, 0x00); // modulo lo
+    bus.write8(ja + 11, 0x00); // modulo hi
+
+    bus.fillRegion(0x020000, 0x00, 4);
+
+    dma.ioWrite(&bus, 0xD703, 0x01);  // EN018B=1
+    triggerDma(dma, bus, 0x030000);
+
+    // With src_hold, all 4 bytes should read from the same address ($010000 = 0x42)
+    ASSERT_EQ(bus.read8(0x020000), 0x42);
+    ASSERT_EQ(bus.read8(0x020001), 0x42);
+    ASSERT_EQ(bus.read8(0x020002), 0x42);
+    ASSERT_EQ(bus.read8(0x020003), 0x42);
+}
+
+// ============================================================================
+// Test: Dest hold flag — writes to same address (#60 item 4)
+// ============================================================================
+
+TEST_CASE(dma_dest_hold) {
+    F018bDmaDevice dma(0xD700);
+    MockMemoryBus bus;
+
+    // Source: sequential values
+    bus.write8(0x010000, 0x10);
+    bus.write8(0x010001, 0x20);
+    bus.write8(0x010002, 0x30);
+    bus.write8(0x010003, 0x40);
+
+    // F018B copy with dest hold: subcmd bit 3 = dst_hold
+    uint32_t ja = 0x030000;
+    bus.write8(ja + 0, 0x00);  // copy
+    bus.write8(ja + 1, 0x04);  // count=4
+    bus.write8(ja + 2, 0x00);
+    bus.write8(ja + 3, 0x00);  // src lo
+    bus.write8(ja + 4, 0x00);  // src mid
+    bus.write8(ja + 5, 0x01);  // src bank=1
+    bus.write8(ja + 6, 0x00);  // dst lo
+    bus.write8(ja + 7, 0x00);  // dst mid
+    bus.write8(ja + 8, 0x02);  // dst bank=2
+    bus.write8(ja + 9, 0x08);  // subcmd: bit 3 = dst_hold
+    bus.write8(ja + 10, 0x00);
+    bus.write8(ja + 11, 0x00);
+
+    bus.fillRegion(0x020000, 0x00, 4);
+
+    dma.ioWrite(&bus, 0xD703, 0x01);
+    triggerDma(dma, bus, 0x030000);
+
+    // With dst_hold, all writes go to $020000.
+    // Last written value (from $010003 = 0x40) should be at $020000.
+    ASSERT_EQ(bus.read8(0x020000), 0x40);
+    // Adjacent bytes should be untouched
+    ASSERT_EQ(bus.read8(0x020001), 0x00);
+    ASSERT_EQ(bus.read8(0x020002), 0x00);
+}
