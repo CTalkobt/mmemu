@@ -229,8 +229,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* joy1     = new Joystick();
     auto* joy2     = new Joystick();
 
-    // Wire $D030 ROM banking query from VIC3 to bank controller
+    // Wire $D030 ROM banking query from VIC3 to bank controller.
+    // When VIC-III is locked (C64 mode), $D030 reads as $FF but the ROM
+    // banking bits are not functional — return $00 so only $01 port controls banking.
     bankCtrl->setD030Query([vic4]() -> uint8_t {
+        if (vic4->isLocked()) return 0x00;
         uint8_t val = 0;
         vic4->ioRead(nullptr, 0xD030, &val);
         return val;
