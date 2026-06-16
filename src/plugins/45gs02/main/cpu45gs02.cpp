@@ -1032,16 +1032,17 @@ int MOS45GS02::step() {
         case 0x50: { int8_t r=(int8_t)read8(m_state.pc++); if(!(m_state.p&FLAG_V)) { m_state.pc+=r; m_state.cycles++; } break; }
         case 0x70: { int8_t r=(int8_t)read8(m_state.pc++); if(m_state.p&FLAG_V) { m_state.pc+=r; m_state.cycles++; } break; }
 
-        // Long branches (relfar)
-        case 0x83: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2+r; m_state.cycles+=3; break; } // LBRA
-        case 0xD3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(!(m_state.p&FLAG_Z)) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBNE
-        case 0xF3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(m_state.p&FLAG_Z) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBEQ
-        case 0x93: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(!(m_state.p&FLAG_C)) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBCC
-        case 0xB3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(m_state.p&FLAG_C) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBCS
-        case 0x13: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(!(m_state.p&FLAG_N)) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBPL
-        case 0x33: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(m_state.p&FLAG_N) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBMI
-        case 0x53: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(!(m_state.p&FLAG_V)) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBVC
-        case 0x73: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; if(m_state.p&FLAG_V) { m_state.pc+=r; m_state.cycles++; } m_state.cycles+=2; break; } // LBVS
+        // Long branches (relfar) — offset is relative to PC+1, not PC+2
+        // (confirmed via xemu _BRA16 and gs4510.vhdl B16TakeBranch: reg_pc + offset - 1)
+        case 0x83: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1+r; m_state.cycles+=3; break; } // LBRA
+        case 0xD3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(!(m_state.p&FLAG_Z)) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBNE
+        case 0xF3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(m_state.p&FLAG_Z) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBEQ
+        case 0x93: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(!(m_state.p&FLAG_C)) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBCC
+        case 0xB3: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(m_state.p&FLAG_C) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBCS
+        case 0x13: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(!(m_state.p&FLAG_N)) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBPL
+        case 0x33: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(m_state.p&FLAG_N) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBMI
+        case 0x53: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(!(m_state.p&FLAG_V)) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBVC
+        case 0x73: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=1; if(m_state.p&FLAG_V) { m_state.pc+=r; m_state.cycles++; } else m_state.pc++; m_state.cycles+=2; break; } // LBVS
         
         // CPX/CPY/CPZ (additional modes)
         case 0xE0: { uint8_t v=read8(m_state.pc++); uint16_t d=(uint16_t)m_state.x-v; m_state.p &= ~FLAG_C; if(m_state.x>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)(d&0xFF)); m_state.cycles++; break; } // CPX #imm
@@ -1643,15 +1644,15 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
         case 0x34: snprintf(buf, bufsz, "BIT $%02X,X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x3C: snprintf(buf, bufsz, "BIT $%04X,X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
 
-        case 0x83: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBRA $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xD3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBNE $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xF3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBEQ $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x93: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCC $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xB3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCS $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x13: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBPL $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x33: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBMI $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x53: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVC $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x73: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVS $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x83: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBRA $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xD3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBNE $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xF3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBEQ $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x93: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCC $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xB3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCS $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x13: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBPL $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x33: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBMI $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x53: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVC $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x73: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVS $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
 
         case 0xF4: snprintf(buf, bufsz, "PHW #$%04X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0xFC: snprintf(buf, bufsz, "PHW $%04X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
