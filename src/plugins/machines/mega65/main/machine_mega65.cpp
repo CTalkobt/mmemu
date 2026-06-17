@@ -520,11 +520,27 @@ MachineDescriptor* Mega65MachineFactory::create() {
             cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
 
             // Initialize DOS zero-page variables that ColdStartDOS would set.
-            // Without these, CLALL ($FFE7) crashes because the DOS handler at
-            // $CBxx reads uninitialized pointers from $6C-$72.
             IBus* mb = d.cpus[0].dataBus;
             for (uint16_t a = 0x6C; a <= 0x72; a++)
                 mb->write8(a, 0x00);
+
+            // TEMPORARY: Redirect CLALL vector ($032C) to a minimal stub
+            // that does KERNAL file cleanup without entering the DOS handler
+            // at $CBxx. The DOS handler uses uninitialized cbdos pointer and
+            // crashes. Remove this once CBDOS initialization is fixed (#62).
+            // Stub at $0380: LDA #$00; STA $98; LDX #$03; STX $9A; STX $99; RTS
+            const uint8_t clallStub[] = {
+                0xA9, 0x00,       // LDA #$00
+                0x85, 0x98,       // STA $98    ; clear file count
+                0xA2, 0x03,       // LDX #$03
+                0x86, 0x9A,       // STX $9A    ; default output = screen
+                0x86, 0x99,       // STX $99    ; default input = keyboard
+                0x60              // RTS
+            };
+            for (size_t i = 0; i < sizeof(clallStub); i++)
+                mb->write8(0x0380 + i, clallStub[i]);
+            mb->write8(0x032C, 0x80);  // CLALL vector low
+            mb->write8(0x032D, 0x03);  // CLALL vector high → $0380
         }
 
         // Detect mflash→HYPPO return: B transitions from $00 to $BF
