@@ -233,18 +233,23 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
     m_fillByte = job.srcAddr & 0xFF;  // For fill ops
 
-    // Direction and hold from command/bank bytes — NO auto-reverse.
-    // F018B: direction from cmd bits 4/5, hold from subcmd (commandMsb) bits 1/3
-    // F018A: direction from bank bit 6, hold from bank bit 4
+    // Direction and hold — per mega65 book Appendix P.
+    // Direction is ALWAYS from bank byte bit 6 (both F018A and F018B).
+    // Command LSB bits 4-7 are MINTERM bits, NOT direction.
+    m_srcDir = (job.srcFlags & 0x04) != 0;   // bank byte bit 6
+    m_dstDir = (job.dstFlags & 0x04) != 0;   // bank byte bit 6
+
     if (f018b) {
-        m_srcDir  = (job.commandLsb & 0x10) != 0;
-        m_dstDir  = (job.commandLsb & 0x20) != 0;
-        m_srcHold = (job.commandMsb & 0x02) != 0;  // subcmd bit 1
-        m_dstHold = (job.commandMsb & 0x08) != 0;  // subcmd bit 3
+        // F018B: hold/modulo from Command MSB 2-bit addressing mode fields.
+        // Bits 0-1 = source mode, bits 2-3 = dest mode.
+        // %00=linear, %01=modulo, %10=hold, %11=XY MOD
+        uint8_t srcMode = job.commandMsb & 0x03;
+        uint8_t dstMode = (job.commandMsb >> 2) & 0x03;
+        m_srcHold = (srcMode == 0x02);  // %10 = hold
+        m_dstHold = (dstMode == 0x02);
     } else {
-        m_srcDir  = (job.srcFlags & 0x04) != 0;    // bank bit 6
-        m_dstDir  = (job.dstFlags & 0x04) != 0;
-        m_srcHold = (job.srcFlags & 0x01) != 0;    // bank bit 4
+        // F018A: hold/modulo from bank byte flags
+        m_srcHold = (job.srcFlags & 0x01) != 0;  // bank byte bit 4
         m_dstHold = (job.dstFlags & 0x01) != 0;
     }
 

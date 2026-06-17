@@ -891,8 +891,8 @@ TEST_CASE(dma_source_hold) {
     bus.write8(0x010002, 0x44);
     bus.write8(0x010003, 0x45);
 
-    // F018B copy with source hold: subcmd (byte 9) bit 1 = src_hold
-    // cmd=0x00 (copy), subcmd=0x02 (src_hold=1)
+    // F018B copy with source hold: Command MSB bits 0-1 = src addressing mode
+    // %10 = hold → Command MSB = 0x02
     uint32_t ja = 0x030000;
     bus.write8(ja + 0, 0x00);  // cmd: copy
     bus.write8(ja + 1, 0x04);  // count=4
@@ -903,7 +903,7 @@ TEST_CASE(dma_source_hold) {
     bus.write8(ja + 6, 0x00);  // dst lo
     bus.write8(ja + 7, 0x00);  // dst mid
     bus.write8(ja + 8, 0x02);  // dst bank=2
-    bus.write8(ja + 9, 0x02);  // subcmd: bit 1 = src_hold
+    bus.write8(ja + 9, 0x02);  // Command MSB: src mode=%10 (hold)
     bus.write8(ja + 10, 0x00); // modulo lo
     bus.write8(ja + 11, 0x00); // modulo hi
 
@@ -933,7 +933,8 @@ TEST_CASE(dma_dest_hold) {
     bus.write8(0x010002, 0x30);
     bus.write8(0x010003, 0x40);
 
-    // F018B copy with dest hold: subcmd bit 3 = dst_hold
+    // F018B copy with dest hold: Command MSB bits 2-3 = dst addressing mode
+    // %10 = hold → bits 2-3 = %10 → Command MSB = 0x08
     uint32_t ja = 0x030000;
     bus.write8(ja + 0, 0x00);  // copy
     bus.write8(ja + 1, 0x04);  // count=4
@@ -944,7 +945,7 @@ TEST_CASE(dma_dest_hold) {
     bus.write8(ja + 6, 0x00);  // dst lo
     bus.write8(ja + 7, 0x00);  // dst mid
     bus.write8(ja + 8, 0x02);  // dst bank=2
-    bus.write8(ja + 9, 0x08);  // subcmd: bit 3 = dst_hold
+    bus.write8(ja + 9, 0x08);  // Command MSB: dst mode=%10 (hold)
     bus.write8(ja + 10, 0x00);
     bus.write8(ja + 11, 0x00);
 
