@@ -528,7 +528,6 @@ MachineDescriptor* Mega65MachineFactory::create() {
             // that does KERNAL file cleanup without entering the DOS handler
             // at $CBxx. The DOS handler uses uninitialized cbdos pointer and
             // crashes. Remove this once CBDOS initialization is fixed (#62).
-            // Stub at $0380: LDA #$00; STA $98; LDX #$03; STX $9A; STX $99; RTS
             const uint8_t clallStub[] = {
                 0xA9, 0x00,       // LDA #$00
                 0x85, 0x98,       // STA $98    ; clear file count
@@ -541,6 +540,25 @@ MachineDescriptor* Mega65MachineFactory::create() {
                 mb->write8(0x0380 + i, clallStub[i]);
             mb->write8(0x032C, 0x80);  // CLALL vector low
             mb->write8(0x032D, 0x03);  // CLALL vector high → $0380
+
+            // Restore CPU port and MAP state after cint.
+            // cint's screen mode setup (escape handlers, DOS calls via CLALL)
+            // leaves $01 with HIRAM=0 and MAP with block 7 unmapped. The
+            // immediately following CLI enables IRQs, so $FFFE must be
+            // readable from KERNAL ROM. Restore $01=$37 (all ROMs visible)
+            // and MAP blocks 4,5,7 (the state set at $C808).
+            mb->write8(0x0001, 0x37);  // LORAM=1, HIRAM=1, CHAREN=1
+            mb->write8(0x0000, 0x2F);  // DDR = standard
+
+            // Restore MAP: A=$00, X=$E3, Y=$00, Z=$B3 (same as $C808)
+            auto* mc = cpu45->getMapMmu();
+            MapState ms = mc->getMapState();
+            // Upper 32K: enable blocks 4,5,7, offset $300
+            uint16_t hiOff = 0x300;
+            ms.enables = 0xB0;  // blocks 4,5,7
+            for (int i = 4; i < 8; i++)
+                ms.offsets[i] = (i * 0x20) + hiOff;
+            mc->setMapState(ms);
         }
 
         // Detect mflash→HYPPO return: B transitions from $00 to $BF
