@@ -24,10 +24,14 @@ void VIC3::initPalette() {
     std::memset(m_paletteG, 0, sizeof(m_paletteG));
     std::memset(m_paletteB, 0, sizeof(m_paletteB));
 
-    for (int i = 0; i < 16; ++i) {
-        m_paletteR[i] = s_c64R[i];
-        m_paletteG[i] = s_c64G[i];
-        m_paletteB[i] = s_c64B[i];
+    // Initialize all 1024 entries (4 banks) with standard colors repeating
+    for (int bank = 0; bank < 4; ++bank) {
+        for (int i = 0; i < 256; ++i) {
+            int idx = (bank << 8) | i;
+            m_paletteR[idx] = s_c64R[i & 0x0F];
+            m_paletteG[idx] = s_c64G[i & 0x0F];
+            m_paletteB[idx] = s_c64B[i & 0x0F];
+        }
     }
 }
 
@@ -46,12 +50,13 @@ void VIC3::reset() {
     // Reset to 0 — OS will set them after unlock.
 }
 
-uint32_t VIC3::getPaletteRGBA(uint8_t index) const {
+uint32_t VIC3::getPaletteRGBA(uint8_t index, uint8_t bank) const {
     // RGBA8888: alpha=0xFF, B in bits 23-16, G in bits 15-8, R in bits 7-0
+    uint32_t fullIdx = ((uint32_t)bank << 8) | index;
     return 0xFF000000u
-         | ((uint32_t)m_paletteB[index] << 16)
-         | ((uint32_t)m_paletteG[index] << 8)
-         | (uint32_t)m_paletteR[index];
+         | ((uint32_t)m_paletteB[fullIdx] << 16)
+         | ((uint32_t)m_paletteG[fullIdx] << 8)
+         | (uint32_t)m_paletteR[fullIdx];
 }
 
 // ---------------------------------------------------------------------------
@@ -111,21 +116,24 @@ bool VIC3::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
     // $D100-$D1FF: Palette Red
     if (offset >= 0x0100 && offset <= 0x01FF) {
         if (m_locked) { *val = 0xFF; return true; }
-        *val = m_paletteR[offset & 0xFF];
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        *val = m_paletteR[fullIdx];
         return true;
     }
 
     // $D200-$D2FF: Palette Green
     if (offset >= 0x0200 && offset <= 0x02FF) {
         if (m_locked) { *val = 0xFF; return true; }
-        *val = m_paletteG[offset & 0xFF];
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        *val = m_paletteG[fullIdx];
         return true;
     }
 
     // $D300-$D3FF: Palette Blue
     if (offset >= 0x0300 && offset <= 0x03FF) {
         if (m_locked) { *val = 0xFF; return true; }
-        *val = m_paletteB[offset & 0xFF];
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        *val = m_paletteB[fullIdx];
         return true;
     }
 
@@ -185,21 +193,24 @@ bool VIC3::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     // $D100-$D1FF: Palette Red
     if (offset >= 0x0100 && offset <= 0x01FF) {
         if (m_locked) return true;
-        m_paletteR[offset & 0xFF] = val;
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        m_paletteR[fullIdx] = val;
         return true;
     }
 
     // $D200-$D2FF: Palette Green
     if (offset >= 0x0200 && offset <= 0x02FF) {
         if (m_locked) return true;
-        m_paletteG[offset & 0xFF] = val;
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        m_paletteG[fullIdx] = val;
         return true;
     }
 
     // $D300-$D3FF: Palette Blue
     if (offset >= 0x0300 && offset <= 0x03FF) {
         if (m_locked) return true;
-        m_paletteB[offset & 0xFF] = val;
+        uint32_t fullIdx = ((uint32_t)getEditPalBank() << 8) | (offset & 0xFF);
+        m_paletteB[fullIdx] = val;
         return true;
     }
 

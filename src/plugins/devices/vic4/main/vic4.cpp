@@ -24,10 +24,10 @@ void VIC4::reset() {
     m_extRegs[0x24] = 0x00; // COLPTRLSB
     m_extRegs[0x25] = 0x00; // COLPTRMSB
 
-    // $D068-$D06A: CHARPTR — character set base (24-bit), default $0000
+    // $D068-$D06A: CHARPTR — character set base (24-bit), default $02D000
     m_extRegs[0x28] = 0x00; // CHARPTRLSB
-    m_extRegs[0x29] = 0x00; // CHARPTRMSB
-    m_extRegs[0x2A] = 0x00; // CHARPTRBNK
+    m_extRegs[0x29] = 0xD0; // CHARPTRMSB
+    m_extRegs[0x2A] = 0x02; // CHARPTRBNK
 }
 
 void VIC4::tick(uint64_t cycles) {
@@ -66,7 +66,7 @@ bool VIC4::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     return VIC3::ioWrite(bus, addr, val);
 }
 
-uint32_t VIC4::getScreenBase() const {
+uint32_t VIC4::screenBase() const {
     if (isLocked()) return VIC2::screenBase();
     // $D060-$D063: SCRNPTR (28-bit physical address)
     return ((uint32_t)(m_extRegs[0x23] & 0x0F) << 24) |
@@ -75,12 +75,28 @@ uint32_t VIC4::getScreenBase() const {
            (uint32_t)m_extRegs[0x20];
 }
 
-uint32_t VIC4::getCharBase() const {
+uint32_t VIC4::charBitmapBase() const {
     if (isLocked()) return VIC2::charBitmapBase();
     // $D068-$D06A: CHARPTR (24-bit physical address)
     return ((uint32_t)m_extRegs[0x2A] << 16) |
            ((uint32_t)m_extRegs[0x29] << 8) |
-           (uint32_t)m_extRegs[0x28];
+           ((uint32_t)m_extRegs[0x28]);
+}
+
+uint8_t VIC4::dmaPeek(uint32_t addr) const {
+    if (isLocked()) return VIC2::dmaPeek(addr);
+    if (!m_dmaBus) return 0xFF;
+
+    // Handle Char ROM shadow in standard 64KB space (banks 0 and 2)
+    if (m_charRom && addr < 0x10000) {
+        uint32_t bank = addr & 0xC000;
+        uint32_t offset = addr & 0x3FFF;
+        if ((bank == 0x0000 || bank == 0x8000) && (offset >= 0x1000 && offset <= 0x1FFF)) {
+            return m_charRom[offset & 0x0FFF];
+        }
+    }
+
+    return m_dmaBus->peek8(addr);
 }
 
 uint16_t VIC4::getColBase() const {
@@ -135,10 +151,10 @@ uint16_t VIC4::getSideBorderWidth() const {
 
 // --- Palette banks ($D070, offset 0x30) ---
 
-uint8_t VIC4::getSprPalBank() const  { return m_extRegs[0x30] & 0x03; }
-uint8_t VIC4::getBtPalBank() const   { return (m_extRegs[0x30] >> 2) & 0x03; }
-uint8_t VIC4::getAbtPalBank() const  { return (m_extRegs[0x30] >> 4) & 0x03; }
-uint8_t VIC4::getMapEdPal() const    { return (m_extRegs[0x30] >> 6) & 0x03; }
+uint8_t VIC4::getSprPalBank() const  { return m_extRegs[0x30] & 0x03; }        // Bits 1:0
+uint8_t VIC4::getBtPalBank() const   { return (m_extRegs[0x30] >> 2) & 0x03; } // Bits 3:2 (Bitplane)
+uint8_t VIC4::getAbtPalBank() const  { return (m_extRegs[0x30] >> 4) & 0x03; } // Bits 5:4 (Character)
+uint8_t VIC4::getBackPalBank() const { return (m_extRegs[0x30] >> 6) & 0x03; } // Bits 7:6 (Backdrop/Border)
 
 // --- System flags ---
 
@@ -164,14 +180,17 @@ bool VIC4::isPalNtsc() const { return (m_extRegs[0x2F] & 0x80) != 0; } // $D06F 
 // ---------------------------------------------------------------------------
 
 void VIC4::renderFCM(uint32_t* buf) {
-    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF);
-    uint32_t bgCol     = getPaletteRGBA(m_regs[BGCOL0] & 0xFF);
+    uint8_t btBank    = getBackPalBank(); // Backdrop/Border
+    uint8_t abtBank   = getAbtPalBank();  // Character
 
-    // Fill border
-    for (int i = 0; i < FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
+    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF, btBank);
+    uint32_t bgCol     = getPaletteRGBA(m_regs[BGCOL0] & 0xFF, btBank);
 
-    uint32_t scrBase  = getScreenBase();
-    uint32_t charBase = getCharBase();
+    // Fill border using V4 dimensions
+    for (int i = 0; i < V4_FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
+
+    uint32_t scrBase  = screenBase();
+    uint32_t charBase = charBitmapBase();
     uint16_t colBase  = getColBase();
 
     uint8_t ctrl54 = d054();
@@ -180,10 +199,12 @@ void VIC4::renderFCM(uint32_t* buf) {
     bool fclrHi = (ctrl54 & D054_FCLRHI) != 0;
 
     bool h640 = (m_regs[REG_D031] & D031_H640) != 0;
+    int pixScale = h640 ? 1 : 2; // 40-col: double each pixel
     int defaultCols = h640 ? 80 : 40;
     int chrCount = getChrCount();
     int cols = (chrCount < 0) ? defaultCols : chrCount;
     int rows = getDispRows();
+    int cellW = 8 * pixScale; // output pixels per character cell
 
     int bytesPerChar = chr16 ? 2 : 1;
     uint16_t lineStep = getLineStep();
@@ -200,7 +221,7 @@ void VIC4::renderFCM(uint32_t* buf) {
             if (chr16) {
                 uint8_t lo = m_dmaBus ? m_dmaBus->peek8(scrAddr) : 0;
                 uint8_t hi = m_dmaBus ? m_dmaBus->peek8(scrAddr + 1) : 0;
-                charNum = lo | ((uint16_t)hi << 8);
+                charNum = lo | ((uint16_t)(hi & 0x0F) << 8);
             } else {
                 charNum = m_dmaBus ? m_dmaBus->peek8(scrAddr) : 0;
             }
@@ -225,83 +246,69 @@ void VIC4::renderFCM(uint32_t* buf) {
             uint32_t dataAddr = charBase + (uint32_t)charNum * 64;
 
             int py = DISPLAY_Y + row * 8;
+            int px = V4_DISPLAY_X + col * cellW;
 
             if (isNCM) {
                 // --- Nibble-Colour Mode ---
-                // 16 pixels wide: 8 bytes per row, 2 pixels per byte
-                // Upper 4 bits of colour = colour RAM (masked, bit 3 excluded)
-                uint8_t colHigh = (fgColor & 0xF0); // upper nibble from colour RAM
-                int charW = h640 ? 8 : 16; // NCM chars are 16px in 40-col, 8px in 80-col
-                int px = DISPLAY_X + col * (h640 ? 4 : 8); // screen position for this cell
-                // In NCM, each char occupies double width in the character grid
-                // but we position based on the cell index
+                // Each byte = 2 logical pixels (high/low nibble).
+                // NCM chars are always 16 logical pixels wide (8 bytes per row).
+                uint8_t colHigh = (fgColor & 0xF0);
 
                 for (int r = 0; r < 8; ++r) {
                     int fy = py + r;
-                    if (fy < DISPLAY_Y || fy >= DISPLAY_Y + DISPLAY_H) continue;
+                    if (fy < 0 || fy >= FRAME_H) continue;
 
                     for (int c = 0; c < 8; ++c) {
                         uint8_t byteVal = m_dmaBus ? m_dmaBus->peek8(dataAddr + r * 8 + c) : 0;
                         uint8_t hiNib = (byteVal >> 4) & 0x0F;
                         uint8_t loNib = byteVal & 0x0F;
 
-                        // Left pixel (high nibble)
                         uint32_t colorL;
-                        if (hiNib == 0x0F) {
-                            colorL = getPaletteRGBA(fgColor);
-                        } else if (hiNib == 0x00) {
-                            colorL = bgCol;
-                        } else {
-                            colorL = getPaletteRGBA(colHigh | hiNib);
-                        }
+                        if (hiNib == 0x0F) colorL = getPaletteRGBA(fgColor, abtBank);
+                        else if (hiNib == 0x00) colorL = bgCol;
+                        else colorL = getPaletteRGBA(colHigh | hiNib, abtBank);
 
-                        // Right pixel (low nibble)
                         uint32_t colorR;
-                        if (loNib == 0x0F) {
-                            colorR = getPaletteRGBA(fgColor);
-                        } else if (loNib == 0x00) {
-                            colorR = bgCol;
-                        } else {
-                            colorR = getPaletteRGBA(colHigh | loNib);
-                        }
+                        if (loNib == 0x0F) colorR = getPaletteRGBA(fgColor, abtBank);
+                        else if (loNib == 0x00) colorR = bgCol;
+                        else colorR = getPaletteRGBA(colHigh | loNib, abtBank);
 
-                        int fx = px + c * 2;
-                        if (fx >= DISPLAY_X && fx < DISPLAY_X + DISPLAY_W)
-                            buf[fy * FRAME_W + fx] = colorL;
-                        if (fx + 1 >= DISPLAY_X && fx + 1 < DISPLAY_X + DISPLAY_W)
-                            buf[fy * FRAME_W + fx + 1] = colorR;
+                        // Each nibble → pixScale output pixels
+                        int fx = px + c * 2 * pixScale;
+                        for (int s = 0; s < pixScale; ++s) {
+                            int fxL = fx + s;
+                            if (fxL >= V4_DISPLAY_X && fxL < V4_DISPLAY_X + V4_DISPLAY_W)
+                                buf[fy * V4_FRAME_W + fxL] = colorL;
+                        }
+                        for (int s = 0; s < pixScale; ++s) {
+                            int fxR = fx + pixScale + s;
+                            if (fxR >= V4_DISPLAY_X && fxR < V4_DISPLAY_X + V4_DISPLAY_W)
+                                buf[fy * V4_FRAME_W + fxR] = colorR;
+                        }
                     }
                 }
             } else {
                 // --- Full-Colour Mode ---
-                int charW = h640 ? 4 : 8;
-                int px = DISPLAY_X + col * charW;
-
+                // Each byte = 1 logical pixel → pixScale output pixels.
+                // $FF = foreground from colour RAM, $00 = background.
                 for (int r = 0; r < 8; ++r) {
                     int fy = py + r;
-                    if (fy < DISPLAY_Y || fy >= DISPLAY_Y + DISPLAY_H) continue;
+                    if (fy < 0 || fy >= FRAME_H) continue;
 
                     for (int c = 0; c < 8; ++c) {
                         uint8_t pixVal = m_dmaBus ? m_dmaBus->peek8(dataAddr + r * 8 + c) : 0;
-
                         uint32_t color;
                         if (pixVal == 0xFF) {
-                            color = getPaletteRGBA(fgColor);
+                            color = getPaletteRGBA(fgColor, abtBank);
                         } else if (pixVal == 0x00) {
                             color = bgCol;
                         } else {
-                            color = getPaletteRGBA(pixVal);
+                            color = getPaletteRGBA(pixVal, abtBank);
                         }
-
-                        if (h640) {
-                            if (c & 1) continue;
-                            int fx = px + (c / 2);
-                            if (fx >= DISPLAY_X && fx < DISPLAY_X + DISPLAY_W)
-                                buf[fy * FRAME_W + fx] = color;
-                        } else {
-                            int fx = px + c;
-                            if (fx >= DISPLAY_X && fx < DISPLAY_X + DISPLAY_W)
-                                buf[fy * FRAME_W + fx] = color;
+                        int fx = px + c * pixScale;
+                        for (int s = 0; s < pixScale; ++s) {
+                            if (fx + s >= V4_DISPLAY_X && fx + s < V4_DISPLAY_X + V4_DISPLAY_W)
+                                buf[fy * V4_FRAME_W + fx + s] = color;
                         }
                     }
                 }
@@ -313,8 +320,109 @@ void VIC4::renderFCM(uint32_t* buf) {
     renderSpritesV4(buf);
 }
 
-// ---------------------------------------------------------------------------
-// VIC-IV Extended Sprite Renderer
+void VIC4::renderBackground80col(uint32_t* buf) {
+    uint8_t btBank    = getBackPalBank(); // Backdrop/Border
+    uint8_t abtBank   = getAbtPalBank();  // Character
+
+    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF, btBank);
+    uint32_t bgCol     = getPaletteRGBA(m_regs[BGCOL0] & 0xFF, btBank);
+
+    // Fill border using V4 dimensions
+    for (int i = 0; i < V4_FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
+
+    uint32_t scrBase  = screenBase();
+    uint32_t charBase = charBitmapBase();
+    uint16_t colBase  = getColBase();
+
+    uint8_t ctrl54 = d054();
+    bool chr16  = (ctrl54 & D054_CHR16)  != 0;
+    bool h640   = (m_regs[REG_D031] & D031_H640) != 0;
+    bool attr   = (m_regs[REG_D031] & D031_ATTR) != 0;
+    int pixScale = h640 ? 1 : 2; // 40-col: double each pixel
+
+    // Both CHR16 and ATTR enable 2-byte screen RAM (Super-Extended Attribute Mode)
+    bool is2byte = chr16 || attr;
+
+    int defaultCols = h640 ? 80 : 40;
+    int chrCount = getChrCount();
+    int cols = (chrCount < 0) ? defaultCols : chrCount;
+    int rows = getDispRows();
+    int cellW = 8 * pixScale; // output pixels per character cell
+
+    int bytesPerChar = is2byte ? 2 : 1;
+    uint16_t lineStep = getLineStep();
+    if (lineStep == 0) lineStep = cols * bytesPerChar;
+
+    for (int row = 0; row < rows; ++row) {
+        uint32_t rowBase = scrBase + (uint32_t)row * lineStep;
+        int py = DISPLAY_Y + row * 8;
+        if (py >= FRAME_H) break;
+
+        for (int col = 0; col < cols; ++col) {
+            uint32_t scrAddr = rowBase + (uint32_t)col * bytesPerChar;
+            uint16_t charNum;
+            uint8_t  charAttr = 0;
+            if (is2byte) {
+                uint8_t lo = dmaPeek(scrAddr);
+                uint8_t hi = dmaPeek(scrAddr + 1);
+                charNum  = lo | ((uint16_t)(hi & 0x0F) << 8);
+                charAttr = hi >> 4;
+            } else {
+                charNum = dmaPeek(scrAddr);
+            }
+
+            // Color RAM access (16-bit per cell in 2-byte mode)
+            uint16_t fgColor = 0x0F;
+            uint16_t colAddr = colBase + col + (row * cols);
+            if (m_colorRam) {
+                if (is2byte) {
+                    uint16_t off = (colAddr * 2) & 0x7FFF;
+                    fgColor = m_colorRam[off] | ((uint16_t)m_colorRam[off + 1] << 8);
+                } else {
+                    fgColor = m_colorRam[colAddr & 0x7FFF];
+                }
+            }
+
+            // NCM flag: bit 11 of color RAM (bit 3 of second byte)
+            bool isNCM = is2byte && (fgColor & 0x0800);
+
+            // Foreground color: bits 0-7 (plus bits 8-11 if we supported 4096-color palette)
+            // For now, we use bits 0-7 as index and abtBank for the bank.
+            uint8_t palIdx = (uint8_t)(fgColor & 0xFF);
+            if (!attr) palIdx &= 0x0F;
+
+            // Character palette bank (bits 5:4 of $D070)
+            uint32_t fgCol = getPaletteRGBA(palIdx, abtBank);
+
+            // Reverse attribute: bit 7 of screen RAM second byte (bit 3 of charAttr)
+            bool reverse = (charAttr & 0x08);
+            // Also check color RAM reverse bit (bit 15 / bit 7 of second byte) if attr mode
+            if (attr && (fgColor & 0x8000)) reverse = !reverse;
+
+            uint32_t glyphAddr = charBase + (uint32_t)charNum * 8;
+
+            int px = V4_DISPLAY_X + col * cellW;
+
+            for (int r = 0; r < 8; ++r) {
+                int fy = py + r;
+                if (fy < DISPLAY_Y || fy >= DISPLAY_Y + DISPLAY_H) continue;
+
+                uint8_t bits = dmaPeek(glyphAddr + r);
+                if (reverse) bits ^= 0xFF;
+
+                for (int b = 0; b < 8; ++b) {
+                    int bit = (bits >> (7 - b)) & 1;
+                    uint32_t color = bit ? fgCol : bgCol;
+                    int fx = px + b * pixScale;
+                    for (int s = 0; s < pixScale; ++s) {
+                        if (fx + s >= V4_DISPLAY_X && fx + s < V4_DISPLAY_X + V4_DISPLAY_W)
+                            buf[fy * V4_FRAME_W + fx + s] = color;
+                    }
+                }
+            }
+        }
+    }
+}
 //
 // Extensions over VIC-II:
 //   $D055 SPRHGTEN:  per-sprite extended height enable
@@ -329,11 +437,17 @@ void VIC4::renderFCM(uint32_t* buf) {
 void VIC4::renderSpritesV4(uint32_t* buf) {
     if (!m_dmaBus) return;
 
+    uint8_t sprPalBank = getSprPalBank();
     uint8_t sprHgtEn  = m_extRegs[0x15]; // $D055: per-sprite extended height enable
     uint8_t sprHgt    = m_extRegs[0x16]; // $D056: shared extended height
     uint8_t sprX64En  = m_extRegs[0x17]; // $D057: per-sprite 64px wide
     uint8_t spr16En   = m_extRegs[0x2B]; // $D06B: per-sprite 16-colour
     uint8_t sprYMsbs  = m_extRegs[0x37]; // $D077: per-sprite Y bit 8
+
+    // $D054 bit 4: SPRH640 — when set, sprite X coordinates are in 640-pixel space
+    bool sprH640 = (d054() & D054_SPRH640) != 0;
+    // When SPRH640 is off, sprite X coords are in 320-pixel VIC-II space → double them
+    int sprXScale = sprH640 ? 1 : 2;
 
     // Sprite pointer base: $D06C-$D06E (24-bit, bottom 7 bits of $D06E)
     uint32_t sprPtrBase = (uint32_t)m_extRegs[0x2C]
@@ -347,14 +461,19 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
     for (int sp = 7; sp >= 0; --sp) {
         if (!(m_regs[SPENA] & (1 << sp))) continue;
 
-        // Position
-        uint16_t spX = (uint16_t)m_regs[SP0X + sp * 2];
-        if (m_regs[MSIGX] & (1 << sp)) spX |= 0x100;
+        // Position — X is in VIC-II 320-pixel space unless SPRH640 is set
+        uint16_t rawX = (uint16_t)m_regs[SP0X + sp * 2];
+        if (m_regs[MSIGX] & (1 << sp)) rawX |= 0x100;
+        int spX = (int)rawX * sprXScale;
+
         uint16_t spY = (uint16_t)m_regs[SP0Y + sp * 2];
         if (sprYMsbs & (1 << sp)) spY |= 0x100;
 
         bool xExp = (m_regs[XXPAND] & (1 << sp)) != 0;
         bool yExp = (m_regs[YXPAND] & (1 << sp)) != 0;
+
+        // X expansion also doubles in output pixel space
+        int xExpScale = xExp ? 2 : 1;
 
         // Height: 21 (VIC-II default) or extended
         int height = (sprHgtEn & (1 << sp)) ? (int)sprHgt : 21;
@@ -391,7 +510,7 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
             if (py < 0 || py >= FRAME_H) continue;
 
             if (is16col) {
-                // 16-colour mode: 4 bits per pixel, normal resolution
+                // 16-colour mode: 4 bits per pixel
                 // Color = sprite# × 16 + nibble. Nibble 0 = transparent.
                 for (int byteIdx = 0; byteIdx < bytesPerRow; ++byteIdx) {
                     uint8_t byteVal = m_dmaBus->peek8(dataAddr + r * bytesPerRow + byteIdx);
@@ -403,20 +522,20 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
                         if (nib == 0) continue; // transparent
 
                         uint8_t palIdx = (uint8_t)(sp * 16 + nib);
-                        uint32_t color = getPaletteRGBA(palIdx);
+                        uint32_t color = getPaletteRGBA(palIdx, sprPalBank);
 
                         int bx = byteIdx * 2 + half;
-                        int pxStart = (int)spX + (xExp ? bx * 2 : bx);
-                        int pxEnd = xExp ? pxStart + 2 : pxStart + 1;
-                        for (int px = pxStart; px < pxEnd; ++px) {
-                            if (px >= 0 && px < FRAME_W)
-                                buf[py * FRAME_W + px] = color;
+                        int pxStart = spX + bx * sprXScale * xExpScale;
+                        int pxCount = sprXScale * xExpScale;
+                        for (int px = pxStart; px < pxStart + pxCount; ++px) {
+                            if (px >= 0 && px < V4_FRAME_W)
+                                buf[py * V4_FRAME_W + px] = color;
                         }
                     }
                 }
             } else {
                 // Standard mono sprite (24 or 64 pixels wide)
-                uint32_t spColor = getPaletteRGBA(colorIdx);
+                uint32_t spColor = getPaletteRGBA(colorIdx, sprPalBank);
 
                 for (int byteIdx = 0; byteIdx < bytesPerRow; ++byteIdx) {
                     uint8_t byteVal = m_dmaBus->peek8(dataAddr + r * bytesPerRow + byteIdx);
@@ -424,11 +543,11 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
                         if (!((byteVal >> bit) & 1)) continue;
 
                         int bx = byteIdx * 8 + (7 - bit);
-                        int pxStart = (int)spX + (xExp ? bx * 2 : bx);
-                        int pxEnd = xExp ? pxStart + 2 : pxStart + 1;
-                        for (int px = pxStart; px < pxEnd; ++px) {
-                            if (px >= 0 && px < FRAME_W)
-                                buf[py * FRAME_W + px] = spColor;
+                        int pxStart = spX + bx * sprXScale * xExpScale;
+                        int pxCount = sprXScale * xExpScale;
+                        for (int px = pxStart; px < pxStart + pxCount; ++px) {
+                            if (px >= 0 && px < V4_FRAME_W)
+                                buf[py * V4_FRAME_W + px] = spColor;
                         }
                     }
                 }
@@ -436,11 +555,11 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
 
             // Y expansion: duplicate sprite pixels on next row
             if (yExp && (py + 1 < FRAME_H)) {
-                int totalPx = xExp ? pixelWidth * 2 : pixelWidth;
-                for (int dx = 0; dx < totalPx; ++dx) {
-                    int px = (int)spX + dx;
-                    if (px >= 0 && px < FRAME_W) {
-                        buf[(py + 1) * FRAME_W + px] = buf[py * FRAME_W + px];
+                int totalOutputPx = pixelWidth * sprXScale * xExpScale;
+                for (int dx = 0; dx < totalOutputPx; ++dx) {
+                    int px = spX + dx;
+                    if (px >= 0 && px < V4_FRAME_W) {
+                        buf[(py + 1) * V4_FRAME_W + px] = buf[py * V4_FRAME_W + px];
                     }
                 }
             }
@@ -469,8 +588,10 @@ void VIC4::renderFrame(uint32_t* buffer) {
         return;
     }
 
-    // Fall back to VIC-III rendering (80-col, bitplane, standard text)
-    VIC3::renderFrame(buffer);
+    // For all other unlocked modes (text, standard bitplane), use our
+    // background renderer which handles CHR16 and dynamic geometry.
+    renderBackground80col(buffer);
+    renderSpritesV4(buffer);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,8 +604,10 @@ void VIC4::renderFrame(uint32_t* buffer) {
 // ---------------------------------------------------------------------------
 
 void VIC4::renderBitplanes16(uint32_t* buf) {
-    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF);
-    for (int i = 0; i < FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
+    uint8_t btBank    = getBackPalBank(); // Backdrop/Border
+    uint8_t bpPal     = getBtPalBank();   // Bitplane palette
+    uint32_t borderCol = getPaletteRGBA(m_regs[EXTCOL] & 0xFF, btBank);
+    for (int i = 0; i < V4_FRAME_W * FRAME_H; ++i) buf[i] = borderCol;
 
     uint8_t bpEnable = m_regs[REG_BPEN];
     uint8_t bpComp   = m_regs[0x3B];
@@ -493,6 +616,7 @@ void VIC4::renderBitplanes16(uint32_t* buf) {
     uint8_t bp16ens = m_extRegs[0x31]; // $D071
 
     bool h640 = (m_regs[REG_D031] & D031_H640) != 0;
+    int pixScale = h640 ? 1 : 2;
     int pixelsPerLine = h640 ? 640 : 320;
     if (pixelsPerLine > DISPLAY_W) pixelsPerLine = DISPLAY_W;
 
@@ -557,9 +681,12 @@ void VIC4::renderBitplanes16(uint32_t* buf) {
                 }
             }
 
-            int fx = DISPLAY_X + x;
-            if (fx >= 0 && fx < FRAME_W)
-                buf[fy * FRAME_W + fx] = getPaletteRGBA(finalColor);
+            uint32_t color = getPaletteRGBA(finalColor, bpPal);
+            int fx = V4_DISPLAY_X + x * pixScale;
+            for (int s = 0; s < pixScale; ++s) {
+                if (fx + s >= 0 && fx + s < V4_FRAME_W)
+                    buf[fy * V4_FRAME_W + fx + s] = color;
+            }
         }
     }
 }

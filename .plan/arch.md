@@ -30,7 +30,7 @@ struct BusConfig {
     uint32_t dataBits;     // 8, 16, 32
     BusRole  role;
     bool     littleEndian;
-    uint32_t addrMask;     // (1u << addrBits) - 1
+    uint32_t addrMask;     // (addrBits == 32) ? 0xFFFFFFFF : ((1u << addrBits) - 1)
 };
 
 class IBus {
@@ -71,12 +71,12 @@ public:
 
 **Concrete implementations:**
 
-| Class | Use case | Addr bits |
-|---|---|---|
-| `Memory6502Bus` | 6502 family — wraps existing `memory_t` unchanged | 16 |
-| `FlatMemoryBus` | Z80, small systems — heap array + IORegistry overlay | configurable |
-| `PagedMemoryBus` | Banked 16-bit machines (C128 MMU, BBC paged ROM, NES mappers) | 16 + bank |
-| `SparseMemoryBus` | Wide address spaces — lazy 4 KB page allocation | configurable |
+| Class             | Use case                                                      | Addr bits    |
+|-------------------|---------------------------------------------------------------|--------------|
+| `Memory6502Bus`   | 6502 family — wraps existing `memory_t` unchanged             | 16           |
+| `FlatMemoryBus`   | Z80, small systems — heap array + IORegistry overlay          | configurable |
+| `PagedMemoryBus`  | Banked 16-bit machines (C128 MMU, BBC paged ROM, NES mappers) | 16 + bank    |
+| `SparseMemoryBus` | Wide address spaces — lazy 4 KB page allocation               | configurable |
 
 `SparseMemoryBus(28)` is exactly what the current `far_pages[65536]` implements — generalized. Any architecture needing a sparse wide address space (45GS02 at 28-bit, 65C816 at 24-bit, ARM at 32-bit) uses this class.
 
@@ -532,16 +532,16 @@ src/plugin_loader/main/
 
 **Commercial plugins (private repos):**
 
-| Plugin | CPU Cores | Machine Presets |
-|---|---|---|
-| `mmemu-plugin-z80` | Z80, Z80B, CMOS-Z80 | ZX Spectrum 48K/128K, ZX81, generic CP/M, MSX |
-| `mmemu-plugin-6809` | M6809, HD6309 | CoCo 3, Dragon 32 |
-| `mmemu-plugin-68000` | 68000/10/20 | Amiga 500/1200, Atari ST, Sega Genesis |
-| `mmemu-plugin-arm` | Cortex-M0/M3/M4 | STM32F1, RP2040 |
-| `mmemu-plugin-avr` | ATmega328p, ATmega2560 | Arduino Uno, Arduino Mega |
-| `mmemu-plugin-8051` | 8051, AT89C51 | Generic 8051 dev board |
-| `mmemu-plugin-pic` | PIC16F, PIC18F | Generic PIC dev board |
-| `mmemu-plugin-tms320` | TMS320C28x | Generic DSP eval board |
+| Plugin                | CPU Cores              | Machine Presets                               |
+|-----------------------|------------------------|-----------------------------------------------|
+| `mmemu-plugin-z80`    | Z80, Z80B, CMOS-Z80    | ZX Spectrum 48K/128K, ZX81, generic CP/M, MSX |
+| `mmemu-plugin-6809`   | M6809, HD6309          | CoCo 3, Dragon 32                             |
+| `mmemu-plugin-68000`  | 68000/10/20            | Amiga 500/1200, Atari ST, Sega Genesis        |
+| `mmemu-plugin-arm`    | Cortex-M0/M3/M4        | STM32F1, RP2040                               |
+| `mmemu-plugin-avr`    | ATmega328p, ATmega2560 | Arduino Uno, Arduino Mega                     |
+| `mmemu-plugin-8051`   | 8051, AT89C51          | Generic 8051 dev board                        |
+| `mmemu-plugin-pic`    | PIC16F, PIC18F         | Generic PIC dev board                         |
+| `mmemu-plugin-tms320` | TMS320C28x             | Generic DSP eval board                        |
 
 ---
 
@@ -553,11 +553,11 @@ Minimum device sets for running real software on each target machine preset.
 
 #### VIC-20
 
-| Chip | Role | Address |
-|---|---|---|
-| MOS 6560 / 6561 VIC | 22×23 char video, 3.5-channel sound, light pen, raster | $9000–$900F |
-| MOS 6522 VIA #1 | Serial bus, joystick port 1, cassette, keyboard column scan | $9110–$911F |
-| MOS 6522 VIA #2 | Serial bus ATN/SRQ, user port, cassette sense, keyboard row scan | $9120–$912F |
+| Chip                | Role                                                             | Address     |
+|---------------------|------------------------------------------------------------------|-------------|
+| MOS 6560 / 6561 VIC | 22×23 char video, 3.5-channel sound, light pen, raster           | $9000–$900F |
+| MOS 6522 VIA #1     | Serial bus, joystick port 1, cassette, keyboard column scan      | $9110–$911F |
+| MOS 6522 VIA #2     | Serial bus ATN/SRQ, user port, cassette sense, keyboard row scan | $9120–$912F |
 
 #### Commodore PET / CBM
 
@@ -693,7 +693,7 @@ Displays the assembler source file(s) with the line currently executing highligh
 
 Features:
 - **Bidirectional sync** with the disassembly pane: navigating one scrolls the other.
-- **Inline error display** — after an assemble run, `AssemblerResult::errorMessage` is parsed and errors are shown as gutter annotations on the relevant line.
+- **Inline error display** — after an assembly run, `AssemblerResult::errorMessage` is parsed and errors are shown as gutter annotations on the relevant line.
 - **Editable** — changes trigger a re-assemble via `IAssembler::assemble()`; on success the new binary is hot-loaded into the session memory without a full reset (unless the load address changed).
 - **Source-level breakpoints** — right-clicking a line inserts a breakpoint at the address `source_map->sourceToAddr(file, line)`.
 
@@ -739,7 +739,7 @@ Features:
 - **Types** — execution, memory read-watch, memory write-watch (write-watch backed by `IBus::getWrites` scan after each step).
 - **Conditions** — simple expressions over register names and memory values; evaluated after the breakpoint address fires.
 - **Hit count** — a breakpoint can be set to only trigger after N hits (useful for loops).
-- **Source-linked** — breakpoints set from the source pane show file/line rather than a raw address.
+- **Source-linked** — breakpoints set from the source pane show the file/line rather than a raw address.
 
 ---
 
@@ -794,7 +794,7 @@ User-defined expressions evaluated each step using side-effect-free bus reads an
 - Backed by `IBus::peek8()` (memory) or `regReadByName()` (register).
 - Labels are user-supplied strings.
 - Format is selectable per entry.
-- Entries whose value changed since the last step are highlighted.
+- Entries whose value change since the last step are highlighted.
 
 ---
 

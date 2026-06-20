@@ -19,6 +19,11 @@
  */
 class VIC4 : public VIC3 {
 public:
+    // MEGA65 dimensions: 640x200 (or more) in 320x200 window, so we double the width.
+    static constexpr int V4_FRAME_W    = 768; // 384 * 2
+    static constexpr int V4_DISPLAY_W  = 640; // 320 * 2
+    static constexpr int V4_DISPLAY_X  = 64;  // 32 * 2
+
     VIC4();
     ~VIC4() override = default;
 
@@ -31,6 +36,9 @@ public:
     void tick(uint64_t cycles) override;
 
     // IVideoOutput overrides
+    VideoDimensions getDimensions() const override {
+        return {V4_FRAME_W, FRAME_H, V4_DISPLAY_W, DISPLAY_H};
+    }
     void renderFrame(uint32_t* buffer) override;
 
     // --- $D054 bit constants ---
@@ -44,10 +52,14 @@ public:
     static constexpr uint8_t D054_ALPHEN = 0x80; // Alpha compositor enable
 
     // Extended register accessors
-    uint32_t getScreenBase() const;
-    uint32_t getCharBase() const;
+    uint32_t screenBase() const override;
+    uint32_t charBitmapBase() const override;
     uint16_t getColBase() const;
     uint8_t  d054() const { return m_extRegs[0x14]; }
+
+    uint8_t dmaPeek(uint32_t addr) const override;
+
+    uint8_t getEditPalBank() const override { return getBackPalBank(); }
 
     // Display geometry accessors
     int getChrCount() const;       // $D05E: characters per row
@@ -65,7 +77,7 @@ public:
     uint8_t getSprPalBank() const;  // bits 1-0
     uint8_t getBtPalBank() const;   // bits 3-2
     uint8_t getAbtPalBank() const;  // bits 5-4
-    uint8_t getMapEdPal() const;    // bits 7-6
+    uint8_t getBackPalBank() const; // bits 7-6
 
     // System flags
     bool isVfast() const;           // $D054.5
@@ -77,6 +89,7 @@ public:
 private:
     void renderFCM(uint32_t* buf);
     void renderBitplanes16(uint32_t* buf);
+    void renderBackground80col(uint32_t* buf);
 
     // Extended registers $D048-$D07F (indexed as $D0xx - $D040)
     uint8_t m_extRegs[64];

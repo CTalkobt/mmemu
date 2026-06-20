@@ -25,7 +25,7 @@ MOS45GS02::MOS45GS02() : m_bus(nullptr) {
 
 void MOS45GS02::reset() {
     m_state.a = 0; m_state.x = 0; m_state.y = 0; m_state.z = 0; m_state.b = 0;
-    m_state.sp = 0x01FF; m_state.p = FLAG_I; m_state.cycles = 0;
+    m_state.sp = 0x01FF; m_state.p = FLAG_I | FLAG_E; m_state.cycles = 0;
     m_state.irqLine = 0; m_state.nmiLine = 0; m_state.nmiPrev = 0; m_state.haltLine = 0;
     memset(&m_hyperState, 0, sizeof(m_hyperState));
 
@@ -440,7 +440,7 @@ int MOS45GS02::step() {
             m_state.pc++; // BRK skips signature byte
             push8((uint8_t)(m_state.pc >> 8));
             push8((uint8_t)(m_state.pc & 0xFF));
-            push8(m_state.p | FLAG_B | FLAG_E);
+            push8(m_state.p | FLAG_B);
             m_state.p |= FLAG_I;
             m_state.p &= ~FLAG_D;
             uint8_t lo = read8(0xFFFE);
@@ -1272,7 +1272,7 @@ int MOS45GS02::step() {
                 if (m_state.z == 0x0F) {
                     // Megabyte select: Y chooses which 1MB region
                     state.megabyteHigh = (uint32_t)m_state.y << 20;
-                } else if (!m_state.hypervisor) {
+                } else {
                     uint32_t hiOff = ((m_state.z & 0x0F) << 8) | m_state.y;
                     for (int i = 4; i < 8; i++)
                         state.offsets[i] = (i * 0x20) + hiOff;
@@ -1665,12 +1665,69 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
 }
 
 int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
-    DisasmEntry* e = (DisasmEntry*)entryOut; e->addr = addr;
+    DisasmEntry* e = (DisasmEntry*)entryOut;
+    e->addr = addr;
     static char s_buf[128]; // Static buffer to avoid dangling pointer, okay for single-threaded simulator
-    e->bytes = disassembleOne(bus, addr, s_buf, sizeof(s_buf)); e->complete = s_buf;
-    uint8_t op = bus->peek8(addr); 
-    e->isCall = (op==0x20 || op==0x63 || op==0x22 || op==0x23); e->isReturn = (op==0x60||op==0x40||op==0x62);
-    e->isBranch = (op&0x1F)==0x10 || (op==0x80) || (op==0x83) || (op&0x1F)==0x13; return e->bytes;
+    e->bytes = disassembleOne(bus, addr, s_buf, sizeof(s_buf));
+    e->complete = s_buf;
+
+    char mnem[32];
+    char ops[128];
+    int scanned = std::sscanf(s_buf, "%31s %127[^\n]", mnem, ops);
+    if (scanned >= 1) {
+        e->mnemonic = mnem;
+    } else {
+        e->mnemonic = "";
+    }
+    if (scanned >= 2) {
+        e->operands = ops;
+    } else {
+        e->operands = "";
+    }
+
+    uint32_t currentAddr = addr;
+    // Skip prefixes to find the actual instruction opcode
+    while (true) {
+        uint8_t prefixOp = bus->peek8(currentAddr);
+        if (prefixOp == 0x42 && bus->peek8(currentAddr + 1) == 0x42) {
+            currentAddr += 2;
+            continue;
+        }
+        if (prefixOp == 0xEA) {
+            uint8_t next = bus->peek8(currentAddr + 1);
+            if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
+                next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
+                currentAddr++;
+                continue;
+            }
+        }
+        break;
+    }
+    uint8_t op = bus->peek8(currentAddr);
+
+    e->isCall = (op == 0x20 || op == 0x63 || op == 0x22 || op == 0x23);
+    e->isReturn = (op == 0x60 || op == 0x40 || op == 0x62);
+    e->isBranch = ((op & 0x1F) == 0x10 || op == 0x80 || op == 0x83 || (op & 0x1F) == 0x13 || (op & 0x0F) == 0x0F);
+    e->isIllegal = false;
+
+    bool isJump = (op == 0x4C || op == 0x6C);
+    if (e->isCall || e->isBranch || isJump) {
+        const char* lastDol = strrchr(s_buf, '$');
+        if (lastDol) {
+            uint32_t val = 0;
+            if (std::sscanf(lastDol + 1, "%x", &val) == 1) {
+                e->targetAddr = val;
+            } else {
+                e->targetAddr = 0;
+            }
+        } else {
+            e->targetAddr = 0;
+        }
+    } else {
+        e->targetAddr = 0;
+    }
+
+    return e->bytes;
 }
 
 void MOS45GS02::saveState(uint8_t* buf) const { memcpy(buf, &m_state, sizeof(m_state)); }

@@ -1,6 +1,7 @@
 #include "test_harness.h"
 #include "plugins/45gs02/main/cpu45gs02.h"
 #include "libmem/main/memory_bus.h"
+#include "libtoolchain/main/idisasm.h"
 
 namespace {
 
@@ -353,3 +354,42 @@ TEST_CASE(gs02_lbra_offset_base) {
     ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0214);
     ASSERT_EQ(t.cpu.regRead(0), (uint32_t)0x77);
 }
+
+TEST_CASE(gs02_disasm_entry) {
+    TestFixture t;
+
+    // Test a relative branch instruction: BNE $0210 at $0200 (offset is 14 bytes)
+    t.pokeProgram(0x0200, {0xD0, 0x0E}); // BNE $0210
+    DisasmEntry entry;
+    int bytes = t.cpu.disassembleEntry(&t.bus, 0x0200, &entry);
+    ASSERT_EQ(bytes, 2);
+    ASSERT_EQ(entry.addr, (uint32_t)0x0200);
+    ASSERT_EQ(entry.mnemonic, "BNE");
+    ASSERT_EQ(entry.operands, "$0210");
+    ASSERT_EQ(entry.complete, "BNE $0210");
+    ASSERT(entry.isBranch);
+    ASSERT(!entry.isCall);
+    ASSERT(!entry.isReturn);
+    ASSERT_EQ(entry.targetAddr, (uint32_t)0x0210);
+
+    // Test JSR $0300 (0x20 0x00 0x03)
+    t.pokeProgram(0x0220, {0x20, 0x00, 0x03}); // JSR $0300
+    DisasmEntry entry2;
+    bytes = t.cpu.disassembleEntry(&t.bus, 0x0220, &entry2);
+    ASSERT_EQ(bytes, 3);
+    ASSERT_EQ(entry2.mnemonic, "JSR");
+    ASSERT_EQ(entry2.operands, "$0300");
+    ASSERT(entry2.isCall);
+    ASSERT(!entry2.isBranch);
+    ASSERT_EQ(entry2.targetAddr, (uint32_t)0x0300);
+
+    // Test BBR0 $02,$0240
+    t.pokeProgram(0x0230, {0x0F, 0x02, 0x0D});
+    DisasmEntry entry3;
+    bytes = t.cpu.disassembleEntry(&t.bus, 0x0230, &entry3);
+    ASSERT_EQ(bytes, 3);
+    ASSERT_EQ(entry3.mnemonic, "BBR0");
+    ASSERT(entry3.isBranch);
+    ASSERT_EQ(entry3.targetAddr, (uint32_t)0x0240);
+}
+

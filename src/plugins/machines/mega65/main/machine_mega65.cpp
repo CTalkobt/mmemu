@@ -76,6 +76,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* physBus = new SparseMemoryBus("phys_bus", 28);
     desc->buses.push_back({"phys_bus", physBus});
 
+    // Map 8 MB of physical RAM
+    uint8_t* ram = new uint8_t[8 * 1024 * 1024];
+    std::memset(ram, 0, 8 * 1024 * 1024);
+    physBus->addRegion(0, 8 * 1024 * 1024, ram, true);
+    desc->deleters.push_back([ram]() { delete[] ram; });
+
     // -----------------------------------------------------------------------
     // Load MEGA65 ROM (128 KB) into physical Banks 2-3 ($020000-$03FFFF)
     // -----------------------------------------------------------------------
@@ -94,7 +100,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (!romPath.empty())
             romLoad(romPath.c_str(), romBuf, 128 * 1024);
     }
-    physBus->addRomOverlay(0x020000, 128 * 1024, romBuf);
+    for (uint32_t i = 0; i < 128 * 1024; i++) {
+        physBus->write8(0x020000 + i, romBuf[i]);
+        physBus->write8(0x0E0000 + i, romBuf[i]);
+    }
+    physBus->clearWriteLog();
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------
@@ -170,12 +180,9 @@ MachineDescriptor* Mega65MachineFactory::create() {
                 size_t fileSize = f.tellg();
                 f.seekg(0);
 
-                // PRG files: skip 2-byte load address header
+                // Note: Do not skip the 2-byte PRG header for BRAM files (like mflash.prg),
+                // as HYPPO expects it to be present at $050000.
                 size_t skip = 0;
-                std::string ext = path.substr(path.rfind('.') + 1);
-                if (ext == "prg" || ext == "PRG") skip = 2;
-
-                if (skip) f.seekg(skip);
                 size_t dataSize = fileSize - skip;
                 if (dataSize > entry.maxSize) dataSize = entry.maxSize;
 
@@ -495,7 +502,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
         auto* cpu = d.cpus[0].cpu;
         int cycles = cpu->step();
-        if (d.ioRegistry) d.ioRegistry->tickAll(1);
+        if (d.ioRegistry) d.ioRegistry->tickAll(cycles);
 
         // Workaround: mflash exits via RTS on empty stack (SP=$01FF).
         // Write return_from_flashmenu address just before ANY RTS
@@ -520,9 +527,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
             cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
 
             // Initialize DOS zero-page variables that ColdStartDOS would set.
+            // Also clear corrupted variables like $C8-$CB and $02-$03.
             IBus* mb = d.cpus[0].dataBus;
-            for (uint16_t a = 0x6C; a <= 0x72; a++)
-                mb->write8(a, 0x00);
+            for (uint16_t a = 0x6C; a <= 0x72; a++) mb->write8(a, 0x00);
+            for (uint16_t a = 0xC8; a <= 0xCB; a++) mb->write8(a, 0x00);
+            mb->write8(0x02, 0x00);
+            mb->write8(0x03, 0x00);
 
             // TEMPORARY: Redirect CLALL vector ($032C) to a minimal stub
             // that does KERNAL file cleanup without entering the DOS handler

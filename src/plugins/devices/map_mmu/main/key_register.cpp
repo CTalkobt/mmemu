@@ -69,9 +69,11 @@ bool KeyRegister::ioWrite(IBus* bus, uint32_t addr, uint8_t val)
     // Check if (m_firstByte, val) is a valid sequence
     IopersonalityMode newMode;
     if (isValidSequence(m_firstByte, val, newMode)) {
-        m_currentPersonality = newMode;
-        if (m_personalityCallback) {
-            m_personalityCallback(newMode);
+        if (newMode != m_currentPersonality) {
+            m_currentPersonality = newMode;
+            if (m_personalityCallback) {
+                m_personalityCallback(newMode);
+            }
         }
     }
 

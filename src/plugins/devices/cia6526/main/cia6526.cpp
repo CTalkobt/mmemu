@@ -129,15 +129,6 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 }
 
 bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
-    if (m_baseAddr == 0xDD00) {
-        static int dd00count = 0;
-        if (dd00count < 20) {
-            fprintf(stderr, "[CIA2] ioWrite addr=%04X val=%02X reg=%d match=%d\n",
-                    addr, val, (int)(addr & 0x0F), ((addr & ~addrMask()) == m_baseAddr)?1:0);
-            fflush(stderr);
-            dd00count++;
-        }
-    }
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x0F;

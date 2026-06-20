@@ -46,10 +46,13 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         }
     }
 
-    // Colour RAM $D800-$DBFF
-    if (addr >= 0xD800 && addr <= 0xDBFF) {
-        *val = m_colorRam[addr - 0xD800];
-        return true;
+    // Colour RAM window ($D800-$DFFF)
+    if (addr >= 0xD800 && addr <= 0xDFFF) {
+        bool cram2k = m_cram2kQuery ? m_cram2kQuery() : false;
+        if (addr <= 0xDBFF || cram2k) {
+            *val = m_colorRam[addr - 0xD800];
+            return true;
+        }
     }
 
     // $D600-$D6FF system registers
@@ -69,10 +72,13 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 }
 
 bool Mega65IoStub::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
-    // Colour RAM $D800-$DBFF
-    if (addr >= 0xD800 && addr <= 0xDBFF) {
-        m_colorRam[addr - 0xD800] = val;
-        return true;
+    // Colour RAM window ($D800-$DFFF)
+    if (addr >= 0xD800 && addr <= 0xDFFF) {
+        bool cram2k = m_cram2kQuery ? m_cram2kQuery() : false;
+        if (addr <= 0xDBFF || cram2k) {
+            m_colorRam[addr - 0xD800] = val;
+            return true;
+        }
     }
 
     // $D600-$D6FF system registers

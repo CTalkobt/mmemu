@@ -46,7 +46,7 @@ struct BusConfig {
     uint32_t dataBits;      // 8, 16, 32
     BusRole  role;
     bool     littleEndian;
-    uint32_t addrMask;      // (1u << addrBits) - 1
+    uint32_t addrMask;      // (addrBits == 32) ? 0xFFFFFFFF : ((1u << addrBits) - 1)
 };
 
 /**

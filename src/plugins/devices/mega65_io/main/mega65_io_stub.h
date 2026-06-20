@@ -30,17 +30,21 @@ public:
 
     const char* name() const override { return "MEGA65 I/O"; }
     uint32_t    baseAddr() const override { return 0xD600; }
-    uint32_t    addrMask() const override { return 0x03FF; } // $D600-$D9FF (covers D600-D6FF + D800-DBFF with colour RAM)
+    uint32_t    addrMask() const override { return 0x7FFF; } // $D600-$DFFF range
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void reset() override;
     void tick(uint64_t) override {}
 
-    /// Access the colour RAM buffer (1KB, shared with VIC4 for rendering)
+    /// Access the colour RAM buffer (32KB, shared with VIC4 for rendering)
     uint8_t* colorRam() { return m_colorRam; }
+
+    /// Set callback to query if 2KB Color RAM view ($D800-$DFFF) is enabled.
+    void setCram2kQuery(std::function<bool()> q) { m_cram2kQuery = q; }
 
 private:
     uint8_t m_regs[256];     // Shadow for $D600-$D6FF
-    uint8_t m_colorRam[1024]; // Colour RAM $D800-$DBFF
+    uint8_t m_colorRam[32768]; // Colour RAM (32KB total)
+    std::function<bool()> m_cram2kQuery;
 };

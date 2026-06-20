@@ -81,22 +81,25 @@ public:
     // $D040-$D047: DAT ports
 
     // Palette access
-    uint32_t getPaletteRGBA(uint8_t index) const;
+    uint32_t getPaletteRGBA(uint8_t index, uint8_t bank = 0) const;
 
     // $D030/$D031 accessors
     uint8_t d030() const { return m_regs[REG_D030]; }
     uint8_t d031() const { return m_regs[REG_D031]; }
 
+    /** Returns the 0-3 bank index used for $D100-$D3FF palette editing. */
+    virtual uint8_t getEditPalBank() const { return 0; }
+
 protected:
     void initPalette();
-    void renderBackground80col(uint32_t* buf);
+    virtual void renderBackground80col(uint32_t* buf);
     void renderBitplanes(uint32_t* buf);
 
     std::string m_vic3Name;
     bool m_locked = true;
 
-    // Palette: 256 entries, separate R/G/B channels
-    uint8_t m_paletteR[256];
-    uint8_t m_paletteG[256];
-    uint8_t m_paletteB[256];
+    // Palette: 1024 entries (4 banks of 256), separate R/G/B channels
+    uint8_t m_paletteR[1024];
+    uint8_t m_paletteG[1024];
+    uint8_t m_paletteB[1024];
 };

@@ -111,7 +111,7 @@ TEST_CASE(vic4_render_locked) {
     Vic4Fixture f;
     f.vic.ioWrite(nullptr, 0xD020, 0x01); // white border
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
     ASSERT_EQ(buf[0], (uint32_t)0xFFFFFFFF); // VIC2 rendering
 }
@@ -124,7 +124,7 @@ TEST_CASE(vic4_render_unlocked_vic3_fallback) {
     f.vic.ioWrite(nullptr, 0xD054, 0x00);
     f.vic.ioWrite(nullptr, 0xD020, 0x01);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
     ASSERT_EQ(buf[0], f.vic.getPaletteRGBA(1));
 }
@@ -147,11 +147,11 @@ TEST_CASE(vic4_screen_base_register) {
     f.vic.ioWrite(nullptr, 0xD061, 0x04);
     f.vic.ioWrite(nullptr, 0xD062, 0x00);
     f.vic.ioWrite(nullptr, 0xD063, 0x00);
-    ASSERT_EQ(f.vic.getScreenBase(), (uint32_t)0x0400);
+    ASSERT_EQ(f.vic.screenBase(), (uint32_t)0x0400);
 
     // 28-bit address
     f.vic.ioWrite(nullptr, 0xD063, 0x01);
-    ASSERT_EQ(f.vic.getScreenBase(), (uint32_t)0x01000400);
+    ASSERT_EQ(f.vic.screenBase(), (uint32_t)0x01000400);
 }
 
 TEST_CASE(vic4_char_base_register) {
@@ -162,7 +162,7 @@ TEST_CASE(vic4_char_base_register) {
     f.vic.ioWrite(nullptr, 0xD068, 0x00);
     f.vic.ioWrite(nullptr, 0xD069, 0x10);
     f.vic.ioWrite(nullptr, 0xD06A, 0x00);
-    ASSERT_EQ(f.vic.getCharBase(), (uint32_t)0x1000);
+    ASSERT_EQ(f.vic.charBitmapBase(), (uint32_t)0x1000);
 }
 
 TEST_CASE(vic4_col_base_register) {
@@ -218,16 +218,17 @@ TEST_CASE(vic4_fcm_basic) {
     // Color RAM: fg color for $FF substitution (not used here)
     f.colorRam[0] = 0x01;
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
 
-    // Pixel 0 = palette 5 (green)
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(5));
-    // Pixel 1 = palette 0 (bg = black)
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 1], f.vic.getPaletteRGBA(0));
+    // Pixel 0 = palette 5 (green), doubled in 40-col mode
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 1], f.vic.getPaletteRGBA(5));
+    // Pixel 1 = palette 0 (bg = black), at px+2 due to doubling
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 2], f.vic.getPaletteRGBA(0));
 }
 
 TEST_CASE(vic4_fcm_ff_uses_color_ram) {
@@ -255,14 +256,14 @@ TEST_CASE(vic4_fcm_ff_uses_color_ram) {
     // Color RAM: fg = palette index 7 (yellow)
     f.colorRam[0] = 7;
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
 
     // $FF pixel → uses colour RAM fg (index 7)
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(7));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(7));
 }
 
 TEST_CASE(vic4_fcm_chr16) {
@@ -291,12 +292,12 @@ TEST_CASE(vic4_fcm_chr16) {
 
     f.colorRam[0] = 0x01;
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(3));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(3));
 }
 
 TEST_CASE(vic4_fcm_fclrlo_only) {
@@ -321,13 +322,13 @@ TEST_CASE(vic4_fcm_fclrlo_only) {
     // Put something visible in FCM data
     f.bus.write8(0x2000 + 256 * 64, 5);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
     // Should be border (black), not palette 5 — FCM skipped this char
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0));
 }
 
 // --- NCM tests ---
@@ -361,16 +362,19 @@ TEST_CASE(vic4_ncm_basic) {
     // Row 0, byte 0: high nibble=3, low nibble=5 → pixels: $A3, $A5
     f.bus.write8(0x2000, 0x35);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
 
     // Left pixel: upper 4 bits from colour RAM ($A0) | high nibble (3) = $A3
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0xA3));
-    // Right pixel: $A0 | low nibble (5) = $A5
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 1], f.vic.getPaletteRGBA(0xA5));
+    // Doubled in 40-col mode: px+0 and px+1
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0xA3));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 1], f.vic.getPaletteRGBA(0xA3));
+    // Right pixel: $A0 | low nibble (5) = $A5, at px+2 and px+3
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 2], f.vic.getPaletteRGBA(0xA5));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 3], f.vic.getPaletteRGBA(0xA5));
 }
 
 TEST_CASE(vic4_ncm_nibble_f_uses_color_ram) {
@@ -396,15 +400,15 @@ TEST_CASE(vic4_ncm_nibble_f_uses_color_ram) {
     // NCM data: byte = $FF → high nibble=$F, low nibble=$F
     f.bus.write8(0x2000, 0xFF);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
 
     // Nibble $F → use full colour RAM value (0x78) as palette index
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0x78));
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px + 1], f.vic.getPaletteRGBA(0x78));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0x78));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px + 1], f.vic.getPaletteRGBA(0x78));
 }
 
 TEST_CASE(vic4_ncm_zero_nibble_is_bg) {
@@ -429,12 +433,12 @@ TEST_CASE(vic4_ncm_zero_nibble_is_bg) {
     // NCM data: $00 → both nibbles = 0 → background
     f.bus.write8(0x2000, 0x00);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(2));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(2));
 }
 
 // --- Variable columns/rows and line step ---
@@ -509,16 +513,16 @@ TEST_CASE(vic4_fcm_variable_rows) {
     f.bus.write8(0x2080, 7); // char 2 pixel 0 = palette 7
     f.colorRam[40] = 0x01;
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     // Row 0
-    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(5));
     // Row 1 (8 pixels down)
-    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(7));
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(7));
     // Row 2 should NOT have been rendered (only 2 rows) — stays as border (black)
-    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 16) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 16) * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0));
 }
 
 TEST_CASE(vic4_fcm_linestep) {
@@ -548,12 +552,12 @@ TEST_CASE(vic4_fcm_linestep) {
     f.bus.write8(0x2080, 9); // char 2 pixel 0 = palette 9
     f.colorRam[40] = 0x01; // colour RAM still uses cellIdx = row*cols+col = 1*40+0 = 40
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
-    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(3));
-    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(9));
+    int px = VIC4::V4_DISPLAY_X;
+    ASSERT_EQ(buf[VIC2::DISPLAY_Y * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(3));
+    ASSERT_EQ(buf[(VIC2::DISPLAY_Y + 8) * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(9));
 }
 
 TEST_CASE(vic4_ncm_without_chr16_is_fcm) {
@@ -579,13 +583,13 @@ TEST_CASE(vic4_ncm_without_chr16_is_fcm) {
     // FCM data: pixel 0 = palette 5
     f.bus.write8(0x2000, 5);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
     // Should render as FCM (byte=5 → palette 5), not NCM
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(5));
 }
 
 // --- Sprite extension tests ---
@@ -624,17 +628,18 @@ TEST_CASE(vic4_sprite_extended_height) {
         f.bus.write8(0x0340 + r * 3 + 2, 0xFF);
     }
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
+    // Sprite X=50 in VIC-II space → output X=100 (SPRH640=0 doubles X)
     // Row 0 should be white
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
     // Row 21 (beyond VIC-II limit) should also be white
-    ASSERT_EQ(buf[71 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[71 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
     // Row 29 (last) should be white
-    ASSERT_EQ(buf[79 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[79 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
     // Row 30 should NOT be sprite (border = black)
-    ASSERT_EQ(buf[80 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[80 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(0));
 }
 
 TEST_CASE(vic4_sprite_16colour) {
@@ -664,12 +669,13 @@ TEST_CASE(vic4_sprite_16colour) {
     // Byte 0 of row 0: high nibble=5, low nibble=3
     f.bus.write8(0x0340, 0x53);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
     // Color = sprite# * 16 + nibble. Sprite 0 → 0*16+5=5, 0*16+3=3
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(5));
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 51], f.vic.getPaletteRGBA(3));
+    // X=50 → output 100, each pixel doubled (sprXScale=2)
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 102], f.vic.getPaletteRGBA(3));
 }
 
 TEST_CASE(vic4_sprite_16colour_transparent) {
@@ -695,13 +701,13 @@ TEST_CASE(vic4_sprite_16colour_transparent) {
     // Nibble 0 = transparent
     f.bus.write8(0x0340, 0x05); // high=0 (transparent), low=5
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // First pixel: transparent → should be border color (blue)
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(6));
-    // Second pixel: nibble 5 → palette 0*16+5=5
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 51], f.vic.getPaletteRGBA(5));
+    // First pixel: transparent → should be border color (blue). X=50 → output 100.
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(6));
+    // Second pixel: nibble 5 → palette 0*16+5=5, at output 102 (doubled)
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 102], f.vic.getPaletteRGBA(5));
 }
 
 TEST_CASE(vic4_sprite_y_msb) {
@@ -729,13 +735,13 @@ TEST_CASE(vic4_sprite_y_msb) {
     f.bus.write8(0x0341, 0xFF);
     f.bus.write8(0x0342, 0xFF);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // Sprite at Y=261 — should be visible near bottom of frame
-    ASSERT_EQ(buf[261 * VIC2::FRAME_W + 10], f.vic.getPaletteRGBA(1));
+    // Sprite at Y=261 — should be visible near bottom of frame. X=10 → output 20.
+    ASSERT_EQ(buf[261 * VIC4::V4_FRAME_W + 20], f.vic.getPaletteRGBA(1));
     // Y=260 should be border
-    ASSERT_EQ(buf[260 * VIC2::FRAME_W + 10], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[260 * VIC4::V4_FRAME_W + 20], f.vic.getPaletteRGBA(0));
 }
 
 TEST_CASE(vic4_sprite_pointer_relocation) {
@@ -769,10 +775,11 @@ TEST_CASE(vic4_sprite_pointer_relocation) {
     f.bus.write8(0x0381, 0xFF);
     f.bus.write8(0x0382, 0xFF);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], f.vic.getPaletteRGBA(1));
+    // X=50 → output 100 (SPRH640=0 doubles X)
+    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
 }
 
 // --- Display geometry accessors ---
@@ -819,7 +826,7 @@ TEST_CASE(vic4_palette_banks) {
     ASSERT_EQ(f.vic.getSprPalBank(), (uint8_t)0);
     ASSERT_EQ(f.vic.getBtPalBank(), (uint8_t)1);
     ASSERT_EQ(f.vic.getAbtPalBank(), (uint8_t)2);
-    ASSERT_EQ(f.vic.getMapEdPal(), (uint8_t)3);
+    ASSERT_EQ(f.vic.getEditPalBank(), (uint8_t)3);
 }
 
 // --- System flags ---
@@ -872,13 +879,13 @@ TEST_CASE(vic4_bitplane16_basic) {
     // Plane 1: first byte = 0xFF (all bits set → bit 1 of nibble)
     f.bus.write8(0x2000, 0xFF);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
     // Both planes set → nibble = 0b11 = 3 → palette index 3
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(3));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(3));
 }
 
 TEST_CASE(vic4_bitplane16_transparent) {
@@ -901,10 +908,10 @@ TEST_CASE(vic4_bitplane16_transparent) {
     f.bus.write8(0x0000, 0x00);
     f.bus.write8(0x2000, 0x00);
 
-    uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    int px = VIC2::DISPLAY_X;
+    int px = VIC4::V4_DISPLAY_X;
     int py = VIC2::DISPLAY_Y;
-    ASSERT_EQ(buf[py * VIC2::FRAME_W + px], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0));
 }

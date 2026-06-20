@@ -182,7 +182,7 @@ void SparseMemoryBus::addRegion(uint32_t base, uint32_t size, const uint8_t* dat
 }
 
 void SparseMemoryBus::addRomOverlay(uint32_t base, uint32_t size, const uint8_t* data) {
-    addRegion(base, size, data, false);
+    m_regions.insert(m_regions.begin(), {base, size, data, false});
 }
 
 void SparseMemoryBus::removeRomOverlay(uint32_t base) {

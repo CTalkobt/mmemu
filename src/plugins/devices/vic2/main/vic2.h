@@ -118,7 +118,7 @@ public:
     void renderFrame(uint32_t* buffer) override;
 
     /** Manual DMA peek for testing and diagnostics. */
-    uint8_t dmaPeek(uint32_t offset) const;
+    virtual uint8_t dmaPeek(uint32_t offset) const;
 
     // -----------------------------------------------------------------------
     // Register indices (relative to base address)
@@ -176,8 +176,8 @@ protected:
     uint32_t palette(uint8_t index) const;
     uint8_t  charRomByte(uint32_t offset) const;
 
-    uint32_t screenBase() const;
-    uint32_t charBitmapBase() const;
+    virtual uint32_t screenBase() const;
+    virtual uint32_t charBitmapBase() const;
 
     void renderBackground(uint32_t* buf);
     void renderSprites(uint32_t* buf);

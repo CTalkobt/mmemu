@@ -78,18 +78,22 @@ TEST_CASE(mega65_integration_rom_visibility) {
     }
     ASSERT(physBus != nullptr);
     
-    // The factory maps ROM to physical Banks 2-3 ($020000-$03FFFF)
-    // Even if the file is missing, it should have a 128KB overlay of $FFs
-    // which is write-protected.
-    
+    // The factory copies ROM into physical Banks 2-3 ($020000-$03FFFF)
+    // and also mirrors it to Banks 14-15 ($0E0000-$0FFFFF).
+    // On real MEGA65, this is writable chip RAM with ROM content loaded.
+
     uint32_t romAddr = 0x020000;
-    uint8_t original = physBus->peek8(romAddr);
-    
-    // Attempt to write to ROM
-    physBus->write8(romAddr, original ^ 0xFF);
-    
-    // Verify it didn't change
-    ASSERT_EQ(physBus->peek8(romAddr), original);
+    uint32_t mirrorAddr = 0x0E0000;
+
+    // Verify ROM content is present and mirrored
+    uint8_t romByte = physBus->peek8(romAddr);
+    uint8_t mirrorByte = physBus->peek8(mirrorAddr);
+    ASSERT_EQ(romByte, mirrorByte);
+
+    // Verify the region is writable (chip RAM, not ROM overlay)
+    physBus->write8(romAddr, romByte ^ 0xFF);
+    ASSERT_EQ(physBus->peek8(romAddr), (uint8_t)(romByte ^ 0xFF));
+    physBus->write8(romAddr, romByte); // restore
     
     delete desc;
 }
