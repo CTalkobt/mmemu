@@ -86,6 +86,9 @@ public:
     // Override VIC2 sprite rendering with VIC-IV extensions
     void renderSpritesV4(uint32_t* buf);
 
+    std::vector<std::pair<std::string, uint32_t>> getDerivedValues() const override;
+    std::vector<std::string> deviceAliases() const override { return {"VIC4", "VICIV", "VIC-IV"}; }
+
 private:
     void renderFCM(uint32_t* buf);
     void renderBitplanes16(uint32_t* buf);

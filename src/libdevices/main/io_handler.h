@@ -124,6 +124,17 @@ public:
         out.addrMask = addrMask();
     }
 
+    /**
+     * Return named computed values derived from internal device state.
+     * These bypass I/O mapping and ROM overlays — they call device methods directly.
+     * Used by the expression evaluator for "DEVICE.NAME" lookups (e.g. "VIC4.SCREEN").
+     * Names should be uppercase, without the device prefix (caller prepends it).
+     */
+    virtual std::vector<std::pair<std::string, uint32_t>> getDerivedValues() const { return {}; }
+
+    /** Short aliases for device name matching (e.g. "VIC4" for "VIC-IV"). */
+    virtual std::vector<std::string> deviceAliases() const { return {}; }
+
     // Disk/Image management (optional overrides)
     virtual bool mountDisk(int unit, const std::string& path) { return false; }
     virtual void ejectDisk(int unit)                          {}

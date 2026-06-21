@@ -150,6 +150,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 
                 if (m_ctx.dbg) { delete m_ctx.dbg; m_ctx.dbg = nullptr; }
                 m_ctx.dbg = new DebugContext(m_ctx.cpu, m_ctx.bus);
+                if (md->ioRegistry) m_ctx.dbg->setIoRegistry(md->ioRegistry);
                 m_ctx.cpu->setObserver(m_ctx.dbg);
                 m_ctx.bus->setObserver(m_ctx.dbg);
                 m_ctx.dbg->onMachineLoad(md);
@@ -643,7 +644,55 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         std::string expr;
         uint32_t addr = 0;
         if (ss >> expr) {
-            if (parseAddr(expr, addr)) {
+            // Handle DEVICE.? — list all derived values for a device
+            auto dotPos = expr.find('.');
+            if (dotPos != std::string::npos && expr.substr(dotPos + 1) == "?" && m_ctx.machine && m_ctx.machine->ioRegistry) {
+                std::string devPart = expr.substr(0, dotPos);
+                std::transform(devPart.begin(), devPart.end(), devPart.begin(), ::toupper);
+                std::vector<IOHandler*> handlers;
+                m_ctx.machine->ioRegistry->enumerate(handlers);
+                bool found = false;
+                for (auto* h : handlers) {
+                    std::string hn = h->name();
+                    std::string hnUpper = hn;
+                    std::transform(hnUpper.begin(), hnUpper.end(), hnUpper.begin(), ::toupper);
+                    bool match = (hnUpper == devPart);
+                    if (!match) {
+                        for (auto& alias : h->deviceAliases()) {
+                            std::string au = alias;
+                            std::transform(au.begin(), au.end(), au.begin(), ::toupper);
+                            if (au == devPart) { match = true; break; }
+                        }
+                    }
+                    if (match) {
+                        found = true;
+                        auto vals = h->getDerivedValues();
+                        if (vals.empty()) {
+                            m_output(hn + ": no derived values defined.\n");
+                        } else {
+                            m_output(hn + " derived values:\n");
+                            for (auto& [name, val] : vals) {
+                                m_output("  " + hn + "." + name + " = $" + toHex(val, addrWidth()) + "\n");
+                            }
+                        }
+                        // Also show registers from DeviceInfo
+                        DeviceInfo info;
+                        h->getDeviceInfo(info);
+                        if (!info.registers.empty()) {
+                            m_output(hn + " registers:\n");
+                            for (auto& r : info.registers) {
+                                m_output("  $" + toHex(info.baseAddr + r.offset, 4) + " " + r.name +
+                                         " = $" + toHex(r.value, 2) + "  " + r.description + "\n");
+                            }
+                        }
+                        break;
+                    }
+                }
+                if (!found) {
+                    m_output("Unknown device '" + devPart + "'. Available:\n");
+                    for (auto* h : handlers) m_output("  " + std::string(h->name()) + "\n");
+                }
+            } else if (parseAddr(expr, addr)) {
                 uint32_t len = 64;
                 if (ss >> expr) {
                     uint32_t l;

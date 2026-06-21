@@ -1,6 +1,8 @@
 #include "expression_evaluator.h"
 #include "debug_context.h"
 #include "libcore/main/icore.h"
+#include "libdevices/main/io_registry.h"
+#include "libdevices/main/io_handler.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -314,6 +316,43 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
         if (symAddr != 0xFFFFFFFF) {
             result = (double)symAddr;
             return true;
+        }
+        // Device derived values: "DEVICE.NAME" pattern (e.g. VIC4.SCREEN)
+        auto dotPos = expr.find('.');
+        if (dotPos != std::string::npos && dbg->ioRegistry()) {
+            std::string devPart = expr.substr(0, dotPos);
+            std::string valPart = expr.substr(dotPos + 1);
+            std::transform(devPart.begin(), devPart.end(), devPart.begin(), ::toupper);
+            std::transform(valPart.begin(), valPart.end(), valPart.begin(), ::toupper);
+            auto* ioReg = static_cast<IORegistry*>(dbg->ioRegistry());
+            std::vector<IOHandler*> handlers;
+            ioReg->enumerate(handlers);
+            for (auto* h : handlers) {
+                // Match against device name and aliases
+                bool match = false;
+                std::string hn = h->name();
+                std::string hnUpper = hn;
+                std::transform(hnUpper.begin(), hnUpper.end(), hnUpper.begin(), ::toupper);
+                if (hnUpper == devPart) match = true;
+                if (!match) {
+                    for (auto& alias : h->deviceAliases()) {
+                        std::string au = alias;
+                        std::transform(au.begin(), au.end(), au.begin(), ::toupper);
+                        if (au == devPart) { match = true; break; }
+                    }
+                }
+                if (match) {
+                    auto vals = h->getDerivedValues();
+                    for (auto& [name, val] : vals) {
+                        std::string nameUpper = name;
+                        std::transform(nameUpper.begin(), nameUpper.end(), nameUpper.begin(), ::toupper);
+                        if (nameUpper == valPart) {
+                            result = (double)val;
+                            return true;
+                        }
+                    }
+                }
+            }
         }
         if (dbg->cpu()) {
             std::string upperName = expr;

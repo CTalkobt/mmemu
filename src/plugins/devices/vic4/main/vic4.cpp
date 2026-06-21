@@ -690,3 +690,17 @@ void VIC4::renderBitplanes16(uint32_t* buf) {
         }
     }
 }
+
+std::vector<std::pair<std::string, uint32_t>> VIC4::getDerivedValues() const {
+    return {
+        {"SCREEN",  screenBase()},
+        {"CHARSET", charBitmapBase()},
+        {"COLOR",   getColBase()},
+        {"COLS",    (uint32_t)(getChrCount() < 0 ? ((m_regs[REG_D031] & D031_H640) ? 80 : 40) : getChrCount())},
+        {"ROWS",    (uint32_t)getDispRows()},
+        {"LOCKED",  isLocked() ? 1u : 0u},
+        {"H640",    (m_regs[REG_D031] & D031_H640) ? 1u : 0u},
+        {"FCM",     (d054() & (D054_FCLRLO | D054_FCLRHI)) ? 1u : 0u},
+        {"RASTER",  (uint32_t)m_regs[0x12]},  // $D012 raster counter low
+    };
+}

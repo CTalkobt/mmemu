@@ -54,7 +54,11 @@ public:
     ICore* cpu() const { return m_cpu; }
     IBus*  bus() const { return m_bus; }
 
+    void setIoRegistry(void* io) { m_ioRegistry = io; }
+    void* ioRegistry() const { return m_ioRegistry; }
+
 private:
+    void* m_ioRegistry = nullptr;
     struct KernalCall {
         std::string name;
         uint32_t    entrySp;
