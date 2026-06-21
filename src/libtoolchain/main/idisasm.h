@@ -30,7 +30,7 @@ class IDisassembler {
 public:
     virtual ~IDisassembler();
 
-    virtual const char* isaName() const = 0;
+    [[nodiscard]] virtual const char* isaName() const = 0;
 
     /**
      * Disassemble one instruction into a string buffer.

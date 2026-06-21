@@ -252,6 +252,12 @@ bool DebugContext::restoreSnapshot(int index) {
     return true;
 }
 
+bool DebugContext::deleteSnapshot(int index) {
+    if (index < 0 || index >= (int)m_snapshots.size()) return false;
+    m_snapshots.erase(m_snapshots.begin() + index);
+    return true;
+}
+
 std::vector<uint32_t> DebugContext::diffSnapshots(int idxA, int idxB) {
     std::vector<uint32_t> diffs;
     if (idxA < 0 || idxA >= (int)m_snapshots.size()) return diffs;

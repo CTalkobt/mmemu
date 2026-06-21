@@ -34,12 +34,12 @@ static IAssembler* createAsmKick() {
 }
 
 static MachineDescriptor* createMachineRaw6502() {
-    MachineDescriptor* desc = new MachineDescriptor();
+    auto* desc = new MachineDescriptor();
     desc->machineId = "raw6502";
     desc->displayName = "Raw 6502 System (Plugin)";
 
-    FlatMemoryBus* bus = new FlatMemoryBus("system", 16);
-    MOS6502* cpu = new MOS6502();
+    auto* bus = new FlatMemoryBus("system", 16);
+    auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
 
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
@@ -49,12 +49,12 @@ static MachineDescriptor* createMachineRaw6502() {
 }
 
 static MachineDescriptor* createMachineRaw6510() {
-    MachineDescriptor* desc = new MachineDescriptor();
+    auto* desc = new MachineDescriptor();
     desc->machineId = "raw6510";
     desc->displayName = "Raw 6510 System (Plugin)";
 
-    FlatMemoryBus* bus = new FlatMemoryBus("system", 16);
-    MOS6510* cpu = new MOS6510();
+    auto* bus = new FlatMemoryBus("system", 16);
+    auto* cpu = new MOS6510();
     cpu->setDataBus(bus);
 
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});

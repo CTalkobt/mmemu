@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 #include <iomanip>
 #include <functional>
@@ -25,11 +26,11 @@ class CliInterpreter {
 public:
     using OutputFn = std::function<void(const std::string&)>;
 
-    CliInterpreter(CliContext& ctx, OutputFn output) : m_ctx(ctx), m_output(output) {}
+    CliInterpreter(CliContext& ctx, OutputFn output) : m_ctx(ctx), m_output(std::move(output)) {}
 
     void processLine(const std::string& line);
-    bool isAssemblyMode() const { return m_asmMode; }
-    uint32_t getAsmAddr() const { return m_asmAddr; }
+    [[nodiscard]] bool isAssemblyMode() const { return m_asmMode; }
+    [[nodiscard]] uint32_t getAsmAddr() const { return m_asmAddr; }
 
 private:
     void handleNormalCommand(const std::string& line);
@@ -38,7 +39,7 @@ private:
     void dumpMemory(uint32_t addr, uint32_t len);
     void saveMemory(const std::string& path, uint32_t addr, uint32_t len);
     void showRegisters();
-    int addrWidth() const;
+    [[nodiscard]] int addrWidth() const;
 
     CliContext& m_ctx;
     OutputFn m_output;
@@ -47,4 +48,5 @@ private:
 
     std::vector<uint8_t> m_lastSearchPattern;
     uint32_t m_lastSearchFoundAddr = 0xFFFFFFFF;
+    std::string m_traceFilter = "all"; // all, calls, io
 };

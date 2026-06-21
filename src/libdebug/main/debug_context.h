@@ -33,7 +33,9 @@ public:
 
     int  saveSnapshot(const std::string& label);
     bool restoreSnapshot(int index);
-    
+    bool deleteSnapshot(int index);
+    void clearSnapshots() { m_snapshots.clear(); }
+
     // Returns indices of snapshots
     const std::vector<SystemSnapshot>& snapshots() const { return m_snapshots; }
 

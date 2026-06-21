@@ -8,7 +8,7 @@ class Disassembler6502 : public IDisassembler {
 public:
     Disassembler6502(SymbolTable* symbols = nullptr);
 
-    const char* isaName() const override { return "6502"; }
+    [[nodiscard]] const char* isaName() const override { return "6502"; }
 
     int disasmOne(IBus* bus, uint32_t addr, char* buf, int bufsz) override;
     int disasmEntry(IBus* bus, uint32_t addr, DisasmEntry& entry) override;

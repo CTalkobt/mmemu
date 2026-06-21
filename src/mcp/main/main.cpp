@@ -30,6 +30,7 @@
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include "libdevices/main/iaudio_output.h"
+#include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/io_registry.h"
 #include "imap_controller.h"
 
@@ -297,6 +298,44 @@ Json handleDescribe() {
         addTool("read_registers", "Read all current CPU registers (A, X, Y, SP, PC, flags).", rrSchema);
     }
 
+    {
+        Json wrSchema(Json::OBJ);
+        wrSchema.oVal["type"] = Json("object");
+        Json wrProps(Json::OBJ);
+        wrProps.oVal["machine_id"] = midProp;
+        Json wrNameProp(Json::OBJ); wrNameProp.oVal["type"] = Json("string"); wrNameProp.oVal["description"] = Json("Name of the register (e.g. \"A\", \"X\", \"Y\", \"SP\")");
+        wrProps.oVal["reg"] = wrNameProp;
+        Json wrValProp(Json::OBJ); wrValProp.oVal["type"] = Json("integer"); wrValProp.oVal["description"] = Json("Value to write");
+        wrProps.oVal["value"] = wrValProp;
+        wrSchema.oVal["properties"] = wrProps;
+        Json wrReq(Json::ARR); wrReq.push_back(Json("machine_id")); wrReq.push_back(Json("reg")); wrReq.push_back(Json("value"));
+        wrSchema.oVal["required"] = wrReq;
+        addTool("write_register", "Write a value to a CPU register.", wrSchema);
+    }
+
+    Json svmSchema(Json::OBJ);
+    svmSchema.oVal["type"] = Json("object");
+    Json svmProps(Json::OBJ);
+    svmProps.oVal["machine_id"] = midProp;
+    Json pathProp(Json::OBJ); pathProp.oVal["type"] = Json("string"); pathProp.oVal["description"] = Json("Destination file path");
+    svmProps.oVal["path"] = pathProp;
+    svmProps.oVal["addr"] = addrProp;
+    svmProps.oVal["size"] = sizeProp;
+    svmSchema.oVal["properties"] = svmProps;
+    Json svmReq(Json::ARR); svmReq.push_back(Json("machine_id")); svmReq.push_back(Json("path")); svmReq.push_back(Json("addr")); svmReq.push_back(Json("size"));
+    svmSchema.oVal["required"] = svmReq;
+    addTool("save_memory", "Save a range of memory to a binary file.", svmSchema);
+
+    Json scrSchema(Json::OBJ);
+    scrSchema.oVal["type"] = Json("object");
+    Json scrProps(Json::OBJ);
+    scrProps.oVal["machine_id"] = midProp;
+    scrProps.oVal["path"] = pathProp;
+    scrSchema.oVal["properties"] = scrProps;
+    Json scrReq(Json::ARR); scrReq.push_back(Json("machine_id")); scrReq.push_back(Json("path"));
+    scrSchema.oVal["required"] = scrReq;
+    addTool("screenshot", "Save a screenshot of the machine's video output to a PNG file.", scrSchema);
+
     Json smSchema(Json::OBJ);
     smSchema.oVal["type"] = Json("object");
     Json smProps(Json::OBJ);
@@ -404,7 +443,6 @@ Json handleDescribe() {
     mtSchema.oVal["type"] = Json("object");
     Json mtProps(Json::OBJ);
     mtProps.oVal["machine_id"] = midProp;
-    Json pathProp(Json::OBJ); pathProp.oVal["type"] = Json("string"); pathProp.oVal["description"] = Json("Filesystem path to the file");
     mtProps.oVal["path"] = pathProp;
     mtSchema.oVal["properties"] = mtProps;
     Json mtReq(Json::ARR); mtReq.push_back(Json("machine_id")); mtReq.push_back(Json("path"));
@@ -1289,6 +1327,81 @@ Json handleToolsCall(const Json& params) {
             }
             ss << std::dec << "\nCycles: " << ms->cpu->cycles();
             textItem.oVal["text"] = Json(ss.str());
+        }
+    } else if (name == "write_register") {
+        std::string mid = args["machine_id"].sVal;
+        std::string regName = args["reg"].sVal;
+        uint32_t val = (uint32_t)args["value"].nVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int idx = ms->cpu->regIndexByName(regName.c_str());
+            if (idx >= 0) {
+                ms->cpu->regWrite(idx, val);
+                textItem.oVal["text"] = Json("Wrote $" + toHex(val) + " to register " + regName);
+            } else {
+                textItem.oVal["text"] = Json("Error: Unknown register '" + regName + "'");
+                textItem.oVal["isError"] = Json(true);
+            }
+        }
+    } else if (name == "save_memory") {
+        std::string mid = args["machine_id"].sVal;
+        std::string path = args["path"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t addr, size;
+            std::string errMsg;
+            if (resolveAddrWithDiagnostic(args["addr"], ms->dbg, addr, errMsg) &&
+                resolveAddrWithDiagnostic(args["size"], ms->dbg, size, errMsg)) {
+                FILE* f = fopen(path.c_str(), "wb");
+                if (f) {
+                    for (uint32_t i = 0; i < size; ++i) {
+                        fputc(ms->bus->read8(addr + i), f);
+                    }
+                    fclose(f);
+                    textItem.oVal["text"] = Json("Saved " + std::to_string(size) + " bytes to " + path);
+                } else {
+                    textItem.oVal["text"] = Json("Error: Failed to open file for writing: " + path);
+                    textItem.oVal["isError"] = Json(true);
+                }
+            } else {
+                textItem.oVal["text"] = Json("Error: " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            }
+        }
+    } else if (name == "screenshot") {
+        std::string mid = args["machine_id"].sVal;
+        std::string path = args["path"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            IVideoOutput* video = nullptr;
+            if (ms->machine->ioRegistry) {
+                std::vector<IOHandler*> handlers;
+                ms->machine->ioRegistry->enumerate(handlers);
+                for (auto* handler : handlers) {
+                    video = dynamic_cast<IVideoOutput*>(handler);
+                    if (video) break;
+                }
+            }
+            if (video) {
+                if (video->exportPng(path)) {
+                    textItem.oVal["text"] = Json("Screenshot saved to " + path);
+                } else {
+                    textItem.oVal["text"] = Json("Error: Failed to save screenshot to " + path);
+                    textItem.oVal["isError"] = Json(true);
+                }
+            } else {
+                textItem.oVal["text"] = Json("Error: No video output device found");
+                textItem.oVal["isError"] = Json(true);
+            }
         }
     } else if (name == "search_memory") {
         std::string mid = args["machine_id"].sVal;

@@ -5,13 +5,20 @@
 #include "libcore/main/image_loader.h"
 #include "libcore/main/sim_config.h"
 #include "libdevices/main/ivideo_output.h"
+#include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/ikeyboard_matrix.h"
+#include "libdevices/main/io_registry.h"
 #include "plugin_command_registry.h"
 #include "libdebug/main/expression_evaluator.h"
+#include "imap_controller.h"
+#include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <set>
+#include <map>
+#include <cstring>
 
 static std::string toHex(uint32_t v, int width = 4) {
     std::ostringstream ss;
@@ -992,6 +999,498 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("No machine or I/O registry available.\n");
         }
+    } else if (cmd == "regwrite") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        std::string regName, valExpr;
+        if (ss >> regName >> valExpr) {
+            uint32_t val;
+            if (ExpressionEvaluator::evaluate(valExpr, m_ctx.dbg, val)) {
+                int idx = m_ctx.cpu->regIndexByName(regName.c_str());
+                if (idx >= 0) {
+                    m_ctx.cpu->regWrite(idx, val);
+                    showRegisters();
+                } else {
+                    m_output("Error: Unknown register '" + regName + "'\n");
+                }
+            } else {
+                m_output("Error: Invalid expression '" + valExpr + "'\n");
+            }
+        } else {
+            m_output("Syntax: regwrite <name> <value>\n");
+        }
+    } else if (cmd == "trace") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string sub;
+        if (ss >> sub) {
+            if (sub == "dump") {
+                int n = 16;
+                std::string nStr;
+                if (ss >> nStr) { try { n = std::stoi(nStr); } catch (...) {} }
+                auto& buf = m_ctx.dbg->trace();
+                if (buf.size() == 0) { m_output("Trace buffer empty.\n"); return; }
+
+                // Collect entries matching filter, most recent first
+                std::vector<size_t> indices;
+                for (size_t i = buf.size(); i > 0 && (int)indices.size() < n; --i) {
+                    size_t idx = i - 1;
+                    const auto& e = buf.at(idx);
+                    if (m_traceFilter == "calls") {
+                        auto& m = e.mnemonic;
+                        if (m.find("JSR") == std::string::npos && m.find("RTS") == std::string::npos &&
+                            m.find("RTI") == std::string::npos && m.find("BSR") == std::string::npos)
+                            continue;
+                    } else if (m_traceFilter == "io") {
+                        // Show only instructions that access I/O ($D000-$DFFF)
+                        bool hasIo = false;
+                        for (auto& mw : e.memWrites) {
+                            if (mw.addr >= 0xD000 && mw.addr <= 0xDFFF) { hasIo = true; break; }
+                        }
+                        if (!hasIo) continue;
+                    }
+                    indices.push_back(idx);
+                }
+                std::reverse(indices.begin(), indices.end());
+
+                if (indices.empty()) { m_output("No matching entries (filter: " + m_traceFilter + ").\n"); return; }
+                for (size_t idx : indices) {
+                    const auto& e = buf.at(idx);
+                    std::ostringstream os;
+                    os << "$" << toHex(e.addr, addrWidth()) << ": " << e.mnemonic;
+                    if (!e.regs.empty()) {
+                        os << "  [";
+                        bool first = true;
+                        for (auto& [rn, rv] : e.regs) {
+                            if (!first) os << " ";
+                            os << rn << "=$" << toHex(rv, 2);
+                            first = false;
+                        }
+                        os << "]";
+                    }
+                    os << "\n";
+                    m_output(os.str());
+                }
+            } else if (sub == "clear") {
+                m_ctx.dbg->trace().clear();
+                m_output("Trace buffer cleared.\n");
+            } else if (sub == "filter") {
+                std::string filter;
+                if (ss >> filter) {
+                    if (filter == "all" || filter == "calls" || filter == "io") {
+                        m_traceFilter = filter;
+                        m_output("Trace filter set to: " + filter + "\n");
+                    } else {
+                        m_output("Invalid filter. Valid: all, calls, io\n");
+                    }
+                } else {
+                    m_output("Current trace filter: " + m_traceFilter + "\n");
+                }
+            } else if (sub == "size") {
+                auto& buf = m_ctx.dbg->trace();
+                m_output("Trace buffer: " + std::to_string(buf.size()) + "/" +
+                         std::to_string(buf.capacity()) + " entries (filter: " + m_traceFilter + ")\n");
+            } else {
+                m_output("Syntax: trace <dump [n]|clear|filter [mode]|size>\n");
+            }
+        } else {
+            m_output("Syntax: trace <dump [n]|clear|filter [mode]|size>\n");
+        }
+    } else if (cmd == "snapshot") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string sub;
+        if (ss >> sub) {
+            if (sub == "save") {
+                std::string name;
+                if (ss >> name) {
+                    int idx = m_ctx.dbg->saveSnapshot(name);
+                    m_output("Snapshot " + std::to_string(idx) + " '" + name + "' saved.\n");
+                } else {
+                    m_output("Syntax: snapshot save <name>\n");
+                }
+            } else if (sub == "list") {
+                const auto& snaps = m_ctx.dbg->snapshots();
+                if (snaps.empty()) { m_output("No snapshots.\n"); return; }
+                for (size_t i = 0; i < snaps.size(); ++i) {
+                    m_output("  " + std::to_string(i) + ": " + snaps[i].label + "\n");
+                }
+            } else if (sub == "diff") {
+                int i1, i2;
+                if (ss >> i1 >> i2) {
+                    auto diffs = m_ctx.dbg->diffSnapshots(i1, i2);
+                    if (diffs.empty()) {
+                        m_output("Snapshots are identical.\n");
+                    } else {
+                        m_output("Memory diff: " + std::to_string(diffs.size()) + " bytes differ:\n");
+                        int shown = 0;
+                        for (uint32_t a : diffs) {
+                            if (++shown > 32) { m_output("  ... (" + std::to_string(diffs.size() - 32) + " more)\n"); break; }
+                            m_output("  $" + toHex(a, addrWidth()) + "\n");
+                        }
+                    }
+                } else {
+                    m_output("Syntax: snapshot diff <index1> <index2>\n");
+                }
+            } else if (sub == "delete") {
+                std::string arg;
+                if (ss >> arg) {
+                    if (arg == "*") {
+                        int count = m_ctx.dbg->snapshots().size();
+                        m_ctx.dbg->clearSnapshots();
+                        m_output("Deleted " + std::to_string(count) + " snapshot(s).\n");
+                    } else {
+                        int idx = std::stoi(arg);
+                        if (m_ctx.dbg->deleteSnapshot(idx)) {
+                            m_output("Deleted snapshot " + std::to_string(idx) + ".\n");
+                        } else {
+                            m_output("Error: Invalid snapshot index.\n");
+                        }
+                    }
+                } else {
+                    m_output("Syntax: snapshot delete <index|*>\n");
+                }
+            } else {
+                m_output("Syntax: snapshot <save|list|diff|delete> ...\n");
+            }
+        } else {
+            m_output("Syntax: snapshot <save|list|diff|delete> ...\n");
+        }
+    } else if (cmd == "analyze") {
+        if (!m_ctx.cpu || !m_ctx.bus || !m_ctx.disasm) {
+            m_output("No machine or disassembler available.\n"); return;
+        }
+        std::string sub;
+        if (ss >> sub && sub == "routine") {
+            std::string expr;
+            if (ss >> expr) {
+                uint32_t entryAddr;
+                if (!ExpressionEvaluator::evaluate(expr, m_ctx.dbg, entryAddr)) {
+                    m_output("Error: Invalid address expression.\n"); return;
+                }
+                int maxInsns = 200;
+                std::string maxStr;
+                if (ss >> maxStr) { try { maxInsns = std::stoi(maxStr); } catch (...) {} }
+                if (maxInsns > 5000) maxInsns = 5000;
+
+                uint32_t addrMask = m_ctx.bus->config().addrMask;
+                SymbolTable* symTab = m_ctx.dbg ? &m_ctx.dbg->symbols() : nullptr;
+
+                std::set<uint32_t> visited;
+                struct QueueItem { uint32_t pc; int depth; };
+                std::vector<QueueItem> queue;
+                queue.push_back({entryAddr, 0});
+
+                struct CallInfo { uint32_t target; uint32_t from; };
+                struct LoopInfo { uint32_t branchAddr; uint32_t target; };
+
+                std::vector<CallInfo> calls;
+                std::vector<LoopInfo> loops;
+                std::vector<uint32_t> exits;
+                int totalInsns = 0;
+                uint32_t minAddr = entryAddr, maxAddr = entryAddr;
+                int branchCount = 0;
+
+                while (!queue.empty() && totalInsns < maxInsns) {
+                    auto item = queue.back(); queue.pop_back();
+                    uint32_t pc = item.pc;
+
+                    while (totalInsns < maxInsns) {
+                        if (visited.count(pc)) break;
+                        visited.insert(pc);
+
+                        DisasmEntry entry;
+                        int bytes = m_ctx.disasm->disasmEntry(m_ctx.bus, pc, entry);
+                        if (bytes <= 0) break;
+                        ++totalInsns;
+                        if (pc < minAddr) minAddr = pc;
+                        if (pc + bytes - 1 > maxAddr) maxAddr = pc + bytes - 1;
+
+                        if (entry.isReturn) { exits.push_back(pc); break; }
+                        else if (entry.isCall) {
+                            calls.push_back({entry.targetAddr & addrMask, pc});
+                            pc = (pc + bytes) & addrMask;
+                        } else if (entry.isBranch) {
+                            ++branchCount;
+                            uint32_t target = entry.targetAddr & addrMask;
+                            if (target <= pc) loops.push_back({pc, target});
+                            if (!visited.count(target)) queue.push_back({target, 0});
+                            pc = (pc + bytes) & addrMask;
+                        } else if (m_ctx.bus->peek8(pc) == 0x4C) {
+                            pc = entry.targetAddr & addrMask;
+                        } else if (m_ctx.bus->peek8(pc) == 0x6C || m_ctx.bus->peek8(pc) == 0x00) {
+                            exits.push_back(pc); break;
+                        } else {
+                            pc = (pc + bytes) & addrMask;
+                        }
+                    }
+                }
+
+                std::ostringstream os;
+                os << "=== Routine at $" << toHex(entryAddr, addrWidth());
+                if (symTab) { auto l = symTab->getLabel(entryAddr); if (!l.empty()) os << " (" << l << ")"; }
+                os << " ===\n";
+                os << "Size: " << (maxAddr - minAddr + 1) << " bytes ($"
+                   << toHex(minAddr, addrWidth()) << "-$" << toHex(maxAddr, addrWidth())
+                   << "), " << totalInsns << " instructions\n";
+                if (totalInsns >= maxInsns) os << "NOTE: Truncated at " << maxInsns << " instructions\n";
+
+                if (!calls.empty()) {
+                    os << "\nCalls (" << calls.size() << "):\n";
+                    std::map<uint32_t, int> cc;
+                    for (auto& c : calls) cc[c.target]++;
+                    for (auto& [t, n] : cc) {
+                        os << "  JSR $" << toHex(t, addrWidth());
+                        if (symTab) { auto l = symTab->getLabel(t); if (!l.empty()) os << " (" << l << ")"; }
+                        if (n > 1) os << " x" << n;
+                        os << "\n";
+                    }
+                }
+                if (!loops.empty()) {
+                    os << "\nLoops (" << loops.size() << "):\n";
+                    for (auto& l : loops)
+                        os << "  $" << toHex(l.target, addrWidth()) << "-$" << toHex(l.branchAddr, addrWidth()) << "\n";
+                }
+                if (!exits.empty()) {
+                    os << "\nExits: ";
+                    for (size_t i = 0; i < exits.size(); ++i) {
+                        if (i) os << ", ";
+                        uint8_t op = m_ctx.bus->peek8(exits[i]);
+                        os << (op == 0x60 ? "RTS" : op == 0x40 ? "RTI" : "BRK") << " at $" << toHex(exits[i], addrWidth());
+                    }
+                    os << "\n";
+                }
+                m_output(os.str());
+            } else {
+                m_output("Syntax: analyze routine <addr> [max_instructions]\n");
+            }
+        }
+    } else if (cmd == "sid") {
+        if (!m_ctx.cpu || !m_ctx.bus) { m_output("No machine created.\n"); return; }
+        std::string sub;
+        if (ss >> sub && sub == "load") {
+            std::string path;
+            if (!(ss >> path)) { m_output("Syntax: sid load <path> [subtune]\n"); return; }
+            int subtune = -1;
+            std::string subStr;
+            if (ss >> subStr) { try { subtune = std::stoi(subStr); } catch (...) {} }
+
+            std::ifstream f(path, std::ios::binary);
+            if (!f) { m_output("Error: Cannot open file: " + path + "\n"); return; }
+            f.seekg(0, std::ios::end);
+            size_t fileSize = f.tellg();
+            f.seekg(0);
+            if (fileSize < 0x7C) { m_output("Error: File too small for PSID header.\n"); return; }
+
+            std::vector<uint8_t> raw(fileSize);
+            f.read(reinterpret_cast<char*>(raw.data()), fileSize);
+
+            std::string magic(reinterpret_cast<char*>(raw.data()), 4);
+            if (magic != "PSID" && magic != "RSID") {
+                m_output("Error: Not a PSID/RSID file.\n"); return;
+            }
+
+            auto rd16be = [&](size_t off) -> uint16_t { return (raw[off] << 8) | raw[off+1]; };
+            uint16_t version    = rd16be(0x04);
+            uint16_t dataOffset = rd16be(0x06);
+            uint16_t loadAddr   = rd16be(0x08);
+            uint16_t initAddr   = rd16be(0x0A);
+            uint16_t playAddr   = rd16be(0x0C);
+            uint16_t songs      = rd16be(0x0E);
+            uint16_t startSong  = rd16be(0x10);
+
+            auto extractStr = [&](size_t off) -> std::string {
+                char buf[33]; std::memcpy(buf, &raw[off], 32); buf[32] = '\0'; return buf;
+            };
+            std::string title = extractStr(0x16);
+            std::string author = extractStr(0x36);
+
+            const uint8_t* data = raw.data() + dataOffset;
+            size_t dataLen = fileSize - dataOffset;
+            if (loadAddr == 0 && dataLen >= 2) {
+                loadAddr = data[0] | (data[1] << 8);
+                data += 2; dataLen -= 2;
+            }
+            if (initAddr == 0) initAddr = loadAddr;
+            if (subtune < 1) subtune = startSong;
+            if (subtune < 1) subtune = 1;
+            if (subtune > songs) subtune = songs;
+
+            for (size_t i = 0; i < dataLen; ++i)
+                m_ctx.bus->write8(loadAddr + i, data[i]);
+
+            // Trampoline at $0002: LDA #subtune, JSR init, BRK
+            m_ctx.bus->write8(0x0002, 0xA9);
+            m_ctx.bus->write8(0x0003, (uint8_t)(subtune - 1));
+            m_ctx.bus->write8(0x0004, 0x20);
+            m_ctx.bus->write8(0x0005, initAddr & 0xFF);
+            m_ctx.bus->write8(0x0006, (initAddr >> 8) & 0xFF);
+            m_ctx.bus->write8(0x0007, 0x00);
+
+            m_ctx.cpu->setPc(0x0002);
+            for (int s = 0; s < 1000000; ++s) {
+                if (m_ctx.cpu->pc() == 0x0007) break;
+                m_ctx.cpu->step();
+            }
+
+            // Install play loop if play address exists
+            if (playAddr != 0) {
+                m_ctx.bus->write8(0x0002, 0x20);
+                m_ctx.bus->write8(0x0003, playAddr & 0xFF);
+                m_ctx.bus->write8(0x0004, (playAddr >> 8) & 0xFF);
+                m_ctx.bus->write8(0x0005, 0x4C);
+                m_ctx.bus->write8(0x0006, 0x02);
+                m_ctx.bus->write8(0x0007, 0x00);
+                m_ctx.cpu->setPc(0x0002);
+            }
+
+            m_output(magic + " v" + std::to_string(version) + ": " + title + " by " + author + "\n");
+            m_output("Songs: " + std::to_string(songs) + ", subtune " + std::to_string(subtune) + "\n");
+            m_output("Load: $" + toHex(loadAddr) + " Init: $" + toHex(initAddr) + " Play: $" + toHex(playAddr) + "\n");
+            if (playAddr) m_output("Play loop installed at $0002. Use 'recordaudio' to capture.\n");
+        } else {
+            m_output("Syntax: sid load <path> [subtune]\n");
+        }
+    } else if (cmd == "map") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        // Find MapMmu bus in the machine descriptor
+        IMapController* mapCtrl = nullptr;
+        for (auto& b : m_ctx.machine->buses) {
+            mapCtrl = dynamic_cast<IMapController*>(b.bus);
+            if (mapCtrl) break;
+        }
+        if (!mapCtrl) { m_output("No MAP controller on this machine.\n"); return; }
+        const MapState& ms = mapCtrl->getMapState();
+        std::ostringstream os;
+        os << "MAP State:\n  Enables: $" << toHex(ms.enables, 2) << "\n  Offsets: ";
+        for (int i = 0; i < 8; ++i) {
+            if (i) os << ", ";
+            os << "$" << toHex(ms.offsets[i], 5);
+        }
+        os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
+           << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
+        m_output(os.str());
+    } else if (cmd == "personality") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        if (!m_ctx.machine->ioRegistry) { m_output("No I/O registry.\n"); return; }
+        std::string mode;
+        if (ss >> mode) {
+            // Write KEY register sequence for personality change
+            uint8_t seq[2] = {0, 0};
+            if (mode == "c64")       { seq[0] = 0x00; seq[1] = 0x00; }
+            else if (mode == "c65")  { seq[0] = 0xA5; seq[1] = 0x96; }
+            else if (mode == "mega65" || mode == "gs") { seq[0] = 0x47; seq[1] = 0x53; }
+            else { m_output("Unknown personality. Use: c64, c65, mega65\n"); return; }
+            m_ctx.machine->ioRegistry->dispatchWrite(nullptr, 0xD02F, seq[0]);
+            m_ctx.machine->ioRegistry->dispatchWrite(nullptr, 0xD02F, seq[1]);
+            m_output("Personality switched to " + mode + ".\n");
+        } else {
+            // Read current personality from KEY register
+            uint8_t val = 0;
+            m_ctx.machine->ioRegistry->dispatchRead(nullptr, 0xD02F, &val);
+            m_output("KEY register: $" + toHex(val, 2) + "\n");
+        }
+    } else if (cmd == "recordaudio") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        std::string filename;
+        int durationMs = 0;
+        if (!(ss >> filename >> durationMs) || durationMs <= 0) {
+            m_output("Syntax: recordaudio <filename.wav> <duration_ms>\n"); return;
+        }
+        if (durationMs > 60000) durationMs = 60000;
+
+        // Find audio device
+        IAudioOutput* audioDev = nullptr;
+        bool isStereo = false;
+        if (m_ctx.machine->ioRegistry) {
+            std::vector<IOHandler*> handlers;
+            m_ctx.machine->ioRegistry->enumerate(handlers);
+            for (auto* h : handlers) {
+                auto* ao = dynamic_cast<IAudioOutput*>(h);
+                if (ao) {
+                    audioDev = ao;
+                    std::string dn = h->name();
+                    if (dn.find("Pair") != std::string::npos || dn.find("Stereo") != std::string::npos)
+                        isStereo = true;
+                    break;
+                }
+            }
+        }
+        if (!audioDev) { m_output("Error: No audio output device found.\n"); return; }
+
+        int sampleRate = audioDev->nativeSampleRate();
+        if (sampleRate <= 0) sampleRate = 44100;
+        int numChannels = isStereo ? 2 : 1;
+        int totalSamples = (int)((int64_t)sampleRate * durationMs / 1000) * numChannels;
+
+        std::vector<float> recorded;
+        recorded.reserve(totalSamples);
+
+        uint32_t clockHz = 985248;
+        int64_t totalCycles = (int64_t)clockHz * durationMs / 1000;
+        float pullBuf[4096];
+        int64_t cyclesRun = 0;
+        int batchSize = sampleRate / 20;
+        if (batchSize < 256) batchSize = 256;
+        int cyclesPerBatch = (int)((int64_t)clockHz * batchSize / sampleRate / numChannels);
+        if (cyclesPerBatch < 100) cyclesPerBatch = 100;
+
+        while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
+            for (int c = 0; c < cyclesPerBatch; ++c) {
+                if (m_ctx.machine->schedulerStep) {
+                    m_ctx.machine->schedulerStep(*m_ctx.machine);
+                } else {
+                    m_ctx.cpu->step();
+                }
+                ++cyclesRun;
+            }
+            int pulled = audioDev->pullSamples(pullBuf, 4096);
+            for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i)
+                recorded.push_back(pullBuf[i]);
+        }
+        // Final drain
+        while ((int)recorded.size() < totalSamples) {
+            int pulled = audioDev->pullSamples(pullBuf, 4096);
+            if (pulled <= 0) break;
+            for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i)
+                recorded.push_back(pullBuf[i]);
+        }
+
+        // Convert to 16-bit PCM and write WAV
+        std::vector<int16_t> pcm(recorded.size());
+        for (size_t i = 0; i < recorded.size(); ++i) {
+            float s = std::max(-1.0f, std::min(1.0f, recorded[i]));
+            pcm[i] = (int16_t)(s * 32767.0f);
+        }
+
+        std::ofstream wav(filename, std::ios::binary);
+        if (!wav) { m_output("Error: Cannot open file: " + filename + "\n"); return; }
+
+        uint32_t dataSize = pcm.size() * 2;
+        uint32_t wavFileSize = 36 + dataSize;
+        uint16_t bitsPerSample = 16;
+        uint16_t blockAlign = numChannels * 2;
+        uint32_t byteRate = sampleRate * blockAlign;
+        uint16_t audioFmt = 1;
+        uint16_t nc = numChannels;
+        uint32_t sr = sampleRate;
+        uint32_t fmtSize = 16;
+
+        wav.write("RIFF", 4); wav.write(reinterpret_cast<char*>(&wavFileSize), 4);
+        wav.write("WAVE", 4);
+        wav.write("fmt ", 4); wav.write(reinterpret_cast<char*>(&fmtSize), 4);
+        wav.write(reinterpret_cast<char*>(&audioFmt), 2);
+        wav.write(reinterpret_cast<char*>(&nc), 2);
+        wav.write(reinterpret_cast<char*>(&sr), 4);
+        wav.write(reinterpret_cast<char*>(&byteRate), 4);
+        wav.write(reinterpret_cast<char*>(&blockAlign), 2);
+        wav.write(reinterpret_cast<char*>(&bitsPerSample), 2);
+        wav.write("data", 4); wav.write(reinterpret_cast<char*>(&dataSize), 4);
+        wav.write(reinterpret_cast<const char*>(pcm.data()), dataSize);
+
+        float durActual = (float)recorded.size() / numChannels / sampleRate;
+        std::ostringstream os;
+        os << "Recorded " << std::fixed << std::setprecision(2) << durActual
+           << "s to " << filename << " (" << (isStereo ? "stereo" : "mono")
+           << ", " << sampleRate << " Hz, " << dataSize << " bytes)\n";
+        m_output(os.str());
     } else if (cmd == "quit" || cmd == "q") {
         m_ctx.quit = true;
     } else {
@@ -1039,8 +1538,10 @@ void CliInterpreter::printHelp() {
              "  run              - Run until a breakpoint or stop\n"
              "  setpc <addr>     - Set the CPU program counter\n"
              "  regs             - Show CPU registers\n"
+             "  regwrite <n> <v> - Write value V to register N\n"
              "  m <addr> [len]   - Dump memory\n"
              "  f <addr> <val> [len] - Fill memory range\n"
+             "  save <path> <addr> <len> - Save memory to binary file\n"
              "  copy <src> <dst> <len> - Copy memory range\n"
              "  swap <addr1> <addr2> <len> - Swap two memory ranges\n"
              "  search <hex1>... - Search for hex pattern in memory (all matches)\n"
@@ -1054,6 +1555,8 @@ void CliInterpreter::printHelp() {
              "  key <name> <state>- Press/release a key (state: 1/0 or down/up)\n"
              "  load <path> [addr]- Load a program/binary file\n"
              "  screenshot <file>  - Save current screen to a PNG file\n"
+             "  recordaudio <f> <d>- Record D ms of audio to WAV file F\n"
+             "  sid load <path>  - Load a SID music file (C64)\n"
              "  cart <path>      - Attach a cartridge image\n"
              "  tape mount <path>   - Mount a .tap file for playback\n"
              "  tape play           - Press Play (start/resume playback)\n"
@@ -1068,7 +1571,9 @@ void CliInterpreter::printHelp() {
              "  eject            - Eject currently attached cartridge\n"
              "  run [addr]       - Run from address (or last loaded address)\n"
              "  sym <add|del|list|search|load|clear> - Symbol table management\n"
-             "  .<instr>         - Assemble and execute a single instruction\n"             "  quit, q          - Exit the program\n"
+             "  .<instr>         - Assemble and execute a single instruction\n"
+             "  analyze routine <addr> - Analyze routine flow and branch targets\n"
+             "  quit, q          - Exit the program\n"
              "\nDebugging:\n"
              "  break <addr>     - Set execution breakpoint at address\n"
              "  watch read <addr> - Set read watchpoint at address\n"
@@ -1077,7 +1582,16 @@ void CliInterpreter::printHelp() {
              "  enable <id>      - Enable breakpoint/watchpoint\n"
              "  disable <id>     - Disable breakpoint/watchpoint\n"
              "  info breaks      - List all breakpoints and watchpoints\n"
-             "  stack [n]        - Show stack trace (default 8 most recent entries)\n");
+             "  stack [n]        - Show stack trace (default 8 most recent entries)\n"
+             "  trace dump [n]   - Dump instruction trace buffer\n"
+             "  trace clear      - Clear trace buffer\n"
+             "  trace filter <m> - Set trace filter (all, instructions, breakpoints, memory)\n"
+             "  snapshot save <n>- Save named machine state snapshot\n"
+             "  snapshot diff <a> <b> - Compare two snapshots\n"
+             "  snapshot list    - List saved snapshots\n"
+             "  snapshot delete <n> - Delete snapshot (or '*' for all)\n"
+             "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
+             "  personality <m>  - Switch MEGA65 I/O personality\n");
 
     std::vector<std::string> pluginCmds;
     PluginCommandRegistry::instance().listCommands(pluginCmds);

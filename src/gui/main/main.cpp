@@ -49,7 +49,7 @@
 class MmemuFrame : public wxFrame {
 public:
     MmemuFrame();
-    ~MmemuFrame() { m_timer.Stop(); delete m_audio; delete m_dbg; }
+    ~MmemuFrame() override { m_timer.Stop(); delete m_audio; delete m_dbg; }
 
     /** Toggle keyboard-capture mode and sync all UI + app key handler. */
     void setKeyCapture(bool active);
@@ -72,7 +72,7 @@ private:
     void OnLoadImage(wxCommandEvent& event);
     void OnAttachCart(wxCommandEvent& event);
     void OnEjectCart(wxCommandEvent& event);
-    void OnKbdFocus(wxCommandEvent& event);
+    void OnKbdFocus(const wxCommandEvent& event);
     void OnShowBpPane(wxCommandEvent& event);
     void OnShowSymPane(wxCommandEvent& event);
     void OnShowStackPane(wxCommandEvent& event);
@@ -85,14 +85,14 @@ private:
     void OnTypeTextDirect(wxCommandEvent& event);
     void OnTimer(wxTimerEvent& event);
     void OnCtrlShiftK(wxKeyEvent& event);
-    void ShowBreakpointPane();
+    void ShowBreakpointPane() const;
     void ShowSymbolPane();
-    void ShowStackPane();
-    void ShowMachineInspectorPane();
+    void ShowStackPane() const;
+    void ShowMachineInspectorPane() const;
     void ShowDeviceInfoPane();
 
     // Returns the currently-selected MemoryPane, or nullptr if none exist.
-    MemoryPane* activeMemPane() const {
+    [[nodiscard]] MemoryPane* activeMemPane() const {
         if (m_memPanes.empty()) return nullptr;
         int sel = m_memNotebook->GetSelection();
         if (sel == wxNOT_FOUND) return nullptr;
@@ -180,7 +180,7 @@ public:
                 // (idempotent if shift was never forwarded).
                 m_shiftPending = false;
                 logKey("left_shift", false);
-                m_handler("left_shift", false);
+                (void) m_handler("left_shift", false);
             }
             return Event_Processed;
         }
@@ -194,7 +194,7 @@ public:
             // Consume the buffered shift — the PET dedicated key needs no shift.
             m_shiftPending = false;
             logKey(dedicated, down);
-            m_handler(dedicated, down);
+            (void)m_handler(dedicated, down);
             return Event_Processed;
         }
 
@@ -203,11 +203,11 @@ public:
         if (!name.empty()) {
             if (m_shiftPending && down) {
                 logKey("left_shift", true);
-                m_handler("left_shift", true);
+                (void)m_handler("left_shift", true);
                 m_shiftPending = false;
             }
             logKey(name, down);
-            m_handler(name, down);
+            (void)m_handler(name, down);
             return Event_Processed;
         }
 
@@ -220,7 +220,7 @@ public:
 private:
     bool m_shiftPending = false;
 
-    void logKey(const std::string& name, bool down) {
+    void logKey(const std::string& name, bool down) const {
         if (m_logger) {
             char buf[80];
             snprintf(buf, sizeof(buf), "key%s: %s", down ? "Down" : "Up", name.c_str());
@@ -527,7 +527,7 @@ MmemuFrame::MmemuFrame()
     toolBar->Realize();
     
     // Status Bar
-    CreateStatusBar();
+    wxFrameBase::CreateStatusBar();
     
     // Main layout: Overall horizontal split
     auto* mainSplitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
@@ -634,7 +634,7 @@ void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
     std::string id = event.GetString().ToStdString();
     MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
     if (md) {
-        if (m_machine) delete m_machine;
+        if (m_machine != md) delete m_machine;
         m_machine = md;
         m_cpu = m_machine->cpus[0].cpu;
         m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
@@ -704,7 +704,7 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
         std::string id = dialog.GetSelectedMachineId();
         MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
         if (md) {
-            if (m_machine) delete m_machine;
+            if (m_machine != md) delete m_machine;
             m_machine = md;
             m_cpu = m_machine->cpus[0].cpu;
             // Use CPU data bus for memory pane if available, otherwise fallback to machine bus
@@ -1157,7 +1157,7 @@ void MmemuFrame::setKeyCapture(bool active) {
         // Ctrl and Shift that were pressed as part of the Ctrl+Shift+K shortcut).
         if (m_machine && m_machine->onKey) {
             for (const char* mod : {"control", "left_shift", "right_shift"})
-                m_machine->onKey(mod, false);
+                (void)m_machine->onKey(mod, false);
         }
     }
     SetStatusText(active
@@ -1165,7 +1165,7 @@ void MmemuFrame::setKeyCapture(bool active) {
         : "Keyboard released.");
 }
 
-void MmemuFrame::ShowBreakpointPane() {
+void MmemuFrame::ShowBreakpointPane() const {
     // Find the pane in the notebook (it may have been closed by the user).
     for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
         if (m_notebook->GetPage(i) == m_bpPane) {
@@ -1195,7 +1195,7 @@ void MmemuFrame::OnShowSymPane(wxCommandEvent&) {
     ShowSymbolPane();
 }
 
-void MmemuFrame::ShowStackPane() {
+void MmemuFrame::ShowStackPane() const {
     for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
         if (m_notebook->GetPage(i) == m_stackPane) {
             m_notebook->SetSelection(i);
@@ -1209,11 +1209,11 @@ void MmemuFrame::OnShowStackPane(wxCommandEvent&) {
     ShowStackPane();
 }
 
-void MmemuFrame::OnKbdFocus(wxCommandEvent& event) {
+void MmemuFrame::OnKbdFocus(const wxCommandEvent& event) {
     setKeyCapture(event.IsChecked());
 }
 
-void MmemuFrame::ShowMachineInspectorPane() {
+void MmemuFrame::ShowMachineInspectorPane() const {
     for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
         if (m_notebook->GetPage(i) == m_machineInspectorPane) {
             m_notebook->SetSelection(i);
