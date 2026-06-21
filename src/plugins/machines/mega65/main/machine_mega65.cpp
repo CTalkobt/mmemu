@@ -300,6 +300,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(sdcard);
     io->registerHandler(ioStub);  // Catch-all for $D600-$D6FF and colour RAM $D800-$DBFF
     io->registerHandler(kbd); // For discovery via IKeyboardMatrix interface
+    dma->setIoRegistry(io);  // DMA needs I/O dispatch for bank byte bit 7
     desc->ioRegistry = io;
 
     // Wire I/O hooks to MapMmu so virtual space accesses to $D000 etc. are dispatched

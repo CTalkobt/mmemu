@@ -11,6 +11,11 @@ F018bDmaDevice::F018bDmaDevice(uint32_t base)
       m_srcAccum(0), m_dstAccum(0), m_srcBase(0), m_dstBase(0),
       m_srcStep(0x0100), m_dstStep(0x0100), m_fillByte(0),
       m_currentOp(DMA_COPY), m_srcDir(false), m_dstDir(false),
+      m_srcHold(false), m_dstHold(false), m_srcIo(false), m_dstIo(false),
+      m_srcModulo(false), m_dstModulo(false),
+      m_moduloValue(0), m_colLimit(0), m_rowLimit(0),
+      m_colCounter(0), m_rowCounter(0), m_moduloActive(false),
+      m_transparency(0x100), m_transparencyVal(0),
       m_inheritSrcMB(0), m_inheritSrcMBset(false),
       m_inheritDstMB(0), m_inheritDstMBset(false) {
     std::memset(m_regs, 0, sizeof(m_regs));
@@ -120,6 +125,8 @@ void F018bDmaDevice::startDma() {
     m_dmaListAddr &= 0x0FFFFFFF;
 
     // Reset inherited options for a new DMA trigger
+    m_transparency = 0x100; // disabled by default
+    m_transparencyVal = 0;
     m_inheritSrcMB = 0; m_inheritSrcMBset = false;
     m_inheritDstMB = 0; m_inheritDstMBset = false;
 
@@ -205,21 +212,13 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_bytesRemaining = job.count ? job.count : 0x10000;
     m_currentOp = static_cast<DmaOperation>(job.commandLsb & 0x03);
 
-    if (m_currentOp == DMA_MIX || m_currentOp == DMA_SWAP) {
-        std::cerr << "F018B/WARN: Attempted to use unsupported DMA operation "
-                  << m_currentOp << ", aborting chain\n";
-        m_dmaActive = false;
-        return false;
-    }
-
     // Extend 20-bit addresses to 28-bit using megabyte register.
     // Per gs4510.vhdl DMAgicGetReady:
-    //   F018B: addr(27:20) = reg_src_mb + bank_byte(6:4), addr(19:16) = bank_byte(3:0)
-    //   F018A: addr(27:20) = reg_src_mb,                  addr(19:16) = bank_byte(3:0)
-    // In F018A, bank_byte bits 6:4 are direction/modulo/hold flags, not address.
+    //   F018B: addr(27:20) = (reg_src_mb + bank_byte(6:4)) & 0xFF, addr(19:16) = bank_byte(3:0)
+    //   F018A: addr(27:20) = reg_src_mb,                            addr(19:16) = bank_byte(3:0)
+    // In F018A, bank_byte bits 6:4 are direction/modulo/hold flags, not address bits.
     uint32_t srcMB, dstMB;
     if (f018b) {
-        // srcFlags = bank_byte >> 4; bits 2:0 = bank_byte bits 6:4
         srcMB = (uint32_t)((m_inheritSrcMB + (job.srcFlags & 0x07)) & 0xFF) << 20;
         dstMB = (uint32_t)((m_inheritDstMB + (job.dstFlags & 0x07)) & 0xFF) << 20;
     } else {
@@ -233,25 +232,43 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_dstStep = job.dstSkipRate ? job.dstSkipRate : 0x0100;
     m_fillByte = job.srcAddr & 0xFF;  // For fill ops
 
-    // Direction and hold — per mega65 book Appendix P.
-    // Direction is ALWAYS from bank byte bit 6 (both F018A and F018B).
-    // Command LSB bits 4-7 are MINTERM bits, NOT direction.
-    m_srcDir = (job.srcFlags & 0x04) != 0;   // bank byte bit 6
-    m_dstDir = (job.dstFlags & 0x04) != 0;   // bank byte bit 6
+    // I/O visibility — bank byte bit 7 (bit 3 of srcFlags/dstFlags)
+    m_srcIo = (job.srcFlags & 0x08) != 0;
+    m_dstIo = (job.dstFlags & 0x08) != 0;
 
+    // Direction, hold, and modulo — per gs4510.vhdl lines 5946-5965:
+    //   F018B: direction from command LSB bits 4-5, hold/modulo from subcommand individual bits
+    //   F018A: direction/modulo/hold from bank byte bits 6/5/4
     if (f018b) {
-        // F018B: hold/modulo from Command MSB 2-bit addressing mode fields.
-        // Bits 0-1 = source mode, bits 2-3 = dest mode.
-        // %00=linear, %01=modulo, %10=hold, %11=XY MOD
-        uint8_t srcMode = job.commandMsb & 0x03;
-        uint8_t dstMode = (job.commandMsb >> 2) & 0x03;
-        m_srcHold = (srcMode == 0x02);  // %10 = hold
-        m_dstHold = (dstMode == 0x02);
+        m_srcDir    = (job.commandLsb & 0x10) != 0;  // command bit 4
+        m_dstDir    = (job.commandLsb & 0x20) != 0;  // command bit 5
+        m_srcHold   = (job.commandMsb & 0x02) != 0;  // subcommand bit 1
+        m_dstHold   = (job.commandMsb & 0x08) != 0;  // subcommand bit 3
+        m_srcModulo = (job.commandMsb & 0x01) != 0;  // subcommand bit 0
+        m_dstModulo = (job.commandMsb & 0x04) != 0;  // subcommand bit 2
     } else {
-        // F018A: hold/modulo from bank byte flags
-        m_srcHold = (job.srcFlags & 0x01) != 0;  // bank byte bit 4
-        m_dstHold = (job.dstFlags & 0x01) != 0;
+        m_srcDir    = (job.srcFlags & 0x04) != 0;    // bank byte bit 6
+        m_dstDir    = (job.dstFlags & 0x04) != 0;    // bank byte bit 6
+        m_srcHold   = (job.srcFlags & 0x01) != 0;    // bank byte bit 4
+        m_dstHold   = (job.dstFlags & 0x01) != 0;    // bank byte bit 4
+        m_srcModulo = (job.srcFlags & 0x02) != 0;    // bank byte bit 5
+        m_dstModulo = (job.dstFlags & 0x02) != 0;    // bank byte bit 5
     }
+
+    // Modulo mode: count LSB = columns, count MSB = rows, modulo value from job
+    m_moduloActive = (m_srcModulo || m_dstModulo);
+    if (m_moduloActive) {
+        m_colLimit = (job.count & 0xFF) ? (job.count & 0xFF) : 256;
+        m_rowLimit = (job.count >> 8) ? (job.count >> 8) : 256;
+        m_colCounter = 0;
+        m_rowCounter = 0;
+        m_moduloValue = job.modulo;
+        // Override bytesRemaining — modulo uses its own counters
+        m_bytesRemaining = (uint32_t)m_colLimit * m_rowLimit;
+    }
+
+    // Set up transparency for this job
+    m_transparency = (m_transparency & 0x100) | m_transparencyVal;
 
     m_srcAccum = 0;
     m_dstAccum = 0;
@@ -273,6 +290,27 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
 // Process one byte of the current DMA operation
 // ---------------------------------------------------------------------------
 
+uint8_t F018bDmaDevice::dmaRead(uint32_t addr, bool ioFlag) {
+    // When I/O flag is set and address is in $xDxxx range (lower 16 bits),
+    // route through IORegistry for $D000-$DFFF I/O register access.
+    if (ioFlag && m_ioRegistry && ((addr & 0xF000) == 0xD000)) {
+        uint8_t val = 0xFF;
+        uint32_t ioAddr = addr & 0xFFFF;
+        if (m_ioRegistry->dispatchRead(m_bus, ioAddr, &val))
+            return val;
+    }
+    return m_bus->read8(addr);
+}
+
+void F018bDmaDevice::dmaWrite(uint32_t addr, uint8_t val, bool ioFlag) {
+    if (ioFlag && m_ioRegistry && ((addr & 0xF000) == 0xD000)) {
+        uint32_t ioAddr = addr & 0xFFFF;
+        if (m_ioRegistry->dispatchWrite(m_bus, ioAddr, val))
+            return;
+    }
+    m_bus->write8(addr, val);
+}
+
 void F018bDmaDevice::tickOneByte() {
     if (!m_bus || m_bytesRemaining == 0) {
         m_dmaActive = false;
@@ -284,20 +322,28 @@ void F018bDmaDevice::tickOneByte() {
 
     switch (m_currentOp) {
         case DMA_COPY: {
-            uint8_t byte = m_bus->read8(srcAddr);
-            m_bus->write8(dstAddr, byte);
+            uint8_t byte = dmaRead(srcAddr, m_srcIo);
+            // Transparency: skip write if byte matches transparent value
+            if ((unsigned)byte != m_transparency)
+                dmaWrite(dstAddr, byte, m_dstIo);
             break;
         }
         case DMA_FILL: {
-            m_bus->write8(dstAddr, m_fillByte);
+            dmaWrite(dstAddr, m_fillByte, m_dstIo);
             break;
         }
-        case DMA_SWAP:
-            break; // Swap not implemented (rejected in fetchAndBeginNextJob)
+        case DMA_SWAP: {
+            uint8_t s = dmaRead(srcAddr, m_srcIo);
+            uint8_t d = dmaRead(dstAddr, m_dstIo);
+            dmaWrite(dstAddr, s, m_dstIo);
+            dmaWrite(srcAddr, d, m_srcIo);
+            break;
+        }
         case DMA_MIX:
-            break; // Mix not implemented
+            break; // MIX (MINTERM) not yet implemented
     }
 
+    // Advance addresses
     if (!m_srcHold) {
         if (m_srcDir) m_srcAccum -= m_srcStep;
         else          m_srcAccum += m_srcStep;
@@ -307,7 +353,23 @@ void F018bDmaDevice::tickOneByte() {
         else          m_dstAccum += m_dstStep;
     }
 
-    m_bytesRemaining--;
+    // Modulo addressing: at end of each row, add modulo value to affected channels
+    if (m_moduloActive) {
+        m_colCounter++;
+        if (m_colCounter >= m_colLimit) {
+            m_colCounter = 0;
+            m_rowCounter++;
+            if (m_rowCounter >= m_rowLimit) {
+                m_bytesRemaining = 0;
+            } else {
+                // Add modulo value (as fixed-point) to channels with modulo enabled
+                if (m_srcModulo) m_srcAccum += (uint32_t)m_moduloValue << 8;
+                if (m_dstModulo) m_dstAccum += (uint32_t)m_moduloValue << 8;
+            }
+        }
+    }
+
+    if (m_bytesRemaining > 0) m_bytesRemaining--;
 
     if (m_bytesRemaining == 0) {
         // Current job done — if chain bit was set, read next job from list
@@ -349,14 +411,14 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
                 case 0x83: job.srcSkipRate = (job.srcSkipRate & 0x00FF) | (arg << 8); break;
                 case 0x84: job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg; break;
                 case 0x85: job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8); break;
-                case 0x86: /* transparent byte value — not yet used */ break;
+                case 0x86: m_transparencyVal = arg; break;
                 default:   break;
             }
         } else {
             // Options $01-$7F: single-byte flags (no argument)
             switch (option) {
-                case 0x06: /* disable transparency */ break;
-                case 0x07: /* enable transparency */ break;
+                case 0x06: m_transparency |= 0x100; break;   // disable transparency
+                case 0x07: m_transparency &= 0xFF; break;    // enable transparency
                 case 0x0A: job.useF018A = true; break;    // Use F018A revision
                 case 0x0B: job.useF018A = false; break;   // Use F018B revision
                 default:   break;

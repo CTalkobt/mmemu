@@ -870,3 +870,17 @@ Surfaces the toolchain pipeline directly in the UI.
 | IRQ Log | `ICore::cycles`, `triggerIrq/Nmi/Reset` callbacks |
 | Snapshots | `ICore::save/loadState`, `IBus::save/loadState` |
 | Assemble & Load | `IAssembler`, `simLoadBinary`, `simLoadSymbols` |
+
+---
+
+## 14. Interface Parity (CLI & MCP)
+
+To ensure a uniform experience across both human-driven and programmatic workflows, `mmemu-cli` and `mmemu-mcp` must maintain strict functional parity. Any capability introduced to one must have an equivalent representation in the other:
+
+- **Execution & Debugging:** Stepping, breakpoints, watchpoints, and call stack introspection must be available symmetrically.
+- **State Management:** Snapshot operations (save, diff, list, restore) and trace buffer controls must be accessible from both interfaces.
+- **Memory & Registers:** Both interfaces must fully support reading, writing, filling, copying, swapping, and pattern searching across memory and CPU registers.
+- **Toolchain:** On-the-fly assembly and disassembly features must be exposed equally.
+- **Hardware Control:** Mounting disks/tapes, cartridge management, device info querying, and keyboard injection must be supported in both.
+
+Discrepancies (e.g., CLI-only `screenshot` or MCP-only `set_map_state`) must be actively resolved to maintain a consistent capability matrix.

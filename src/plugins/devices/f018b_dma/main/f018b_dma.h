@@ -1,5 +1,6 @@
 #pragma once
 #include "libdevices/main/io_handler.h"
+#include "libdevices/main/io_registry.h"
 #include "libdevices/main/device_info.h"
 #include <cstring>
 #include <string>
@@ -51,6 +52,7 @@ public:
     void setName(const std::string& n) override { m_name = n; }
     void setBaseAddr(uint32_t a) override { m_base = a; }
     void setDmaBus(IBus* bus) override { m_bus = bus; }
+    void setIoRegistry(IORegistry* io) { m_ioRegistry = io; }
     bool isHaltRequested() const override { return m_dmaActive; }
 
     void reset() override;
@@ -62,8 +64,8 @@ public:
 private:
     enum DmaOperation {
         DMA_COPY = 0,
-        DMA_SWAP = 1, // not implemented on HW
-        DMA_MIX  = 2, // not implemented on HW
+        DMA_MIX  = 1,
+        DMA_SWAP = 2,
 	DMA_FILL = 3
     };
 
@@ -95,9 +97,13 @@ private:
     // Per-byte tick
     void tickOneByte();
 
+    uint8_t dmaRead(uint32_t addr, bool ioFlag);
+    void dmaWrite(uint32_t addr, uint8_t val, bool ioFlag);
+
     uint32_t m_base;
     std::string m_name{"F018B DMA"};
     IBus* m_bus;
+    IORegistry* m_ioRegistry = nullptr;
     uint8_t m_regs[16];         // Register shadow: $D700–$D70F
     uint32_t m_dmaListAddr;     // 28-bit pointer into job list (advances as bytes are read)
     bool m_dmaActive;           // Set during execution; CPU halts while true
@@ -118,6 +124,22 @@ private:
     bool     m_dstDir;          // Dest direction: false=forward, true=backward
     bool     m_srcHold;         // Source hold: address doesn't change
     bool     m_dstHold;         // Dest hold: address doesn't change
+    bool     m_srcIo;           // Source I/O visibility ($D000-$DFFF mapped)
+    bool     m_dstIo;           // Dest I/O visibility ($D000-$DFFF mapped)
+    bool     m_srcModulo;       // Source uses modulo addressing
+    bool     m_dstModulo;       // Dest uses modulo addressing
+
+    // Modulo mode state
+    uint16_t m_moduloValue;     // Value added to address at end of each row
+    uint16_t m_colLimit;        // Columns per row (from count LSB, 0=256)
+    uint16_t m_rowLimit;        // Number of rows (from count MSB, 0=256)
+    uint16_t m_colCounter;      // Current column position
+    uint16_t m_rowCounter;      // Current row position
+    bool     m_moduloActive;    // Modulo counting is in use for this job
+
+    // Transparency
+    uint16_t m_transparency;    // Low byte = transparent value; bit 8 set = disabled
+    uint8_t  m_transparencyVal; // The transparent byte value (enhanced option $86)
 
     // Inherited enhanced options across chained jobs
     uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;

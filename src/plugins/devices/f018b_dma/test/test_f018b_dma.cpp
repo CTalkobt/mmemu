@@ -303,8 +303,8 @@ TEST_CASE(dma_fill_basic) {
 // Test: DMA Swap Operation
 // ============================================================================
 
-TEST_CASE(dma_swap_aborts) {
-    // Swap (cmd=0x02) is unimplemented on real hardware; DMA should abort
+TEST_CASE(dma_swap_basic) {
+    // Swap (cmd=0x02): exchange source and destination bytes
     F018bDmaDevice dma(0xD700);
     MockMemoryBus bus;
 
@@ -315,9 +315,9 @@ TEST_CASE(dma_swap_aborts) {
 
     triggerDma(dma, bus, 0x030000);
 
-    // Both regions should be unchanged — swap aborted
-    ASSERT(bus.verifyRegion(0x010000, 0xAA, 8));
-    ASSERT(bus.verifyRegion(0x020000, 0xBB, 8));
+    // Source should now contain what was in dest, and vice versa
+    ASSERT(bus.verifyRegion(0x010000, 0xBB, 8));
+    ASSERT(bus.verifyRegion(0x020000, 0xAA, 8));
 }
 
 // ============================================================================
