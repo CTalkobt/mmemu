@@ -15,6 +15,7 @@
 #include "plugins/devices/virtual_iec/main/virtual_iec.h"
 #include "plugins/devices/vic4/main/vic4.h"
 #include "plugins/devices/hypervisor/main/hypervisor_regs.h"
+#include "plugins/devices/hypervisor/main/hdos_handler.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
 #include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
 #include <cstring>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -419,46 +421,30 @@ MachineDescriptor* Mega65MachineFactory::create() {
         desc->deleters.push_back([hyperRegs]() { delete hyperRegs; });
 
         // HDOS trap virtualization — intercept DOS traps for host filesystem access
-        hyperRegs->setHdosTrapHandler([](uint8_t func, MOS45GS02* cpu) -> bool {
-            auto& h = cpu->hyperState();
+        auto* hdos = new HdosHandler();
+        hdos->setPhysBus(physBus);
 
-            // Set carry flag in saved P to indicate success/failure
-            auto setCarry = [&](bool success) {
-                if (success) h.pflags |= 0x01; // set C
-                else         h.pflags &= ~0x01; // clear C
+        // Set HDOS root directory from SD card image path or default
+        std::string hdosRoot = ".";
+        // Try to find a suitable root from the machine JSON or defaults
+        {
+            std::vector<std::string> candidates = {
+                "roms/mega65/sdcard/",
+                std::string(getenv("HOME") ? getenv("HOME") : "") + "/.local/share/xemu-lgb/mega65/hdos/",
+                "."
             };
-
-            switch (func >> 1) {
-                case 0x00: // Get default drive info
-                    h.regA = 0x00; // no error
-                    setCarry(true);
-                    return true;
-
-                case 0x06: // Set current filename
-                    setCarry(true);
-                    return true;
-
-                case 0x09: // Find file
-                    h.regA = 0xFF; // file not found
-                    setCarry(false);
-                    return true;
-
-                case 0x0C: // chdir
-                    setCarry(true);
-                    return true;
-
-                case 0x1E: // cdrootdir
-                    setCarry(true);
-                    return true;
-
-                case 0x11: // closeall
-                    setCarry(true);
-                    return true;
-
-                default:
-                    // Not virtualized — let HYPPO handle it
-                    return false;
+            for (auto& p : candidates) {
+                if (!p.empty() && std::filesystem::is_directory(p)) {
+                    hdosRoot = p;
+                    break;
+                }
             }
+        }
+        hdos->setRootDir(hdosRoot);
+        desc->deleters.push_back([hdos]() { delete hdos; });
+
+        hyperRegs->setHdosTrapHandler([hdos](uint8_t func, MOS45GS02* cpu) -> bool {
+            return hdos->handleTrap(func, cpu);
         });
     }
 

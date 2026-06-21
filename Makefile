@@ -195,6 +195,7 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
 	src/plugins/devices/mega65_math/main/mega65_math.cpp \
 	src/plugins/devices/hypervisor/main/hypervisor_regs.cpp \
+	src/plugins/devices/hypervisor/main/hdos_handler.cpp \
 	src/plugins/devices/sdcard/main/sdcard.cpp \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
@@ -365,6 +366,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vic4/main/vic4.o \
 	src/plugins/devices/mega65_math/main/mega65_math.o \
 	src/plugins/devices/hypervisor/main/hypervisor_regs.o \
+	src/plugins/devices/hypervisor/main/hdos_handler.o \
 	src/plugins/devices/sdcard/main/sdcard.o \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.o \
 	src/plugins/devices/hyper_serial/main/hyper_serial.o \
