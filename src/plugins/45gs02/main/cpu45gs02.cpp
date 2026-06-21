@@ -1020,7 +1020,13 @@ int MOS45GS02::step() {
         case 0x60: { m_state.pc = pull16() + 1; m_state.cycles += 3; break; } // RTS
         case 0x40: { uint8_t pulled = pull8(); m_state.p = (pulled & ~(FLAG_B|FLAG_E)) | (m_state.p & (FLAG_B|FLAG_E)); m_state.pc = pull16(); m_state.cycles += 3; break; } // RTI
         case 0x80: { int8_t r=(int8_t)read8(m_state.pc++); m_state.pc+=r; m_state.cycles++; break; } // BRA
-        case 0x63: { int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8); m_state.pc+=2; uint16_t ret=m_state.pc-1; push16(ret); m_state.pc+=r; m_state.cycles+=4; break; } // BSR (16-bit)
+        case 0x63: { // BSR (16-bit) — per xemu _BRA16 and VHDL B16TakeBranch: target = PC + 2 + offset
+            int16_t r=(int16_t)read8(m_state.pc)|((int16_t)read8(m_state.pc+1)<<8);
+            uint16_t ret=m_state.pc+1; // return addr = instruction_addr + 3 - 1 = PC_after_opcode + 2 - 1
+            push16(ret);
+            m_state.pc+=1+r; // PC is at first offset byte; target = PC + 1 + offset = instruction_addr + 2 + offset
+            m_state.cycles+=4; break;
+        }
         case 0x62: { uint16_t ret = pull16(); uint8_t imm = read8(m_state.pc++); m_state.pc = ret + 1; m_state.sp += imm; m_state.cycles += 4; break; } // RTN (RTS imm)
 
         case 0xF0: { int8_t r=(int8_t)read8(m_state.pc++); if(m_state.p&FLAG_Z) { m_state.pc+=r; m_state.cycles++; } break; }
@@ -1644,15 +1650,15 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
         case 0x34: snprintf(buf, bufsz, "BIT $%02X,X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x3C: snprintf(buf, bufsz, "BIT $%04X,X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
 
-        case 0x83: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBRA $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xD3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBNE $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xF3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBEQ $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x93: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCC $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0xB3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCS $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x13: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBPL $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x33: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBMI $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x53: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVC $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
-        case 0x73: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVS $%04X", (uint16_t)(currentAddr + 1 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x83: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBRA $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xD3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBNE $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xF3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBEQ $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x93: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCC $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0xB3: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBCS $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x13: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBPL $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x33: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBMI $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x53: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVC $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
+        case 0x73: { int16_t r=(int16_t)bus->peek8(currentAddr)|((int16_t)bus->peek8(currentAddr+1)<<8); snprintf(buf, bufsz, "LBVS $%04X", (uint16_t)(currentAddr + 2 + r)); return (int)(currentAddr + 2 - addr); }
 
         case 0xF4: snprintf(buf, bufsz, "PHW #$%04X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0xFC: snprintf(buf, bufsz, "PHW $%04X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
