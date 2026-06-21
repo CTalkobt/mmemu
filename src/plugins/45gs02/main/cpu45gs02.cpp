@@ -94,7 +94,6 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
 }
 
 void MOS45GS02::exitHypervisor() {
-    // Restore CPU state from virtualisation control registers
     m_state.a  = m_hyperState.regA;
     m_state.x  = m_hyperState.regX;
     m_state.z  = m_hyperState.regZ;
@@ -981,7 +980,27 @@ int MOS45GS02::step() {
         case 0x98: m_state.a = m_state.y; updateNZ(m_state.a); break;
         case 0x4B: m_state.z = m_state.a; updateNZ(m_state.z); break;
         case 0x6B: m_state.a = m_state.z; updateNZ(m_state.a); break;
-        case 0x5B: m_state.b = m_state.a; updateNZ(m_state.b); break;
+        case 0x5B: { // TAB
+            uint8_t oldB = m_state.b;
+            m_state.b = m_state.a;
+            updateNZ(m_state.b);
+            // Detect implicit hypervisor exit: TAB changing B from $BF (hypervisor page)
+            // while in hypervisor mode. Some HYPPO code paths (e.g. $825B→$AD92)
+            // skip the STA $D67F exit and use TAB to transition directly.
+            // If hyperState.pc was not set by task_set_pc_to_reset_vector,
+            // read the reset vector from the ROM and use that as the entry point.
+            if (m_state.hypervisor && oldB == 0xBF && m_state.b != 0xBF) {
+                if (m_hyperState.pc == 0 && m_bus) {
+                    // Read reset vector from ROM at physical $02FFFC
+                    IBus* phys = m_mapMmu ? m_mapMmu->getPhysBus() : m_bus;
+                    uint8_t lo = phys->peek8(0x02FFFC);
+                    uint8_t hi = phys->peek8(0x02FFFD);
+                    m_hyperState.pc = lo | ((uint16_t)hi << 8);
+                }
+                exitHypervisor();
+            }
+            break;
+        }
         case 0x7B: m_state.a = m_state.b; updateNZ(m_state.a); break;
         case 0xBA: m_state.x = (uint8_t)(m_state.sp & 0xFF); updateNZ(m_state.x); break;
         case 0x9A: m_state.sp = (m_state.sp & 0xFF00) | m_state.x; break;
