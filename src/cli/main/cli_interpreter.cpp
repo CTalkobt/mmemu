@@ -48,13 +48,28 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     };
 
     if (line[0] == '.') {
-        if (!m_ctx.cpu || !m_ctx.assem) {
-            m_output("No machine created or no assembler for this ISA.\n");
+        if (!m_ctx.cpu) {
+            m_output("No machine created.\n");
             return;
         }
         std::string instr = line.substr(1);
         uint8_t opcodes[16];
-        if (int sz = m_ctx.assem->assembleLine(instr, opcodes, sizeof(opcodes), m_ctx.cpu->pc()); sz > 0) {
+        int sz = -1;
+        // Try primary assembler first
+        if (m_ctx.assem)
+            sz = m_ctx.assem->assembleLine(instr, opcodes, sizeof(opcodes), m_ctx.cpu->pc());
+        // Fallback: try ISA default, then base "6502" assembler (handles LDA/STA/etc.)
+        if (sz <= 0) {
+            const char* fallbackIsas[] = { m_ctx.cpu->isaName(), "6502", nullptr };
+            for (int fi = 0; sz <= 0 && fallbackIsas[fi]; fi++) {
+                IAssembler* fallback = ToolchainRegistry::instance().createAssembler(fallbackIsas[fi]);
+                if (fallback) {
+                    sz = fallback->assembleLine(instr, opcodes, sizeof(opcodes), m_ctx.cpu->pc());
+                    delete fallback;
+                }
+            }
+        }
+        if (sz > 0) {
             uint32_t scratch = 0x0200;
             for (int i = 0; i < sz; ++i) m_ctx.bus->write8(scratch + i, opcodes[i]);
             uint32_t oldPc = m_ctx.cpu->pc();
