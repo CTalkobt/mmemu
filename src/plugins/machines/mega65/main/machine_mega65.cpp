@@ -506,10 +506,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
 
         // Workaround: skip ColdStartDOS ($C84D: JSR $CC3D).
-        // The DOS init crashes because the MAP'd DOS ROM code at $8000
-        // doesn't match our ROM file layout, or the dos_cold vector is wrong.
-        // Skipping it lets the KERNAL continue to BASIC cold start.
-        // TODO: fix DOS ROM mapping or implement HDOS traps (#52).
+        // The DOS init calls Get_DOS which MAPs DOS ROM and uses cbdos pointer.
+        // The C65 BASIC init code at $2AF4 then does SD card reads with a timeout
+        // counter at ($02),Y — but $02/$03 points to KERNAL ROM ($FFF1), causing
+        // an infinite loop since writes don't stick.
+        // TODO: fix the root cause (C65 BASIC address computation) or fully
+        // virtualize DOS init via HDOS traps. See #61.
         if (!cpu45->isHypervisor() && cpu45->pc() == 0xC84D) {
             cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
 
