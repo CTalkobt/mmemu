@@ -127,6 +127,7 @@ public:
 
     // Hypervisor support
     bool isHypervisor() const { return m_state.hypervisor; }
+    void setHypervisorMode(bool on) { m_state.hypervisor = on; }
     void setHypervisorRom(const uint8_t* data, uint32_t size);
     void enterHypervisor(uint16_t trapAddr);
     void exitHypervisor();

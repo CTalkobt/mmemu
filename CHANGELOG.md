@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### MEGA65 Boot to BASIC
+- **MEGA65 boots to READY. prompt** with proper 80-column display, colour palette, and rainbow sprite bars. HYPPO boot stage skipped; starts directly at C65 KERNAL reset vector ($E4B8).
+- **PHW push order** (fixes boot crash): PHW was using push16() (high-byte-first) but VHDL pushes low-address-byte first. Fixed to push8(lo); push8(hi) matching VHDL PushWordLow/PushWordHigh. This was the root cause of the Get_DOS trampoline crash.
+- **JMP ($abs,X)**: Opcode $7C was wrongly implemented as EOM/NOP. Implemented as 65C02 indirect indexed jump, required for KERNAL escape/control character dispatch tables.
+- **VIC-IV SCRNPTR default**: $D060-$D062 initialized to $000400 matching VHDL `screen_ram_base := x"0000400"`. Was $000000, causing DMA screen clear to fill zero page (clobbering cbdos pointer at $C8).
+- **VIC-IV palette nibble swap**: Palette values expanded using VHDL nibble-swap (low nybl → high output bits, high nybl → low output bits) instead of incorrect `*17` linear scaling.
+- **Colour RAM physical bus mapping**: Colour RAM buffer mapped to physical bus at $080000 (DMA attribute fill target) and $0FF80000 (I/O space). DMA fills were writing to SparseMemoryBus, not the shared colour RAM buffer used by VIC-IV rendering.
+- **ATTR mode screen RAM**: ATTR ($D031 bit 5) enables extended colour attributes but does NOT change screen RAM to 2-byte per character. Only CHR16 ($D054 bit 0) makes screen codes 2 bytes. The KERNAL uses 1-byte screen codes with ATTR mode.
+- **CIA SDR shift register flag**: Set ICR bit 3 (SP) on SDR write when CRA bit 6 is set (output mode), matching xemu's `CIA_OUT_SDR_SETS_ICR_BIT3`. Prevents IEC serial polling loops from hanging (mega65-rom-public#169).
+- **KernalHLE simulateRts**: Was truncating 16-bit SP to 8 bits, corrupting SPH on 45GS02. Now checks RegWidth and E flag for correct 8-bit/16-bit stack handling.
+- **HDOS getdisksize ($08)**: Virtualized to prevent entering uninitialized HYPPO. Returns dummy disk size.
+- **VIC2 PAL timing**: Configurable via setPal(). Default PAL (63 cycles/line, 312 lines). Was hardcoded NTSC (65/263).
+
+### Added
+- **MCP test automation tools** (#71): `test_sequence` (batch commands), `test_assert` (load+run+assertions), `test_diagnose` (watchpoint root cause analysis).
+- **MCP `stop_on_brk`**: Flag on `run_cpu` and `test_assert` to halt before executing BRK instruction.
+- **MCP `run_until` precision**: Per-step condition checking by default. `loose=true` for every-256-step performance mode.
+- **45GS02 `setHypervisorMode()`**: Direct flag control for reset override.
+- **CIA `ICR_SP` constant**: Serial port shift register flag ($08).
+
 ### Fixed
 - **`mflash.prg` PRG header loading**: Stopped skipping the 2-byte load address header when loading `mflash.prg` into physical BRAM at `$050000`. The `HYPPO` hypervisor expects the 2-byte header to be present to correctly copy the program to RAM. Skipping it caused a 2-byte alignment shift that misaligned subroutines (such as `pushax` ending up at `$74B2` instead of `$74B4`), resulting in corrupted return addresses and crashes at `$03D3`.
 - **`C64BankController` hypervisor condition**: Refined the `inHypervisor()` read condition in `C64BankController::ioRead()` to allow ROM reads at or above `$E000` (block 7) in hypervisor mode. This ensures the trampoline's `JMP ($FFF6)` fetch resolves to the KERNAL reset/boot vector rather than falling through to unmapped RAM.

@@ -14,11 +14,12 @@ void VIC4::reset() {
     std::memset(m_extRegs, 0, sizeof(m_extRegs));
 
     // Default VIC-IV extended registers (indexed as $D0xx - $D040)
-    // $D060-$D063: SCRNPTR — screen RAM base (28-bit), default $0000
-    m_extRegs[0x20] = 0x00; // SCRNPTRLSB
-    m_extRegs[0x21] = 0x00; // SCRNPTRMSB
-    m_extRegs[0x22] = 0x00; // SCRNPTRBNK
-    m_extRegs[0x23] = 0x00; // SCRNPTRMB (bits 27-24)
+    // $D060-$D063: SCRNPTR — screen RAM base (28-bit)
+    // VHDL default: x"0000400" (C64 standard screen at $0400)
+    m_extRegs[0x20] = 0x00; // SCRNPTRLSB  ($D060)
+    m_extRegs[0x21] = 0x04; // SCRNPTRMSB  ($D061) = $04 → screen at $0400
+    m_extRegs[0x22] = 0x00; // SCRNPTRBNK  ($D062)
+    m_extRegs[0x23] = 0x00; // SCRNPTRMB   ($D063)
 
     // $D064-$D065: COLPTR — colour RAM base, default $0000
     m_extRegs[0x24] = 0x00; // COLPTRLSB
@@ -340,16 +341,16 @@ void VIC4::renderBackground80col(uint32_t* buf) {
     bool attr   = (m_regs[REG_D031] & D031_ATTR) != 0;
     int pixScale = h640 ? 1 : 2; // 40-col: double each pixel
 
-    // Both CHR16 and ATTR enable 2-byte screen RAM (Super-Extended Attribute Mode)
-    bool is2byte = chr16 || attr;
-
+    // CHR16 enables 2-byte screen RAM (16-bit char numbers).
+    // ATTR enables extended attributes in colour RAM but does NOT
+    // change screen RAM to 2-byte — screen codes remain 1 byte.
     int defaultCols = h640 ? 80 : 40;
     int chrCount = getChrCount();
     int cols = (chrCount < 0) ? defaultCols : chrCount;
     int rows = getDispRows();
     int cellW = 8 * pixScale; // output pixels per character cell
 
-    int bytesPerChar = is2byte ? 2 : 1;
+    int bytesPerChar = chr16 ? 2 : 1;
     uint16_t lineStep = getLineStep();
     if (lineStep == 0) lineStep = cols * bytesPerChar;
 
@@ -362,7 +363,7 @@ void VIC4::renderBackground80col(uint32_t* buf) {
             uint32_t scrAddr = rowBase + (uint32_t)col * bytesPerChar;
             uint16_t charNum;
             uint8_t  charAttr = 0;
-            if (is2byte) {
+            if (chr16) {
                 uint8_t lo = dmaPeek(scrAddr);
                 uint8_t hi = dmaPeek(scrAddr + 1);
                 charNum  = lo | ((uint16_t)(hi & 0x0F) << 8);
@@ -371,33 +372,22 @@ void VIC4::renderBackground80col(uint32_t* buf) {
                 charNum = dmaPeek(scrAddr);
             }
 
-            // Color RAM access (16-bit per cell in 2-byte mode)
-            uint16_t fgColor = 0x0F;
+            // Colour RAM: 1 byte per character (per VHDL viciv.vhdl line 3434:
+            // colourramaddress = colour_ram_base + first_card_of_row).
+            // The 8-bit value is the foreground colour index.
+            uint8_t fgColor = 0x0F;
             uint16_t colAddr = colBase + col + (row * cols);
             if (m_colorRam) {
-                if (is2byte) {
-                    uint16_t off = (colAddr * 2) & 0x7FFF;
-                    fgColor = m_colorRam[off] | ((uint16_t)m_colorRam[off + 1] << 8);
-                } else {
-                    fgColor = m_colorRam[colAddr & 0x7FFF];
-                }
+                fgColor = m_colorRam[colAddr & 0x7FFF];
             }
 
             // NCM flag: bit 11 of color RAM (bit 3 of second byte)
-            bool isNCM = is2byte && (fgColor & 0x0800);
-
-            // Foreground color: bits 0-7 (plus bits 8-11 if we supported 4096-color palette)
-            // For now, we use bits 0-7 as index and abtBank for the bank.
-            uint8_t palIdx = (uint8_t)(fgColor & 0xFF);
-            if (!attr) palIdx &= 0x0F;
-
-            // Character palette bank (bits 5:4 of $D070)
+            // Foreground colour index from colour RAM
+            uint8_t palIdx = attr ? fgColor : (fgColor & 0x0F);
             uint32_t fgCol = getPaletteRGBA(palIdx, abtBank);
 
-            // Reverse attribute: bit 7 of screen RAM second byte (bit 3 of charAttr)
-            bool reverse = (charAttr & 0x08);
-            // Also check color RAM reverse bit (bit 15 / bit 7 of second byte) if attr mode
-            if (attr && (fgColor & 0x8000)) reverse = !reverse;
+            // Reverse attribute from screen RAM second byte (bit 3 of charAttr)
+            bool reverse = (charAttr & 0x08) != 0;
 
             uint32_t glyphAddr = charBase + (uint32_t)charNum * 8;
 

@@ -93,6 +93,18 @@ bool HdosHandler::handleTrap(uint8_t func, MOS45GS02* cpu) {
             virtSelectDrive(cpu);
             return true;
 
+        case 0x08 >> 1: { // $08: getdisksize
+            // Return a dummy disk size to avoid entering uninitialized HYPPO.
+            // MEGA65 D81 images are 819200 bytes = 3200 sectors of 256 bytes.
+            auto& h = cpu->hyperState();
+            h.regA = 0x00;  // sectors low
+            h.regX = 0x0C;  // sectors mid (3200 = $0C80)
+            h.regY = 0x80;  // sectors high
+            h.regZ = 0x00;
+            h.pflags |= 0x01; // carry = success
+            return true;
+        }
+
         case 0x0C >> 1: // $0C: chdir
             virtCd(cpu);
             return true;

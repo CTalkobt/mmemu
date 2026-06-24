@@ -132,7 +132,7 @@ TEST_CASE(vic4_render_unlocked_vic3_fallback) {
 TEST_CASE(vic4_tick) {
     Vic4Fixture f;
     // Tick should advance raster via VIC3→VIC2
-    f.vic.tick(VIC2::CYCLES_PER_LINE);
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     uint8_t val;
     f.vic.ioRead(nullptr, 0xD012, &val);
     ASSERT_EQ(val, (uint8_t)1);

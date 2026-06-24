@@ -86,7 +86,7 @@ TEST_CASE(vic2_irq_write_clears) {
 
     // Simulate raster match by ticking
     f.vic.ioWrite(nullptr, 0xD012, 1);     // RASTER compare = line 1
-    f.vic.tick(VIC2::CYCLES_PER_LINE);     // Advance to line 1
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);     // Advance to line 1
 
     uint8_t irqStatus;
     f.vic.ioRead(nullptr, 0xD019, &irqStatus);
@@ -130,17 +130,17 @@ TEST_CASE(vic2_raster_counter) {
     ASSERT_EQ(lo, (uint8_t)0); // starts at 0
 
     // Tick one scanline
-    f.vic.tick(VIC2::CYCLES_PER_LINE);
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     f.vic.ioRead(nullptr, 0xD012, &lo);
     ASSERT_EQ(lo, (uint8_t)1);
 
     // Tick to line 255
-    for (int i = 1; i < 255; i++) f.vic.tick(VIC2::CYCLES_PER_LINE);
+    for (int i = 1; i < 255; i++) f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     f.vic.ioRead(nullptr, 0xD012, &lo);
     ASSERT_EQ(lo, (uint8_t)255);
 
     // Tick to line 256 — raster bit 8 in SCR1
-    f.vic.tick(VIC2::CYCLES_PER_LINE);
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     f.vic.ioRead(nullptr, 0xD012, &lo);
     ASSERT_EQ(lo, (uint8_t)0); // low 8 bits wrap to 0
     uint8_t scr1;
@@ -151,8 +151,8 @@ TEST_CASE(vic2_raster_counter) {
 TEST_CASE(vic2_raster_wraps) {
     VicFixture f;
     // Tick through a full frame
-    for (int i = 0; i < VIC2::LINES_PER_FRAME; i++)
-        f.vic.tick(VIC2::CYCLES_PER_LINE);
+    for (int i = 0; i < VIC2::PAL_LINES_PER_FRAME; i++)
+        f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
 
     uint8_t lo;
     f.vic.ioRead(nullptr, 0xD012, &lo);
@@ -165,7 +165,7 @@ TEST_CASE(vic2_raster_irq) {
     f.vic.ioWrite(nullptr, 0xD012, 10);    // compare at line 10
 
     // Tick to line 9 — no IRQ
-    for (int i = 0; i < 10; i++) f.vic.tick(VIC2::CYCLES_PER_LINE);
+    for (int i = 0; i < 10; i++) f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     ASSERT(f.irq.m_level); // line 10 reached, IRQ fires
 }
 
@@ -174,7 +174,7 @@ TEST_CASE(vic2_raster_irq_disabled) {
     f.vic.ioWrite(nullptr, 0xD01A, 0x00); // IRQ disabled
     f.vic.ioWrite(nullptr, 0xD012, 1);
 
-    f.vic.tick(VIC2::CYCLES_PER_LINE);
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     ASSERT(!f.irq.m_level); // no IRQ even though raster matches
 }
 
@@ -301,7 +301,7 @@ TEST_CASE(vic2_reset_clears_irq) {
     VicFixture f;
     f.vic.ioWrite(nullptr, 0xD01A, 0x01);
     f.vic.ioWrite(nullptr, 0xD012, 1);
-    f.vic.tick(VIC2::CYCLES_PER_LINE);
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
     ASSERT(f.irq.m_level);
 
     f.vic.reset();

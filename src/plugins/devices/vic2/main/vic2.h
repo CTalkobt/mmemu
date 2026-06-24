@@ -53,9 +53,11 @@ public:
     static constexpr int DISPLAY_W  = 320; // 40 columns × 8 pixels
     static constexpr int DISPLAY_H  = 200; // 25 rows × 8 pixels
 
-    // Cycles-per-scanline for NTSC 6567.
-    static constexpr int CYCLES_PER_LINE  = 65;
-    static constexpr int LINES_PER_FRAME  = 263;
+    // Timing defaults (PAL 6569).  Call setPal(false) for NTSC 6567.
+    static constexpr int PAL_CYCLES_PER_LINE  = 63;
+    static constexpr int PAL_LINES_PER_FRAME  = 312;
+    static constexpr int NTSC_CYCLES_PER_LINE = 65;
+    static constexpr int NTSC_LINES_PER_FRAME = 263;
 
     // ---------------------------------------------------------------------------
 
@@ -86,6 +88,13 @@ public:
     void setBankBase(uint32_t base) override { m_bankBase = base & 0xC000; }
 
     void setIrqLine(ISignalLine* line) override { m_irqLine = line; }
+
+    /** Select PAL (true, default) or NTSC (false) timing. */
+    void setPal(bool pal) {
+        m_cyclesPerLine = pal ? PAL_CYCLES_PER_LINE : NTSC_CYCLES_PER_LINE;
+        m_linesPerFrame = pal ? PAL_LINES_PER_FRAME : NTSC_LINES_PER_FRAME;
+    }
+    bool isPal() const { return m_linesPerFrame == PAL_LINES_PER_FRAME; }
 
     void setLogger(void* handle, void (*logFn)(void*, int, const char*)) {
         m_logger = handle;
@@ -190,7 +199,9 @@ protected:
 
     uint8_t  m_regs[64];            // 47 used, rest pad to 64
     uint64_t m_cycleAccum = 0;      // cycles since last frame start
-    uint16_t m_rasterLine = 0;      // current raster line (0–262)
+    uint16_t m_rasterLine = 0;      // current raster line
+    int      m_cyclesPerLine = PAL_CYCLES_PER_LINE;
+    int      m_linesPerFrame = PAL_LINES_PER_FRAME;
 
     // DMA and ROM
     IBus*           m_dmaBus     = nullptr;

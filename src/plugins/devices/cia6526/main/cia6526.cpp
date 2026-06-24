@@ -193,7 +193,19 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             }
             break;
 
-        case SDR: break; // not implemented
+        case SDR:
+            // Serial data register.  When CRA bit 6 is set (output mode),
+            // writing triggers a serial shift.  With no physical IEC device,
+            // the shift "completes" immediately — set ICR bit 3 (SP flag).
+            // This matches xemu's CIA_OUT_SDR_SETS_ICR_BIT3 behavior and
+            // prevents the ROM's IEC serial polling loop from hanging
+            // (see mega65-rom-public#169).
+            // Only set the flag (don't call updateIrq) — the ROM polls
+            // $DC0D to check for completion rather than using interrupts.
+            if (m_cra & 0x40) {
+                m_icrPending |= ICR_SP;
+            }
+            break;
 
         case ICR:
             // Bit 7 = 1: set bits in mask; bit 7 = 0: clear bits from mask.

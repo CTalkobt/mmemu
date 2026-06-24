@@ -106,6 +106,7 @@ public:
     static constexpr uint8_t ICR_TA  = 0x01;
     static constexpr uint8_t ICR_TB  = 0x02;
     static constexpr uint8_t ICR_TOD = 0x04;
+    static constexpr uint8_t ICR_SP  = 0x08; // serial port shift complete
     static constexpr uint8_t ICR_INT = 0x80; // any interrupt active
 
 private:

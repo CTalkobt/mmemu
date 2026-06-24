@@ -178,11 +178,11 @@ void VIC2::tick(uint64_t cycles) {
     m_cycleAccum += cycles;
 
     // Advance raster lines based on accumulated cycles.
-    while (m_cycleAccum >= (uint64_t)CYCLES_PER_LINE) {
-        m_cycleAccum -= CYCLES_PER_LINE;
+    while (m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
+        m_cycleAccum -= m_cyclesPerLine;
         m_rasterLine++;
 
-        if (m_rasterLine >= LINES_PER_FRAME) {
+        if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
             m_rasterLine = 0;
         }
 

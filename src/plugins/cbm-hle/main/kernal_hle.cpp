@@ -9,6 +9,49 @@
 
 namespace fs = std::filesystem;
 
+// Simulate RTS, handling both 8-bit (6502) and 16-bit (45GS02) stack pointers.
+// On the 45GS02, the E flag (P bit 5) controls stack mode:
+//   E=1 (SEE): 8-bit SP, wraps within current stack page (SPH preserved)
+//   E=0 (CLE): 16-bit SP, full address space
+// On the 6502, SP is always 8-bit in page $01.
+static void simulateRts(ICore* cpu, IBus* bus) {
+    uint32_t sp = cpu->regReadByName("SP");
+    uint32_t p  = cpu->regReadByName("P");
+    // Check SP register width to distinguish 6502 (8-bit) from 45GS02 (16-bit)
+    bool has16bitSP = false;
+    for (int i = 0; i < cpu->regCount(); ++i) {
+        const auto* d = cpu->regDescriptor(i);
+        if (d && std::string(d->name) == "SP" && d->width == RegWidth::R16) {
+            has16bitSP = true;
+            break;
+        }
+    }
+
+    uint16_t addr1, addr2;
+    if (has16bitSP) {
+        bool eFlag = (p & 0x20) != 0;  // FLAG_E = bit 5
+        if (eFlag) {
+            // 8-bit stack mode: wrap within current page
+            uint16_t page = sp & 0xFF00;
+            addr1 = page | ((sp + 1) & 0xFF);
+            addr2 = page | ((sp + 2) & 0xFF);
+            cpu->regWriteByName("SP", (uint32_t)(page | ((sp + 2) & 0xFF)));
+        } else {
+            // 16-bit stack mode
+            addr1 = (sp + 1) & 0xFFFF;
+            addr2 = (sp + 2) & 0xFFFF;
+            cpu->regWriteByName("SP", (uint32_t)((sp + 2) & 0xFFFF));
+        }
+    } else {
+        // 6502: 8-bit SP always in page $01
+        addr1 = 0x0100 | ((sp + 1) & 0xFF);
+        addr2 = 0x0100 | ((sp + 2) & 0xFF);
+        cpu->regWriteByName("SP", (uint32_t)((sp + 2) & 0xFF));
+    }
+    uint16_t retAddr = (bus->read8(addr1) | (bus->read8(addr2) << 8)) + 1;
+    cpu->setPc(retAddr);
+}
+
 KernalHLE::KernalHLE() : m_enabled(true), m_hostPath(".") {
     // Standard KERNAL jump table vectors (fixed for all CBM machines)
     m_machineVectors["c64"]   = { 0xFFD5, 0xFFD8 };
@@ -86,13 +129,7 @@ void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
         setStatus(bus, 4); // 4 = File not found
         setCarry(cpu, true);
         
-        // Simulate RTS
-        uint16_t sp = 0x0100 | ((cpu->regReadByName("SP") + 1) & 0xFF);
-        uint8_t lo = bus->read8(sp);
-        uint8_t hi = bus->read8(0x0100 | ((cpu->regReadByName("SP") + 2) & 0xFF));
-        uint16_t retAddr = (lo | (hi << 8)) + 1;
-        cpu->regWriteByName("SP", (uint8_t)((cpu->regReadByName("SP") + 2) & 0xFF));
-        cpu->setPc(retAddr);
+        simulateRts(cpu, bus);
         return;
     }
 
@@ -123,13 +160,7 @@ void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
     setCarry(cpu, false);
     setStatus(bus, 0);
 
-    // Simulate RTS
-    uint16_t sp = 0x0100 | ((cpu->regReadByName("SP") + 1) & 0xFF);
-    uint8_t lo = bus->read8(sp);
-    uint8_t hi = bus->read8(0x0100 | ((cpu->regReadByName("SP") + 2) & 0xFF));
-    uint16_t retAddr = (lo | (hi << 8)) + 1;
-    cpu->regWriteByName("SP", (uint8_t)((cpu->regReadByName("SP") + 2) & 0xFF));
-    cpu->setPc(retAddr);
+    simulateRts(cpu, bus);
 }
 
 void KernalHLE::handleSave(ICore* cpu, IBus* bus) {
@@ -137,13 +168,7 @@ void KernalHLE::handleSave(ICore* cpu, IBus* bus) {
     setStatus(bus, 5); // 5 = Device not present / Not implemented
     setCarry(cpu, true);
     
-    // Simulate RTS
-    uint16_t sp = 0x0100 | ((cpu->regReadByName("SP") + 1) & 0xFF);
-    uint8_t lo = bus->read8(sp);
-    uint8_t hi = bus->read8(0x0100 | ((cpu->regReadByName("SP") + 2) & 0xFF));
-    uint16_t retAddr = (lo | (hi << 8)) + 1;
-    cpu->regWriteByName("SP", (uint8_t)((cpu->regReadByName("SP") + 2) & 0xFF));
-    cpu->setPc(retAddr);
+    simulateRts(cpu, bus);
 }
 
 uint8_t KernalHLE::getDevice(ICore* cpu, IBus* bus) {

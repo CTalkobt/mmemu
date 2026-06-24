@@ -112,10 +112,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // -----------------------------------------------------------------------
     // Load BRAM contents (flash menu, freezer, onboarding) into physical RAM.
     // On real hardware these live in FPGA Block RAM, pre-loaded at synthesis.
-    // We load from files at the same physical addresses HYPPO expects:
-    //   $012000  Freezer       (FREEZER.M65)
-    //   $040000  Onboarding    (not currently used)
-    //   $050000  Flash utility (mflash.prg, loaded without PRG header)
+    // Not required for boot (HYPPO is skipped), but loaded for completeness
+    // and potential future freezer/flash menu support.
     // Persistent BRAM: saved to roms/mega65/bram.bin on exit if modified.
     // -----------------------------------------------------------------------
     {
@@ -238,6 +236,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* joy1     = new Joystick();
     auto* joy2     = new Joystick();
 
+    vic4->setPal(true);  // MEGA65 defaults to PAL timing
+
     // Wire $D030 ROM banking query from VIC3 to bank controller.
     // When VIC-III is locked (C64 mode), $D030 reads as $FF but the ROM
     // banking bits are not functional — return $00 so only $01 port controls banking.
@@ -255,10 +255,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
     vic4->setCharRom(romBuf + 0xD000, 4096);
 
     // Share colour RAM between VIC4 and Mega65IoStub.
-    // The IOStub handles CPU reads/writes at $D800-$DBFF;
-    // the VIC4 reads from the same buffer for rendering.
-    // CRAM2K ($D030 bit 0) controls whether 1KB or 2KB is exposed.
+    // Colour RAM: 32KB buffer shared between IOStub ($D800 CPU access),
+    // VIC4 (rendering), and physical bus.  On real hardware, colour RAM is
+    // at $FF80000 (I/O space).  The KERNAL's cint uses DMA with bank $08
+    // ($080000) to fill attribute/colour RAM.  Map at both addresses.
     vic4->setColorRam(ioStub->colorRam());
+    physBus->addRegion(0x0FF80000, 32768, ioStub->colorRam(), true);
+    physBus->addRegion(0x00080000, 32768, ioStub->colorRam(), true);
     
     // Wire keyboard to CIA1
     cia1->setPortADevice(kbd->getPort(0)); // CIA1 Port A drives columns
@@ -465,23 +468,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
             fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", sdPath.c_str());
         } else {
-            fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HYPPO will not load C65 ROMs.\n");
+            fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HDOS file operations may fail.\n");
             fprintf(stderr, "[MEGA65]   Configure paths in machines/mega65.json or copy an image to roms/mega65/\n");
         }
     }
 
 
-    // Workaround: mflash.prg zeros hypervisor RAM $9AFF-$A406 (workspace clear).
-    // Our HICKUP.M65 has critical code (sdwaitawhile) at $A126 in that range.
-    // After mflash returns to HYPPO (return_from_flashmenu at $A4D9), detect the
-    // re-entry (B changes from $00 back to $BF) and restore the zeroed region.
-    struct HyperRestoreState { bool done; uint8_t lastB; uint8_t* rom; uint32_t size; };
-    auto* hyperRestore = new HyperRestoreState{false, 0xBF, hyperRom, hyperRom ? 16384u : 0u};
-    desc->deleters.push_back([hyperRestore]() { delete hyperRestore; });
-
     // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
     // When DMA is active, tick devices without stepping the CPU (CPU is halted).
-    desc->schedulerStep = [dma, cpu45, hyperRestore](MachineDescriptor& d) -> int {
+    desc->schedulerStep = [dma, cpu45](MachineDescriptor& d) -> int {
         if (dma->isHaltRequested()) {
             // DMA active: tick devices (processes one DMA byte), CPU stays halted
             if (d.ioRegistry) d.ioRegistry->tickAll(1);
@@ -490,106 +485,58 @@ MachineDescriptor* Mega65MachineFactory::create() {
         auto* cpu = d.cpus[0].cpu;
         int cycles = cpu->step();
         if (d.ioRegistry) d.ioRegistry->tickAll(cycles);
-
-        // Workaround: mflash exits via RTS on empty stack (SP=$01FF).
-        // Write return_from_flashmenu address just before ANY RTS
-        // in mflash range that would pop from $0200/$0201.
-        if (!hyperRestore->done && cpu45->isHypervisor() &&
-            cpu45->sp() == 0x01FF && cpu45->regRead(4) == 0x00 &&
-            cpu45->pc() >= 0x0800 && cpu45->pc() < 0x8000) {
-            IBus* pb = d.buses[0].bus;
-            uint8_t op = pb->peek8(cpu45->pc());
-            if (op == 0x60) {  // RTS
-                pb->write8(0x0200, 0xD8);
-                pb->write8(0x0201, 0xA4);
-            }
-        }
-
-        // Workaround: skip ColdStartDOS ($C84D: JSR $CC3D).
-        // The DOS init calls Get_DOS which MAPs DOS ROM and uses cbdos pointer.
-        // The C65 BASIC init code at $2AF4 then does SD card reads with a timeout
-        // counter at ($02),Y — but $02/$03 points to KERNAL ROM ($FFF1), causing
-        // an infinite loop since writes don't stick.
-        // TODO: fix the root cause (C65 BASIC address computation) or fully
-        // virtualize DOS init via HDOS traps. See #61.
-        if (!cpu45->isHypervisor() && cpu45->pc() == 0xC84D) {
-            cpu45->regWrite(6, 0xC850);  // skip JSR $CC3D, set PC to CLI
-
-            // Initialize DOS zero-page variables that ColdStartDOS would set.
-            // Also clear corrupted variables like $C8-$CB and $02-$03.
-            IBus* mb = d.cpus[0].dataBus;
-            for (uint16_t a = 0x6C; a <= 0x72; a++) mb->write8(a, 0x00);
-            for (uint16_t a = 0xC8; a <= 0xCB; a++) mb->write8(a, 0x00);
-            mb->write8(0x02, 0x00);
-            mb->write8(0x03, 0x00);
-
-            // TEMPORARY: Redirect CLALL vector ($032C) to a minimal stub
-            // that does KERNAL file cleanup without entering the DOS handler
-            // at $CBxx. The DOS handler uses uninitialized cbdos pointer and
-            // crashes. Remove this once CBDOS initialization is fixed (#62).
-            const uint8_t clallStub[] = {
-                0xA9, 0x00,       // LDA #$00
-                0x85, 0x98,       // STA $98    ; clear file count
-                0xA2, 0x03,       // LDX #$03
-                0x86, 0x9A,       // STX $9A    ; default output = screen
-                0x86, 0x99,       // STX $99    ; default input = keyboard
-                0x60              // RTS
-            };
-            for (size_t i = 0; i < sizeof(clallStub); i++)
-                mb->write8(0x0380 + i, clallStub[i]);
-            mb->write8(0x032C, 0x80);  // CLALL vector low
-            mb->write8(0x032D, 0x03);  // CLALL vector high → $0380
-
-            // Restore CPU port and MAP state after cint.
-            // cint's screen mode setup (escape handlers, DOS calls via CLALL)
-            // leaves $01 with HIRAM=0 and MAP with block 7 unmapped. The
-            // immediately following CLI enables IRQs, so $FFFE must be
-            // readable from KERNAL ROM. Restore $01=$37 (all ROMs visible)
-            // and MAP blocks 4,5,7 (the state set at $C808).
-            mb->write8(0x0001, 0x37);  // LORAM=1, HIRAM=1, CHAREN=1
-            mb->write8(0x0000, 0x2F);  // DDR = standard
-
-            // Restore MAP: A=$00, X=$E3, Y=$00, Z=$B3 (same as $C808)
-            auto* mc = cpu45->getMapMmu();
-            MapState ms = mc->getMapState();
-            // Upper 32K: enable blocks 4,5,7, offset $300
-            uint16_t hiOff = 0x300;
-            ms.enables = 0xB0;  // blocks 4,5,7
-            for (int i = 4; i < 8; i++)
-                ms.offsets[i] = (i * 0x20) + hiOff;
-            mc->setMapState(ms);
-        }
-
-        // Detect mflash→HYPPO return: B transitions from $00 to $BF
-        if (!hyperRestore->done && hyperRestore->rom) {
-            uint8_t curB = cpu45->regRead(4); // B register
-            if (hyperRestore->lastB == 0x00 && curB == 0xBF) {
-                // Restore zeroed hypervisor RAM from original ROM
-                uint8_t* hram = cpu45->hyperRam();
-                if (hram) {
-                    uint32_t start = 0x9AFF - 0x8000;  // zeroed range start
-                    uint32_t end   = 0xA406 - 0x8000;  // zeroed range end
-                    if (end <= hyperRestore->size) {
-                        for (uint32_t i = start; i <= end; i++)
-                            hram[i] = hyperRestore->rom[i];
-                        fprintf(stderr, "[MEGA65] Restored hypervisor RAM $%04X-$%04X after mflash\n",
-                                (unsigned)(start + 0x8000), (unsigned)(end + 0x8000));
-                    }
-                }
-                hyperRestore->done = true;
-            }
-            hyperRestore->lastB = curB;
-        }
-
         return cycles;
     };
 
-    // Reset callback: reset all I/O devices, then CPU (so CPU reads
-    // the reset vector after bank controller overlays are in place)
-    desc->onReset = [](MachineDescriptor& d) {
+    // Reset callback: reset all I/O devices, then CPU.
+    // Skip HYPPO boot — go directly to the C65 KERNAL reset vector.
+    // HYPPO remains loaded for runtime HDOS trap handling ($D640 writes).
+    desc->onReset = [physBus](MachineDescriptor& d) {
         if (d.ioRegistry) d.ioRegistry->resetAll();
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();
+
+        // The 45GS02 reset() enters hypervisor mode when HYPPO is loaded.
+        // Override: leave hypervisor and start at the C65 KERNAL reset vector
+        // ($FFFC/$FFFD in the ROM at physical $02FFFC/$02FFFD).
+        // Don't use exitHypervisor() — it restores from zeroed hyperState,
+        // corrupting SP, P, and MAP. Instead, directly clear hypervisor flag
+        // and set the correct initial CPU state.
+        auto* cpu = static_cast<MOS45GS02*>(d.cpus[0].cpu);
+        if (cpu->isHypervisor()) {
+            uint8_t lo = physBus->read8(0x02FFFC);
+            uint8_t hi = physBus->read8(0x02FFFD);
+            uint16_t resetVec = lo | ((uint16_t)hi << 8);
+
+            // Clear hypervisor mode flag directly
+            cpu->setHypervisorMode(false);
+
+            // Set initial CPU state matching Cold Start spec (Step 1-2):
+            cpu->regWrite(0, 0);            // A = 0
+            cpu->regWrite(1, 0);            // X = 0
+            cpu->regWrite(2, 0);            // Y = 0
+            cpu->regWrite(3, 0);            // Z = 0
+            cpu->regWrite(4, 0);            // B = 0 (direct page at $0000)
+            cpu->regWrite(5, 0x01FF);       // SP = $01FF
+            cpu->regWrite(6, resetVec);     // PC = reset vector
+            cpu->regWrite(7, 0x24);         // P = I flag set, E flag set
+
+            // Clear MAP state (no block mappings at reset)
+            auto* mc = cpu->getMapMmu();
+            if (mc) {
+                MapState ms;
+                memset(&ms, 0, sizeof(ms));
+                mc->setMapState(ms);
+            }
+
+            // Default I/O channels
+            IBus* mb = d.cpus[0].dataBus;
+            mb->write8(0x9A, 0x03);    // default output = screen
+            mb->write8(0x99, 0x00);    // default input = keyboard
+
+
+            fprintf(stderr, "[MEGA65] Skipping HYPPO, booting C65 KERNAL at $%04X\n", resetVec);
+        }
     };
 
     return desc;

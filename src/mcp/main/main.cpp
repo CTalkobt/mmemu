@@ -135,6 +135,58 @@ struct MachineSnapshot {
     uint32_t memSize = 0;                      // size of memory dump
 };
 
+// ---------------------------------------------------------------------------
+// Test automation helpers (Phase 1-3 of #71)
+// ---------------------------------------------------------------------------
+
+// Build structured JSON object with register values
+static Json buildRegistersJson(MachineState* ms) {
+    Json regs(Json::OBJ);
+    int regCount = ms->cpu->regCount();
+    for (int i = 0; i < regCount; ++i) {
+        const auto* desc = ms->cpu->regDescriptor(i);
+        if (desc->flags & REGFLAG_INTERNAL) continue;
+        regs.oVal[desc->name] = Json((int)ms->cpu->regRead(i));
+    }
+    regs.oVal["cycles"] = Json((double)ms->cpu->cycles());
+    return regs;
+}
+
+// Read memory as an array of ints
+static Json buildMemoryJson(MachineState* ms, uint32_t addr, uint32_t size) {
+    Json arr(Json::ARR);
+    for (uint32_t i = 0; i < size; ++i)
+        arr.push_back(Json((int)ms->bus->peek8(addr + i)));
+    return arr;
+}
+
+// Run CPU with a step budget.  Returns stop reason string.
+// Sets breakpointHit=true if a breakpoint stopped execution.
+static std::string runWithBudget(MachineState* ms, int maxSteps, bool ignoreProgramEnd,
+                                 bool& breakpointHit, bool stopOnBrk = false) {
+    breakpointHit = false;
+    ms->dbg->resume();
+    int steps = 0;
+    while (steps < maxSteps) {
+        // Check for BRK before executing it
+        if (stopOnBrk && ms->bus->peek8(ms->cpu->pc()) == 0x00) {
+            return "brk";
+        }
+        if (ms->machine && ms->machine->schedulerStep)
+            ms->machine->schedulerStep(*ms->machine);
+        else
+            ms->cpu->step();
+        ++steps;
+        if (ms->dbg->isPaused()) { breakpointHit = true; return "breakpoint"; }
+        if (!ignoreProgramEnd && ms->cpu->isProgramEnd(ms->bus)) return "program_end";
+    }
+    return "max_steps";
+}
+
+// Dispatch a single tool call internally, returning a structured Json result.
+// Used by test_sequence to batch multiple calls.
+static Json dispatchToolInternal(const std::string& toolName, const Json& toolArgs);
+
 static std::map<std::string, MachineState> g_machines;
 static std::map<std::string, std::map<std::string, MachineSnapshot>> g_snapshots; // machine_id → name → snapshot
 static std::map<std::string, std::string> g_assemblerOverrides;  // per-instance assembler overrides
@@ -647,10 +699,13 @@ Json handleDescribe() {
     Json maxStepsProp(Json::OBJ); maxStepsProp.oVal["type"] = Json("integer"); maxStepsProp.oVal["description"] = Json("Maximum instructions to execute before stopping (default 10000000)");
     runProps.oVal["max_steps"] = maxStepsProp;
     runProps.oVal["ignore_program_end"] = ipeProp;
+    Json sobProp(Json::OBJ); sobProp.oVal["type"] = Json("boolean");
+    sobProp.oVal["description"] = Json("If true, stop immediately when PC points to a BRK instruction (opcode $00), BEFORE executing it. Useful for debugging crashes — use reverse_step to trace back.");
+    runProps.oVal["stop_on_brk"] = sobProp;
     runSchema.oVal["properties"] = runProps;
     Json runReq(Json::ARR); runReq.push_back(Json("machine_id"));
     runSchema.oVal["required"] = runReq;
-    addTool("run_cpu", "Run the CPU until a breakpoint is hit, the program ends (BRK/RTS to empty stack), or max_steps is reached (default 10000000)", runSchema);
+    addTool("run_cpu", "Run the CPU until a breakpoint is hit, the program ends (BRK/RTS to empty stack), BRK opcode (if stop_on_brk), or max_steps is reached (default 10000000)", runSchema);
 
     // run_until
     {
@@ -670,11 +725,139 @@ Json handleDescribe() {
         rptProp.oVal["description"] = Json("Comma-separated report items: regs, disasm, stack, mem:ADDR:SIZE (e.g. 'regs,disasm,mem:$0400:32'). Default: regs");
         ruProps.oVal["report"] = rptProp;
         ruProps.oVal["ignore_program_end"] = ipeProp;
+        Json looseProp(Json::OBJ); looseProp.oVal["type"] = Json("boolean");
+        looseProp.oVal["description"] = Json("If true, check condition every 256 steps instead of every step (faster but may miss transient conditions). Default: false (check every step).");
+        ruProps.oVal["loose"] = looseProp;
         ruSchema.oVal["properties"] = ruProps;
         Json ruReq(Json::ARR); ruReq.push_back(Json("machine_id")); ruReq.push_back(Json("condition"));
         ruSchema.oVal["required"] = ruReq;
         addTool("run_until", "Run the CPU until a condition expression becomes true, a breakpoint hits, program ends, or max_steps is reached. "
-            "Returns registers, disassembly, and optional memory dumps. Much more efficient than repeated step/check cycles.", ruSchema);
+            "Checks condition every instruction by default (use loose=true to check every 256 steps for performance). "
+            "Returns registers, disassembly, and optional memory dumps.", ruSchema);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test automation tools (#71)
+    // -----------------------------------------------------------------------
+
+    // test_sequence — Phase 1: batch execute commands
+    {
+        Json tsSchema(Json::OBJ); tsSchema.oVal["type"] = Json("object");
+        Json tsProps(Json::OBJ);
+        tsProps.oVal["machine_id"] = midProp;
+        Json cmdsProp(Json::OBJ); cmdsProp.oVal["type"] = Json("array");
+        cmdsProp.oVal["description"] = Json(
+            "Array of tool calls to execute sequentially. Each element is an object with "
+            "'tool' (string) and 'args' (object) fields. Example: "
+            "[{\"tool\": \"set_pc\", \"args\": {\"addr\": \"$2000\"}}, "
+            "{\"tool\": \"run_cpu\", \"args\": {\"max_steps\": 50000}}, "
+            "{\"tool\": \"read_registers\"}]. "
+            "Args inherit machine_id from the top-level parameter automatically.");
+        Json cmdItemSchema(Json::OBJ); cmdItemSchema.oVal["type"] = Json("object");
+        cmdsProp.oVal["items"] = cmdItemSchema;
+        tsProps.oVal["commands"] = cmdsProp;
+        tsSchema.oVal["properties"] = tsProps;
+        Json tsReq(Json::ARR); tsReq.push_back(Json("machine_id")); tsReq.push_back(Json("commands"));
+        tsSchema.oVal["required"] = tsReq;
+        addTool("test_sequence",
+            "Execute a batch of tool calls in sequence on a machine, returning all results in one response. "
+            "Eliminates multiple round-trips. Each command's args automatically inherits machine_id. "
+            "If any command fails, subsequent commands still execute (results include per-command status). "
+            "Supports all existing tools: step_cpu, run_cpu, run_until, set_pc, set_breakpoint, "
+            "read_memory, write_memory, read_registers, load_image, disassemble, assemble, etc.",
+            tsSchema);
+    }
+
+    // test_assert — Phase 2: load + run + check assertions
+    {
+        Json taSchema(Json::OBJ); taSchema.oVal["type"] = Json("object");
+        Json taProps(Json::OBJ);
+        taProps.oVal["machine_id"] = midProp;
+
+        Json loadProp(Json::OBJ); loadProp.oVal["type"] = Json("string");
+        loadProp.oVal["description"] = Json("Path to .prg or .bin image to load (optional — skip to test current state)");
+        taProps.oVal["load"] = loadProp;
+
+        Json entryProp(Json::OBJ); entryProp.oVal["type"] = Json("string");
+        entryProp.oVal["description"] = Json("Entry point address expression (default: use PRG load address or current PC)");
+        taProps.oVal["entry"] = entryProp;
+
+        Json tcProp(Json::OBJ); tcProp.oVal["type"] = Json("integer");
+        tcProp.oVal["description"] = Json("Maximum CPU steps before timeout (default 10000000)");
+        taProps.oVal["timeout_steps"] = tcProp;
+
+        taProps.oVal["ignore_program_end"] = ipeProp;
+        taProps.oVal["stop_on_brk"] = sobProp;
+
+        Json assertsProp(Json::OBJ); assertsProp.oVal["type"] = Json("object");
+        assertsProp.oVal["description"] = Json(
+            "Assertion specifications. All are optional. Object with fields: "
+            "'memory' — object mapping address expressions to expected byte arrays, e.g. {\"$4000\": [1,2,3]}. "
+            "'registers' — object mapping register names to expected values, e.g. {\"A\": 66, \"X\": 0}. "
+            "'halt_pc' — address expression where execution should stop. "
+            "'exit_type' — expected stop reason: 'breakpoint', 'program_end', or 'max_steps'.");
+        taProps.oVal["assertions"] = assertsProp;
+
+        taSchema.oVal["properties"] = taProps;
+        Json taReq(Json::ARR); taReq.push_back(Json("machine_id"));
+        taSchema.oVal["required"] = taReq;
+        addTool("test_assert",
+            "Load a program, run it, and check assertions. Returns structured pass/fail with detailed "
+            "failure information for each assertion. Combines load_image + set_pc + run_cpu + memory/register "
+            "checks into a single call. Ideal for automated test validation.",
+            taSchema);
+    }
+
+    // test_diagnose — Phase 3: watchpoint-driven root cause analysis
+    {
+        Json tdSchema(Json::OBJ); tdSchema.oVal["type"] = Json("object");
+        Json tdProps(Json::OBJ);
+        tdProps.oVal["machine_id"] = midProp;
+
+        Json loadProp2(Json::OBJ); loadProp2.oVal["type"] = Json("string");
+        loadProp2.oVal["description"] = Json("Path to .prg or .bin image to load (optional)");
+        tdProps.oVal["load"] = loadProp2;
+
+        Json entryProp2(Json::OBJ); entryProp2.oVal["type"] = Json("string");
+        entryProp2.oVal["description"] = Json("Entry point address expression");
+        tdProps.oVal["entry"] = entryProp2;
+
+        Json tcProp2(Json::OBJ); tcProp2.oVal["type"] = Json("integer");
+        tcProp2.oVal["description"] = Json("Maximum CPU steps (default 10000000)");
+        tdProps.oVal["timeout_steps"] = tcProp2;
+
+        tdProps.oVal["ignore_program_end"] = ipeProp;
+
+        Json watchAddrProp(Json::OBJ); watchAddrProp.oVal["type"] = Json("string");
+        watchAddrProp.oVal["description"] = Json("Address expression to set a write watchpoint on. "
+            "When the CPU writes to this address, execution stops and the tool reports "
+            "which instruction wrote there, with registers, disassembly, and trace context.");
+        tdProps.oVal["watch_addr"] = watchAddrProp;
+
+        Json watchTypeProp(Json::OBJ); watchTypeProp.oVal["type"] = Json("string");
+        watchTypeProp.oVal["description"] = Json("Watchpoint type: 'write' (default) or 'read'");
+        tdProps.oVal["watch_type"] = watchTypeProp;
+
+        Json traceDepthProp(Json::OBJ); traceDepthProp.oVal["type"] = Json("integer");
+        traceDepthProp.oVal["description"] = Json("Number of trace entries to include before the watchpoint hit (default 20)");
+        tdProps.oVal["trace_depth"] = traceDepthProp;
+
+        Json expectedProp(Json::OBJ); expectedProp.oVal["type"] = Json("array");
+        expectedProp.oVal["description"] = Json("Expected byte values at watch_addr. If provided, reports the "
+            "mismatch between expected and actual values after the write.");
+        Json expectedItemProp(Json::OBJ); expectedItemProp.oVal["type"] = Json("integer");
+        expectedProp.oVal["items"] = expectedItemProp;
+        tdProps.oVal["expected"] = expectedProp;
+
+        tdSchema.oVal["properties"] = tdProps;
+        Json tdReq(Json::ARR); tdReq.push_back(Json("machine_id")); tdReq.push_back(Json("watch_addr"));
+        tdSchema.oVal["required"] = tdReq;
+        addTool("test_diagnose",
+            "Root-cause analysis tool. Sets a watchpoint on an address, runs the program, and when the "
+            "watchpoint fires, reports the instruction that triggered it with full context: PC, registers, "
+            "disassembly of surrounding code, trace buffer history, and optional expected-vs-actual comparison. "
+            "Use this after test_assert identifies a failing memory location to find what wrote the wrong value.",
+            tdSchema);
     }
 
     // disassemble
@@ -2369,21 +2552,14 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["isError"] = Json(true);
         } else {
             bool ignPE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
-            ms->dbg->resume();
-            int steps = 0;
-            while (!ms->dbg->isPaused() && steps < maxSteps) {
-                if (ms->machine && ms->machine->schedulerStep) {
-                    ms->machine->schedulerStep(*ms->machine);
-                } else {
-                    ms->cpu->step();
-                }
-                if (!ignPE && ms->cpu->isProgramEnd(ms->bus)) break;
-                ++steps;
-            }
+            bool stopBrk = args.contains("stop_on_brk") && args["stop_on_brk"].bVal;
+            bool bpHit = false;
+            std::string reason = runWithBudget(ms, maxSteps, ignPE, bpHit, stopBrk);
             std::stringstream ss;
-            if (ms->dbg->isPaused())   ss << "Breakpoint hit. ";
-            else if (steps >= maxSteps) ss << "Stopped after " << maxSteps << " steps. ";
-            else                        ss << "Program ended. ";
+            if (reason == "breakpoint")    ss << "Breakpoint hit. ";
+            else if (reason == "brk")      ss << "BRK at $" << toHex(ms->cpu->pc()) << ". ";
+            else if (reason == "max_steps") ss << "Stopped after " << maxSteps << " steps. ";
+            else                            ss << "Program ended. ";
             int regCount = ms->cpu->regCount();
             for (int i = 0; i < regCount; ++i) {
                 const auto* desc = ms->cpu->regDescriptor(i);
@@ -2416,7 +2592,7 @@ Json handleToolsCall(const Json& params) {
                 bool conditionMet = false;
                 std::string stopReason;
 
-                // Check condition every 256 steps for performance
+                bool loose = args.contains("loose") && args["loose"].bVal;
                 while (steps < maxSteps) {
                     if (ms->machine && ms->machine->schedulerStep)
                         ms->machine->schedulerStep(*ms->machine);
@@ -2427,7 +2603,7 @@ Json handleToolsCall(const Json& params) {
                     if (ms->dbg->isPaused()) { stopReason = "Breakpoint hit"; break; }
                     if (!ignPE && ms->cpu->isProgramEnd(ms->bus)) { stopReason = "Program ended"; break; }
 
-                    if ((steps & 0xFF) == 0 || steps < 16) {
+                    if (!loose || (steps & 0xFF) == 0 || steps < 16) {
                         uint32_t condVal = 0;
                         ExpressionEvaluator::evaluate(condition, ms->dbg, condVal);
                         if (condVal != 0) { conditionMet = true; stopReason = "Condition met: " + condition; break; }
@@ -3831,6 +4007,345 @@ Json handleToolsCall(const Json& params) {
 
             textItem.oVal["text"] = Json(ss.str());
         }
+    // -----------------------------------------------------------------------
+    // Test automation tools (#71)
+    // -----------------------------------------------------------------------
+
+    } else if (name == "test_sequence") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!args.contains("commands") || !args["commands"].is_array()) {
+            textItem.oVal["text"] = Json("Error: 'commands' must be an array");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            Json results(Json::ARR);
+            for (const auto& cmd : args["commands"].aVal) {
+                std::string tool = cmd.contains("tool") ? cmd["tool"].sVal : "";
+                Json toolArgs = cmd.contains("args") ? cmd["args"] : Json(Json::OBJ);
+                // Auto-inject machine_id
+                if (!toolArgs.contains("machine_id"))
+                    toolArgs.oVal["machine_id"] = Json(mid);
+
+                Json cmdResult(Json::OBJ);
+                cmdResult.oVal["tool"] = Json(tool);
+
+                if (tool.empty()) {
+                    cmdResult.oVal["error"] = Json("Missing 'tool' field");
+                } else {
+                    Json inner = dispatchToolInternal(tool, toolArgs);
+                    cmdResult.oVal["result"] = inner;
+                }
+                results.push_back(cmdResult);
+            }
+            // Build a structured response with all results
+            Json structured(Json::OBJ);
+            structured.oVal["sequence_results"] = results;
+            structured.oVal["final_registers"] = buildRegistersJson(ms);
+            textItem.oVal["text"] = Json(structured.stringify());
+        }
+
+    } else if (name == "test_assert") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int maxSteps = args.contains("timeout_steps") ? (int)args["timeout_steps"].nVal : 10000000;
+            bool ignorePE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
+            bool stopBrk = args.contains("stop_on_brk") && args["stop_on_brk"].bVal;
+            uint32_t entryAddr = 0;
+            bool hasEntry = false;
+            bool loadOk = true;
+
+            // Load image if specified
+            if (args.contains("load") && !args["load"].sVal.empty()) {
+                std::string path = args["load"].sVal;
+                auto* loader = ImageLoaderRegistry::instance().findLoader(path);
+                if (loader && loader->load(path, ms->bus, ms->machine, 0)) {
+                    // Extract PRG load address as default entry
+                    if (std::string(loader->name()).find("PRG") != std::string::npos) {
+                        std::ifstream f(path, std::ios::binary);
+                        uint8_t h[2]; f.read((char*)h, 2);
+                        entryAddr = h[0] | (h[1] << 8);
+                        hasEntry = true;
+                    }
+                } else {
+                    textItem.oVal["text"] = Json("Error: Failed to load image");
+                    textItem.oVal["isError"] = Json(true);
+                    loadOk = false;
+                }
+            }
+
+            if (loadOk) {
+                // Set entry point
+                if (args.contains("entry") && !args["entry"].sVal.empty()) {
+                    if (resolveAddr(args["entry"], ms->dbg, entryAddr))
+                        hasEntry = true;
+                }
+                if (hasEntry) ms->cpu->setPc(entryAddr);
+
+                // Run
+                bool bpHit = false;
+                std::string stopReason = runWithBudget(ms, maxSteps, ignorePE, bpHit, stopBrk);
+
+                // Build result
+                Json result(Json::OBJ);
+                result.oVal["stop_reason"] = Json(stopReason);
+                result.oVal["registers"] = buildRegistersJson(ms);
+                result.oVal["pc"] = Json("$" + toHex(ms->cpu->pc()));
+
+                // Evaluate assertions
+                bool allPass = true;
+                Json failures(Json::ARR);
+
+                if (args.contains("assertions") && args["assertions"].is_object()) {
+                    const Json& asserts = args["assertions"];
+
+                    // Check halt_pc
+                    if (asserts.contains("halt_pc")) {
+                        uint32_t expectedPc;
+                        if (resolveAddr(asserts["halt_pc"], ms->dbg, expectedPc)) {
+                            if (ms->cpu->pc() != expectedPc) {
+                                Json f(Json::OBJ);
+                                f.oVal["type"] = Json("halt_pc");
+                                f.oVal["expected"] = Json("$" + toHex(expectedPc));
+                                f.oVal["actual"] = Json("$" + toHex(ms->cpu->pc()));
+                                failures.push_back(f);
+                                allPass = false;
+                            }
+                        }
+                    }
+
+                    // Check exit_type
+                    if (asserts.contains("exit_type")) {
+                        std::string expected = asserts["exit_type"].sVal;
+                        if (stopReason != expected) {
+                            Json f(Json::OBJ);
+                            f.oVal["type"] = Json("exit_type");
+                            f.oVal["expected"] = Json(expected);
+                            f.oVal["actual"] = Json(stopReason);
+                            failures.push_back(f);
+                            allPass = false;
+                        }
+                    }
+
+                    // Check registers
+                    if (asserts.contains("registers") && asserts["registers"].is_object()) {
+                        for (const auto& kv : asserts["registers"].oVal) {
+                            std::string regName = kv.first;
+                            int expected = (int)kv.second.nVal;
+                            // Find register by name
+                            int regCount = ms->cpu->regCount();
+                            bool found = false;
+                            for (int i = 0; i < regCount; ++i) {
+                                const auto* desc = ms->cpu->regDescriptor(i);
+                                if (desc->name == regName) {
+                                    int actual = (int)ms->cpu->regRead(i);
+                                    if (actual != expected) {
+                                        Json f(Json::OBJ);
+                                        f.oVal["type"] = Json("register");
+                                        f.oVal["register"] = Json(regName);
+                                        f.oVal["expected"] = Json(expected);
+                                        f.oVal["actual"] = Json(actual);
+                                        failures.push_back(f);
+                                        allPass = false;
+                                    }
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                Json f(Json::OBJ);
+                                f.oVal["type"] = Json("register");
+                                f.oVal["register"] = Json(regName);
+                                f.oVal["error"] = Json("Unknown register name");
+                                failures.push_back(f);
+                                allPass = false;
+                            }
+                        }
+                    }
+
+                    // Check memory
+                    if (asserts.contains("memory") && asserts["memory"].is_object()) {
+                        for (const auto& kv : asserts["memory"].oVal) {
+                            uint32_t addr;
+                            if (!ExpressionEvaluator::evaluate(kv.first, ms->dbg, addr)) {
+                                Json f(Json::OBJ);
+                                f.oVal["type"] = Json("memory");
+                                f.oVal["address"] = Json(kv.first);
+                                f.oVal["error"] = Json("Invalid address expression");
+                                failures.push_back(f);
+                                allPass = false;
+                                continue;
+                            }
+                            if (!kv.second.is_array()) continue;
+                            for (size_t i = 0; i < kv.second.aVal.size(); ++i) {
+                                int expected = (int)kv.second.aVal[i].nVal;
+                                int actual = (int)ms->bus->peek8(addr + i);
+                                if (actual != expected) {
+                                    Json f(Json::OBJ);
+                                    f.oVal["type"] = Json("memory");
+                                    f.oVal["address"] = Json("$" + toHex(addr + (uint32_t)i));
+                                    f.oVal["offset"] = Json((int)i);
+                                    f.oVal["expected"] = Json(expected);
+                                    f.oVal["actual"] = Json(actual);
+                                    failures.push_back(f);
+                                    allPass = false;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                result.oVal["pass"] = Json(allPass);
+                result.oVal["failures"] = failures;
+                textItem.oVal["text"] = Json(result.stringify());
+            }
+        }
+
+    } else if (name == "test_diagnose") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t watchAddr;
+            std::string errMsg;
+            if (!resolveAddrWithDiagnostic(args["watch_addr"], ms->dbg, watchAddr, errMsg)) {
+                textItem.oVal["text"] = Json("Error: watch_addr - " + errMsg);
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                int maxSteps = args.contains("timeout_steps") ? (int)args["timeout_steps"].nVal : 10000000;
+                int traceDepth = args.contains("trace_depth") ? (int)args["trace_depth"].nVal : 20;
+                bool ignorePE = args.contains("ignore_program_end") && args["ignore_program_end"].bVal;
+                std::string watchType = args.contains("watch_type") ? args["watch_type"].sVal : "write";
+                bool loadOk = true;
+                uint32_t entryAddr = 0;
+                bool hasEntry = false;
+
+                // Load image if specified
+                if (args.contains("load") && !args["load"].sVal.empty()) {
+                    std::string path = args["load"].sVal;
+                    auto* loader = ImageLoaderRegistry::instance().findLoader(path);
+                    if (loader && loader->load(path, ms->bus, ms->machine, 0)) {
+                        if (std::string(loader->name()).find("PRG") != std::string::npos) {
+                            std::ifstream f(path, std::ios::binary);
+                            uint8_t h[2]; f.read((char*)h, 2);
+                            entryAddr = h[0] | (h[1] << 8);
+                            hasEntry = true;
+                        }
+                    } else {
+                        textItem.oVal["text"] = Json("Error: Failed to load image");
+                        textItem.oVal["isError"] = Json(true);
+                        loadOk = false;
+                    }
+                }
+
+                if (loadOk) {
+                    // Set entry point
+                    if (args.contains("entry") && !args["entry"].sVal.empty()) {
+                        if (resolveAddr(args["entry"], ms->dbg, entryAddr))
+                            hasEntry = true;
+                    }
+                    if (hasEntry) ms->cpu->setPc(entryAddr);
+
+                    // Set watchpoint
+                    BreakpointType btype = (watchType == "read") ?
+                        BreakpointType::READ_WATCH : BreakpointType::WRITE_WATCH;
+                    int wpId = ms->dbg->breakpoints().add(watchAddr, btype);
+
+                    // Run until watchpoint or timeout
+                    bool bpHit = false;
+                    std::string stopReason = runWithBudget(ms, maxSteps, ignorePE, bpHit);
+
+                    // Remove the watchpoint we added
+                    ms->dbg->breakpoints().remove(wpId);
+
+                    // Build result
+                    Json result(Json::OBJ);
+                    result.oVal["stop_reason"] = Json(stopReason);
+                    result.oVal["watchpoint_hit"] = Json(bpHit);
+                    result.oVal["watch_addr"] = Json("$" + toHex(watchAddr));
+                    result.oVal["registers"] = buildRegistersJson(ms);
+                    result.oVal["pc"] = Json("$" + toHex(ms->cpu->pc()));
+
+                    // Actual value at watched address
+                    if (args.contains("expected") && args["expected"].is_array()) {
+                        Json comparison(Json::ARR);
+                        for (size_t i = 0; i < args["expected"].aVal.size(); ++i) {
+                            int expected = (int)args["expected"].aVal[i].nVal;
+                            int actual = (int)ms->bus->peek8(watchAddr + i);
+                            Json entry(Json::OBJ);
+                            entry.oVal["address"] = Json("$" + toHex(watchAddr + (uint32_t)i));
+                            entry.oVal["expected"] = Json(expected);
+                            entry.oVal["actual"] = Json(actual);
+                            entry.oVal["match"] = Json(expected == actual);
+                            comparison.push_back(entry);
+                        }
+                        result.oVal["comparison"] = comparison;
+                    }
+
+                    // Disassemble around current PC
+                    if (ms->disasm && bpHit) {
+                        // Show a few instructions before and at current PC
+                        uint32_t disasmStart = ms->cpu->pc() >= 8 ? ms->cpu->pc() - 8 : 0;
+                        Json disasmArr(Json::ARR);
+                        uint32_t addr = disasmStart;
+                        for (int i = 0; i < 8 && addr <= 0xFFFF; ++i) {
+                            char buf[64];
+                            int len = ms->disasm->disasmOne(ms->bus, addr, buf, sizeof(buf));
+                            if (len <= 0) break;
+                            Json line(Json::OBJ);
+                            line.oVal["addr"] = Json("$" + toHex(addr));
+                            line.oVal["instruction"] = Json(buf);
+                            line.oVal["current"] = Json(addr == ms->cpu->pc());
+                            disasmArr.push_back(line);
+                            addr += len;
+                        }
+                        result.oVal["disassembly"] = disasmArr;
+                    }
+
+                    // Trace buffer context
+                    if (ms->dbg && bpHit) {
+                        auto& tb = ms->dbg->trace();
+                        int avail = (int)tb.size();
+                        int show = std::min(traceDepth, avail);
+                        Json traceArr(Json::ARR);
+                        for (int i = avail - show; i < avail; ++i) {
+                            const auto& entry = tb.at(i);
+                            std::stringstream ss;
+                            ss << "$" << toHex(entry.addr) << ": ";
+                            if (!entry.mnemonic.empty()) {
+                                ss << entry.mnemonic;
+                            } else if (ms->disasm) {
+                                char buf[64];
+                                ms->disasm->disasmOne(ms->bus, entry.addr, buf, sizeof(buf));
+                                ss << buf;
+                            }
+                            ss << "  [";
+                            bool first = true;
+                            for (const auto& rv : entry.regs) {
+                                if (!first) ss << " ";
+                                int w = (rv.first == "SP" || rv.first == "PC") ? 4 : 2;
+                                ss << rv.first << "=$" << toHex(rv.second, w);
+                                first = false;
+                            }
+                            ss << "]";
+                            traceArr.push_back(Json(ss.str()));
+                        }
+                        result.oVal["trace"] = traceArr;
+                    }
+
+                    textItem.oVal["text"] = Json(result.stringify());
+                }
+            }
+        }
+
     } else {
         textItem.oVal["text"] = Json("Error: Unknown tool " + name);
         textItem.oVal["isError"] = Json(true);
@@ -3839,6 +4354,26 @@ Json handleToolsCall(const Json& params) {
     content.push_back(textItem);
     res.oVal["content"] = content;
     return res;
+}
+
+// Implementation of dispatchToolInternal — wraps handleToolsCall for batch use
+static Json dispatchToolInternal(const std::string& toolName, const Json& toolArgs) {
+    Json params(Json::OBJ);
+    params.oVal["name"] = Json(toolName);
+    params.oVal["arguments"] = toolArgs;
+    Json fullResult = handleToolsCall(params);
+    // Extract the text content from the standard MCP response
+    if (fullResult.contains("content") && fullResult["content"].is_array() &&
+        !fullResult["content"].aVal.empty()) {
+        const Json& item = fullResult["content"].aVal[0];
+        Json extracted(Json::OBJ);
+        if (item.contains("text")) extracted.oVal["text"] = item["text"];
+        if (item.contains("isError")) extracted.oVal["error"] = Json(true);
+        return extracted;
+    }
+    Json err(Json::OBJ);
+    err.oVal["error"] = Json("Internal dispatch failure");
+    return err;
 }
 
 static Json handleInitialize(const Json& params) {

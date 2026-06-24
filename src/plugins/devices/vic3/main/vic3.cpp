@@ -52,11 +52,15 @@ void VIC3::reset() {
 
 uint32_t VIC3::getPaletteRGBA(uint8_t index, uint8_t bank) const {
     // RGBA8888: alpha=0xFF, B in bits 23-16, G in bits 15-8, R in bits 7-0
+    // Per VHDL (viciv.vhdl line 3846-3854): VIC-III palette stores values with
+    // "reversed nybl order" — the low nybl holds the C65 4-bit colour value,
+    // the high nybl holds VIC-IV extended bits. Output swaps the nibbles:
+    //   output(7:4) = stored(3:0),  output(3:0) = stored(7:4)
     uint32_t fullIdx = ((uint32_t)bank << 8) | index;
-    return 0xFF000000u
-         | ((uint32_t)m_paletteB[fullIdx] << 16)
-         | ((uint32_t)m_paletteG[fullIdx] << 8)
-         | (uint32_t)m_paletteR[fullIdx];
+    uint8_t r = ((m_paletteR[fullIdx] & 0x0F) << 4) | ((m_paletteR[fullIdx] >> 4) & 0x0F);
+    uint8_t g = ((m_paletteG[fullIdx] & 0x0F) << 4) | ((m_paletteG[fullIdx] >> 4) & 0x0F);
+    uint8_t b = ((m_paletteB[fullIdx] & 0x0F) << 4) | ((m_paletteB[fullIdx] >> 4) & 0x0F);
+    return 0xFF000000u | ((uint32_t)b << 16) | ((uint32_t)g << 8) | (uint32_t)r;
 }
 
 // ---------------------------------------------------------------------------

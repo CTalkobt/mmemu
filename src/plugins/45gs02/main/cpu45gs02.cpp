@@ -1029,8 +1029,8 @@ int MOS45GS02::step() {
         case 0x22: { uint16_t a=getAbs(); uint16_t t=read8(a)|(read8(a+1)<<8); push16(m_state.pc-1); m_state.pc=t; m_state.cycles+=2; break; } // JSR (abs)
         case 0x23: { uint16_t a=(getAbs()+m_state.x); uint16_t t=read8(a)|(read8(a+1)<<8); push16(m_state.pc-1); m_state.pc=t; m_state.cycles+=2; break; } // JSR (abs,X)
 
-        case 0xF4: { uint16_t l=read8(m_state.pc++); uint16_t h=read8(m_state.pc++); uint16_t v=l|(h<<8); m_state.cycles+=2; push16(v); break; } // PHW #imm16
-        case 0xFC: { uint16_t a=getAbs(); uint16_t v=read8(a)|(read8(a+1)<<8); m_state.cycles+=2; push16(v); break; } // PHW abs
+        case 0xF4: { uint8_t lo=read8(m_state.pc++); uint8_t hi=read8(m_state.pc++); m_state.cycles+=2; push8(lo); push8(hi); break; } // PHW #imm16
+        case 0xFC: { uint16_t a=getAbs(); uint8_t lo=read8(a); uint8_t hi=read8(a+1); m_state.cycles+=2; push8(lo); push8(hi); break; } // PHW abs
 
         // --- 7. Flow Control ---
         case 0x4C: m_state.pc = getAbs(); break;
@@ -1309,10 +1309,13 @@ int MOS45GS02::step() {
             m_state.cycles++;
             break;
         }
-        case 0x7C: { // EOM - End of mapping sequence (NOP)
-            // EOM does NOT clear map state — it only re-enables interrupts
-            // after a MAP instruction. MAP state persists until another MAP or RESET.
-            m_state.cycles++;
+        case 0x7C: { // JMP (abs,X) — jump absolute indexed indirect
+            // 65C02/45GS02: reads 16-bit target from (operand + X)
+            uint16_t base = getAbs();
+            uint16_t ea = (base + m_state.x) & 0xFFFF;
+            uint16_t target = read8(ea) | (read8(ea + 1) << 8);
+            m_state.pc = target;
+            m_state.cycles += 2;
             break;
         }
 
@@ -1661,7 +1664,7 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
 
         case 0x42: snprintf(buf, bufsz, "%s", neg_pfx); return (int)(currentAddr - addr);
         case 0x5C: snprintf(buf, bufsz, "MAP"); return (int)(currentAddr - addr);
-        case 0x7C: snprintf(buf, bufsz, "EOM"); return (int)(currentAddr - addr);
+        case 0x7C: snprintf(buf, bufsz, "JMP ($%04X,X)", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
 
         case 0x89: snprintf(buf, bufsz, "BIT #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x24: snprintf(buf, bufsz, "%s $%02X", bit_pfx, bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
