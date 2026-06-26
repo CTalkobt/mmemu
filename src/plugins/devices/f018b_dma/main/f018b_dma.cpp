@@ -129,6 +129,8 @@ void F018bDmaDevice::startDma() {
     m_transparencyVal = 0;
     m_inheritSrcMB = 0; m_inheritSrcMBset = false;
     m_inheritDstMB = 0; m_inheritDstMBset = false;
+    memset(&m_srcLine, 0, sizeof(m_srcLine));
+    memset(&m_dstLine, 0, sizeof(m_dstLine));
 
     // Read and begin the first job
     if (!fetchAndBeginNextJob()) {
@@ -311,6 +313,58 @@ void F018bDmaDevice::dmaWrite(uint32_t addr, uint8_t val, bool ioFlag) {
     m_bus->write8(addr, val);
 }
 
+// Address stepping: normal mode or line drawing mode.
+// In line mode (slopeType bit 7 set), uses Bresenham-like slope accumulator
+// to trace lines across VIC-IV 8×8 card-based pixel addresses.
+// Based on xemu's dma65.c address_stepping() (lines 180-219).
+void F018bDmaDevice::stepAddress(uint32_t& accum, uint32_t base,
+                                  uint16_t step, bool hold, bool dir,
+                                  LineMode& lm) {
+    if (hold) return;
+
+    if (!(lm.slopeType & 0x80)) {
+        // Normal addressing: fixed-point accumulator step
+        if (dir) accum -= step;
+        else     accum += step;
+        return;
+    }
+
+    // Line Drawing Mode (LDM)
+    // addr in accum is fixed-point (low 8 bits = fractional).
+    // X position within cards: bits [10:8] of (accum >> 8)
+    // Y position: stepping by ±8 pixels (±0x800 in fixed-point)
+    lm.slopeAccum += lm.slope;
+
+    if (lm.slopeType & 0x40) {
+        // Y is major axis: always step Y, conditionally step X on overflow
+        accum += 0x800;  // +8 rows (Y step)
+        // Check Y card boundary (bits [14:11])
+        if ((accum & (7u << (3 + 8))) == (7u << (3 + 8)))
+            accum += lm.yCol;
+
+        if (lm.slopeAccum > 0xFFFF) {
+            lm.slopeAccum &= 0xFFFF;
+            // Minor axis (X) step
+            if (lm.slopeType & 0x20) {
+                // Negative X
+                accum -= ((accum & 0x700) == 0) ? lm.xCol + 0x100 : 0x100;
+            } else {
+                // Positive X
+                accum += ((accum & 0x700) == 0x700) ? lm.xCol + 0x100 : 0x100;
+            }
+        }
+    } else {
+        // X is major axis: always step X, conditionally step Y on overflow
+        accum += ((accum & 0x700) == 0x700) ? lm.xCol + 0x100 : 0x100;
+
+        if (lm.slopeAccum > 0xFFFF) {
+            lm.slopeAccum &= 0xFFFF;
+            // Minor axis (Y) step
+            accum += (lm.slopeType & 0x20) ? (uint32_t)-0x800 : 0x800u;
+        }
+    }
+}
+
 void F018bDmaDevice::tickOneByte() {
     if (!m_bus || m_bytesRemaining == 0) {
         m_dmaActive = false;
@@ -343,15 +397,11 @@ void F018bDmaDevice::tickOneByte() {
             break; // MIX (MINTERM) not yet implemented
     }
 
-    // Advance addresses
-    if (!m_srcHold) {
-        if (m_srcDir) m_srcAccum -= m_srcStep;
-        else          m_srcAccum += m_srcStep;
-    }
-    if (!m_dstHold) {
-        if (m_dstDir) m_dstAccum -= m_dstStep;
-        else          m_dstAccum += m_dstStep;
-    }
+    // Advance addresses (normal or line drawing mode)
+    if (!m_srcHold)
+        stepAddress(m_srcAccum, m_srcBase, m_srcStep, m_srcHold, m_srcDir, m_srcLine);
+    if (!m_dstHold)
+        stepAddress(m_dstAccum, m_dstBase, m_dstStep, m_dstHold, m_dstDir, m_dstLine);
 
     // Modulo addressing: at end of each row, add modulo value to affected channels
     if (m_moduloActive) {
@@ -412,6 +462,26 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
                 case 0x84: job.dstSkipRate = (job.dstSkipRate & 0xFF00) | arg; break;
                 case 0x85: job.dstSkipRate = (job.dstSkipRate & 0x00FF) | (arg << 8); break;
                 case 0x86: m_transparencyVal = arg; break;
+                // Line Drawing Mode — destination
+                case 0x87: m_dstLine.xCol = (m_dstLine.xCol & 0xFF0000) | ((uint32_t)arg << 8); break;
+                case 0x88: m_dstLine.xCol = (m_dstLine.xCol & 0x00FF00) | ((uint32_t)arg << 16); break;
+                case 0x89: m_dstLine.yCol = (m_dstLine.yCol & 0xFF0000) | ((uint32_t)arg << 8); break;
+                case 0x8A: m_dstLine.yCol = (m_dstLine.yCol & 0x00FF00) | ((uint32_t)arg << 16); break;
+                case 0x8B: m_dstLine.slope = (m_dstLine.slope & 0xFF00) | arg; break;
+                case 0x8C: m_dstLine.slope = (m_dstLine.slope & 0x00FF) | ((uint16_t)arg << 8); break;
+                case 0x8D: m_dstLine.slopeAccum = (m_dstLine.slopeAccum & 0xFF00) | arg; break;
+                case 0x8E: m_dstLine.slopeAccum = (m_dstLine.slopeAccum & 0x00FF) | ((uint16_t)arg << 8); break;
+                case 0x8F: m_dstLine.slopeType = arg; break;
+                // Line Drawing Mode — source
+                case 0x97: m_srcLine.xCol = (m_srcLine.xCol & 0xFF0000) | ((uint32_t)arg << 8); break;
+                case 0x98: m_srcLine.xCol = (m_srcLine.xCol & 0x00FF00) | ((uint32_t)arg << 16); break;
+                case 0x99: m_srcLine.yCol = (m_srcLine.yCol & 0xFF0000) | ((uint32_t)arg << 8); break;
+                case 0x9A: m_srcLine.yCol = (m_srcLine.yCol & 0x00FF00) | ((uint32_t)arg << 16); break;
+                case 0x9B: m_srcLine.slope = (m_srcLine.slope & 0xFF00) | arg; break;
+                case 0x9C: m_srcLine.slope = (m_srcLine.slope & 0x00FF) | ((uint16_t)arg << 8); break;
+                case 0x9D: m_srcLine.slopeAccum = (m_srcLine.slopeAccum & 0xFF00) | arg; break;
+                case 0x9E: m_srcLine.slopeAccum = (m_srcLine.slopeAccum & 0x00FF) | ((uint16_t)arg << 8); break;
+                case 0x9F: m_srcLine.slopeType = arg; break;
                 default:   break;
             }
         } else {

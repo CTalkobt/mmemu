@@ -150,6 +150,21 @@ private:
     uint16_t m_transparency;    // Low byte = transparent value; bit 8 set = disabled
     uint8_t  m_transparencyVal; // The transparent byte value (enhanced option $86)
 
+    // Line Drawing Mode (LDM) — per channel
+    // Enabled via enhanced option $8F (dest) / $9F (src) bit 7.
+    // Uses Bresenham-like slope accumulator for line rendering.
+    struct LineMode {
+        uint32_t xCol;         // X card boundary offset (options $87/$88 or $97/$98)
+        uint32_t yCol;         // Y card boundary offset (options $89/$8A or $99/$9A)
+        uint16_t slope;        // Slope value added to accumulator each step ($8B/$8C or $9B/$9C)
+        uint16_t slopeAccum;   // Slope accumulator ($8D/$8E or $9D/$9E)
+        uint8_t  slopeType;    // Control byte ($8F or $9F): bit7=enable, bit6=Y-major, bit5=negative
+    };
+    LineMode m_srcLine, m_dstLine;
+
+    void stepAddress(uint32_t& accum, uint32_t base, uint16_t step,
+                     bool hold, bool dir, LineMode& lm);
+
     // Inherited enhanced options across chained jobs
     uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;
     uint8_t  m_inheritDstMB;    bool m_inheritDstMBset;
