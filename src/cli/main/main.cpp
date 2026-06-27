@@ -48,6 +48,7 @@ int main(int argc, char *argv[]) {
                       << "  -m, --machine <id>    Create a machine on startup\n"
                       << "  -i, --mount <path>    Mount a disk/tape/program image\n"
                       << "  -t, --type <text>     Type text into the machine\n"
+                      << "  --run                 Auto-start the loaded program\n"
                       << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
                       << "  -h, -?, --help        Show this help\n";
             return 0;
@@ -68,8 +69,9 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
     });
 
-    // Process other command line args (machine, mount, type, gdb)
+    // Process other command line args (machine, mount, type, gdb, run)
     uint16_t gdbPort = 0;
+    bool autoRun = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--machine" || arg == "-m") && i + 1 < argc) {
@@ -78,9 +80,16 @@ int main(int argc, char *argv[]) {
             interpreter.processLine("load " + std::string(argv[++i]));
         } else if ((arg == "--type" || arg == "-t") && i + 1 < argc) {
             interpreter.processLine("type " + std::string(argv[++i]));
+        } else if (arg == "--run") {
+            autoRun = true;
         } else if (arg == "--gdb-port" && i + 1 < argc) {
             gdbPort = std::stoi(argv[++i]);
         }
+    }
+
+    // Auto-start: run from the loaded PRG address
+    if (autoRun && ctx.cpu) {
+        interpreter.processLine("run");
     }
 
     // Start GDB server if requested

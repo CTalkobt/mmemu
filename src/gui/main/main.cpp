@@ -383,6 +383,7 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] =
     { wxCMD_LINE_OPTION, "m", "machine", "Create a machine on startup", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "i", "mount",   "Mount a disk/tape/program image", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "t", "type",    "Type text into the machine", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_SWITCH, nullptr, "run", "Auto-start the loaded program", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, "h", "help",    "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_SWITCH, "?", "",        "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_NONE, nullptr, nullptr, nullptr, wxCMD_LINE_VAL_NONE, 0 }
@@ -399,6 +400,7 @@ public:
         parser.Found("machine", &m_startMachine);
         parser.Found("mount", &m_startMount);
         parser.Found("type", &m_startType);
+        m_autoRun = parser.Found("run");
         return true;
     }
 
@@ -441,6 +443,10 @@ public:
             evt.SetString(m_startType);
             frame->GetEventHandler()->AddPendingEvent(evt);
         }
+        if (m_autoRun) {
+            wxCommandEvent evt(wxEVT_MENU, ID_RUN);
+            frame->GetEventHandler()->AddPendingEvent(evt);
+        }
 
         return true;
     }
@@ -454,6 +460,7 @@ public:
     wxString m_startMachine;
     wxString m_startMount;
     wxString m_startType;
+    bool     m_autoRun = false;
 };
 
 wxIMPLEMENT_APP(MmemuApp);
