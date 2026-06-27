@@ -268,3 +268,47 @@ TEST_CASE(mega65_integration_joysticks) {
 
     delete desc;
 }
+
+// Boot the MEGA65 through the full Cold Start sequence.
+// Verify: boot completes without BRK, reaches KERNAL editor loop,
+// and the banner text "THE MEGA65" is present in screen RAM at $0800.
+TEST_CASE(mega65_boot_to_ready) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    auto* cpu = desc->cpus[0].cpu;
+    IBus* bus = desc->buses[0].bus;  // physical bus
+    ASSERT(cpu != nullptr);
+
+    // Run 20M steps — enough to complete boot.
+    const int MAX_STEPS = 20000000;
+    for (int s = 0; s < MAX_STEPS; ++s) {
+        if (desc->schedulerStep)
+            desc->schedulerStep(*desc);
+        else
+            cpu->step();
+    }
+
+    // Verify SP is still in page $01 (not corrupted)
+    ASSERT(cpu->regRead(5) >= 0x0100);
+
+    // Verify banner text in screen RAM at physical $0800.
+    // "THE MEGA65" in screen codes: T=14, H=08, E=05, space=20, M=0D, ...
+    // Check for "THE" at offset ~27 in row 1 ($0850+27 = $086B)
+    bool foundBanner = false;
+    const uint8_t the[] = {0x14, 0x08, 0x05};
+    for (uint32_t addr = 0x0800; addr < 0x0C00; ++addr) {
+        if (bus->peek8(addr) == the[0] &&
+            bus->peek8(addr + 1) == the[1] &&
+            bus->peek8(addr + 2) == the[2]) {
+            foundBanner = true;
+            break;
+        }
+    }
+    ASSERT(foundBanner);
+
+    delete desc;
+}

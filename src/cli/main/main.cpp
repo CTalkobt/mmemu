@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <memory>
+#include <csignal>
 #include "cli_interpreter.h"
 #include "gdb_server.h"
 #include "plugin_loader/main/plugin_loader.h"
@@ -9,8 +10,19 @@
 #include "include/version.h"
 #include "libcore/main/json_machine_loader.h"
 
+// Defined in cli_interpreter.cpp
+extern volatile sig_atomic_t g_interrupted;
+static void sigintHandler(int) { g_interrupted = 1; }
+
 int main(int argc, char *argv[]) {
     (void)argc; (void)argv;
+
+    // Install SIGINT handler so Ctrl-C breaks out of run loops
+    struct sigaction sa = {};
+    sa.sa_handler = sigintHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
 
     std::cout << "mmemu - Multi Machine Emulator (CLI)\n";
     std::cout << "Version " MMSIM_VERSION_FULL "\n";

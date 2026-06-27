@@ -1,5 +1,10 @@
 #include "cli_interpreter.h"
+#include <csignal>
 #include "include/util/logging.h"
+
+// Global interrupt flag — set by SIGINT handler, checked by run loops.
+// Defined here (not in main.cpp) so the test binary can link it too.
+volatile sig_atomic_t g_interrupted = 0;
 #include "libcore/main/machines/machine_registry.h"
 #include "libtoolchain/main/toolchain_registry.h"
 #include "libcore/main/image_loader.h"
@@ -232,30 +237,53 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         std::string expr;
         bool breakpointOnly = false;
+        int maxSteps = 0; // 0 = unlimited
         if (ss >> expr) {
             if (expr == "breakpoint") {
                 breakpointOnly = true;
             } else {
-                uint32_t addr;
-                if (parseAddr(expr, addr)) {
-                    m_ctx.cpu->setPc(addr);
+                // Try as decimal cycle count first (e.g. "run 5000000")
+                bool isDecimal = true;
+                for (char c : expr) { if (!isdigit(c)) { isDecimal = false; break; } }
+                if (isDecimal && expr.size() > 0) {
+                    maxSteps = std::stoi(expr);
                 } else {
-                    m_output("Error: Invalid address '" + expr + "'\n");
-                    return;
+                    uint32_t addr;
+                    if (parseAddr(expr, addr)) {
+                        m_ctx.cpu->setPc(addr);
+                    } else {
+                        m_output("Error: Invalid address or step count '" + expr + "'\n");
+                        return;
+                    }
                 }
             }
         } else if (m_ctx.lastLoadAddr != 0) {
             m_ctx.cpu->setPc(m_ctx.lastLoadAddr);
         }
-        m_output("Running... (Ctrl-C to stop - actually not supported in CLI yet, will run until break)\n");
+        if (maxSteps > 0)
+            m_output("Running " + std::to_string(maxSteps) + " steps... (Ctrl-C to stop)\n");
+        else
+            m_output("Running... (Ctrl-C to stop)\n");
+        g_interrupted = 0;
         m_ctx.dbg->resume();
-        while (!m_ctx.dbg->isPaused()) {
+        int steps = 0;
+        while (!m_ctx.dbg->isPaused() && !g_interrupted) {
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);
             } else {
                 m_ctx.cpu->step();
             }
+            ++steps;
             if (!breakpointOnly && m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
+            if (maxSteps > 0 && steps >= maxSteps) break;
+        }
+        if (g_interrupted) {
+            m_output("Interrupted.\n");
+            g_interrupted = 0;
+        } else if (m_ctx.dbg->isPaused()) {
+            m_output("Breakpoint hit.\n");
+        } else if (maxSteps > 0 && steps >= maxSteps) {
+            m_output("Stopped after " + std::to_string(steps) + " steps.\n");
         }
         showRegisters();
     } else if (cmd == "load") {
