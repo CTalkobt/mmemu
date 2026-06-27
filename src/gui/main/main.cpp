@@ -1264,17 +1264,20 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
         // Time-box to 25ms to keep the UI responsive even during slow boot sequences.
         const int CYCLES_PER_FRAME = 33333;
         int ran = 0;
+        int iters = 0;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
         while (ran < CYCLES_PER_FRAME) {
             ran += m_machine->schedulerStep(*m_machine);
+            ++iters;
             if (m_dbg && m_dbg->isPaused()) {
                 m_running = false;
                 SetStatusText(m_dbg->lastHitMessage());
                 if (m_bpPane) m_bpPane->RefreshValues();
                 break;
             }
-            // Yield to UI every 25ms to prevent freeze during heavy boot/DMA
-            if ((ran & 0xFF) == 0 && std::chrono::steady_clock::now() >= deadline)
+            // Yield to UI every 25ms — use iteration count (not cycle count)
+            // to handle cases where schedulerStep returns 0 cycles (DMA stall)
+            if ((iters & 0xFF) == 0 && std::chrono::steady_clock::now() >= deadline)
                 break;
         }
     }

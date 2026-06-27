@@ -275,10 +275,15 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_srcAccum = 0;
     m_dstAccum = 0;
 
-    // Zero-length job: chain immediately if possible
+    // Zero-length job: chain immediately if possible (limit depth to prevent
+    // infinite recursion from circular or degenerate chain lists)
+    static int chainDepth = 0;
     if (m_bytesRemaining == 0) {
-        if (m_hasChain) {
-            return fetchAndBeginNextJob();
+        if (m_hasChain && chainDepth < 256) {
+            ++chainDepth;
+            bool ok = fetchAndBeginNextJob();
+            --chainDepth;
+            return ok;
         } else {
             m_dmaActive = false;
             return false;
@@ -443,7 +448,9 @@ void F018bDmaDevice::tickOneByte() {
 void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
     if (!m_bus) return;
 
-    while (true) {
+    // Parse enhanced DMA options. Limit to 128 to prevent infinite loop
+    // if memory has no $00 terminator.
+    for (int optCount = 0; optCount < 128; ++optCount) {
         uint8_t option = m_bus->read8(addr);
         addr++;
 
