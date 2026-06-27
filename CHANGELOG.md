@@ -8,7 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### MEGA65 Boot to BASIC
-- **MEGA65 boots to READY. prompt** with proper 80-column display, colour palette, and rainbow sprite bars. HYPPO boot stage skipped; starts directly at C65 KERNAL reset vector ($E4B8).
+- **MEGA65 boots to READY. prompt** with proper 80-column display, colour palette, rainbow sprite bars, and real-time clock. HYPPO boot stage skipped; starts directly at C65 KERNAL reset vector ($E4B8).
+- **Real-Time Clock (RTC) device** (#76): Emulates MEGA65 I2C RTC at $FFD7110-$FFD7115. Returns host system date/time in BCD. Writes create a machine-local offset (does not affect host clock). Boot banner now shows actual date/time instead of "NO-RTC-2000".
+- **DMA line drawing mode** (#74): Bresenham-like line rendering via enhanced DMA options $87-$8F/$97-$9F. Slope accumulator with card boundary handling for VIC-IV 8×8 pixel layout.
+- **CLI run loop responsiveness** (#72): SIGINT handler for Ctrl-C, decimal cycle count argument (`run 5000000`), status reporting.
+- **MEGA65 boot integration test**: Verifies boot completes with banner text and uncorrupted SP (test #551).
 - **PHW push order** (fixes boot crash): PHW was using push16() (high-byte-first) but VHDL pushes low-address-byte first. Fixed to push8(lo); push8(hi) matching VHDL PushWordLow/PushWordHigh. This was the root cause of the Get_DOS trampoline crash.
 - **JMP ($abs,X)**: Opcode $7C was wrongly implemented as EOM/NOP. Implemented as 65C02 indirect indexed jump, required for KERNAL escape/control character dispatch tables.
 - **VIC-IV SCRNPTR default**: $D060-$D062 initialized to $000400 matching VHDL `screen_ram_base := x"0000400"`. Was $000000, causing DMA screen clear to fill zero page (clobbering cbdos pointer at $C8).

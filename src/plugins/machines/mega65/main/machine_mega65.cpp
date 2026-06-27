@@ -17,6 +17,7 @@
 #include "plugins/devices/hypervisor/main/hypervisor_regs.h"
 #include "plugins/devices/hypervisor/main/hdos_handler.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
+#include "plugins/devices/rtc/main/mega65_rtc.h"
 #include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
 #include "plugins/devices/sid_pair/main/sid_pair.h"
@@ -228,6 +229,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
     auto* sdcard   = new SdCardDevice(0xD680);
+    auto* rtc      = new Mega65Rtc(0xD710);
     auto* ioStub   = new Mega65IoStub();
     auto* kbd      = new KbdMega65();
     auto* cia1     = new CIA6526("CIA1", 0xDC00);
@@ -303,6 +305,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(cia2);
     io->registerHandler(exitTrap);
     io->registerHandler(sdcard);
+    rtc->setPhysBus(physBus);
+    io->registerHandler(rtc);
     io->registerHandler(ioStub);  // Catch-all for $D600-$D6FF and colour RAM $D800-$DBFF
     io->registerHandler(kbd); // For discovery via IKeyboardMatrix interface
     dma->setIoRegistry(io);  // DMA needs I/O dispatch for bank byte bit 7
@@ -330,6 +334,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([math]() { delete math; });
     desc->deleters.push_back([serial]() { delete serial; });
     desc->deleters.push_back([exitTrap]() { delete exitTrap; });
+    desc->deleters.push_back([rtc]() { delete rtc; });
     desc->deleters.push_back([kbd]() { delete kbd; });
     desc->deleters.push_back([vic4]() { delete vic4; });
     desc->deleters.push_back([cia1]() { delete cia1; });
