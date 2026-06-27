@@ -30,7 +30,7 @@ def assemble(src_path):
 def run_xmega65(prg_path):
     dump_path = "xmega65.dump"
     if os.path.exists(dump_path): os.remove(dump_path)
-    
+
     env = os.environ.copy()
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
@@ -45,9 +45,9 @@ def run_xmega65(prg_path):
         "-prgexit",
         "-dumpmem", dump_path,
     ]
-    
+
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
-    
+
     start_time = time.time()
     timeout = 60
     while time.time() - start_time < timeout:
@@ -60,7 +60,7 @@ def run_xmega65(prg_path):
         if proc.poll() is not None:
             break
         time.sleep(1.0)
-    
+
     if proc.poll() is None:
         proc.terminate()
         try:
@@ -109,7 +109,7 @@ def main():
     if time.time() - start_time > 120:
         print("  RESULT: FAIL (xmega65 timeout)")
         sys.exit(1)
-    
+
     print(f"  mmsim:   {mmsim_res.hex().upper()}")
     print(f"  xmega65: {xmega65_res.hex().upper()}")
 
@@ -119,9 +119,8 @@ def main():
         print("  RESULT: FAIL (mmsim invalid)")
         sys.exit(1)
 
-    # For rawMega65 tests, xmega65 may produce different results (different boot environment)
-    # So we validate mmsim produces a non-trivial result, not cross-validate against xmega65
-    if mmsim_res != b"\x00" * 16:  # At least something was written
+    # Validate mmsim produces a non-trivial result
+    if mmsim_res != b"\x00" * 16:
         print("  RESULT: PASS (mmsim produced result)")
         sys.exit(0)
     else:
