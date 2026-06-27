@@ -301,6 +301,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
+	src/plugins/devices/rtc/test/test_mega65_rtc.cpp \
+	src/plugins/devices/hypervisor/test/test_hypervisor.cpp \
 	src/plugins/devices/datasette/test/test_datasette.cpp \
 	src/plugins/devices/crtc6545/test/test_crtc6545.cpp \
 	src/libcore/test/test_sim_config.cpp \

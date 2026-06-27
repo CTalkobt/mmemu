@@ -840,6 +840,85 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": edge_mid})
 
+    # ---------------------------------------------------------------
+    # Test automation tools (#71): test_sequence, test_assert, stop_on_brk
+    # ---------------------------------------------------------------
+    print("\n--- Test automation tools ---")
+
+    auto_mid = client.call_tool("create_machine", {"machine_type": "c64"})
+    auto_mid = auto_mid["result"]["content"][0]["text"].split('"')[1]
+
+    # test_sequence: batch multiple commands
+    res = client.call_tool("test_sequence", {
+        "machine_id": auto_mid,
+        "commands": [
+            {"tool": "write_memory", "args": {"addr": "$C000", "bytes": [169, 42, 0]}},
+            {"tool": "set_pc", "args": {"addr": "$C000"}},
+            {"tool": "step_cpu", "args": {"count": 2}},
+            {"tool": "read_registers"}
+        ]
+    })
+    text = res["result"]["content"][0]["text"]
+    import json as jsonmod
+    data = jsonmod.loads(text)
+    assert data["final_registers"]["A"] == 42, f"Expected A=42, got {data['final_registers']['A']}"
+    assert len(data["sequence_results"]) == 4, "Expected 4 command results"
+    print("  ✓ test_sequence batch execution OK")
+
+    # test_assert: create a fresh machine for clean state
+    client.call_tool("destroy_machine", {"machine_id": auto_mid})
+    auto_mid2 = client.call_tool("create_machine", {"machine_type": "c64"})
+    auto_mid2 = auto_mid2["result"]["content"][0]["text"].split('"')[1]
+    client.call_tool("write_memory", {"machine_id": auto_mid2, "addr": "$C000", "bytes": [169, 42, 0]})
+    res = client.call_tool("test_assert", {
+        "machine_id": auto_mid2,
+        "entry": "$C000",
+        "timeout_steps": 100,
+        "stop_on_brk": True,
+        "assertions": {"registers": {"A": 42}}
+    })
+    text = res["result"]["content"][0]["text"]
+    data = jsonmod.loads(text)
+    assert data["pass"] == True, f"Expected pass=true: {data}"
+    print("  ✓ test_assert pass OK")
+
+    # test_assert with failing assertion
+    res = client.call_tool("test_assert", {
+        "machine_id": auto_mid2,
+        "entry": "$C000",
+        "timeout_steps": 100,
+        "stop_on_brk": True,
+        "assertions": {"registers": {"A": 99}}
+    })
+    auto_mid = auto_mid2  # use the new machine for remaining tests
+    text = res["result"]["content"][0]["text"]
+    data = jsonmod.loads(text)
+    assert data["pass"] == False, f"Expected pass=false: {data}"
+    assert len(data["failures"]) > 0, "Expected failures"
+    print("  ✓ test_assert fail detection OK")
+
+    # stop_on_brk
+    client.call_tool("write_memory", {"machine_id": auto_mid, "addr": "$C000", "bytes": [169, 55, 0]})
+    client.call_tool("set_pc", {"machine_id": auto_mid, "addr": "$C000"})
+    res = client.call_tool("run_cpu", {"machine_id": auto_mid, "max_steps": 1000, "stop_on_brk": True})
+    text = res["result"]["content"][0]["text"]
+    assert "BRK" in text, f"Expected BRK stop: {text}"
+    print("  ✓ stop_on_brk OK")
+
+    # run_until with loose flag
+    client.call_tool("set_pc", {"machine_id": auto_mid, "addr": "$C000"})
+    res = client.call_tool("run_until", {
+        "machine_id": auto_mid,
+        "condition": "A == 55",
+        "max_steps": 100,
+        "loose": True
+    })
+    text = res["result"]["content"][0]["text"]
+    assert "Condition met" in text, f"Expected condition met: {text}"
+    print("  ✓ run_until with loose flag OK")
+
+    client.call_tool("destroy_machine", {"machine_id": auto_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

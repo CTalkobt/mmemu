@@ -18,17 +18,18 @@ bool Mega65Rtc::ioRead(IBus*, uint32_t addr, uint8_t* val) {
     if ((addr & ~addrMask()) != m_base) return false;
     uint8_t reg = addr & 0x7F;
 
-    // NVRAM: $D740-$D77F → offsets $30-$6F
-    if (reg >= 0x30 && reg <= 0x6F) {
-        *val = m_nvram[reg - 0x30];
+    // NVRAM: $D740-$D77F → offsets $40-$7F
+    if (reg >= 0x40 && reg <= 0x7F) {
+        *val = m_nvram[reg - 0x40];
         return true;
     }
 
-    // RTC registers: $D710-$D715 → offsets $00-$05
-    if (reg > 0x05) {
+    // RTC registers: $D710-$D715 → offsets $10-$15
+    if (reg < 0x10 || reg > 0x15) {
         *val = 0;
         return true;
     }
+    reg -= 0x10;  // normalize to 0-5
 
     // Get current host time
     time_t now = time(nullptr);
@@ -67,13 +68,14 @@ bool Mega65Rtc::ioWrite(IBus*, uint32_t addr, uint8_t val) {
     uint8_t reg = addr & 0x7F;
 
     // NVRAM writes
-    if (reg >= 0x30 && reg <= 0x6F) {
-        m_nvram[reg - 0x30] = val;
+    if (reg >= 0x40 && reg <= 0x7F) {
+        m_nvram[reg - 0x40] = val;
         return true;
     }
 
     // RTC register writes: compute offset from current host time
-    if (reg > 0x05) return true;
+    if (reg < 0x10 || reg > 0x15) return true;
+    reg -= 0x10;
 
     time_t now = time(nullptr);
     struct tm* t = localtime(&now);

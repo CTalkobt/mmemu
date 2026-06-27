@@ -25,7 +25,7 @@
  */
 class Mega65Rtc : public IOHandler {
 public:
-    explicit Mega65Rtc(uint32_t base = 0xD710);
+    explicit Mega65Rtc(uint32_t base = 0xD700);
     ~Mega65Rtc() override = default;
 
     const char* name()     const override { return m_name.c_str(); }
