@@ -68,26 +68,22 @@ TEST_CASE(cia_port_default_state) {
 
 TEST_CASE(cia_timer_a_latch) {
     CiaFixture f;
-    uint8_t val;
+    uint8_t val_lo, val_hi;
 
-    // Enable Timer A (CRA bit 0 = 1)
-    ASSERT(f.cia.ioWrite(&f.bus, 0xDC0E, 0x01));
-
-    // Write Timer A latch (low byte) - sets latch, counter still shows old value
+    // Write Timer A latch low byte (goes to latch, not counter)
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC04, 0x34));
 
-    // To get the latch loaded, stop the timer and it will reload from latch
-    ASSERT(f.cia.ioWrite(&f.bus, 0xDC0E, 0x00));  // Stop timer
-
-    // Now read - counter should be reloaded from latch
-    ASSERT(f.cia.ioRead(&f.bus, 0xDC04, &val));
-    ASSERT_EQ((int)val, 0x34);
-
-    // Write Timer A latch (high byte)
+    // Write Timer A latch high byte (goes to latch, and since timer is stopped,
+    // the latch value is immediately loaded into the counter)
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC05, 0x12));
-    // High byte read should show new value after latch update
-    ASSERT(f.cia.ioRead(&f.bus, 0xDC05, &val));
-    ASSERT_EQ((int)val, 0x12);
+
+    // Read back counter values (which now equals latch since it was loaded)
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC04, &val_lo));
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC05, &val_hi));
+
+    // Counter should have been loaded from latch
+    ASSERT_EQ((int)val_lo, 0x34);
+    ASSERT_EQ((int)val_hi, 0x12);
 }
 
 TEST_CASE(cia_timer_a_countdown) {
