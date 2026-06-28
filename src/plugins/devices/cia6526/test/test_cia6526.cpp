@@ -20,11 +20,15 @@ TEST_CASE(cia_port_read_write) {
     CiaFixture f;
     uint8_t val;
 
+    // Configure Port A as output (DDRA = 0xFF)
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDC02, 0xFF));
     // Write to Port A output latch
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC00, 0x42));
     ASSERT(f.cia.ioRead(&f.bus, 0xDC00, &val));
     ASSERT_EQ((int)val, 0x42);
 
+    // Configure Port B as output (DDRB = 0xFF)
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDC03, 0xFF));
     // Write to Port B output latch
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC01, 0x99));
     ASSERT(f.cia.ioRead(&f.bus, 0xDC01, &val));
@@ -66,13 +70,22 @@ TEST_CASE(cia_timer_a_latch) {
     CiaFixture f;
     uint8_t val;
 
-    // Write Timer A latch (low byte)
+    // Enable Timer A (CRA bit 0 = 1)
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDC0E, 0x01));
+
+    // Write Timer A latch (low byte) - sets latch, counter still shows old value
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC04, 0x34));
+
+    // To get the latch loaded, stop the timer and it will reload from latch
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDC0E, 0x00));  // Stop timer
+
+    // Now read - counter should be reloaded from latch
     ASSERT(f.cia.ioRead(&f.bus, 0xDC04, &val));
     ASSERT_EQ((int)val, 0x34);
 
     // Write Timer A latch (high byte)
     ASSERT(f.cia.ioWrite(&f.bus, 0xDC05, 0x12));
+    // High byte read should show new value after latch update
     ASSERT(f.cia.ioRead(&f.bus, 0xDC05, &val));
     ASSERT_EQ((int)val, 0x12);
 }
