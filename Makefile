@@ -27,9 +27,9 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/hyper_serial/main \
 	-Isrc/plugins/devices/virtual_iec/main \
 	-Isrc/plugins/devices/vic3/main \
-	-Isrc/plugins/devices/hypervisor/main \
+	-Isrc/plugins/devices/mega65_hypervisor/main \
 	-Isrc/plugins/devices/sdcard/main \
-	-Isrc/plugins/devices/rtc/main \
+	-Isrc/plugins/devices/mega65_rtc/main \
 	-Isrc/plugins/devices/mega65_io/main \
 	-Isrc/plugins/devices/f018b_dma/main \
 	-Isrc/plugins/devices/map_mmu/main \
@@ -195,10 +195,10 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/map_mmu/main/c64_bank_controller.cpp \
 	src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
 	src/plugins/devices/mega65_math/main/mega65_math.cpp \
-	src/plugins/devices/hypervisor/main/hypervisor_regs.cpp \
-	src/plugins/devices/hypervisor/main/hdos_handler.cpp \
+	src/plugins/devices/mega65_hypervisor/main/hypervisor_regs.cpp \
+	src/plugins/devices/mega65_hypervisor/main/hdos_handler.cpp \
 	src/plugins/devices/sdcard/main/sdcard.cpp \
-	src/plugins/devices/rtc/main/mega65_rtc.cpp \
+	src/plugins/devices/mega65_rtc/main/mega65_rtc.cpp \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
 
@@ -301,8 +301,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
-	src/plugins/devices/rtc/test/test_mega65_rtc.cpp \
-	src/plugins/devices/hypervisor/test/test_hypervisor.cpp \
+	src/plugins/devices/mega65_rtc/test/test_mega65_rtc.cpp \
+	src/plugins/devices/mega65_hypervisor/test/test_hypervisor.cpp \
 	src/plugins/devices/datasette/test/test_datasette.cpp \
 	src/plugins/devices/crtc6545/test/test_crtc6545.cpp \
 	src/libcore/test/test_sim_config.cpp \
@@ -369,10 +369,10 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vic3/main/vic3.o \
 	src/plugins/devices/vic4/main/vic4.o \
 	src/plugins/devices/mega65_math/main/mega65_math.o \
-	src/plugins/devices/hypervisor/main/hypervisor_regs.o \
-	src/plugins/devices/hypervisor/main/hdos_handler.o \
+	src/plugins/devices/mega65_hypervisor/main/hypervisor_regs.o \
+	src/plugins/devices/mega65_hypervisor/main/hdos_handler.o \
 	src/plugins/devices/sdcard/main/sdcard.o \
-	src/plugins/devices/rtc/main/mega65_rtc.o \
+	src/plugins/devices/mega65_rtc/main/mega65_rtc.o \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.o \
 	src/plugins/devices/hyper_serial/main/hyper_serial.o \
 	src/plugins/devices/exit_trap/main/exit_trap.o \
