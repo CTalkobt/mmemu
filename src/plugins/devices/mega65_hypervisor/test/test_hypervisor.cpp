@@ -1,6 +1,6 @@
 #include "test_harness.h"
-#include "plugins/devices/hypervisor/main/hypervisor_regs.h"
-#include "plugins/devices/hypervisor/main/hdos_handler.h"
+#include "plugins/devices/mega65_hypervisor/main/hypervisor_regs.h"
+#include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 #include "plugins/45gs02/main/cpu45gs02.h"
 #include "libmem/main/memory_bus.h"
 

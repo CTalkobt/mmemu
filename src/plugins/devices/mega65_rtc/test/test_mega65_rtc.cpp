@@ -1,5 +1,5 @@
 #include "test_harness.h"
-#include "plugins/devices/rtc/main/mega65_rtc.h"
+#include "plugins/devices/mega65_rtc/main/mega65_rtc.h"
 
 TEST_CASE(rtc_read_returns_valid_bcd) {
     Mega65Rtc rtc(0xD700);

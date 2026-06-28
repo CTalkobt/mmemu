@@ -14,10 +14,10 @@
 #include "plugins/devices/keyboard/main/keyboard_matrix_mega65.h"
 #include "plugins/devices/virtual_iec/main/virtual_iec.h"
 #include "plugins/devices/vic4/main/vic4.h"
-#include "plugins/devices/hypervisor/main/hypervisor_regs.h"
-#include "plugins/devices/hypervisor/main/hdos_handler.h"
+#include "plugins/devices/mega65_hypervisor/main/hypervisor_regs.h"
+#include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
-#include "plugins/devices/rtc/main/mega65_rtc.h"
+#include "plugins/devices/mega65_rtc/main/mega65_rtc.h"
 #include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
 #include "plugins/devices/sid_pair/main/sid_pair.h"
