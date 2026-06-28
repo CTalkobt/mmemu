@@ -25,6 +25,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **VIC2 PAL timing**: Configurable via setPal(). Default PAL (63 cycles/line, 312 lines). Was hardcoded NTSC (65/263).
 
 ### Added
+- **Commodore Plus/4 Architecture Plan** (`.plan/plus4.md` & Phase 25 in `.plan/todo.md`): Detailed roadmap covering MOS 7501/8501 CPU, MOS 7360/8360 TED chip, 121-color RGBA video engine, 2-channel audio subsystem, MOS 6551 ACIA, and machine factories for Plus/4, C16, and C116.
+- **Commodore 128 Architecture Plan** (`.plan/c128.md` & Phase 34 in `.plan/todo.md`): Detailed roadmap covering MOS 8502 CPU, Zilog Z80A core, MOS 8722 MMU, VDC 8563 80-column video controller, VIC-IIe, and machine factory.
 - **MCP test automation tools** (#71): `test_sequence` (batch commands), `test_assert` (load+run+assertions), `test_diagnose` (watchpoint root cause analysis).
 - **MCP `stop_on_brk`**: Flag on `run_cpu` and `test_assert` to halt before executing BRK instruction.
 - **MCP `run_until` precision**: Per-step condition checking by default. `loose=true` for every-256-step performance mode.

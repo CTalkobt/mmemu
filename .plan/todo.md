@@ -790,67 +790,35 @@ MEGA65 SD card image.*
 
 ## Phase 25: Commodore Plus/4 and C16 (TED-based)
 
-*Goal: Implement the TED-based Commodore machines (C16, C116, Plus/4).*
+*Goal: Implement the TED-based Commodore machines (Plus/4, C16, C116). Detailed architecture and specifications are in `.plan/plus4.md`.*
 
-### Phase 25.1: MOS 7360 / 8360 TED (`src/plugins/devices/ted7360/`)
+### Phase 25.1: MOS 7501 / 8501 CPU Core
+- [ ] Implement `MOS8501` inheriting from `MOS6510` (`src/plugins/devices/plus4/cpu8501/`).
+- [ ] 6-bit on-chip I/O port at `$00/$01` and dynamic clock speed scaling (0.89 MHz / 1.76 MHz).
 
-- [ ] Implement `TED7360 : public IOHandler`.
-- [ ] **Register File**: 64 registers ($FF00–$FF3F) controlling video, sound, 
-      timers, and memory banking.
-- [ ] **Internal Timers**:
-    - Three 16-bit interval timers (Timer 1, 2, 3).
-    - Timer 3 also drives the cursor blink and system clock.
-- [ ] **Banking Logic**:
-    - Integrated ROM/RAM banking control (BASIC, KERNAL, Function ROMs).
-    - `ISignalLine` outputs for LORAM/HIRAM equivalents.
-- [ ] **Sound**:
-    - Two square wave channels (10-bit frequency).
-    - Channel 2 can be switched to digital noise.
-    - Master volume control.
-- [ ] **I/O**:
-    - Keyboard matrix scanning (shared with video registers).
-    - Joystick port reading.
+### Phase 25.2: MOS 7360 / 8360 TED Core & Register File
+- [ ] Implement `TED7360 : public IOHandler` (`src/plugins/devices/ted7360/`).
+- [ ] 64-register file ($FF00–$FF3F), three 16-bit interval timers with reload latches & IRQ, keyboard matrix scanning, joystick reading.
 
-### Phase 25.2: TED Video and Palette (`src/plugins/devices/ted_video/`)
+### Phase 25.3: TED Video Engine & 121-Color Renderer
+- [ ] Implement `TedVideo` inheriting from `IVideoOutput` (`src/plugins/devices/ted_video/`).
+- [ ] 121-color RGBA palette lookup table generation (15 hues × 8 luminances + black).
+- [ ] Standard/multicolor text, extended background color, standard/multicolor bitmap modes, raster IRQ compare, and smooth scrolling.
 
-- [ ] Implement `TedVideo` inheriting from `IVideoOutput`.
-- [ ] **121-Color Palette**:
-    - 15 hues (plus black) and 8 luminance levels.
-    - Implement the luminance scaling logic in the RGBA renderer.
-- [ ] **Video Modes**:
-    - Standard 40-column text.
-    - Multicolor text.
-    - Multicolor bitmap.
-    - Extended background color.
-- [ ] **Raster Pipeline**:
-    - Raster counter and compare (triggering IRQ).
-    - Horizontal and vertical smooth scrolling.
-- [ ] `renderFrame()`: produces RGBA buffer using TED registers and memory.
+### Phase 25.4: TED Audio Subsystem
+- [ ] Implement `TedAudio` satisfying `IAudioOutput` (`src/plugins/devices/ted_audio/`).
+- [ ] Channel 1 (square wave), Channel 2 (square wave or LFSR white noise), master volume control.
 
-### Phase 25.3: MOS 6551 ACIA (`src/plugins/devices/acia6551/`)
+### Phase 25.5: MOS 6551 ACIA Communications Adapter
+- [ ] Implement `ACIA6551 : public IOHandler` at $FD00 (`src/plugins/devices/acia6551/`).
+- [ ] Data, Status, Command, Control registers, baud rate generator (50–19200 baud), TX/RX interrupts.
 
-- [ ] Implement `ACIA6551 : public IOHandler` at $FD00.
-- [ ] **Registers**: Control, Command, Status, and Data.
-- [ ] **Baud Rate Generator**: Support for standard rates (50 to 19200 baud).
-- [ ] **Interrupts**: IRQ on transmit buffer empty or receive buffer full.
+### Phase 25.6: Plus/4 Memory Map & Machine Factory
+- [ ] `MachineDescriptor` for `"plus4"`, `"c16"`, and `"c116"` (`src/plugins/machines/plus4/`).
+- [ ] Memory maps (64 KB for Plus/4, 16 KB for C16/C116), system ROMs (BASIC v3.5, KERNAL, 3Plus1), dummy address banking decoder for `$FDD0–$FDEF`, and 75-key keyboard matrix mapping.
 
-### Phase 25.4: Plus/4 Machine Factory and Memory Map
-
-- [ ] `MachineDescriptor` for `"plus4"` and `"c16"`.
-- [ ] **Memory Map**:
-    - C16: 16 KB RAM ($0000–$3FFF).
-    - Plus/4: 64 KB RAM ($0000–$FDFF).
-    - ROMs: BASIC ($8000), KERNAL ($E000).
-- [ ] **Keyboard**: Implement the 8x8 matrix scanned via TED registers.
-- [ ] `onReset`: Load ROMs, reset TED and ACIA.
-
-### Phase 25.5: Plus/4 Integration Tests
-
-- [ ] **TED Color Test**: Cycle through all 121 colors and verify RGBA output.
-- [ ] **TED Timer Test**: Program Timer 1 for IRQ and verify `sigIrq` pulses.
-- [ ] **TED Banking Test**: Switch between RAM and ROM at $8000 via TED 
-      registers; verify data change.
-- [ ] **ACIA Loopback Test**: Connect TX to RX and verify data round-trip.
+### Phase 25.7: Plus/4 Integration Tests
+- [ ] Integration test suite (`tests/test_plus4.cpp`) covering 121-color RGBA verification, TED timers, dummy address bank switching, ACIA loopback, and boot to BASIC 3.5 prompt.
 
 ---
 
@@ -1318,3 +1286,40 @@ register state, I/O line levels, and visual assets like sprites or tile maps.*
 
 - [ ] ***GUI**: On the DeviceInfoPane hierarchical view, allow 
       a) adding, b) editing and c) removign a device. 
+
+---
+
+## Phase 34: Commodore 128 Machine
+
+*Goal: Dual-CPU, dual-video Commodore 128 simulation with 128 KB MMU banking, VDC 80-column display, and C64/CP/M backward compatibility. Detailed specifications are in `.plan/c128.md`.*
+
+### Phase 34.1: MOS 8502 CPU & 2 MHz Fast Mode
+- [ ] Implement `MOS8502` inheriting from `MOS6510` (`src/plugins/devices/c128/cpu8502/`).
+- [ ] 8-bit on-chip I/O port at `$00/$01` and 2 MHz clock stretch scaling.
+
+### Phase 34.2: Zilog Z80A Core & Dual-CPU Switcher
+- [ ] Implement `Z80` class inheriting from `ICore` (`src/plugins/z80/`).
+- [ ] Full register set, opcode matrix, and disassembler (`DisassemblerZ80`).
+- [ ] Implement dual-CPU bus handoff switcher (`$D505` bit 0).
+
+### Phase 34.3: MOS 8722 MMU Implementation
+- [ ] Implement `MMU8722` IOHandler (`src/plugins/devices/mmu8722/`).
+- [ ] Configuration registers CR0–CR4, MCR (`$D505`), RCR (`$D506`), page relocation (`$D507–$D50A`).
+- [ ] `C128MmuAdapter` bus wrapper for 128 KB physical RAM banking and Shared RAM (`$0000–$00FF`, `$FF00–$FFFF`).
+
+### Phase 34.4: MOS 8563 VDC 80-Column Display Controller
+- [ ] Implement `VDC8563 : public IOHandler, public IVideoOutput` (`src/plugins/devices/vdc8563/`).
+- [ ] Indirect registers at `$D600/$D601`, 37 internal registers, dedicated 16 KB/64 KB VDC RAM.
+- [ ] Hardware block fill/copy engine and 80-column RGBI text/attribute frame buffer renderer.
+
+### Phase 34.5: MOS 8564/8566 VIC-IIe Enhancements
+- [ ] Implement `VIC2e` (`src/plugins/devices/vic2e/`) wrapping `VIC2` with `$D030` clock control.
+
+### Phase 34.6: C128 Machine Factory and Memory Map
+- [ ] Machine descriptor for `"c128"` (`src/plugins/machines/c128/`).
+- [ ] Load C128 KERNAL, BASIC 7.0, Editor, CharROM, and C64 ROMs.
+- [ ] 108-key keyboard matrix mapping.
+
+### Phase 34.7: C128 Integration Tests
+- [ ] Integration test suite (`tests/test_c128.cpp`) covering MMU, Z80 startup, VDC RAM operations, and `GO 64` transition.
+
