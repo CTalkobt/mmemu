@@ -4419,9 +4419,16 @@ void mcpCleanup() {
 
 #ifndef TEST_BUILD
 int main(int argc, char* argv[]) {
-    (void)argc; (void)argv;
-
     LogRegistry::instance().init();
+
+    // Parse verbosity flags
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-vv" || arg == "--trace")
+            LogRegistry::instance().setGlobalLevel(spdlog::level::trace);
+        else if (arg == "-v" || arg == "--verbose")
+            LogRegistry::instance().setGlobalLevel(spdlog::level::debug);
+    }
     PluginLoader::instance().loadFromStandardLocations();
     SimConfig::instance().load();
 

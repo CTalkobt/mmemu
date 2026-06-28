@@ -23,6 +23,7 @@
 #include "plugins/devices/sid_pair/main/sid_pair.h"
 #include "plugins/devices/cia6526/main/cia6526.h"
 #include "libdevices/main/shared_signal_line.h"
+#include "libdevices/main/shared_irq_manager.h"
 #include "libdevices/main/joystick.h"
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
@@ -277,15 +278,6 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // CIA2 Port A is Joystick 1
     cia2->setPortADevice(joy1);
     
-    // Wire signals
-    auto* sigIrq = new SharedSignalLine("sigIrq");
-    cia1->setIrqLine(sigIrq);
-    vic4->setIrqLine(sigIrq);
-    
-    auto* sigNmi = new SharedSignalLine("sigNmi");
-    cia2->setIrqLine(sigNmi); // CIA2 IRQ is wired to CPU NMI on Commodore
-    kbd->setRestoreLine(sigNmi); // RESTORE key also triggers NMI
-
     // Personality switch callback
     keyReg->setPersonalityChangeCallback([vic4](IopersonalityMode mode) {
         vic4->setLocked(mode != IopersonalityMode::MEGA65);
@@ -342,8 +334,6 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([joy1]() { delete joy1; });
     desc->deleters.push_back([joy2]() { delete joy2; });
     desc->deleters.push_back([combined1B]() { delete combined1B; });
-    desc->deleters.push_back([sigIrq]() { delete sigIrq; });
-    desc->deleters.push_back([sigNmi]() { delete sigNmi; });
 
     // -----------------------------------------------------------------------
     // Create 45GS02 CPU
@@ -365,6 +355,20 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Load HYPPO Hypervisor ROM (16 KB)
     // -----------------------------------------------------------------------
     auto* cpu45 = static_cast<MOS45GS02*>(cpu);
+
+    // Wire signals — use SharedIrqManager for proper wired-OR that drives
+    // the CPU's IRQ/NMI pins.  SharedSignalLine doesn't push to the CPU.
+    auto* irqMgr = new SharedIrqManager(cpu45);
+    cia1->setIrqLine(irqMgr->createLine());
+    vic4->setIrqLine(irqMgr->createLine());
+    desc->deleters.push_back([irqMgr]() { delete irqMgr; });
+
+    // NMI: CIA2 IRQ output is wired to CPU NMI on Commodore.
+    // RESTORE key also triggers NMI.  Use SharedNmiManager for wired-OR.
+    auto* nmiMgr = new SharedNmiManager(cpu45);
+    cia2->setIrqLine(nmiMgr->createLine()); // CIA2 IRQ → CPU NMI
+    kbd->setRestoreLine(nmiMgr->createLine());
+    desc->deleters.push_back([nmiMgr]() { delete nmiMgr; });
 
     // KEY register: block personality changes while in hypervisor mode
     keyReg->setHypervisorCheck([cpu45]() { return cpu45->isHypervisor(); });

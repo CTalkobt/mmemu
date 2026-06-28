@@ -26,12 +26,7 @@ TEST_CASE(f018b_registers_read_write) {
     F018bFixture f;
     uint8_t val;
 
-    // Write to ADDRLSBTRIG
-    ASSERT(f.dma.ioWrite(&f.flatBus, 0xD700, 0x34));
-    ASSERT(f.dma.ioRead(&f.flatBus, 0xD700, &val));
-    ASSERT_EQ((int)val, 0x34);
-
-    // Write to ADDRMSB
+    // Write to ADDRMSB (non-trigger register — simple readback)
     ASSERT(f.dma.ioWrite(&f.flatBus, 0xD701, 0x12));
     ASSERT(f.dma.ioRead(&f.flatBus, 0xD701, &val));
     ASSERT_EQ((int)val, 0x12);
@@ -40,6 +35,11 @@ TEST_CASE(f018b_registers_read_write) {
     ASSERT(f.dma.ioWrite(&f.flatBus, 0xD702, 0x05));
     ASSERT(f.dma.ioRead(&f.flatBus, 0xD702, &val));
     ASSERT_EQ((int)val, 0x05);
+
+    // $D700 is ADDRLSBTRIG — writing triggers DMA execution, so the
+    // register value may be modified by the DMA job read.  Just verify
+    // the write is accepted.
+    ASSERT(f.dma.ioWrite(&f.flatBus, 0xD700, 0x34));
 }
 
 TEST_CASE(f018b_base_addr_mask) {
@@ -236,7 +236,7 @@ TEST_CASE(f018b_dma_aliases) {
 
     bool found_dma = false, found_f018b = false;
     for (const auto& alias : aliases) {
-        if (alias == "DMA") found_dma = true;
+        if (alias == "F018BDMA") found_dma = true;
         if (alias == "F018B") found_f018b = true;
     }
     ASSERT(found_dma);

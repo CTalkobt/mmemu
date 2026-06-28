@@ -26,8 +26,20 @@ int main(int argc, char *argv[]) {
 
     std::cout << "mmemu - Multi Machine Emulator (CLI)\n";
     std::cout << "Version " MMSIM_VERSION_FULL "\n";
-    
+
     LogRegistry::instance().init();
+
+    // Parse verbosity flags early so logging is active for plugin loading
+    int verbosity = 0;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-vv" || arg == "--trace")   { verbosity = 2; }
+        else if (arg == "-v" || arg == "--verbose") { if (verbosity < 1) verbosity = 1; }
+    }
+    if (verbosity >= 2)
+        LogRegistry::instance().setGlobalLevel(spdlog::level::trace);
+    else if (verbosity >= 1)
+        LogRegistry::instance().setGlobalLevel(spdlog::level::debug);
 
     PluginLoader::instance().setCommandRegisterFn([](const PluginCommandInfo* info) {
         PluginCommandRegistry::instance().registerCommand(info);
@@ -50,6 +62,8 @@ int main(int argc, char *argv[]) {
                       << "  -t, --type <text>     Type text into the machine\n"
                       << "  --run                 Auto-start the loaded program\n"
                       << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
+                      << "  -v, --verbose         Enable debug logging\n"
+                      << "  -vv, --trace          Enable trace logging (very verbose)\n"
                       << "  -h, -?, --help        Show this help\n";
             return 0;
         }

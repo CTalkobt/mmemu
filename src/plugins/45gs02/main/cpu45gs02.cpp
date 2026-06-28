@@ -577,6 +577,7 @@ int MOS45GS02::step() {
         case 0x86: write8(getZp(), m_state.x); m_state.cycles++; break;
         case 0x96: write8(getZpY(), m_state.x); m_state.cycles++; break;
         case 0x9B: write8(getAbsY(), m_state.x); m_state.cycles++; break; // STX abs,Y
+        case 0x8B: write8(getAbsX(), m_state.y); m_state.cycles++; break; // STY abs,X
         case 0x8C: write8(getAbs(), m_state.y); m_state.cycles++; break;
         case 0x84: write8(getZp(), m_state.y); m_state.cycles++; break;
         case 0x94: write8(getZpX(), m_state.y); m_state.cycles++; break;
@@ -1606,6 +1607,7 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
         case 0x86: snprintf(buf, bufsz, "STX $%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x96: snprintf(buf, bufsz, "STX $%02X,Y", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x9B: snprintf(buf, bufsz, "STX $%04X,Y", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
+        case 0x8B: snprintf(buf, bufsz, "STY $%04X,X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x8C: snprintf(buf, bufsz, "STY $%04X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x84: snprintf(buf, bufsz, "STY $%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x94: snprintf(buf, bufsz, "STY $%02X,X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);

@@ -81,6 +81,7 @@ private:
     void OnNewMemView(wxCommandEvent& event);
     void OnRenameMemView(wxCommandEvent& event);
     void OnLoadMachineDirect(wxCommandEvent& event);
+    void loadMachineById(const std::string& id);
     void OnLoadImageDirect(wxCommandEvent& event);
     void OnTypeTextDirect(wxCommandEvent& event);
     void OnTimer(wxTimerEvent& event);
@@ -383,6 +384,8 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] =
     { wxCMD_LINE_OPTION, "m", "machine", "Create a machine on startup", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "i", "mount",   "Mount a disk/tape/program image", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "t", "type",    "Type text into the machine", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_SWITCH, "v", "verbose", "Enable debug logging", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_SWITCH, nullptr, "trace", "Enable trace logging (very verbose)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "run", "Auto-start the loaded program", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, "h", "help",    "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_SWITCH, "?", "",        "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
@@ -401,21 +404,27 @@ public:
         parser.Found("mount", &m_startMount);
         parser.Found("type", &m_startType);
         m_autoRun = parser.Found("run");
+        m_trace = parser.Found("trace");
+        m_verbose = parser.Found("verbose");
         return true;
     }
 
     bool OnInit() override {
-        // Handle help early and exit if requested
-        wxCmdLineParser parser(g_cmdLineDesc, argc, argv);
-        parser.SetSwitchChars("-");
-        if (parser.Parse(false) != 0) {
-            // Error in parsing or help requested
-            // Note: Parse(false) doesn't print help, we do it manually or via Parse(true)
-            parser.Usage();
+        // wxApp::OnInit() drives OnInitCmdLine → parse → OnCmdLineParsed,
+        // which populates m_startMachine etc.  Must be called first.
+        if (!wxApp::OnInit())
             return false;
-        }
 
         LogRegistry::instance().init();
+        // Also check for -vv in raw argv (wxWidgets can't parse combined short flags)
+        for (int i = 1; i < argc; ++i) {
+            wxString a(argv[i]);
+            if (a == "-vv") m_trace = true;
+        }
+        if (m_trace)
+            LogRegistry::instance().setGlobalLevel(spdlog::level::trace);
+        else if (m_verbose)
+            LogRegistry::instance().setGlobalLevel(spdlog::level::debug);
         m_keyFilter.m_logger = LogRegistry::instance().getLogger("gui.keyboard");
         wxEvtHandler::AddFilter(&m_keyFilter);
         PluginLoader::instance().setPaneRegisterFn([](const PluginPaneInfo* info) {
@@ -461,6 +470,8 @@ public:
     wxString m_startMount;
     wxString m_startType;
     bool     m_autoRun = false;
+    bool     m_verbose = false;
+    bool     m_trace   = false;
 };
 
 wxIMPLEMENT_APP(MmemuApp);
@@ -639,43 +650,7 @@ MmemuFrame::MmemuFrame()
 
 void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
     std::string id = event.GetString().ToStdString();
-    MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
-    if (md) {
-        if (m_machine != md) delete m_machine;
-        m_machine = md;
-        m_cpu = m_machine->cpus[0].cpu;
-        m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
-        if (m_disasm) { delete m_disasm; m_disasm = nullptr; }
-        m_disasm = ToolchainRegistry::instance().createDisassembler(m_cpu->isaName());
-        delete m_dbg;
-        m_dbg = new DebugContext(m_cpu, m_machine->buses[0].bus);
-        m_cpu->setObserver(m_dbg);
-        m_machine->buses[0].bus->setObserver(m_dbg);
-        m_dbg->onMachineLoad(m_machine);
-        for (const auto& path : m_machine->symbolFiles) m_dbg->symbols().loadSym(path);
-        if (m_disasm) m_disasm->setSymbolTable(&m_dbg->symbols());
-        m_regPane->SetCPU(m_cpu);
-        for (auto* p : m_memPanes) p->SetBus(m_bus);
-        m_disasmPane->SetBus(m_bus);
-        m_disasmPane->SetDisassembler(m_disasm);
-        m_disasmPane->SetDebugContext(m_dbg);
-        m_consolePane->SetContext(m_cpu, m_bus);
-        m_consolePane->SetMachine(m_machine);
-        m_consolePane->SetDebugContext(m_dbg);
-        m_bpPane->SetDebugContext(m_dbg);
-        m_symPane->SetDebugContext(m_dbg);
-        m_stackPane->SetDebugContext(m_dbg);
-        m_cartPane->SetBus(m_bus);
-        m_machineInspectorPane->setMachine(m_machine);
-        m_deviceInfoPane->setMachine(m_machine);
-        m_regWatchPane->setMachine(m_machine);
-        m_tracePane->SetDebugContext(m_dbg);
-        m_tracePane->SetCPU(m_cpu);
-        if (m_machine->onReset) m_machine->onReset(*m_machine);
-        PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
-        SetTitle("mmemu - " + m_machine->displayName);
-        SetStatusText("Loaded machine: " + id);
-    }
+    loadMachineById(id);
 }
 
 void MmemuFrame::OnLoadImageDirect(wxCommandEvent& event) {
@@ -708,114 +683,111 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
     (void)event;
     MachineSelectorDialog dialog(this);
     if (dialog.ShowModal() == wxID_OK) {
-        std::string id = dialog.GetSelectedMachineId();
-        MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
-        if (md) {
-            if (m_machine != md) delete m_machine;
-            m_machine = md;
-            m_cpu = m_machine->cpus[0].cpu;
-            // Use CPU data bus for memory pane if available, otherwise fallback to machine bus
-            m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
-            if (m_disasm) {
-                delete m_disasm;
-                m_disasm = nullptr;
+        loadMachineById(dialog.GetSelectedMachineId());
+    }
+}
+
+void MmemuFrame::loadMachineById(const std::string& id) {
+    MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
+    if (!md) return;
+
+    if (m_machine != md) delete m_machine;
+    m_machine = md;
+    m_cpu = m_machine->cpus[0].cpu;
+    m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
+    if (m_disasm) {
+        delete m_disasm;
+        m_disasm = nullptr;
+    }
+    m_disasm = ToolchainRegistry::instance().createDisassembler(m_cpu->isaName());
+
+    delete m_dbg;
+    m_dbg = new DebugContext(m_cpu, m_machine->buses[0].bus);
+    m_cpu->setObserver(m_dbg);
+    m_machine->buses[0].bus->setObserver(m_dbg);
+    m_dbg->onMachineLoad(m_machine);
+
+    for (const auto& path : m_machine->symbolFiles)
+        m_dbg->symbols().loadSym(path);
+    if (m_disasm)
+        m_disasm->setSymbolTable(&m_dbg->symbols());
+
+    m_regPane->SetCPU(m_cpu);
+    for (auto* p : m_memPanes) p->SetBus(m_bus);
+    m_disasmPane->SetBus(m_bus);
+    m_disasmPane->SetDisassembler(m_disasm);
+    m_disasmPane->SetDebugContext(m_dbg);
+    m_disasmPane->SetMemoryPaneCallback([this](uint32_t addr) {
+        if (!m_memPanes.empty()) m_memPanes[0]->SetAddress(addr);
+    });
+    m_consolePane->SetContext(m_cpu, m_bus);
+    m_consolePane->SetMachine(m_machine);
+    m_consolePane->SetDebugContext(m_dbg);
+    m_bpPane->SetDebugContext(m_dbg);
+    m_symPane->SetDebugContext(m_dbg);
+    m_symPane->SetGotoCallback([this](uint32_t addr){ m_disasmPane->GoTo(addr); });
+    m_stackPane->SetDebugContext(m_dbg);
+    m_stackPane->SetGotoCallback([this](uint32_t addr){ m_disasmPane->GoTo(addr); });
+    m_cartPane->SetBus(m_bus);
+    m_machineInspectorPane->setMachine(m_machine);
+    m_deviceInfoPane->setMachine(m_machine);
+    m_regWatchPane->setMachine(m_machine);
+    m_tracePane->SetDebugContext(m_dbg);
+    m_tracePane->SetCPU(m_cpu);
+
+    // Show/hide MEGA65 status pane based on machine type
+    {
+        bool isMega65 = (id.find("mega65") != std::string::npos);
+        for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+            if (m_notebook->GetPage(i) == m_mega65StatusPane) {
+                m_notebook->RemovePage(i);
+                break;
             }
-            m_disasm = ToolchainRegistry::instance().createDisassembler(m_cpu->isaName());
-            
-            delete m_dbg;
-            m_dbg = new DebugContext(m_cpu, m_machine->buses[0].bus);
-            m_cpu->setObserver(m_dbg);
-            m_machine->buses[0].bus->setObserver(m_dbg);
-            m_dbg->onMachineLoad(m_machine);
-
-            for (const auto& path : m_machine->symbolFiles) {
-                m_dbg->symbols().loadSym(path);
-            }
-
-            if (m_disasm) {
-                m_disasm->setSymbolTable(&m_dbg->symbols());
-            }
-
-            m_regPane->SetCPU(m_cpu);
-            for (auto* p : m_memPanes) p->SetBus(m_bus);
-            m_disasmPane->SetBus(m_bus);
-            m_disasmPane->SetDisassembler(m_disasm);
-            m_disasmPane->SetDebugContext(m_dbg);
-            m_disasmPane->SetMemoryPaneCallback([this](uint32_t addr) {
-                if (!m_memPanes.empty()) m_memPanes[0]->SetAddress(addr);
-            });
-            m_consolePane->SetContext(m_cpu, m_bus);
-            m_consolePane->SetMachine(m_machine);
-            m_consolePane->SetDebugContext(m_dbg);
-            m_bpPane->SetDebugContext(m_dbg);
-            m_symPane->SetDebugContext(m_dbg);
-            m_symPane->SetGotoCallback([this](uint32_t addr){ m_disasmPane->GoTo(addr); });
-            m_stackPane->SetDebugContext(m_dbg);
-            m_stackPane->SetGotoCallback([this](uint32_t addr){ m_disasmPane->GoTo(addr); });
-            m_cartPane->SetBus(m_bus);
-            m_machineInspectorPane->setMachine(m_machine);
-            m_deviceInfoPane->setMachine(m_machine);
-            m_regWatchPane->setMachine(m_machine);
-            m_tracePane->SetDebugContext(m_dbg);
-            m_tracePane->SetCPU(m_cpu);
-
-            // Show/hide MEGA65 status pane based on machine type
-            {
-                bool isMega65 = (id.find("mega65") != std::string::npos);
-                // Remove existing page if present
-                for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-                    if (m_notebook->GetPage(i) == m_mega65StatusPane) {
-                        m_notebook->RemovePage(i);
-                        break;
-                    }
-                }
-                if (isMega65) {
-                    m_mega65StatusPane->SetMachine(m_machine, m_cpu);
-                    m_notebook->AddPage(m_mega65StatusPane, "MEGA65");
-                }
-            }
-
-            if (m_machine->onReset) m_machine->onReset(*m_machine);
-
-            // Discover and start audio output for any IAudioOutput device in
-            // the new machine's IO registry.
-            delete m_audio;
-            m_audio = nullptr;
-            if (m_machine->ioRegistry) {
-                std::vector<IOHandler*> handlers;
-                m_machine->ioRegistry->enumerate(handlers);
-                for (auto* h : handlers) {
-                    if (auto* ao = dynamic_cast<IAudioOutput*>(h)) {
-                        m_audio = new AudioOutput();
-                        if (!m_audio->start(ao)) {
-                            delete m_audio;
-                            m_audio = nullptr;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            // Release capture before switching machine.
-            m_capturePane = nullptr;
-            setKeyCapture(false);
-
-            PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
-
-            // Wire the screen pane's Capture button (if present) to setKeyCapture().
-            wxWindow* screenWin = PluginPaneManager::instance().getPaneWindow("screen");
-            if (screenWin) {
-                m_capturePane = dynamic_cast<IKeyboardCapturePane*>(screenWin);
-                if (m_capturePane)
-                    m_capturePane->SetCaptureCallback([this](bool active) { setKeyCapture(active); });
-            }
-
-            std::string statusMsg = "Loaded machine: " + id;
-            if (!m_machine->onKey) statusMsg += " (no keyboard)";
-            SetTitle("mmemu - " + m_machine->displayName);
-            SetStatusText(statusMsg);
+        }
+        if (isMega65) {
+            m_mega65StatusPane->SetMachine(m_machine, m_cpu);
+            m_notebook->AddPage(m_mega65StatusPane, "MEGA65");
         }
     }
+
+    if (m_machine->onReset) m_machine->onReset(*m_machine);
+
+    // Discover and start audio output
+    delete m_audio;
+    m_audio = nullptr;
+    if (m_machine->ioRegistry) {
+        std::vector<IOHandler*> handlers;
+        m_machine->ioRegistry->enumerate(handlers);
+        for (auto* h : handlers) {
+            if (auto* ao = dynamic_cast<IAudioOutput*>(h)) {
+                m_audio = new AudioOutput();
+                if (!m_audio->start(ao)) {
+                    delete m_audio;
+                    m_audio = nullptr;
+                }
+                break;
+            }
+        }
+    }
+
+    // Release capture before switching machine.
+    m_capturePane = nullptr;
+    setKeyCapture(false);
+
+    PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
+
+    // Wire the screen pane's Capture button
+    wxWindow* screenWin = PluginPaneManager::instance().getPaneWindow("screen");
+    if (screenWin) {
+        m_capturePane = dynamic_cast<IKeyboardCapturePane*>(screenWin);
+        if (m_capturePane)
+            m_capturePane->SetCaptureCallback([this](bool active) { setKeyCapture(active); });
+    }
+
+    std::string statusMsg = "Loaded machine: " + id;
+    if (!m_machine->onKey) statusMsg += " (no keyboard)";
+    SetTitle("mmemu - " + m_machine->displayName);
+    SetStatusText(statusMsg);
 }
 
 void MmemuFrame::OnStep(wxCommandEvent& event) {
@@ -1259,15 +1231,12 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
 void MmemuFrame::OnTimer(wxTimerEvent& event) {
     (void)event;
     if (m_running && m_machine && m_machine->schedulerStep) {
-        // ~1 MHz VIC-20 at 30 fps needs ~33 333 cycles per frame.
-        // Use schedulerStep so the IO registry (VIC, VIA) is ticked each instruction.
-        // Time-box to 25ms to keep the UI responsive even during slow boot sequences.
-        const int CYCLES_PER_FRAME = 33333;
-        int ran = 0;
+        // Run as many cycles as possible within 25ms to keep the UI responsive.
+        // This adapts automatically to any CPU clock speed (1 MHz or 40 MHz).
         int iters = 0;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
-        while (ran < CYCLES_PER_FRAME) {
-            ran += m_machine->schedulerStep(*m_machine);
+        while (true) {
+            m_machine->schedulerStep(*m_machine);
             ++iters;
             if (m_dbg && m_dbg->isPaused()) {
                 m_running = false;
@@ -1275,8 +1244,7 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 if (m_bpPane) m_bpPane->RefreshValues();
                 break;
             }
-            // Yield to UI every 25ms — use iteration count (not cycle count)
-            // to handle cases where schedulerStep returns 0 cycles (DMA stall)
+            // Check deadline every 256 iterations to avoid clock_now() overhead
             if ((iters & 0xFF) == 0 && std::chrono::steady_clock::now() >= deadline)
                 break;
         }

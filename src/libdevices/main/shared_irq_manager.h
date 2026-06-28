@@ -57,3 +57,42 @@ private:
     uint32_t m_state = 0;
     std::vector<DeviceLine*> m_lines;
 };
+
+/**
+ * NMI variant of SharedIrqManager.  Same wired-OR logic but drives the
+ * CPU NMI pin instead of IRQ.
+ */
+class SharedNmiManager {
+public:
+    explicit SharedNmiManager(ICore* cpu) : m_cpu(cpu) {}
+    ~SharedNmiManager() { for (auto* l : m_lines) delete l; }
+
+    class DeviceLine : public ISignalLine {
+    public:
+        DeviceLine(SharedNmiManager* parent, uint32_t bit) : m_parent(parent), m_bit(bit) {}
+        bool get()  const override { return m_level; }
+        void pulse() override { m_parent->m_cpu->triggerNmi(); }
+        void set(bool level) override {
+            m_level = level;
+            if (level) m_parent->m_state |=  m_bit;
+            else       m_parent->m_state &= ~m_bit;
+            m_parent->m_cpu->setNmiLine(m_parent->m_state != 0);
+        }
+    private:
+        SharedNmiManager* m_parent;
+        uint32_t          m_bit;
+        bool              m_level = false;
+    };
+
+    ISignalLine* createLine() {
+        uint32_t bit = 1u << (uint32_t)m_lines.size();
+        auto* line = new DeviceLine(this, bit);
+        m_lines.push_back(line);
+        return line;
+    }
+
+private:
+    ICore*   m_cpu;
+    uint32_t m_state = 0;
+    std::vector<DeviceLine*> m_lines;
+};
