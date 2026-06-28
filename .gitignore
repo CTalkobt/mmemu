@@ -34,3 +34,6 @@ coverage/
 # exclude compiledb and clangd cache
 compile_commands.json
 .cache/
+.geminiignore
+roms/mega65
+.ai
