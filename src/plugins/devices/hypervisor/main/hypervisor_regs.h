@@ -33,6 +33,8 @@ public:
     void reset() override {}
     void tick(uint64_t) override {}
 
+    std::vector<std::string> deviceAliases() const override { return {"MEGA65_HYPERVISOR", "M45_HYPERVISOR"}; }
+
     /// Set HDOS trap handler. Called with function code (from A register).
     /// Returns true if the function was virtualized (caller should exit hypervisor).
     using HdosTrapFn = std::function<bool(uint8_t func, MOS45GS02* cpu)>;

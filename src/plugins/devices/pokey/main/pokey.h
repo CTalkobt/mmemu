@@ -36,6 +36,8 @@ public:
     void reset()  override;
     void tick(uint64_t cycles) override;
 
+    std::vector<std::string> deviceAliases() const override { return {"POKEY", "ATARI_POKEY"}; }
+
     // -----------------------------------------------------------------------
     // IAudioOutput interface
     // -----------------------------------------------------------------------

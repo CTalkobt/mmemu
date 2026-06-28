@@ -61,7 +61,7 @@ public:
     void tick(uint64_t cycles) override;
     void getDeviceInfo(DeviceInfo& out) const override;
 
-    std::vector<std::string> deviceAliases() const override { return {"DMA", "F018B", "F018BDMA", "DMAGIC"}; }
+    std::vector<std::string> deviceAliases() const override { return {"F018BDMA", "MEGA65DMA", "F018B", "DMAGIC"}; }
     std::vector<std::pair<std::string, uint32_t>> getDerivedValues() const override {
         return {
             {"LISTADDR", m_dmaListAddr},

@@ -44,6 +44,8 @@ public:
     void setPhysBus(IBus* bus) { m_physBus = bus; }
     void getDeviceInfo(DeviceInfo& out) const override;
 
+    std::vector<std::string> deviceAliases() const override { return {"MEGA65RTC", "RTC"}; }
+
 private:
     static uint8_t toBcd(int val) { return (uint8_t)(((val / 10) << 4) | (val % 10)); }
     static int fromBcd(uint8_t bcd) { return (bcd >> 4) * 10 + (bcd & 0x0F); }

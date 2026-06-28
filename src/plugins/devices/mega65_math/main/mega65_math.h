@@ -38,6 +38,8 @@ public:
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void tick(uint64_t /*cycles*/) override {}
 
+    std::vector<std::string> deviceAliases() const override { return {"MEGA65MATH", "MATH"}; }
+
 private:
     void computeMultiply();
     void computeDivide();
