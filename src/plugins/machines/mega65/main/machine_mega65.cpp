@@ -229,7 +229,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
     auto* sdcard   = new SdCardDevice(0xD680);
-    auto* rtc      = new Mega65Rtc(0xD700);
+    auto* rtc      = new Mega65Rtc(0xD700);  // RTC device (claims $D710-$D77F, rejects $D700-$D70F for F018B)
     auto* ioStub   = new Mega65IoStub();
     auto* kbd      = new KbdMega65();
     auto* cia1     = new CIA6526("CIA1", 0xDC00);

@@ -18,6 +18,9 @@ bool Mega65Rtc::ioRead(IBus*, uint32_t addr, uint8_t* val) {
     if ((addr & ~addrMask()) != m_base) return false;
     uint8_t reg = addr & 0x7F;
 
+    // $D700-$D70F belong to F018B DMA controller — don't claim them
+    if (reg <= 0x0F) return false;
+
     // NVRAM: $D740-$D77F → offsets $40-$7F
     if (reg >= 0x40 && reg <= 0x7F) {
         *val = m_nvram[reg - 0x40];
@@ -66,6 +69,9 @@ bool Mega65Rtc::ioRead(IBus*, uint32_t addr, uint8_t* val) {
 bool Mega65Rtc::ioWrite(IBus*, uint32_t addr, uint8_t val) {
     if ((addr & ~addrMask()) != m_base) return false;
     uint8_t reg = addr & 0x7F;
+
+    // $D700-$D70F belong to F018B DMA controller — don't claim them
+    if (reg <= 0x0F) return false;
 
     // NVRAM writes
     if (reg >= 0x40 && reg <= 0x7F) {

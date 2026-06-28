@@ -74,8 +74,8 @@ void Mega65MathDevice::computeDivide() {
 bool Mega65MathDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     uint32_t off = addr - m_base;
     if (off >= 256) return false;
-    // $D700-$D70F belong to the DMA controller — don't claim them
-    if (off < 0x0F) return false; // $D700-$D70E belong to DMA controller
+    // $D700-$D70F belong to the F018B DMA controller — don't claim them
+    if (off <= 0x0F) return false; // $D700-$D70F reserved for F018B DMA
     if (off == OFF_RNDREG) {
         *val = m_regs[OFF_RNDREG];
         advanceRng(); // next read gets a new value
@@ -88,8 +88,8 @@ bool Mega65MathDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 bool Mega65MathDevice::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     uint32_t off = addr - m_base;
     if (off >= 256) return false;
-    // $D700-$D70F belong to the DMA controller — don't claim them
-    if (off < 0x0F) return false; // $D700-$D70E belong to DMA controller
+    // $D700-$D70F belong to the F018B DMA controller — don't claim them
+    if (off <= 0x0F) return false; // $D700-$D70F reserved for F018B DMA
     if (off == OFF_RNDREG || off == OFF_RNGSTAT)
         return true; // read-only registers, ignore writes
 
