@@ -24,13 +24,16 @@ void VIC3::initPalette() {
     std::memset(m_paletteG, 0, sizeof(m_paletteG));
     std::memset(m_paletteB, 0, sizeof(m_paletteB));
 
-    // Initialize all 1024 entries (4 banks) with standard colors repeating
+    // Initialize all 1024 entries (4 banks) with standard colors.
+    // Store in VHDL nibble-swapped format: getPaletteRGBA() will swap
+    // nibbles on output, so we pre-swap here so the round-trip is correct.
     for (int bank = 0; bank < 4; ++bank) {
         for (int i = 0; i < 256; ++i) {
             int idx = (bank << 8) | i;
-            m_paletteR[idx] = s_c64R[i & 0x0F];
-            m_paletteG[idx] = s_c64G[i & 0x0F];
-            m_paletteB[idx] = s_c64B[i & 0x0F];
+            uint8_t r = s_c64R[i & 0x0F], g = s_c64G[i & 0x0F], b = s_c64B[i & 0x0F];
+            m_paletteR[idx] = ((r & 0x0F) << 4) | ((r >> 4) & 0x0F);
+            m_paletteG[idx] = ((g & 0x0F) << 4) | ((g >> 4) & 0x0F);
+            m_paletteB[idx] = ((b & 0x0F) << 4) | ((b >> 4) & 0x0F);
         }
     }
 }
