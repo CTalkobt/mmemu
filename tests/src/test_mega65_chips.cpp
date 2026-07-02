@@ -320,3 +320,96 @@ TEST_CASE(mega65_chips_sid_dispatch) {
     ASSERT_EQ(v1, 0x41);
     ASSERT_EQ(v2, 0x82);
 }
+
+TEST_CASE(mega65_chips_dma_mix) {
+    SparseMemoryBus sparseBus{"sparse", 28};
+    F018bDmaDevice dma{0xD700};
+    dma.setDmaBus(&sparseBus);
+
+    // Pre-allocate pages
+    for (uint32_t i = 0; i < 0x40000; i += 0x1000)
+        sparseBus.read8(i);
+
+    // Source: $10000 = 0xF0, Dest: $20000 = 0x0F
+    sparseBus.write8(0x10000, 0xF0);
+    sparseBus.write8(0x20000, 0x0F);
+
+    // MIX with minterm = OR (bits 5,6,7 set → m1=FF, m2=FF, m3=FF, m0=00)
+    // OR: result = src | dst = 0xF0 | 0x0F = 0xFF
+    // Command: operation=01 (MIX), minterm bits in command byte 4-7
+    //   bit4=0 (~s&~d=0), bit5=1 (~s&d=FF), bit6=1 (s&~d=FF), bit7=1 (s&d=FF)
+    //   command = 0x01 | (0b1110 << 4) = 0x01 | 0xE0 = 0xE1
+    uint32_t listAddr = 0x2000;
+    sparseBus.write8(listAddr + 0, 0xE1);      // MIX + OR minterm
+    sparseBus.write8(listAddr + 1, 0x01);      // Count = 1
+    sparseBus.write8(listAddr + 2, 0x00);
+    sparseBus.write8(listAddr + 3, 0x00);      // Src $10000
+    sparseBus.write8(listAddr + 4, 0x00);
+    sparseBus.write8(listAddr + 5, 0x01);      // Src bank
+    sparseBus.write8(listAddr + 6, 0x00);      // Dst $20000
+    sparseBus.write8(listAddr + 7, 0x00);
+    sparseBus.write8(listAddr + 8, 0x02);      // Dst bank
+    sparseBus.write8(listAddr + 9, 0x00);
+    sparseBus.write8(listAddr + 10, 0x00);
+
+    dma.ioWrite(&sparseBus, 0xD701, 0x20);
+    dma.ioWrite(&sparseBus, 0xD700, 0x00);
+
+    for (int i = 0; i < 10; ++i) dma.tick(1);
+
+    ASSERT_EQ((int)sparseBus.read8(0x20000), 0xFF); // 0xF0 | 0x0F
+
+    // Test AND minterm: bit7=1 (s&d=FF), rest=0 → command = 0x81
+    sparseBus.write8(0x10000, 0xAA);
+    sparseBus.write8(0x20000, 0x55);
+
+    sparseBus.write8(listAddr + 0, 0x81);      // MIX + AND minterm
+    dma.ioWrite(&sparseBus, 0xD701, 0x20);
+    dma.ioWrite(&sparseBus, 0xD700, 0x00);
+
+    for (int i = 0; i < 10; ++i) dma.tick(1);
+
+    ASSERT_EQ((int)sparseBus.read8(0x20000), 0x00); // 0xAA & 0x55 = 0x00
+}
+
+TEST_CASE(mega65_chips_dma_irq_on_done) {
+    SparseMemoryBus sparseBus{"sparse", 28};
+    F018bDmaDevice dma{0xD700};
+    dma.setDmaBus(&sparseBus);
+    MockIrqLine irq;
+    dma.setIrqLine(&irq);
+
+    // Pre-allocate pages
+    for (uint32_t i = 0; i < 0x40000; i += 0x1000)
+        sparseBus.read8(i);
+
+    // Fill 4 bytes at $30000 with $42, with IRQ on completion (bit 3 set)
+    uint32_t listAddr = 0x2000;
+    sparseBus.write8(listAddr + 0, 0x0B);      // Fill (0x03) + IRQ (0x08)
+    sparseBus.write8(listAddr + 1, 0x04);      // Count = 4
+    sparseBus.write8(listAddr + 2, 0x00);
+    sparseBus.write8(listAddr + 3, 0x42);      // Fill byte
+    sparseBus.write8(listAddr + 4, 0x00);
+    sparseBus.write8(listAddr + 5, 0x00);
+    sparseBus.write8(listAddr + 6, 0x00);
+    sparseBus.write8(listAddr + 7, 0x00);
+    sparseBus.write8(listAddr + 8, 0x03);      // Dst $30000
+    sparseBus.write8(listAddr + 9, 0x00);
+    sparseBus.write8(listAddr + 10, 0x00);
+
+    ASSERT(!irq.m_level);
+
+    dma.ioWrite(&sparseBus, 0xD701, 0x20);
+    dma.ioWrite(&sparseBus, 0xD700, 0x00);
+
+    // Tick until DMA completes
+    for (int i = 0; i < 20; ++i) dma.tick(1);
+
+    // IRQ should have fired
+    ASSERT(irq.m_level);
+    ASSERT(!dma.isHaltRequested());
+
+    // Verify fill worked
+    for (int i = 0; i < 4; ++i)
+        ASSERT_EQ((int)sparseBus.read8(0x30000 + i), 0x42);
+}

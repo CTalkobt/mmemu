@@ -257,6 +257,19 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
         m_dstModulo = (job.dstFlags & 0x02) != 0;    // bank byte bit 5
     }
 
+    // MIX minterms — 4 boolean masks derived from command/subcommand bits 4-7.
+    // F018A: bits 4-7 of command byte; F018B: bits 4-7 of subcommand byte.
+    if (m_currentOp == DMA_MIX) {
+        uint8_t mintermBits = f018b ? job.commandMsb : job.commandLsb;
+        m_minterms[0] = (mintermBits & 0x10) ? 0xFF : 0x00;  // ~src & ~dst
+        m_minterms[1] = (mintermBits & 0x20) ? 0xFF : 0x00;  // ~src &  dst
+        m_minterms[2] = (mintermBits & 0x40) ? 0xFF : 0x00;  //  src & ~dst
+        m_minterms[3] = (mintermBits & 0x80) ? 0xFF : 0x00;  //  src &  dst
+    }
+
+    // IRQ on completion — command bit 3
+    m_irqOnDone = (job.commandLsb & 0x08) != 0;
+
     // Modulo mode: count LSB = columns, count MSB = rows, modulo value from job
     m_moduloActive = (m_srcModulo || m_dstModulo);
     if (m_moduloActive) {
@@ -398,8 +411,17 @@ void F018bDmaDevice::tickOneByte() {
             dmaWrite(srcAddr, d, m_srcIo);
             break;
         }
-        case DMA_MIX:
-            break; // MIX (MINTERM) not yet implemented
+        case DMA_MIX: {
+            // MINTERM: combine source and dest using 4 boolean masks
+            uint8_t s = dmaRead(srcAddr, m_srcIo);
+            uint8_t d = dmaRead(dstAddr, m_dstIo);
+            uint8_t result = (( s) & ( d) & m_minterms[3])
+                           | (( s) & (~d) & m_minterms[2])
+                           | ((~s) & ( d) & m_minterms[1])
+                           | ((~s) & (~d) & m_minterms[0]);
+            dmaWrite(dstAddr, result, m_dstIo);
+            break;
+        }
     }
 
     // Advance addresses (normal or line drawing mode)
@@ -427,6 +449,11 @@ void F018bDmaDevice::tickOneByte() {
     if (m_bytesRemaining > 0) m_bytesRemaining--;
 
     if (m_bytesRemaining == 0) {
+        // Fire IRQ if requested (command bit 3)
+        if (m_irqOnDone && m_irqLine) {
+            m_irqLine->set(true);
+        }
+
         // Current job done — if chain bit was set, read next job from list
         if (m_hasChain) {
             if (!fetchAndBeginNextJob()) {

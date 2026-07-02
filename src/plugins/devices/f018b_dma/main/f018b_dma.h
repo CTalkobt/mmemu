@@ -1,6 +1,7 @@
 #pragma once
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/io_registry.h"
+#include "libdevices/main/isignal_line.h"
 #include "libdevices/main/device_info.h"
 #include <cstring>
 #include <string>
@@ -53,6 +54,7 @@ public:
     void setBaseAddr(uint32_t a) override { m_base = a; }
     void setDmaBus(IBus* bus) override { m_bus = bus; }
     void setIoRegistry(IORegistry* io) { m_ioRegistry = io; }
+    void setIrqLine(ISignalLine* line) { m_irqLine = line; }
     bool isHaltRequested() const override { return m_dmaActive; }
 
     void reset() override;
@@ -164,6 +166,13 @@ private:
 
     void stepAddress(uint32_t& accum, uint32_t base, uint16_t step,
                      bool hold, bool dir, LineMode& lm);
+
+    // MIX (MINTERM) operation — 4 masks for the 2-input truth table
+    uint8_t  m_minterms[4] = {};  // [0]=~s&~d, [1]=~s&d, [2]=s&~d, [3]=s&d
+
+    // IRQ on completion (command bit 3)
+    ISignalLine* m_irqLine = nullptr;
+    bool     m_irqOnDone = false;
 
     // Inherited enhanced options across chained jobs
     uint8_t  m_inheritSrcMB;    bool m_inheritSrcMBset;
