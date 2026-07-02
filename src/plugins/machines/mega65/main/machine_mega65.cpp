@@ -27,11 +27,166 @@
 #include "libdevices/main/joystick.h"
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
+// ---------------------------------------------------------------------------
+// MEGA65 keyboard buffer: map key names to ASCII + PETSCII codes
+// ---------------------------------------------------------------------------
+
+// Modifier bit positions for $D60A/$D611
+static constexpr uint8_t MOD_LSHIFT = 0x01;
+static constexpr uint8_t MOD_RSHIFT = 0x02;
+static constexpr uint8_t MOD_CTRL   = 0x04;
+static constexpr uint8_t MOD_MEGA   = 0x08;
+static constexpr uint8_t MOD_ALT    = 0x10;
+static constexpr uint8_t MOD_NOSCRL = 0x20;
+static constexpr uint8_t MOD_CAPS   = 0x40;
+
+struct Mega65KeyCode {
+    uint8_t ascii;
+    uint8_t petscii;
+};
+
+/// Map a key name (uppercase, as from pressKeyByName) + current modifier
+/// state to ASCII and PETSCII codes.  Returns {0,0} if the key should not
+/// produce a buffer event (pure modifier keys, unknown keys).
+static Mega65KeyCode mega65KeyCode(const std::string& name, uint8_t mods) {
+    bool shifted = (mods & (MOD_LSHIFT | MOD_RSHIFT)) != 0;
+
+    // Letters: ASCII is case-sensitive; PETSCII unshifted = uppercase
+    if (name.size() == 1 && name[0] >= 'A' && name[0] <= 'Z') {
+        char ch = name[0];
+        uint8_t ascii   = shifted ? ch : (ch + 32); // A→a unshifted, A shifted
+        uint8_t petscii = shifted ? (uint8_t)(ch + 32) : (uint8_t)ch; // PETSCII: unshifted=upper
+        return {ascii, petscii};
+    }
+
+    // Digits
+    if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') {
+        static const char shiftDigit[] = ")!\"#$%&'("; // shifted 0-9 → )!"#$%&'(
+        uint8_t ch = (uint8_t)name[0];
+        if (shifted) {
+            uint8_t sc = (uint8_t)shiftDigit[ch - '0'];
+            return {sc, sc};
+        }
+        return {ch, ch};
+    }
+
+    // Function keys — user-specified PC→MEGA65 mapping:
+    // PC F5→MEGA65 F1 (PETSCII $85), PC F6→F3 ($86), PC F7→F5 ($87), PC F8→F7 ($88)
+    // PC F9→F9 ($89), PC F10→F11 ($8A), PC F11→F13 ($8B)
+    // Shifted versions: F2 ($89→no, per C64 convention: F2=$89, F4=$8A, etc.)
+    // MEGA65 PETSCII: F1=$85, F2=$89, F3=$86, F4=$8A, F5=$87, F6=$8B, F7=$88, F8=$8C
+    //                 F9=$85+8=$8D, F10=$8E, F11=$8F (extended)
+    if (name == "F1") {
+        // PC F5 maps here via wxKeyToVic20Name. MEGA65 F1/F2.
+        return {0, shifted ? (uint8_t)0x89 : (uint8_t)0x85};
+    }
+    if (name == "F3") {
+        return {0, shifted ? (uint8_t)0x8A : (uint8_t)0x86};
+    }
+    if (name == "F5") {
+        return {0, shifted ? (uint8_t)0x8B : (uint8_t)0x87};
+    }
+    if (name == "F7") {
+        return {0, shifted ? (uint8_t)0x8C : (uint8_t)0x88};
+    }
+
+    // Extended function keys (F9-F14, MEGA65-only)
+    if (name == "F9")  return {0, shifted ? (uint8_t)0x8E : (uint8_t)0x8D};
+    if (name == "F10") return {0, shifted ? (uint8_t)0x8E : (uint8_t)0x8D}; // alias
+    if (name == "F11") return {0, shifted ? (uint8_t)0x90 : (uint8_t)0x8F};
+    if (name == "F12") return {0, shifted ? (uint8_t)0x90 : (uint8_t)0x8F}; // alias
+    if (name == "F13") return {0, (uint8_t)0x8F};
+    if (name == "F14") return {0, (uint8_t)0x90};
+
+    // MEGA65-specific keys mapped from PC keyboard
+    // PC ESC → RUN/STOP (PETSCII $03)
+    if (name == "RUNSTOP" || name == "RUN_STOP")
+        return {0x1B, 0x03};
+
+    // MEGA65 ESC key (row 7, col 1 on matrix)
+    if (name == "ESC")
+        return {0x1B, 0x1B};
+
+    // Standard keys
+    if (name == "RETURN" || name == "ENTER")
+        return {0x0D, 0x0D};
+    if (name == "SPACE")
+        return {0x20, 0x20};
+    if (name == "DEL" || name == "BACKSPACE" || name == "DELETE")
+        return {0x14, 0x14}; // PETSCII DEL
+    if (name == "HOME")
+        return {0x13, shifted ? (uint8_t)0x93 : (uint8_t)0x13};
+    if (name == "TAB")
+        return {0x09, 0x09};
+
+    // Cursor keys (PETSCII codes)
+    if (name == "UP")
+        return {0, 0x91};
+    if (name == "DOWN")
+        return {0, 0x11};
+    if (name == "LEFT")
+        return {0, 0x9D};
+    if (name == "RIGHT")
+        return {0, 0x1D};
+
+    // Punctuation
+    if (name == "+")       return {'+', '+'};
+    if (name == "-")       return {'-', '-'};
+    if (name == "*")       return {'*', '*'};
+    if (name == "/")       return {'/', '/'};
+    if (name == "=")       return {'=', '='};
+    if (name == ".")       return {'.', '.'};
+    if (name == ",")       return {',', ','};
+    if (name == ":")       return {':', ':'};
+    if (name == ";")       return {';', ';'};
+    if (name == "@")       return {'@', '@'};
+    if (name == "^")       return {'^', '^'};
+    if (name == "POUND")   return {0x5C, 0x5C}; // backslash position
+
+    // Shifted punctuation combos (these arrive as their own key names)
+    if (name == "!")       return {'!', '!'};
+    if (name == "\"")      return {'"', '"'};
+    if (name == "#")       return {'#', '#'};
+    if (name == "$")       return {'$', '$'};
+    if (name == "%")       return {'%', '%'};
+    if (name == "&")       return {'&', '&'};
+    if (name == "'")       return {'\'', '\''};
+    if (name == "(")       return {'(', '('};
+    if (name == ")")       return {')', ')'};
+
+    // Pure modifier keys — update state but don't generate a buffer event
+    if (name == "SHIFT_L" || name == "LSHIFT" ||
+        name == "LEFT_SHIFT" || name == "SHIFT_R" || name == "RSHIFT" ||
+        name == "CTRL" || name == "CONTROL" ||
+        name == "COMMODORE" || name == "MEGA" ||
+        name == "ALT" || name == "CAPS" || name == "CAPS_LOCK" ||
+        name == "NOSCRL" || name == "RESTORE")
+        return {0, 0}; // no buffer event
+
+    return {0, 0};
+}
+
+/// Map a key name to the modifier bit it represents (0 if not a modifier).
+static uint8_t mega65ModBit(const std::string& name) {
+    if (name == "SHIFT_L" || name == "LSHIFT" || name == "LEFT_SHIFT") return MOD_LSHIFT;
+    if (name == "SHIFT_R" || name == "RSHIFT")                        return MOD_RSHIFT;
+    if (name == "CTRL" || name == "CONTROL")                          return MOD_CTRL;
+    if (name == "COMMODORE" || name == "MEGA")                        return MOD_MEGA;
+    if (name == "ALT")                                                return MOD_ALT;
+    if (name == "NOSCRL")                                             return MOD_NOSCRL;
+    if (name == "CAPS" || name == "CAPS_LOCK")                        return MOD_CAPS;
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
 
 // Load mega65.json config, return empty object on failure
 static json loadMega65Config() {
@@ -236,10 +391,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* cia1     = new CIA6526("CIA1", 0xDC00);
     auto* cia2     = new CIA6526("CIA2", 0xDD00);
     auto* vic4     = new VIC4();
+    auto* sidPair  = new SidPair();
     auto* joy1     = new Joystick();
     auto* joy2     = new Joystick();
 
     vic4->setPal(true);  // MEGA65 defaults to PAL timing
+    sidPair->setClockHz(985248);  // PAL clock for SID
 
     // Wire $D030 ROM banking query from VIC3 to bank controller.
     // When VIC-III is locked (C64 mode), $D030 reads as $FF but the ROM
@@ -293,6 +450,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(math);
     io->registerHandler(serial);
     io->registerHandler(vic4);
+    io->registerHandler(sidPair);
     io->registerHandler(cia1);
     io->registerHandler(cia2);
     io->registerHandler(exitTrap);
@@ -316,8 +474,62 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (port == 1) joy2->setState(bits);
     };
 
-    desc->onKey = [kbd](const std::string& keyName, bool down) {
-        return kbd->pressKeyByName(keyName, down);
+    // Keyboard: drive both the CIA matrix (for C64-compatible scanning)
+    // and the MEGA65 ASCII/PETSCII keyboard buffer ($D610/$D619).
+    // A shared modifier byte tracks current state for $D611.
+    //
+    // PC→MEGA65 function key mapping:
+    //   PC ESC → RUN/STOP      PC F1 → ESC         PC F2 → ALT
+    //   PC F3  → CAPS LOCK     PC F4 → NO SCROLL
+    //   PC F5  → F1/F2         PC F6 → F3/F4       PC F7 → F5/F6
+    //   PC F8  → F7/F8         PC F9 → F9/F10      PC F10→ F11/F12
+    //   PC F11 → F13/F14
+    auto modState = std::make_shared<uint8_t>(0);
+    desc->onKey = [kbd, ioStub, modState](const std::string& keyName, bool down) {
+        // Normalise key name to uppercase
+        std::string name = keyName;
+        std::transform(name.begin(), name.end(), name.begin(), ::toupper);
+
+        // PC→MEGA65 function key remapping
+        if      (name == "F1") name = "ESC";
+        else if (name == "F2") name = "ALT";
+        else if (name == "F3") name = "CAPS";
+        else if (name == "F4") name = "NOSCRL";
+        else if (name == "F5") name = "F1";
+        else if (name == "F6") name = "F3";
+        else if (name == "F7") name = "F5";
+        else if (name == "F8") name = "F7";
+        // F9-F12: no C64 matrix equivalent, buffer-only below
+
+        // Map PC ALT to MEGA65 Commodore/MEGA key
+        if (name == "ALT") name = "COMMODORE";
+
+        // GUI sends "CONTROL" for Ctrl key
+        if (name == "CONTROL") name = "CTRL";
+
+        // GUI sends "RUN_STOP" for ESC key
+        if (name == "RUN_STOP") name = "RUNSTOP";
+
+        // Update the CIA matrix (for C64-compatible keyboard scanning)
+        bool ok = kbd->pressKeyByName(name, down);
+
+        // Track modifier state for $D611
+        uint8_t modBit = mega65ModBit(name);
+        if (modBit) {
+            if (down) *modState |= modBit;
+            else      *modState &= ~modBit;
+            ioStub->setModifiers(*modState);
+            return ok;
+        }
+
+        // On key-down, push an event into the ASCII/PETSCII buffer
+        if (down) {
+            Mega65KeyCode kc = mega65KeyCode(name, *modState);
+            if (kc.ascii || kc.petscii) {
+                ioStub->pushKey(kc.ascii, kc.petscii, *modState);
+            }
+        }
+        return ok;
     };
 
     desc->deleters.push_back([bankCtrl]() { delete bankCtrl; });
@@ -329,6 +541,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([rtc]() { delete rtc; });
     desc->deleters.push_back([kbd]() { delete kbd; });
     desc->deleters.push_back([vic4]() { delete vic4; });
+    desc->deleters.push_back([sidPair]() { delete sidPair; });
     desc->deleters.push_back([cia1]() { delete cia1; });
     desc->deleters.push_back([cia2]() { delete cia2; });
     desc->deleters.push_back([joy1]() { delete joy1; });

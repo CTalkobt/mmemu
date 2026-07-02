@@ -9,6 +9,7 @@ std::string wxKeyToVic20Name(int code) {
         case WXK_SPACE:            return "space";
         case WXK_RETURN:           return "return";
         case WXK_CONTROL:          return "control";
+        case WXK_ALT:              return "alt";
         case WXK_UP:               return "up";
         case WXK_DOWN:             return "down";
         case WXK_LEFT:             return "left";
@@ -18,11 +19,19 @@ std::string wxKeyToVic20Name(int code) {
         case WXK_BACK:             return "delete";
         case WXK_ESCAPE:           return "run_stop";
         case WXK_TAB:              return "tab";
-        // PC F1/F3/F5/F7 map to VIC-20 physical function keys.
+        // All function keys — machine-specific onKey handlers remap as needed
         case WXK_F1:               return "f1";
+        case WXK_F2:               return "f2";
         case WXK_F3:               return "f3";
+        case WXK_F4:               return "f4";
         case WXK_F5:               return "f5";
+        case WXK_F6:               return "f6";
         case WXK_F7:               return "f7";
+        case WXK_F8:               return "f8";
+        case WXK_F9:               return "f9";
+        case WXK_F10:              return "f10";
+        case WXK_F11:              return "f11";
+        case WXK_F12:              return "f12";
         // Punctuation — unshifted only; shifted combos handled by shiftedPetKey()
         case ';':                  return "semicolon";
         case '=':                  return "kpeq";       // PET = key (row 9)

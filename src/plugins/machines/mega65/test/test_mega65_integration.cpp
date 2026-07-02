@@ -8,6 +8,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libcore/main/core_registry.h"
 #include "cpu45gs02.h"
+#include "plugins/devices/f018b_dma/main/f018b_dma.h"
 #include <cstring>
 #include <vector>
 
@@ -312,3 +313,240 @@ TEST_CASE(mega65_boot_to_ready) {
 
     delete desc;
 }
+
+TEST_CASE(mega65_integration_map) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    auto* cpu = desc->cpus[0].cpu;
+    auto* mmuBus = desc->cpus[0].dataBus;
+    auto* physBus = desc->buses[0].bus;
+
+    // LDA #$00
+    // LDX #$00
+    // LDY #$60
+    // LDZ #$23
+    // MAP
+    // EOM
+    // LDA #$55
+    // STA $A000
+    // BRK
+    uint8_t prog[] = {
+        0xA9, 0x00,        // LDA #$00
+        0xA2, 0x00,        // LDX #$00
+        0xA0, 0x60,        // LDY #$60
+        0xA3, 0x23,        // LDZ #$23
+        0x5C,              // MAP
+        0xEA,              // EOM/NOP
+        0xA9, 0x55,        // LDA #$55
+        0x8D, 0x00, 0xA0,  // STA $A000
+        0x00               // BRK
+    };
+
+    // Load program into Bank 0 at $2000
+    for (size_t i = 0; i < sizeof(prog); i++) {
+        mmuBus->write8(0x2000 + i, prog[i]);
+    }
+
+    // Don't call cpu->reset() — onReset() already handled it and exited
+    // hypervisor mode. A second reset() re-enters hypervisor, which overlays
+    // $8000-$BFFF with hypervisor RAM and blocks MAP translation for $A000.
+    // Clear MAP state and set PC directly.
+    auto* mmu = dynamic_cast<MapMmu*>(mmuBus);
+    ASSERT(mmu != nullptr);
+    mmu->clearMapState();
+    cpu->regWrite(6, 0x2000); // Set PC to $2000 (reg index 6 = PC in 45GS02)
+
+    ASSERT_EQ((int)cpu->pc(), 0x2000);
+
+    // Step CPU until it hits BRK (haltLine == 1)
+    for (int i = 0; i < 20; i++) {
+        cpu->step();
+    }
+
+    // Verify via SparseMemoryBus (physical bus) that the byte appears at physical address $40000
+    uint8_t val = physBus->read8(0x40000);
+    ASSERT_EQ((int)val, 0x55);
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_dma_stall) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    auto* mmuBus = desc->cpus[0].dataBus;
+    auto* physBus = desc->buses[0].bus;
+    
+    // Set up a DMA job at virtual $3000 to fill 256 bytes at $2000 with $55
+    uint32_t listAddr = 0x3000;
+    mmuBus->write8(listAddr + 0, 0x03);      // Fill operation
+    mmuBus->write8(listAddr + 1, 0x00);      // Count = 256
+    mmuBus->write8(listAddr + 2, 0x01);      // Count MSB
+    mmuBus->write8(listAddr + 3, 0x55);      // Fill byte
+    mmuBus->write8(listAddr + 4, 0x00);
+    mmuBus->write8(listAddr + 5, 0x00);
+    mmuBus->write8(listAddr + 6, 0x00);      // Dst addr LSB ($2000)
+    mmuBus->write8(listAddr + 7, 0x20);      // Dst addr MSB ($20)
+    mmuBus->write8(listAddr + 8, 0x00);      // Dst bank
+    mmuBus->write8(listAddr + 9, 0x00);
+    mmuBus->write8(listAddr + 10, 0x00);
+
+    // Get DMA device
+    auto* dma = dynamic_cast<F018bDmaDevice*>(desc->ioRegistry->findHandler("F018B DMA"));
+    ASSERT(dma != nullptr);
+    ASSERT(!dma->isHaltRequested());
+
+    // Trigger DMA by writing list address to registers
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD701, 0x30);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD700, 0x00);
+
+    // CPU should be stalled (halt requested)
+    ASSERT(dma->isHaltRequested());
+
+    // Run schedulerStep until DMA is done
+    bool wasHalted = false;
+    int limit = 500;
+    while (dma->isHaltRequested() && limit-- > 0) {
+        wasHalted = true;
+        desc->schedulerStep(*desc);
+    }
+    ASSERT(wasHalted);
+    ASSERT(!dma->isHaltRequested());
+
+    // Verify destination RAM is filled
+    for (int i = 0; i < 256; ++i) {
+        ASSERT_EQ((int)physBus->read8(0x002000 + i), 0x55);
+    }
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_vic4_raster) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    uint8_t r1 = 0, r2 = 0;
+    desc->ioRegistry->dispatchRead(nullptr, 0xD012, &r1);
+    
+    // Tick enough cycles to advance raster lines
+    desc->ioRegistry->tickAll(1000);
+    
+    desc->ioRegistry->dispatchRead(nullptr, 0xD012, &r2);
+    ASSERT(r2 != r1);
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_dual_sid) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    // Write distinct frequency values to SID1 and SID2 voice 1
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD400, 0x12);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD401, 0x34);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD420, 0x56);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD421, 0x78);
+
+    uint8_t s1l = 0, s1h = 0, s2l = 0, s2h = 0;
+    desc->ioRegistry->dispatchRead(nullptr, 0xD400, &s1l);
+    desc->ioRegistry->dispatchRead(nullptr, 0xD401, &s1h);
+    desc->ioRegistry->dispatchRead(nullptr, 0xD420, &s2l);
+    desc->ioRegistry->dispatchRead(nullptr, 0xD421, &s2h);
+
+    ASSERT_EQ(s1l, 0x12);
+    ASSERT_EQ(s1h, 0x34);
+    ASSERT_EQ(s2l, 0x56);
+    ASSERT_EQ(s2h, 0x78);
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_math_accel) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    // Write MULTINA = 200
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD770, 200 & 0xFF);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD771, (200 >> 8) & 0xFF);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD772, 0);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD773, 0);
+
+    // Write MULTINB = 200
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD774, 200 & 0xFF);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD775, (200 >> 8) & 0xFF);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD776, 0);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD777, 0);
+
+    // Read MULTOUT
+    uint8_t mb[8];
+    for (int i = 0; i < 8; ++i) {
+        desc->ioRegistry->dispatchRead(nullptr, 0xD778 + i, &mb[i]);
+    }
+    uint64_t prod = mb[0] | ((uint64_t)mb[1] << 8) | ((uint64_t)mb[2] << 16) | ((uint64_t)mb[3] << 24);
+    ASSERT_EQ(prod, (uint64_t)40000);
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_personality_switch) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    // Start in C64 mode (Key register write 0)
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x00);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x00);
+
+    // Write to VIC-IV extended reg $D04C
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD04C, 0xAA);
+    uint8_t pv = 0;
+    desc->ioRegistry->dispatchRead(nullptr, 0xD04C, &pv);
+    // Should be $FF when locked
+    ASSERT_EQ(pv, 0xFF);
+
+    // Knock to unlock MEGA65 personality
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x47);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x53);
+
+    // Write to $D04C
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD04C, 0x55);
+    desc->ioRegistry->dispatchRead(nullptr, 0xD04C, &pv);
+    ASSERT_EQ(pv, 0x55);
+
+    // Lock personality
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x00);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x00);
+
+    // Read back: should be $FF again
+    desc->ioRegistry->dispatchRead(nullptr, 0xD04C, &pv);
+    ASSERT_EQ(pv, 0xFF);
+
+    delete desc;
+}
+
+TEST_CASE(mega65_integration_machine_id) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    ASSERT_EQ(desc->machineId, "mega65");
+    delete desc;
+}
+

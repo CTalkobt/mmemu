@@ -53,8 +53,8 @@ void Mega65MathDevice::computeDivide() {
     uint32_t dividend = load32(&m_regs[OFF_DIVINA]);
     uint32_t divisor  = load32(&m_regs[OFF_DIVINB]);
 
-    uint64_t quotient  = 0;
-    uint32_t remainder = 0;
+    uint64_t quotient  = 0xFFFFFFFFFFFFFFFFULL;
+    uint32_t remainder = 0xFFFFFFFFU;
     if (divisor != 0) {
         quotient  = dividend / divisor;
         remainder = dividend % divisor;

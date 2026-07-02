@@ -67,8 +67,8 @@ TEST_CASE(mega65_math_divide_by_zero) {
     Mega65MathDevice dev(0xD700);
     write32(dev, 0xD760, 42);
     write32(dev, 0xD764, 0);
-    ASSERT_EQ(read64(dev, 0xD768), (uint64_t)0);
-    ASSERT_EQ(read32(dev, 0xD770), (uint32_t)0);
+    ASSERT_EQ(read64(dev, 0xD768), 0xFFFFFFFFFFFFFFFFULL);
+    ASSERT_EQ(read32(dev, 0xD770), 0xFFFFFFFFU);
 }
 
 TEST_CASE(mega65_math_divbusy_zero) {

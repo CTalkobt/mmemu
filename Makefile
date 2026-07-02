@@ -295,6 +295,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	tests/src/test_d81_directory_listing.cpp \
 	tests/src/test_plugin_validation.cpp \
 	tests/src/test_ffd0_bug.cpp \
+	tests/src/test_mega65_chips.cpp \
 	src/plugins/devices/sid_pair/test/test_sid_pair.cpp \
 	src/libdebug/test/test_stack_trace.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \

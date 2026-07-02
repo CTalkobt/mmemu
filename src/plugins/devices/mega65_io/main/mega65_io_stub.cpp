@@ -8,6 +8,8 @@ Mega65IoStub::Mega65IoStub() {
 void Mega65IoStub::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
     std::memset(m_colorRam, 0, sizeof(m_colorRam));
+    m_keyQueue.clear();
+    m_currentMods = 0;
 
     // $D600: UART/VDC status — bit 7 = READY (data available / transmit ready)
     m_regs[0x00] = 0x80;
@@ -35,6 +37,10 @@ void Mega65IoStub::reset() {
     m_regs[0x7F] = 'U';
 }
 
+void Mega65IoStub::pushKey(uint8_t ascii, uint8_t petscii, uint8_t mods) {
+    m_keyQueue.push_back({ascii, petscii, mods});
+}
+
 bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     // F011 FDC registers $D080-$D09F (stub — no real floppy emulation)
     if (addr >= 0xD080 && addr <= 0xD09F) {
@@ -59,9 +65,39 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if (addr >= 0xD600 && addr <= 0xD6FF) {
         // Skip ranges handled by dedicated handlers:
         // $D640-$D67F: HypervisorRegs
-        // $D680-$D6FF: SdCardDevice
+        // $D680-$D693: SdCardDevice
         if (addr >= 0xD640 && addr <= 0xD67F) return false;
-        if (addr >= 0xD680 && addr <= 0xD693) return false; // SdCardDevice
+        if (addr >= 0xD680 && addr <= 0xD693) return false;
+
+        // --- Keyboard buffer registers ---
+
+        // $D60A: bit 7 = queue non-empty, bits 6-0 = modifier state at event
+        if (addr == 0xD60A) {
+            if (!m_keyQueue.empty()) {
+                *val = 0x80 | (m_keyQueue.front().mods & 0x7F);
+            } else {
+                *val = 0x00;
+            }
+            return true;
+        }
+
+        // $D610: ASCII key at top of queue (0 if empty)
+        if (addr == 0xD610) {
+            *val = m_keyQueue.empty() ? 0x00 : m_keyQueue.front().ascii;
+            return true;
+        }
+
+        // $D611: Current modifier key state (immediate, not buffered)
+        if (addr == 0xD611) {
+            *val = m_currentMods;
+            return true;
+        }
+
+        // $D619: PETSCII key at top of queue (0 if empty)
+        if (addr == 0xD619) {
+            *val = m_keyQueue.empty() ? 0x00 : m_keyQueue.front().petscii;
+            return true;
+        }
 
         uint8_t off = addr & 0xFF;
         *val = m_regs[off];
@@ -85,13 +121,27 @@ bool Mega65IoStub::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if (addr >= 0xD600 && addr <= 0xD6FF) {
         // Skip ranges handled by dedicated handlers
         if (addr >= 0xD640 && addr <= 0xD67F) return false;
-        if (addr >= 0xD680 && addr <= 0xD693) return false; // SdCardDevice
+        if (addr >= 0xD680 && addr <= 0xD693) return false;
+
+        // $D60A: writing 0 to bit 7 flushes the keyboard queue
+        if (addr == 0xD60A) {
+            if (!(val & 0x80)) flushKeyQueue();
+            return true;
+        }
+
+        // $D610: write clears top of queue (advance to next event)
+        if (addr == 0xD610) {
+            if (!m_keyQueue.empty()) m_keyQueue.erase(m_keyQueue.begin());
+            return true;
+        }
+
+        // $D619: write also clears top of queue (same event)
+        if (addr == 0xD619) {
+            if (!m_keyQueue.empty()) m_keyQueue.erase(m_keyQueue.begin());
+            return true;
+        }
 
         uint8_t off = addr & 0xFF;
-
-        // $D610: keyboard buffer — write clears (returns 0 on next read)
-        if (addr == 0xD610) { m_regs[off] = 0x00; return true; }
-
         m_regs[off] = val;
         return true;
     }
