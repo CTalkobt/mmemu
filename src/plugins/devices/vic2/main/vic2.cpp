@@ -186,6 +186,21 @@ void VIC2::tick(uint64_t cycles) {
             m_rasterLine = 0;
         }
 
+        // Badline detection (#20): a badline occurs when the raster is in the
+        // display area, DEN is set, and the lower 3 bits of the raster line
+        // match the Y-scroll value.  On a badline the VIC steals ~40 bus
+        // cycles from the CPU to fetch character pointers.
+        if (m_stallBacklog && m_badlineEnable && (m_regs[SCR1] & SCR1_DEN)) {
+            uint16_t firstDisplayLine = DISPLAY_Y;
+            uint16_t lastDisplayLine  = DISPLAY_Y + DISPLAY_H - 1;
+            if (m_rasterLine >= firstDisplayLine && m_rasterLine <= lastDisplayLine) {
+                uint8_t yscroll = m_regs[SCR1] & SCR1_YSCROLL;
+                if ((m_rasterLine & 7) == yscroll) {
+                    *m_stallBacklog += 40 + m_badlineExtra;
+                }
+            }
+        }
+
         // Check for raster IRQ
         uint16_t rasterCmp = ((m_regs[SCR1] & SCR1_RASTER8) << 1) | m_regs[RASTER];
         if (m_rasterLine == rasterCmp) {

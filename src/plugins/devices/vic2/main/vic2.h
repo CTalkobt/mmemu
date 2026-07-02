@@ -96,6 +96,17 @@ public:
     }
     bool isPal() const { return m_linesPerFrame == PAL_LINES_PER_FRAME; }
 
+    /** Set shared stall backlog counter for bus contention (#20).
+     *  When a badline occurs, the VIC adds ~40 cycles to this counter.
+     *  The machine scheduler stalls the CPU while backlog > 0. */
+    void setStallBacklog(int* backlog) { m_stallBacklog = backlog; }
+
+    /** Set extra badline cost (0-3, matching MEGA65 $D710 bits 4-5). */
+    void setBadlineExtraCycles(int extra) { m_badlineExtra = extra & 3; }
+
+    /** Enable/disable badline emulation (MEGA65 $D710 bit 0). */
+    void setBadlineEnable(bool en) { m_badlineEnable = en; }
+
     void setLogger(void* handle, void (*logFn)(void*, int, const char*)) {
         m_logger = handle;
         m_logNamed = logFn;
@@ -202,6 +213,11 @@ protected:
     uint16_t m_rasterLine = 0;      // current raster line
     int      m_cyclesPerLine = PAL_CYCLES_PER_LINE;
     int      m_linesPerFrame = PAL_LINES_PER_FRAME;
+
+    // Bus contention (#20)
+    int*     m_stallBacklog = nullptr;   // shared counter with scheduler
+    int      m_badlineExtra = 0;         // extra cycles per badline (0-3)
+    bool     m_badlineEnable = true;     // badline emulation enabled
 
     // DMA and ROM
     IBus*           m_dmaBus     = nullptr;

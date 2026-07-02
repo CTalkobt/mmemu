@@ -696,11 +696,23 @@ MachineDescriptor* Mega65MachineFactory::create() {
     }
 
 
+    // Bus contention model (#20): shared phi_backlog counter.
+    // VIC-IV adds badline stall cycles; DMA halt and backlog stall the CPU.
+    // Matches VHDL gs4510.vhdl phi_pause / phi_backlog mechanism.
+    auto phiBacklog = std::make_shared<int>(0);
+    vic4->setStallBacklog(phiBacklog.get());
+
     // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
-    // When DMA is active, tick devices without stepping the CPU (CPU is halted).
-    desc->schedulerStep = [dma, cpu45](MachineDescriptor& d) -> int {
+    // Three stall sources: DMA halt, badline backlog, and I/O wait states.
+    desc->schedulerStep = [dma, phiBacklog](MachineDescriptor& d) -> int {
         if (dma->isHaltRequested()) {
             // DMA active: tick devices (processes one DMA byte), CPU stays halted
+            if (d.ioRegistry) d.ioRegistry->tickAll(1);
+            return 1;
+        }
+        if (*phiBacklog > 0) {
+            // Badline or I/O stall: CPU paused, tick devices to count down
+            (*phiBacklog)--;
             if (d.ioRegistry) d.ioRegistry->tickAll(1);
             return 1;
         }
