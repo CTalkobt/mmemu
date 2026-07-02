@@ -654,11 +654,12 @@ void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
 }
 
 void MmemuFrame::OnLoadImageDirect(wxCommandEvent& event) {
-    if (!m_bus) return;
+    if (!m_bus || !m_machine) return;
     std::string path = event.GetString().ToStdString();
+    IBus* loadBus = m_machine->buses[0].bus; // physical bus (#79)
     auto* loader = ImageLoaderRegistry::instance().findLoader(path);
     if (loader) {
-        if (loader->load(path, m_bus, m_machine, 0)) {
+        if (loader->load(path, loadBus, m_machine, 0)) {
             SetStatusText("Loaded " + path);
             for (auto* p : m_memPanes) p->RefreshValues();
         }
@@ -1050,9 +1051,10 @@ void MmemuFrame::OnLoadImage(wxCommandEvent& event) {
     if (dialog.ShowModal() == wxID_OK) {
         path = dialog.GetPath();
         uint32_t addr = dialog.GetAddress();
+        IBus* loadBus = m_machine->buses[0].bus; // physical bus (#79)
         auto* loader = ImageLoaderRegistry::instance().findLoader(path);
         if (loader) {
-            if (loader->load(path, m_bus, m_machine, addr)) {
+            if (loader->load(path, loadBus, m_machine, addr)) {
                 SetStatusText("Loaded " + path);
                 if (dialog.GetAutoStart()) {
                     uint32_t startAddr = addr;

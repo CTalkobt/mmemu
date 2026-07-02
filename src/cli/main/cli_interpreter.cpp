@@ -300,8 +300,13 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     return;
                 }
             }
+            // Use the physical bus for loading so data goes to the literal
+            // address regardless of MAP state (#79).  For machines without
+            // address translation (C64, VIC-20) this is the same as the
+            // CPU's dataBus.
+            IBus* loadBus = m_ctx.machine->buses[0].bus;
             if (auto* loader = ImageLoaderRegistry::instance().findLoader(path)) {
-                if (loader->load(path, m_ctx.bus, m_ctx.machine, addr)) {
+                if (loader->load(path, loadBus, m_ctx.machine, addr)) {
                     m_output("Loaded '" + path + "' using " + loader->name() + "\n");
                     // Extract load address if not provided (for .prg)
                     if (!hasAddr && std::string(loader->name()).find("PRG") != std::string::npos) {

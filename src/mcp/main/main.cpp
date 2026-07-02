@@ -2072,7 +2072,10 @@ Json handleToolsCall(const Json& params) {
                 bool autoStart = args.contains("auto_start") ? args["auto_start"].bVal : false;
                 auto* loader = ImageLoaderRegistry::instance().findLoader(path);
                 if (loader) {
-                    if (loader->load(path, ms->bus, ms->machine, addr)) {
+                    // Use physical bus for loading so data goes to the literal
+                    // address regardless of MAP state (#79).
+                    IBus* loadBus = ms->machine->buses[0].bus;
+                    if (loader->load(path, loadBus, ms->machine, addr)) {
                         uint32_t startAddr = addr;
                         if (startAddr == 0 && std::string(loader->name()).find("PRG") != std::string::npos) {
                             std::ifstream f(path, std::ios::binary);
@@ -4064,8 +4067,9 @@ Json handleToolsCall(const Json& params) {
             // Load image if specified
             if (args.contains("load") && !args["load"].sVal.empty()) {
                 std::string path = args["load"].sVal;
+                IBus* loadBus = ms->machine->buses[0].bus; // physical bus (#79)
                 auto* loader = ImageLoaderRegistry::instance().findLoader(path);
-                if (loader && loader->load(path, ms->bus, ms->machine, 0)) {
+                if (loader && loader->load(path, loadBus, ms->machine, 0)) {
                     // Extract PRG load address as default entry
                     if (std::string(loader->name()).find("PRG") != std::string::npos) {
                         std::ifstream f(path, std::ios::binary);
@@ -4231,8 +4235,9 @@ Json handleToolsCall(const Json& params) {
                 // Load image if specified
                 if (args.contains("load") && !args["load"].sVal.empty()) {
                     std::string path = args["load"].sVal;
+                    IBus* loadBus = ms->machine->buses[0].bus; // physical bus (#79)
                     auto* loader = ImageLoaderRegistry::instance().findLoader(path);
-                    if (loader && loader->load(path, ms->bus, ms->machine, 0)) {
+                    if (loader && loader->load(path, loadBus, ms->machine, 0)) {
                         if (std::string(loader->name()).find("PRG") != std::string::npos) {
                             std::ifstream f(path, std::ios::binary);
                             uint8_t h[2]; f.read((char*)h, 2);
