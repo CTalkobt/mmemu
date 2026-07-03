@@ -23,7 +23,9 @@ DeviceInfoPane::DeviceInfoPane(wxWindow* parent)
     sizer->Add(splitter, 1, wxEXPAND | wxALL, 0);
 
     m_tree = new wxTreeCtrl(splitter, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTR_DEFAULT_STYLE | wxTR_HIDE_ROOT);
-    
+    m_tree->Bind(wxEVT_TREE_ITEM_RIGHT_CLICK, &DeviceInfoPane::onTreeRightClick, this);
+    m_tree->Bind(wxEVT_TREE_ITEM_ACTIVATED, &DeviceInfoPane::onTreeActivated, this);
+
     m_bitmapWindow = new wxScrolledWindow(splitter, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL | wxHSCROLL);
     m_bitmapWindow->SetBackgroundColour(*wxBLACK);
     m_bitmapWindow->SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -56,6 +58,7 @@ void DeviceInfoPane::onDeviceSelected(wxCommandEvent& /*evt*/) {
 
 void DeviceInfoPane::refreshValues() {
     m_tree->DeleteAllItems();
+    m_regItemMap.clear();
     if (!m_desc || !m_desc->ioRegistry) return;
 
     int sel = m_deviceSelector->GetSelection();
@@ -103,10 +106,12 @@ void DeviceInfoPane::refreshValues() {
 
     if (!info.registers.empty()) {
         wxTreeItemId regsNode = m_tree->AppendItem(root, "Registers");
-        for (const auto& r : info.registers) {
+        for (int i = 0; i < (int)info.registers.size(); ++i) {
+            const auto& r = info.registers[i];
             std::string label = r.name + " ($" + toHex(r.offset, 2) + "): $" + toHex(r.value, 2);
-            if (!r.description.empty()) label += " (" + r.description + ")";
-            m_tree->AppendItem(regsNode, label);
+            if (!r.description.empty()) label += "  " + r.description;
+            wxTreeItemId item = m_tree->AppendItem(regsNode, label);
+            m_regItemMap[item] = i;
         }
         m_tree->Expand(regsNode);
     }
@@ -125,6 +130,56 @@ void DeviceInfoPane::refreshValues() {
     m_bitmapWindow->SetVirtualSize(maxWidth, totalHeight);
     m_bitmapWindow->SetScrollRate(10, 10);
     m_bitmapWindow->Refresh();
+}
+
+void DeviceInfoPane::onTreeRightClick(wxTreeEvent& evt) {
+    wxTreeItemId item = evt.GetItem();
+    auto it = m_regItemMap.find(item);
+    if (it == m_regItemMap.end()) return;
+
+    wxMenu menu;
+    menu.Append(wxID_EDIT, "Edit Value...");
+    menu.Bind(wxEVT_MENU, [this, idx = it->second](wxCommandEvent&) {
+        editRegister(idx);
+    }, wxID_EDIT);
+    PopupMenu(&menu);
+}
+
+void DeviceInfoPane::onTreeActivated(wxTreeEvent& evt) {
+    wxTreeItemId item = evt.GetItem();
+    auto it = m_regItemMap.find(item);
+    if (it != m_regItemMap.end()) {
+        editRegister(it->second);
+    }
+}
+
+void DeviceInfoPane::editRegister(int regIndex) {
+    if (!m_desc || !m_desc->ioRegistry) return;
+    if (regIndex < 0 || regIndex >= (int)m_currentInfo.registers.size()) return;
+
+    const auto& reg = m_currentInfo.registers[regIndex];
+    uint32_t addr = m_currentInfo.baseAddr + reg.offset;
+
+    char curVal[8];
+    std::snprintf(curVal, sizeof(curVal), "%02X", reg.value);
+
+    wxTextEntryDialog dlg(this,
+        wxString::Format("Edit %s at $%04X\nCurrent value: $%02X",
+                         reg.name.c_str(), addr, reg.value),
+        "Edit Register", curVal);
+
+    if (dlg.ShowModal() == wxID_OK) {
+        unsigned long newVal = 0;
+        wxString input = dlg.GetValue();
+        // Strip optional $ prefix
+        if (input.StartsWith("$")) input = input.Mid(1);
+        if (input.ToULong(&newVal, 16) && newVal <= 0xFF) {
+            m_desc->ioRegistry->dispatchWrite(nullptr, addr, (uint8_t)newVal);
+            refreshValues();
+        } else {
+            wxMessageBox("Invalid hex value (00-FF)", "Error", wxOK | wxICON_ERROR);
+        }
+    }
 }
 
 void DeviceInfoPane::onPaintBitmaps(wxPaintEvent& /*evt*/) {
