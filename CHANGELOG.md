@@ -24,6 +24,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **MCP performance profiling tools** (#19): `profile_cpu` runs N steps sampling PC to build a frequency histogram, returns top hotspots with symbol annotations, percentages, and disassembly. `measure_region` runs from addr until PC leaves range, returns total cycles, instruction count, and average CPI.
 - **MCP plugin tool dispatch fix**: Plugin-registered MCP tools appeared in `tools/list` but calling them returned "Unknown tool". Now routes through `PluginToolRegistry::dispatch()` before the catch-all error.
 - **MCP plugin tool integration tests** (#17): Python tests verify plugin tools appear in `tools/list` and exercise `profile_cpu`/`measure_region` with structured JSON validation.
+- **CLI commands bridging MCP gaps**: `profile` (hotspot analysis), `measure` (cycle counting for address range), `runto` (run until condition expression true), `devinfo` (device register dump), `undoinfo` (show what backstep would undo).
 - **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 581 C++ tests total.
 
 ### MEGA65 Boot to BASIC
