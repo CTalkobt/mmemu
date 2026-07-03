@@ -168,6 +168,27 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
         }
         return false;
     }
+    // Memory dereference: *addr reads byte, *addr:16 reads 16-bit LE word
+    if (expr[0] == '*' && expr.length() > 1) {
+        // Check for :16 suffix
+        bool word = false;
+        std::string inner = expr.substr(1);
+        if (inner.length() > 3 && inner.substr(inner.length() - 3) == ":16") {
+            word = true;
+            inner = inner.substr(0, inner.length() - 3);
+        }
+        double a;
+        if (dbg && dbg->bus() && evaluate(inner, dbg, a, defaultBase)) {
+            uint32_t addr = (uint32_t)a;
+            if (word) {
+                result = (double)(dbg->bus()->peek8(addr) | (dbg->bus()->peek8(addr + 1) << 8));
+            } else {
+                result = (double)dbg->bus()->peek8(addr);
+            }
+            return true;
+        }
+        return false;
+    }
 
     // Functions
     auto handleFunc = [&](const std::string& name, double (*func)(double)) {

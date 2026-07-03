@@ -1484,6 +1484,52 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_ctx.machine->ioRegistry->dispatchRead(nullptr, 0xD02F, &val);
             m_output("KEY register: $" + toHex(val, 2) + "\n");
         }
+    } else if (cmd == "iomap") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        if (!m_ctx.machine->ioRegistry) { m_output("No I/O registry.\n"); return; }
+        std::string expr;
+        if (ss >> expr) {
+            // Show which handler claims a specific address
+            uint32_t addr = 0;
+            if (!parseAddr(expr, addr)) {
+                m_output("Error: Invalid address '" + expr + "'\n");
+                return;
+            }
+            // Try dispatching to find the claiming handler
+            std::vector<IOHandler*> handlers;
+            m_ctx.machine->ioRegistry->enumerate(handlers);
+            bool found = false;
+            for (auto* h : handlers) {
+                uint8_t dummy = 0;
+                if (h->ioRead(nullptr, addr, &dummy)) {
+                    uint32_t base = h->baseAddr();
+                    uint32_t end = base + h->addrMask();
+                    m_output("$" + toHex(addr, addrWidth()) + " → "
+                           + h->name() + " ($" + toHex(base, addrWidth())
+                           + "-$" + toHex(end, addrWidth()) + ")\n");
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                m_output("$" + toHex(addr, addrWidth()) + " → (no I/O handler claims this address)\n");
+            }
+        } else {
+            // List all registered I/O handlers with their address ranges
+            std::vector<IOHandler*> handlers;
+            m_ctx.machine->ioRegistry->enumerate(handlers);
+            std::ostringstream os;
+            os << "I/O Address Map (" << handlers.size() << " handlers):\n";
+            for (auto* h : handlers) {
+                uint32_t base = h->baseAddr();
+                uint32_t end = base + h->addrMask();
+                os << "  $" << toHex(base, addrWidth()) << "-$"
+                   << toHex(end, addrWidth()) << "  " << h->name();
+                if (h->isHaltRequested()) os << " [DMA active]";
+                os << "\n";
+            }
+            m_output(os.str());
+        }
     } else if (cmd == "recordaudio") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string filename;
@@ -1688,7 +1734,8 @@ void CliInterpreter::printHelp() {
              "  snapshot list    - List saved snapshots\n"
              "  snapshot delete <n> - Delete snapshot (or '*' for all)\n"
              "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
-             "  personality <m>  - Switch MEGA65 I/O personality\n");
+             "  personality <m>  - Switch MEGA65 I/O personality\n"
+             "  iomap [addr]     - Show I/O handler for address, or list all\n");
 
     std::vector<std::string> pluginCmds;
     PluginCommandRegistry::instance().listCommands(pluginCmds);

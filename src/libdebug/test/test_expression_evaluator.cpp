@@ -379,3 +379,40 @@ TEST_CASE(expression_evaluator_error_paths) {
     ASSERT(!ExpressionEvaluator::evaluate("<$ZZZZ", nullptr, res));
     ASSERT(!ExpressionEvaluator::evaluate(">$ZZZZ", nullptr, res));
 }
+
+TEST_CASE(expression_evaluator_memory_deref) {
+    // Set up a CPU + bus with known memory contents
+    FlatMemoryBus bus{"test", 16};
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+
+    bus.write8(0x1000, 0x42);
+    bus.write8(0x1001, 0xAB);
+    bus.write8(0x00C8, 0x6C);
+
+    uint32_t res;
+
+    // Basic byte dereference
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*$1000", &dbg, res));
+    EXPECT_EQ(res, 0x42);
+
+    // 16-bit word dereference
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*$1000:16", &dbg, res));
+    EXPECT_EQ(res, (uint32_t)(0x42 | (0xAB << 8)));
+
+    // Dereference with arithmetic
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*($1000 + 1)", &dbg, res));
+    EXPECT_EQ(res, 0xAB);
+
+    // Dereference in comparison (for breakpoint conditions)
+    EXPECT_TRUE(ExpressionEvaluator::evaluateCondition("*$00C8 == $6C", &dbg));
+    ASSERT(!ExpressionEvaluator::evaluateCondition("*$00C8 == $00", &dbg));
+
+    // Multiply still works (binary * has left operand)
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("10 * 20", &dbg, res));
+    EXPECT_EQ(res, 200);
+
+    // No bus = dereference fails gracefully
+    ASSERT(!ExpressionEvaluator::evaluate("*$1000", nullptr, res));
+}
