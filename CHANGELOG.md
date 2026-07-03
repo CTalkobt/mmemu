@@ -7,6 +7,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### MEGA65 Integration & Contention Model
+- **Dual SID (SidPair) wired to MEGA65 machine** (#6): SidPair was included but never created or registered. Now created with PAL clock ($D400/$D420) and registered in IORegistry.
+- **MEGA65 keyboard buffer** ($D610/$D619/$D60A/$D611): ASCII/PETSCII typing queue with modifier tracking. PC→MEGA65 function key remapping (PC F5→MEGA65 F1, etc.). Immediate modifier state at $D611.
+- **DMA MIX (MINTERM) operation** (#5): Combines source and destination bytes using a 4-entry boolean truth table. Command/subcommand bits 4-7 select which combinations contribute, enabling arbitrary boolean operations (OR, AND, XOR, etc.) between memory regions.
+- **DMA IRQ on completion** (#5): Command byte bit 3 fires the DMA IRQ line when the job finishes. Wired via `setIrqLine(ISignalLine*)`.
+- **I/O stalls and DMA bus contention** (#20): VIC-II badline detection steals 40-43 cycles from CPU per badline. Shared `phi_backlog` counter between VIC-IV and MEGA65 scheduler matches VHDL `gs4510.vhdl` contention model. Configurable via `setBadlineEnable()` and `setBadlineExtraCycles()` (MEGA65 $D710 bits 0, 4-5).
+- **Math accelerator divide-by-zero**: Returns all-ones ($FFFFFFFFFFFFFFFF quotient, $FFFFFFFF remainder) matching MEGA65 hardware behavior.
+- **load_image writes to physical bus** (#79, #80): All load operations (CLI, GUI, MCP) now write to the physical bus directly, bypassing MAP translation. Ensures data lands at the literal PRG address regardless of MAP state.
+- **GUI function keys**: All F1-F12 plus ALT key events now passed to machine handlers.
+- **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 580 C++ tests total.
+
 ### MEGA65 Boot to BASIC
 - **MEGA65 boots to READY. prompt** with proper 80-column display, colour palette, rainbow sprite bars, and real-time clock. HYPPO boot stage skipped; starts directly at C65 KERNAL reset vector ($E4B8).
 - **Real-Time Clock (RTC) device** (#76): Emulates MEGA65 I2C RTC at $FFD7110-$FFD7115. Returns host system date/time in BCD. Writes create a machine-local offset (does not affect host clock). Boot banner now shows actual date/time instead of "NO-RTC-2000".
