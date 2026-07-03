@@ -15,8 +15,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **I/O stalls and DMA bus contention** (#20): VIC-II badline detection steals 40-43 cycles from CPU per badline. Shared `phi_backlog` counter between VIC-IV and MEGA65 scheduler matches VHDL `gs4510.vhdl` contention model. Configurable via `setBadlineEnable()` and `setBadlineExtraCycles()` (MEGA65 $D710 bits 0, 4-5).
 - **Math accelerator divide-by-zero**: Returns all-ones ($FFFFFFFFFFFFFFFF quotient, $FFFFFFFF remainder) matching MEGA65 hardware behavior.
 - **load_image writes to physical bus** (#79, #80): All load operations (CLI, GUI, MCP) now write to the physical bus directly, bypassing MAP translation. Ensures data lands at the literal PRG address regardless of MAP state.
+- **Physical-address breakpoints** (#73): `break phys $02CBA5` in CLI, `physical: true` in MCP. Resolves CPU's virtual PC through MapMmu to 28-bit physical address before comparing. Catches the same ROM code regardless of MAP block. MapState moved to `imap_controller.h` with `resolvePhysical()` default implementation.
+- **MCP conditional breakpoints** (#18): `condition` parameter on `set_breakpoint` and `set_watchpoint` MCP tools. Conditions shown in `list_breakpoints` output. Supports full expression syntax including `*addr` memory dereference.
+- **I/O address map command** (#67): CLI `iomap $D770` shows which device claims an address. `iomap` lists all registered handlers with ranges.
+- **Memory dereference operator** (#75): `*$1000` reads byte, `*$1000:16` reads 16-bit LE word. Works in breakpoint conditions, `run_until`, all expression contexts. Binary multiply still works when left operand present.
+- **SD card and HDOS config in JSON** (#50): SD card image paths and HDOS root directory paths now fully driven by `mega65.json`. No hardcoded fallbacks in factory.
 - **GUI function keys**: All F1-F12 plus ALT key events now passed to machine handlers.
-- **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 580 C++ tests total.
+- **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 581 C++ tests total.
 
 ### MEGA65 Boot to BASIC
 - **MEGA65 boots to READY. prompt** with proper 80-column display, colour palette, rainbow sprite bars, and real-time clock. HYPPO boot stage skipped; starts directly at C65 KERNAL reset vector ($E4B8).
