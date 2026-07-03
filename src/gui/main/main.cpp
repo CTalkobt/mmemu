@@ -529,6 +529,9 @@ MmemuFrame::MmemuFrame()
     menuTools->Append(ID_TOOL_MEASURE, "Measure Region...");
     menuTools->Append(ID_TOOL_RUNTO,   "Run Until...");
     menuTools->Append(ID_TOOL_DEVINFO, "Device Info...");
+    menuTools->AppendSeparator();
+    menuTools->Append(ID_TOOL_HEATMAP, "Memory Heat Map...");
+    menuTools->Append(ID_TOOL_RASTER,  "Raster Position...");
 
     auto* menuBar = new wxMenuBar;
     menuBar->Append(menuFile, "&File");
@@ -821,6 +824,99 @@ MmemuFrame::MmemuFrame()
             (dummy.SetEventType(wxEVT_BUTTON), dummy.SetId(wxID_OK), dummy));
         dlg.ShowModal();
     }, ID_TOOL_DEVINFO);
+
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_dbg) return;
+        auto& hm = m_dbg->heatmap();
+        std::vector<ToolField> fields = {
+            {"action", "Action", "choice", "top", "What to do", {"top", "page", "enable", "disable", "reset"}},
+            {"top",    "Top N",  "integer", "20", "Number of hotspots (for 'top' action)"}
+        };
+        ToolRunnerDialog dlg(this, "Memory Heat Map", fields, [this, &hm](const auto& args) -> ToolResult {
+            std::string action = args.at("action");
+            ToolResult r;
+            if (action == "enable")  { hm.setEnabled(true);  r.summary = "Recording enabled."; return r; }
+            if (action == "disable") { hm.setEnabled(false); r.summary = "Recording disabled."; return r; }
+            if (action == "reset")   { hm.reset();           r.summary = "Data cleared."; return r; }
+
+            r.summary = std::string("Heat map: ") + (hm.isEnabled() ? "recording" : "paused");
+
+            if (action == "top") {
+                int n = 20; try { n = std::stoi(args.at("top")); } catch (...) {}
+                auto spots = hm.topAddresses(n);
+                if (spots.empty()) { r.summary += "\nNo data. Use 'enable' first, then run the CPU."; return r; }
+                r.columns = {
+                    {"addr", "Address", 90, false}, {"reads", "Reads", 70, true},
+                    {"writes", "Writes", 70, true}, {"total", "Total", 70, true},
+                    {"sym", "Symbol", 150, false}
+                };
+                for (const auto& s : spots) {
+                    ToolResultRow row;
+                    char buf[16]; std::snprintf(buf, sizeof(buf), "$%04X", s.addr);
+                    row.values["addr"] = buf;
+                    row.values["reads"] = std::to_string(s.reads);
+                    row.values["writes"] = std::to_string(s.writes);
+                    row.values["total"] = std::to_string(s.total);
+                    if (m_dbg) {
+                        std::string sym = m_dbg->symbols().getLabel(s.addr);
+                        if (!sym.empty()) row.values["sym"] = sym;
+                    }
+                    r.rows.push_back(row);
+                }
+            } else if (action == "page") {
+                r.columns = {{"page", "Page", 80, false}, {"heat", "Heat", 400, false}};
+                uint32_t pages = hm.size() / 256;
+                for (uint32_t p = 0; p < pages; p += 16) {
+                    ToolResultRow row;
+                    char buf[16]; std::snprintf(buf, sizeof(buf), "$%04X", p * 256);
+                    row.values["page"] = buf;
+                    std::string bar;
+                    for (uint32_t i = 0; i < 16 && (p+i) < pages; ++i) {
+                        double h = hm.pageHeat(p+i);
+                        if (h == 0) bar += '.';
+                        else if (h < 0.1) bar += '-';
+                        else if (h < 0.3) bar += '+';
+                        else if (h < 0.6) bar += '#';
+                        else bar += '@';
+                    }
+                    row.values["heat"] = bar;
+                    r.rows.push_back(row);
+                }
+            }
+            return r;
+        });
+        dlg.ShowModal();
+    }, ID_TOOL_HEATMAP);
+
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_machine || !m_machine->ioRegistry) return;
+        std::vector<IOHandler*> handlers;
+        m_machine->ioRegistry->enumerate(handlers);
+        IOHandler* vic = nullptr;
+        for (auto* h : handlers) {
+            std::string n = h->name();
+            if (n.find("VIC") != std::string::npos) { vic = h; break; }
+        }
+        if (!vic) { wxMessageBox("No VIC device found.", "Error", wxICON_ERROR); return; }
+
+        ToolRunnerDialog dlg(this, "Raster Position", {}, [vic](const auto&) -> ToolResult {
+            ToolResult r;
+            DeviceInfo info;
+            vic->getDeviceInfo(info);
+            std::ostringstream os;
+            for (const auto& [k, v] : info.state) {
+                if (k == "Raster Line" || k == "Raster Cycle" ||
+                    k == "Lines/Frame" || k == "Cycles/Line")
+                    os << k << ": " << v << "\n";
+            }
+            r.summary = os.str();
+            return r;
+        });
+        // Auto-run
+        wxCommandEvent dummy; dummy.SetEventType(wxEVT_BUTTON); dummy.SetId(wxID_OK);
+        dlg.GetEventHandler()->ProcessEvent(dummy);
+        dlg.ShowModal();
+    }, ID_TOOL_RASTER);
 
     Bind(wxEVT_TOOL, &MmemuFrame::OnKbdFocus, this, ID_KBD_FOCUS);
     Bind(wxEVT_TIMER, &MmemuFrame::OnTimer, this, ID_GUI_TIMER);

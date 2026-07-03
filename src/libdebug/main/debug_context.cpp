@@ -179,6 +179,8 @@ void DebugContext::onMemoryWrite(IBus* bus, uint32_t addr, uint8_t before, uint8
         cur->memWrites.push_back({addr, before});
     }
 
+    if (m_heatmap.isEnabled()) m_heatmap.recordWrite(addr);
+
     if (auto* bp = m_breakpoints.checkWrite(addr, this)) {
         m_lastHitMessage = "Write watchpoint " + std::to_string(bp->id) + " hit at $" + toHex(addr);
         m_cpu->log(SIM_LOG_INFO, m_lastHitMessage.c_str());
@@ -190,6 +192,8 @@ void DebugContext::onMemoryRead(IBus* bus, uint32_t addr, uint8_t val) {
     for (auto* obs : ObserverRegistry::instance().observers()) {
         obs->onMemoryRead(bus, addr, val);
     }
+
+    if (m_heatmap.isEnabled()) m_heatmap.recordRead(addr);
 
     if (auto* bp = m_breakpoints.checkRead(addr, this)) {
         m_lastHitMessage = "Read watchpoint " + std::to_string(bp->id) + " hit at $" + toHex(addr);

@@ -1296,6 +1296,54 @@ Json handleDescribe() {
                 schema);
     }
 
+    // get_heatmap — memory access heat map (#25)
+    {
+        Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ); props.oVal["machine_id"] = midProp;
+        Json topProp(Json::OBJ); topProp.oVal["type"] = Json("integer");
+        topProp.oVal["description"] = Json("Number of top hotspots to return (default 20)");
+        props.oVal["top"] = topProp;
+        Json startProp(Json::OBJ); startProp.oVal["type"] = Json("integer");
+        startProp.oVal["description"] = Json("Start address for filtering (default 0)");
+        props.oVal["start_addr"] = startProp;
+        Json endProp2(Json::OBJ); endProp2.oVal["type"] = Json("integer");
+        endProp2.oVal["description"] = Json("End address for filtering (default: full range)");
+        props.oVal["end_addr"] = endProp2;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("get_heatmap",
+                "Get memory access heat map data. Returns top N addresses by read+write frequency. "
+                "Use heatmap_control to enable/disable/reset recording.",
+                schema);
+    }
+
+    // heatmap_control (#25)
+    {
+        Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ); props.oVal["machine_id"] = midProp;
+        Json actionProp(Json::OBJ); actionProp.oVal["type"] = Json("string");
+        actionProp.oVal["description"] = Json("Action: 'enable', 'disable', or 'reset'");
+        props.oVal["action"] = actionProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id")); req.push_back(Json("action"));
+        schema.oVal["required"] = req;
+        addTool("heatmap_control", "Enable, disable, or reset memory heat map recording.", schema);
+    }
+
+    // get_raster_position (#27)
+    {
+        Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ); props.oVal["machine_id"] = midProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("get_raster_position",
+                "Get the current raster beam position (line, cycle) from the VIC video chip. "
+                "Returns line number, cycle within line, frame dimensions, and beam region.",
+                schema);
+    }
+
     // profile_cpu — hotspot analysis (#19)
     {
         Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
@@ -4409,6 +4457,101 @@ Json handleToolsCall(const Json& params) {
 
                     textItem.oVal["text"] = Json(result.stringify());
                 }
+            }
+        }
+
+    } else if (name == "get_heatmap") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int top = args.contains("top") ? (int)args["top"].nVal : 20;
+            uint32_t startAddr = args.contains("start_addr") ? (uint32_t)args["start_addr"].nVal : 0;
+            uint32_t endAddr = args.contains("end_addr") ? (uint32_t)args["end_addr"].nVal : 0;
+            auto spots = ms->dbg->heatmap().topAddresses(top, startAddr, endAddr);
+
+            Json result(Json::OBJ);
+            result.oVal["enabled"] = Json(ms->dbg->heatmap().isEnabled());
+            Json arr(Json::ARR);
+            for (const auto& s : spots) {
+                Json entry(Json::OBJ);
+                entry.oVal["addr"] = Json("$" + toHex(s.addr));
+                entry.oVal["reads"] = Json((int)s.reads);
+                entry.oVal["writes"] = Json((int)s.writes);
+                entry.oVal["total"] = Json((int)s.total);
+                if (ms->dbg) {
+                    std::string sym = ms->dbg->symbols().getLabel(s.addr);
+                    if (!sym.empty()) entry.oVal["symbol"] = Json(sym);
+                }
+                arr.push_back(entry);
+            }
+            result.oVal["hotspots"] = arr;
+            textItem.oVal["text"] = Json(result.stringify());
+        }
+
+    } else if (name == "heatmap_control") {
+        std::string mid = args["machine_id"].sVal;
+        std::string action = args["action"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (action == "enable") {
+            ms->dbg->heatmap().setEnabled(true);
+            textItem.oVal["text"] = Json("Heat map recording enabled");
+        } else if (action == "disable") {
+            ms->dbg->heatmap().setEnabled(false);
+            textItem.oVal["text"] = Json("Heat map recording disabled");
+        } else if (action == "reset") {
+            ms->dbg->heatmap().reset();
+            textItem.oVal["text"] = Json("Heat map data cleared");
+        } else {
+            textItem.oVal["text"] = Json("Error: action must be 'enable', 'disable', or 'reset'");
+            textItem.oVal["isError"] = Json(true);
+        }
+
+    } else if (name == "get_raster_position") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            // Find VIC device via name match
+            IOHandler* vic = nullptr;
+            if (ms->machine->ioRegistry) {
+                std::vector<IOHandler*> handlers;
+                ms->machine->ioRegistry->enumerate(handlers);
+                for (auto* h : handlers) {
+                    std::string n = h->name();
+                    if (n.find("VIC") != std::string::npos) { vic = h; break; }
+                }
+            }
+            if (!vic) {
+                textItem.oVal["text"] = Json("Error: No VIC device found");
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                DeviceInfo info;
+                vic->getDeviceInfo(info);
+                Json result(Json::OBJ);
+                for (const auto& [k, v] : info.state) {
+                    if (k == "Raster Line") result.oVal["line"] = Json(std::stoi(v));
+                    else if (k == "Raster Cycle") result.oVal["cycle"] = Json(std::stoi(v));
+                    else if (k == "Lines/Frame") result.oVal["lines_per_frame"] = Json(std::stoi(v));
+                    else if (k == "Cycles/Line") result.oVal["cycles_per_line"] = Json(std::stoi(v));
+                }
+                int line = 0, linesPerFrame = 312;
+                try { line = std::stoi(result.oVal["line"].stringify()); } catch(...) {}
+                try { linesPerFrame = std::stoi(result.oVal["lines_per_frame"].stringify()); } catch(...) {}
+                result.oVal["mode"] = Json(linesPerFrame == 312 ? "PAL" : "NTSC");
+                if (line < 36) result.oVal["region"] = Json("top_border");
+                else if (line < 236) {
+                    result.oVal["region"] = Json("display");
+                    result.oVal["display_row"] = Json(line - 36);
+                } else result.oVal["region"] = Json("bottom_border");
+                textItem.oVal["text"] = Json(result.stringify());
             }
         }
 

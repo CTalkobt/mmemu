@@ -4,6 +4,7 @@
 #include "breakpoint_list.h"
 #include "trace_buffer.h"
 #include "stack_trace.h"
+#include "memory_heatmap.h"
 #include "libtoolchain/main/symbol_table.h"
 #include <vector>
 #include <memory>
@@ -30,6 +31,7 @@ public:
     TraceBuffer&    trace()       { return m_trace; }
     StackTrace&     stackTrace()  { return m_stackTrace; }
     SymbolTable&    symbols()     { return m_symbols; }
+    MemoryHeatMap&  heatmap()     { return m_heatmap; }
 
     int  saveSnapshot(const std::string& label);
     bool restoreSnapshot(int index);
@@ -76,6 +78,7 @@ private:
     TraceBuffer    m_trace;
     StackTrace     m_stackTrace;
     SymbolTable    m_symbols;
+    MemoryHeatMap  m_heatmap;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;
     std::vector<SystemSnapshot> m_snapshots;

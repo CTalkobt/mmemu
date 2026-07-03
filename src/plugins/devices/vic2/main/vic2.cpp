@@ -516,6 +516,10 @@ void VIC2::getDeviceInfo(DeviceInfo& out) const {
     out.state.push_back({"Cycle Accum", buf});
     std::sprintf(buf, "$%04X", m_bankBase);
     out.state.push_back({"Bank Base", buf});
+    out.state.push_back({"Raster Line", std::to_string(m_rasterLine)});
+    out.state.push_back({"Raster Cycle", std::to_string(m_cycleAccum % m_cyclesPerLine)});
+    out.state.push_back({"Lines/Frame", std::to_string(m_linesPerFrame)});
+    out.state.push_back({"Cycles/Line", std::to_string(m_cyclesPerLine)});
 
     out.dependencies.push_back({"DMA Bus", m_dmaBus ? "connected" : "none"});
     out.dependencies.push_back({"Char ROM", m_charRom ? "connected" : "none"});

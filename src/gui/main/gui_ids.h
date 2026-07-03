@@ -36,5 +36,7 @@ enum {
     ID_TOOL_MEASURE,
     ID_TOOL_RUNTO,
     ID_TOOL_DEVINFO,
+    ID_TOOL_HEATMAP,
+    ID_TOOL_RASTER,
     ID_TOOL_RUNNER_BASE = wxID_HIGHEST + 500,  // dynamic tool IDs start here
 };

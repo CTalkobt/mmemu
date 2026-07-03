@@ -96,6 +96,12 @@ public:
     }
     bool isPal() const { return m_linesPerFrame == PAL_LINES_PER_FRAME; }
 
+    /** Current raster beam position (#27). */
+    uint16_t rasterLine() const { return m_rasterLine; }
+    uint16_t rasterCycle() const { return (uint16_t)(m_cycleAccum % m_cyclesPerLine); }
+    int cyclesPerLine() const { return m_cyclesPerLine; }
+    int linesPerFrame() const { return m_linesPerFrame; }
+
     /** Set shared stall backlog counter for bus contention (#20).
      *  When a badline occurs, the VIC adds ~40 cycles to this counter.
      *  The machine scheduler stalls the CPU while backlog > 0. */

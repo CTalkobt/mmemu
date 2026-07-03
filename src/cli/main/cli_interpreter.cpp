@@ -1617,6 +1617,81 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
             m_output(os.str());
         }
+    } else if (cmd == "heatmap") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        auto& hm = m_ctx.dbg->heatmap();
+        std::string sub;
+        if (ss >> sub) {
+            if (sub == "on")    { hm.setEnabled(true);  m_output("Heat map recording enabled.\n"); }
+            else if (sub == "off")   { hm.setEnabled(false); m_output("Heat map recording disabled.\n"); }
+            else if (sub == "reset") { hm.reset();           m_output("Heat map cleared.\n"); }
+            else if (sub == "top") {
+                int n = 20; ss >> n;
+                auto spots = hm.topAddresses(n);
+                if (spots.empty()) { m_output("No data recorded. Use 'heatmap on' first.\n"); return; }
+                std::ostringstream os;
+                os << std::left << std::setw(10) << "Addr" << std::setw(10) << "Reads"
+                   << std::setw(10) << "Writes" << "Total\n"
+                   << std::string(40, '-') << "\n";
+                for (const auto& s : spots) {
+                    os << "$" << std::left << std::setw(9) << toHex(s.addr, addrWidth())
+                       << std::setw(10) << s.reads << std::setw(10) << s.writes << s.total << "\n";
+                }
+                m_output(os.str());
+            } else if (sub == "page") {
+                // Show 256-page overview as ASCII heat bar
+                std::ostringstream os;
+                os << "Memory heat map (per page, " << (hm.isEnabled() ? "recording" : "PAUSED") << "):\n";
+                uint32_t pages = hm.size() / 256;
+                for (uint32_t p = 0; p < pages; p += 16) {
+                    os << "$" << toHex(p * 256, addrWidth()) << ": ";
+                    for (uint32_t i = 0; i < 16 && (p + i) < pages; ++i) {
+                        double h = hm.pageHeat(p + i);
+                        if (h == 0)      os << '.';
+                        else if (h < 0.1) os << '-';
+                        else if (h < 0.3) os << '+';
+                        else if (h < 0.6) os << '#';
+                        else              os << '@';
+                    }
+                    os << "\n";
+                }
+                os << "Legend: .=none -=low +=medium #=high @=very high\n";
+                m_output(os.str());
+            } else {
+                m_output("Syntax: heatmap <on|off|reset|top [n]|page>\n");
+            }
+        } else {
+            m_output("Heat map: " + std::string(hm.isEnabled() ? "enabled" : "disabled") + "\n");
+            m_output("  heatmap on       - Start recording\n");
+            m_output("  heatmap off      - Stop recording\n");
+            m_output("  heatmap reset    - Clear all data\n");
+            m_output("  heatmap top [n]  - Show top N hotspots\n");
+            m_output("  heatmap page     - ASCII page-level overview\n");
+        }
+    } else if (cmd == "raster") {
+        if (!m_ctx.machine || !m_ctx.machine->ioRegistry) {
+            m_output("No machine created.\n"); return;
+        }
+        // Find VIC device via name match and query state from DeviceInfo
+        std::vector<IOHandler*> handlers;
+        m_ctx.machine->ioRegistry->enumerate(handlers);
+        IOHandler* vic = nullptr;
+        for (auto* h : handlers) {
+            std::string n = h->name();
+            if (n.find("VIC") != std::string::npos) { vic = h; break; }
+        }
+        if (!vic) { m_output("No VIC device found.\n"); return; }
+        DeviceInfo info;
+        vic->getDeviceInfo(info);
+        // Extract raster state from DeviceInfo state entries
+        std::ostringstream os;
+        os << "Raster beam position:\n";
+        for (const auto& [k, v] : info.state) {
+            if (k == "Raster Line" || k == "Raster Cycle" ||
+                k == "Lines/Frame" || k == "Cycles/Line")
+                os << "  " << k << ": " << v << "\n";
+        }
+        m_output(os.str());
     } else if (cmd == "devinfo") {
         if (!m_ctx.machine || !m_ctx.machine->ioRegistry) {
             m_output("No machine created.\n"); return;
@@ -1966,7 +2041,9 @@ void CliInterpreter::printHelp() {
              "  profile [n] [top]- Profile N steps, show top hotspots\n"
              "  measure <s> <e>  - Measure cycles for address range [s,e)\n"
              "  runto <cond>     - Run until condition expression is true\n"
-             "  undoinfo         - Show what backstep would undo\n");
+             "  undoinfo         - Show what backstep would undo\n"
+             "  heatmap <cmd>    - Memory access heat map (on/off/reset/top/page)\n"
+             "  raster           - Show current raster beam position\n");
 
     std::vector<std::string> pluginCmds;
     PluginCommandRegistry::instance().listCommands(pluginCmds);
