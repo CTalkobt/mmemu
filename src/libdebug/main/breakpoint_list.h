@@ -16,6 +16,7 @@ struct Breakpoint {
     std::string    condition;
     int            hitCount;
     bool           enabled;
+    bool           physical;   // match against 28-bit physical address (#73)
     int            id;
 };
 
@@ -23,7 +24,7 @@ class DebugContext;
 
 class BreakpointList {
 public:
-    int  add(uint32_t addr, BreakpointType type);
+    int  add(uint32_t addr, BreakpointType type, bool physical = false);
     void remove(int id);
     void setEnabled(int id, bool enabled);
     void setCondition(int id, const std::string& condition);

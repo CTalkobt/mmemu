@@ -2,9 +2,14 @@
 
 #include <cstdint>
 
-// Forward declarations
-struct MapState;
 class IBus;
+
+struct MapState {
+    uint32_t offsets[8];  // 20-bit offset for each 8KB block
+    uint8_t  enables;     // bitmask: bit i = block i enabled
+    uint32_t megabyteLow;  // megabyte base for lower 32KB (set via MAP with X==0x0F)
+    uint32_t megabyteHigh; // megabyte base for upper 32KB (set via MAP with Z==0x0F)
+};
 
 /**
  * Interface for controllers that manage memory mapping via the MAP instruction.
@@ -27,4 +32,18 @@ public:
     // Access the underlying physical bus (bypasses MAP translation and overlays).
     // Used for 32-bit indirect long addressing. Returns nullptr if not available.
     virtual IBus* getPhysBus() const { return nullptr; }
+
+    // Translate a 16-bit virtual address to a 28-bit physical address
+    // using the current MAP state. Used by physical-address breakpoints (#73).
+    virtual uint32_t resolvePhysical(uint32_t vaddr) const {
+        const MapState& ms = getMapState();
+        vaddr &= 0xFFFF;
+        int block = (vaddr >> 13) & 7;
+        if (ms.enables & (1 << block)) {
+            uint32_t offset = ms.offsets[block] & 0xFFFFF;
+            uint32_t megabyte = (block < 4) ? ms.megabyteLow : ms.megabyteHigh;
+            return (megabyte + (offset << 8) + (vaddr & 0x1FFF)) & 0x0FFFFFFF;
+        }
+        return vaddr;
+    }
 };

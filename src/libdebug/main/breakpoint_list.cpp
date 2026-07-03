@@ -1,13 +1,24 @@
 #include "breakpoint_list.h"
 #include "debug_context.h"
 #include "expression_evaluator.h"
+#include "libcore/main/icore.h"
+#include "imap_controller.h"
 #include <algorithm>
 
-int BreakpointList::add(uint32_t addr, BreakpointType type) {
+int BreakpointList::add(uint32_t addr, BreakpointType type, bool physical) {
     int id = m_nextId++;
-    m_breakpoints.push_back({addr, type, "", 0, true, id});
+    m_breakpoints.push_back({addr, type, "", 0, true, physical, id});
     if (type == BreakpointType::EXEC) m_execCount++;
     return id;
+}
+
+// Resolve a virtual address to physical via MapMmu if available.
+static uint32_t toPhysical(uint32_t vaddr, DebugContext* dbg) {
+    if (dbg && dbg->cpu()) {
+        auto* mmu = dbg->cpu()->getMapMmu();
+        if (mmu) return mmu->resolvePhysical(vaddr);
+    }
+    return vaddr;
 }
 
 void BreakpointList::remove(int id) {
@@ -45,7 +56,9 @@ void BreakpointList::clearHitCounts() {
 
 Breakpoint* BreakpointList::checkExec(uint32_t addr, DebugContext* dbg) {
     for (auto& b : m_breakpoints) {
-        if (b.enabled && b.type == BreakpointType::EXEC && b.addr == addr) {
+        if (!b.enabled || b.type != BreakpointType::EXEC) continue;
+        uint32_t cmpAddr = b.physical ? toPhysical(addr, dbg) : addr;
+        if (b.addr == cmpAddr) {
             if (ExpressionEvaluator::evaluateCondition(b.condition, dbg)) {
                 b.hitCount++;
                 return &b;
@@ -57,7 +70,9 @@ Breakpoint* BreakpointList::checkExec(uint32_t addr, DebugContext* dbg) {
 
 Breakpoint* BreakpointList::checkWrite(uint32_t addr, DebugContext* dbg) {
     for (auto& b : m_breakpoints) {
-        if (b.enabled && b.type == BreakpointType::WRITE_WATCH && b.addr == addr) {
+        if (!b.enabled || b.type != BreakpointType::WRITE_WATCH) continue;
+        uint32_t cmpAddr = b.physical ? toPhysical(addr, dbg) : addr;
+        if (b.addr == cmpAddr) {
             if (ExpressionEvaluator::evaluateCondition(b.condition, dbg)) {
                 b.hitCount++;
                 return &b;
@@ -69,7 +84,9 @@ Breakpoint* BreakpointList::checkWrite(uint32_t addr, DebugContext* dbg) {
 
 Breakpoint* BreakpointList::checkRead(uint32_t addr, DebugContext* dbg) {
     for (auto& b : m_breakpoints) {
-        if (b.enabled && b.type == BreakpointType::READ_WATCH && b.addr == addr) {
+        if (!b.enabled || b.type != BreakpointType::READ_WATCH) continue;
+        uint32_t cmpAddr = b.physical ? toPhysical(addr, dbg) : addr;
+        if (b.addr == cmpAddr) {
             if (ExpressionEvaluator::evaluateCondition(b.condition, dbg)) {
                 b.hitCount++;
                 return &b;

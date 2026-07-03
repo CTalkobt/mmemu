@@ -44,12 +44,7 @@ class SparseMemoryBus;
  * - C64 ROM overlays are typically disabled
  */
 
-struct MapState {
-    uint32_t offsets[8];  // 20-bit offset for each 8KB block
-    uint8_t  enables;     // bitmask: bit i = block i enabled
-    uint32_t megabyteLow;  // megabyte base for lower 32KB (set via MAP with X==0x0F)
-    uint32_t megabyteHigh; // megabyte base for upper 32KB (set via MAP with Z==0x0F)
-};
+// MapState is defined in imap_controller.h
 
 class MapMmu : public IBus, public IMapController {
 public:

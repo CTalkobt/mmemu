@@ -904,8 +904,11 @@ Json handleDescribe() {
     Json sbpSchema(Json::OBJ); sbpSchema.oVal["type"] = Json("object");
     Json sbpProps(Json::OBJ); sbpProps.oVal["machine_id"] = midProp; sbpProps.oVal["addr"] = addrProp;
     Json bpCondProp(Json::OBJ); bpCondProp.oVal["type"] = Json("string");
-    bpCondProp.oVal["description"] = Json("Expression that must be true for the breakpoint to fire. Supports registers, comparisons, logical operators.");
+    bpCondProp.oVal["description"] = Json("Expression that must be true for the breakpoint to fire. Supports registers, comparisons, memory dereference (*addr), logical operators.");
     sbpProps.oVal["condition"] = bpCondProp;
+    Json physProp(Json::OBJ); physProp.oVal["type"] = Json("boolean");
+    physProp.oVal["description"] = Json("If true, match against 28-bit physical address (resolved via MapMmu) instead of logical CPU address. Useful for MEGA65 where the same code appears at multiple logical addresses.");
+    sbpProps.oVal["physical"] = physProp;
     sbpSchema.oVal["properties"] = sbpProps;
     Json sbpReq(Json::ARR); sbpReq.push_back(Json("machine_id")); sbpReq.push_back(Json("addr"));
     sbpSchema.oVal["required"] = sbpReq;
@@ -916,6 +919,8 @@ Json handleDescribe() {
     Json swpProps(Json::OBJ); swpProps.oVal["machine_id"] = midProp; swpProps.oVal["addr"] = addrProp;
     Json wpTypeProp(Json::OBJ); wpTypeProp.oVal["type"] = Json("string"); wpTypeProp.oVal["description"] = Json("Watchpoint type: \"read\" or \"write\"");
     swpProps.oVal["type"] = wpTypeProp;
+    swpProps.oVal["condition"] = bpCondProp;
+    swpProps.oVal["physical"] = physProp;
     swpSchema.oVal["properties"] = swpProps;
     Json swpReq(Json::ARR); swpReq.push_back(Json("machine_id")); swpReq.push_back(Json("addr")); swpReq.push_back(Json("type"));
     swpSchema.oVal["required"] = swpReq;
@@ -2779,11 +2784,13 @@ Json handleToolsCall(const Json& params) {
         } else {
             uint32_t addr;
             if (resolveAddr(args["addr"], ms->dbg, addr)) {
-                int id = ms->dbg->breakpoints().add(addr, BreakpointType::EXEC);
+                bool physical = args.contains("physical") && args["physical"].bVal;
+                int id = ms->dbg->breakpoints().add(addr, BreakpointType::EXEC, physical);
                 if (args.contains("condition") && !args["condition"].sVal.empty()) {
                     ms->dbg->breakpoints().setCondition(id, args["condition"].sVal);
                 }
-                std::string msg = "Breakpoint " + std::to_string(id) + " set at $" + toHex(addr);
+                std::string msg = (physical ? "Physical breakpoint " : "Breakpoint ")
+                                + std::to_string(id) + " set at $" + toHex(addr);
                 if (args.contains("condition") && !args["condition"].sVal.empty())
                     msg += " if " + args["condition"].sVal;
                 textItem.oVal["text"] = Json(msg);
@@ -2805,9 +2812,16 @@ Json handleToolsCall(const Json& params) {
         } else {
             uint32_t addr;
             if (resolveAddr(args["addr"], ms->dbg, addr)) {
+                bool physical = args.contains("physical") && args["physical"].bVal;
                 BreakpointType btype = (type == "read") ? BreakpointType::READ_WATCH : BreakpointType::WRITE_WATCH;
-                int id = ms->dbg->breakpoints().add(addr, btype);
-                textItem.oVal["text"] = Json("Watchpoint " + std::to_string(id) + " (" + type + ") at $" + toHex(addr));
+                int id = ms->dbg->breakpoints().add(addr, btype, physical);
+                if (args.contains("condition") && !args["condition"].sVal.empty())
+                    ms->dbg->breakpoints().setCondition(id, args["condition"].sVal);
+                std::string msg = (physical ? "Physical watchpoint " : "Watchpoint ")
+                                + std::to_string(id) + " (" + type + ") at $" + toHex(addr);
+                if (args.contains("condition") && !args["condition"].sVal.empty())
+                    msg += " if " + args["condition"].sVal;
+                textItem.oVal["text"] = Json(msg);
             } else {
                 textItem.oVal["text"] = Json("Error: Invalid address expression");
                 textItem.oVal["isError"] = Json(true);
@@ -2858,10 +2872,15 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("No breakpoints set");
             } else {
                 std::stringstream ss;
-                ss << "ID  Type   Addr  En  Hits\n";
+                ss << "ID  Type         Addr     En  Hits  Condition\n";
                 for (const auto& bp : bps) {
-                    const char* t = (bp.type == BreakpointType::EXEC) ? "exec" : (bp.type == BreakpointType::READ_WATCH ? "read" : "write");
-                    ss << std::left << std::setw(4) << bp.id << std::setw(7) << t << "$" << toHex(bp.addr) << "  " << (bp.enabled ? "Y" : "N") << "   " << bp.hitCount << "\n";
+                    std::string t = (bp.type == BreakpointType::EXEC) ? "exec" : (bp.type == BreakpointType::READ_WATCH ? "read" : "write");
+                    if (bp.physical) t += "(phys)";
+                    ss << std::left << std::setw(4) << bp.id << std::setw(13) << t
+                       << "$" << toHex(bp.addr) << "  " << (bp.enabled ? "Y" : "N")
+                       << "   " << std::setw(5) << bp.hitCount;
+                    if (!bp.condition.empty()) ss << "  " << bp.condition;
+                    ss << "\n";
                 }
                 textItem.oVal["text"] = Json(ss.str());
             }
