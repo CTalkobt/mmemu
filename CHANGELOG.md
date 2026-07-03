@@ -21,6 +21,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Memory dereference operator** (#75): `*$1000` reads byte, `*$1000:16` reads 16-bit LE word. Works in breakpoint conditions, `run_until`, all expression contexts. Binary multiply still works when left operand present.
 - **SD card and HDOS config in JSON** (#50): SD card image paths and HDOS root directory paths now fully driven by `mega65.json`. No hardcoded fallbacks in factory.
 - **GUI function keys**: All F1-F12 plus ALT key events now passed to machine handlers.
+- **MCP performance profiling tools** (#19): `profile_cpu` runs N steps sampling PC to build a frequency histogram, returns top hotspots with symbol annotations, percentages, and disassembly. `measure_region` runs from addr until PC leaves range, returns total cycles, instruction count, and average CPI.
+- **MCP plugin tool dispatch fix**: Plugin-registered MCP tools appeared in `tools/list` but calling them returned "Unknown tool". Now routes through `PluginToolRegistry::dispatch()` before the catch-all error.
+- **MCP plugin tool integration tests** (#17): Python tests verify plugin tools appear in `tools/list` and exercise `profile_cpu`/`measure_region` with structured JSON validation.
 - **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 581 C++ tests total.
 
 ### MEGA65 Boot to BASIC
