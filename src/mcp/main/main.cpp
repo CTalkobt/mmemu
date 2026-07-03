@@ -4519,8 +4519,16 @@ Json handleToolsCall(const Json& params) {
         }
 
     } else {
-        textItem.oVal["text"] = Json("Error: Unknown tool " + name);
-        textItem.oVal["isError"] = Json(true);
+        // Try plugin-provided tools before returning unknown
+        std::string pluginResult;
+        Json pluginArgs(Json::OBJ);
+        if (args.is_object()) pluginArgs = args;
+        if (PluginToolRegistry::instance().dispatch(name, pluginArgs.stringify(), pluginResult)) {
+            textItem.oVal["text"] = Json(pluginResult);
+        } else {
+            textItem.oVal["text"] = Json("Error: Unknown tool " + name);
+            textItem.oVal["isError"] = Json(true);
+        }
     }
 
     content.push_back(textItem);
