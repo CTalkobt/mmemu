@@ -649,23 +649,29 @@ MachineDescriptor* Mega65MachineFactory::create() {
         auto* hdos = new HdosHandler();
         hdos->setPhysBus(physBus);
 
-        // Set HDOS root directory from SD card image path or default
-        std::string hdosRoot = ".";
-        // Try to find a suitable root from the machine JSON or defaults
+        // Set HDOS root directory from JSON config or defaults
         {
-            std::vector<std::string> candidates = {
+            json hdosPaths = json::array({
                 "roms/mega65/sdcard/",
-                std::string(getenv("HOME") ? getenv("HOME") : "") + "/.local/share/xemu-lgb/mega65/hdos/",
+                "~/.local/share/xemu-lgb/mega65/hdos/",
                 "."
-            };
-            for (auto& p : candidates) {
-                if (!p.empty() && std::filesystem::is_directory(p)) {
-                    hdosRoot = p;
+            });
+            if (cfg.contains("hdos") && cfg["hdos"].contains("paths"))
+                hdosPaths = cfg["hdos"]["paths"];
+
+            std::string hdosRoot = ".";
+            const char* home = std::getenv("HOME");
+            for (const auto& p : hdosPaths) {
+                std::string path = p.get<std::string>();
+                if (path.size() > 1 && path[0] == '~' && path[1] == '/' && home)
+                    path = std::string(home) + path.substr(1);
+                if (!path.empty() && std::filesystem::is_directory(path)) {
+                    hdosRoot = path;
                     break;
                 }
             }
+            hdos->setRootDir(hdosRoot);
         }
-        hdos->setRootDir(hdosRoot);
         desc->deleters.push_back([hdos]() { delete hdos; });
 
         hyperRegs->setHdosTrapHandler([hdos](uint8_t func, MOS45GS02* cpu) -> bool {
@@ -675,23 +681,18 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
 
-    // Try to auto-mount SD card image — paths from JSON or defaults
+    // Auto-mount SD card image — paths from JSON config (#50)
     {
-        json sdPathsJson = json::array({
-            "roms/mega65/mega65.img", "roms/mega65/sdcard.img",
-            "~/.local/share/xemu-lgb/mega65/mega65.img",
-            "~/.local/share/xemu-lgb/mega65/mega65_sd.img",
-            "~/.local/share/mmsim/mega65.img"
-        });
+        json sdPaths = json::array();
         if (cfg.contains("sdcard") && cfg["sdcard"].contains("paths"))
-            sdPathsJson = cfg["sdcard"]["paths"];
+            sdPaths = cfg["sdcard"]["paths"];
 
-        std::string sdPath = findFile(sdPathsJson);
+        std::string sdPath = findFile(sdPaths);
         if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
             fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", sdPath.c_str());
         } else {
             fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HDOS file operations may fail.\n");
-            fprintf(stderr, "[MEGA65]   Configure paths in machines/mega65.json or copy an image to roms/mega65/\n");
+            fprintf(stderr, "[MEGA65]   Configure paths in machines/mega65.json\n");
         }
     }
 

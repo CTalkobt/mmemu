@@ -59,12 +59,22 @@
 
       "sdcard": {
         "description": "SD card image — required for HYPPO to load C65 ROMs during boot",
+        "baseAddr": "0xD680",
         "paths": [
           "roms/mega65/mega65.img",
           "roms/mega65/sdcard.img",
           "~/.local/share/xemu-lgb/mega65/mega65.img",
           "~/.local/share/xemu-lgb/mega65/mega65_sd.img",
           "~/.local/share/mmsim/mega65.img"
+        ]
+      },
+
+      "hdos": {
+        "description": "HDOS host filesystem root — directory searched for MEGA65 file operations",
+        "paths": [
+          "roms/mega65/sdcard/",
+          "~/.local/share/xemu-lgb/mega65/hdos/",
+          "."
         ]
       },
 
