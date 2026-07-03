@@ -26,6 +26,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **MCP plugin tool integration tests** (#17): Python tests verify plugin tools appear in `tools/list` and exercise `profile_cpu`/`measure_region` with structured JSON validation.
 - **CLI commands bridging MCP gaps**: `profile` (hotspot analysis), `measure` (cycle counting for address range), `runto` (run until condition expression true), `devinfo` (device register dump), `undoinfo` (show what backstep would undo).
 - **GUI ToolRunnerDialog framework** (#82, #83, #84): Generic wxDialog auto-generating input controls from field definitions, rendering results as summary text + sortable wxListCtrl table. ExpressionTextCtrl with register/symbol autocomplete popup. Tools menu: Profile CPU, Measure Region, Run Until, Device Info. Six existing dialogs (Fill/Copy/Swap Memory, Go To Address, Search Memory, Load Image) converted to ToolRunnerDialog with new `choice` and `file` field types. Old dialog files removed.
+- **GUI device register editing** (#8): Double-click or right-click any register in DeviceInfoPane to edit its value. Hex input with validation, writes via `ioRegistry->dispatchWrite()`, auto-refreshes.
 - **New integration tests** (#6, #7): MAP translation, DMA stall, VIC-IV raster, dual SID, math accelerator, personality switching, DMA MIX/IRQ, plus existing VIC-IV, DMA copy/fill/chain tests. 581 C++ tests total.
 
 ### MEGA65 Boot to BASIC
