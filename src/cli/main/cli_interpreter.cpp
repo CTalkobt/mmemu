@@ -23,7 +23,9 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <sstream>
 #include <set>
 #include <map>
+#include <unordered_map>
 #include <cstring>
+#include "libdevices/main/device_info.h"
 
 static std::string toHex(uint32_t v, int width = 4) {
     std::ostringstream ss;
@@ -231,6 +233,69 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_output("No undo history available.\n");
         } else {
             m_output("Reversed " + std::to_string(reversed) + " instruction(s).\n");
+            showRegisters();
+        }
+    } else if (cmd == "undoinfo") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        auto& tb = m_ctx.dbg->trace();
+        if (tb.size() == 0) {
+            m_output("No undo history available.\n");
+        } else {
+            const auto& entry = tb.at(tb.size() - 1);
+            std::ostringstream os;
+            os << "Last instruction: $" << toHex(entry.addr, addrWidth());
+            if (!entry.mnemonic.empty()) os << "  " << entry.mnemonic;
+            os << "\n  Registers: ";
+            for (const auto& [name, val] : entry.regs) {
+                int w = (name == "SP" || name == "PC") ? 4 : 2;
+                os << name << "=$" << toHex(val, w) << " ";
+            }
+            os << "\n  Memory writes: " << entry.memWrites.size();
+            for (const auto& mw : entry.memWrites) {
+                os << "\n    $" << toHex(mw.addr, addrWidth())
+                   << ": was $" << toHex(mw.before, 2);
+            }
+            os << "\n";
+            m_output(os.str());
+        }
+    } else if (cmd == "runto") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        if (!m_ctx.dbg) { m_output("No debug context.\n"); return; }
+        std::string rest;
+        std::getline(ss, rest);
+        rest = rest.substr(rest.find_first_not_of(" \t") != std::string::npos ? rest.find_first_not_of(" \t") : 0);
+        if (rest.empty()) {
+            m_output("Syntax: runto <condition_expression> [max_steps]\n");
+            m_output("  Example: runto A == $42\n");
+            m_output("  Example: runto *$D012 > 100\n");
+        } else {
+            // Check for trailing max_steps number
+            int maxSteps = 10000000;
+            m_ctx.dbg->resume();
+            g_interrupted = 0;
+            int steps = 0;
+            bool condMet = false;
+            while (!g_interrupted && steps < maxSteps) {
+                if (m_ctx.machine && m_ctx.machine->schedulerStep)
+                    m_ctx.machine->schedulerStep(*m_ctx.machine);
+                else
+                    m_ctx.cpu->step();
+                ++steps;
+                if (m_ctx.dbg->isPaused()) break;
+                if (ExpressionEvaluator::evaluateCondition(rest, m_ctx.dbg)) {
+                    condMet = true;
+                    break;
+                }
+            }
+            if (condMet)
+                m_output("Condition met after " + std::to_string(steps) + " steps.\n");
+            else if (g_interrupted)
+                m_output("Interrupted after " + std::to_string(steps) + " steps.\n");
+            else if (m_ctx.dbg->isPaused())
+                m_output("Breakpoint hit after " + std::to_string(steps) + " steps.\n");
+            else
+                m_output("Max steps reached (" + std::to_string(steps) + ").\n");
+            g_interrupted = 0;
             showRegisters();
         }
     } else if (cmd == "run") {
@@ -1552,6 +1617,145 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
             m_output(os.str());
         }
+    } else if (cmd == "devinfo") {
+        if (!m_ctx.machine || !m_ctx.machine->ioRegistry) {
+            m_output("No machine created.\n"); return;
+        }
+        std::string devName;
+        if (!(ss >> devName)) {
+            m_output("Syntax: devinfo <device_name>\n");
+            m_output("Use 'iomap' to list available devices.\n");
+            return;
+        }
+        // Find handler by exact or partial name match
+        IOHandler* handler = m_ctx.machine->ioRegistry->findHandler(devName);
+        if (!handler) {
+            std::vector<IOHandler*> handlers;
+            m_ctx.machine->ioRegistry->enumerate(handlers);
+            std::string target = devName;
+            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
+            for (auto* h : handlers) {
+                std::string hn = h->name();
+                std::transform(hn.begin(), hn.end(), hn.begin(), ::tolower);
+                if (hn == target || hn.find(target) != std::string::npos) {
+                    handler = h; break;
+                }
+            }
+        }
+        if (!handler) {
+            m_output("Device '" + devName + "' not found.\n"); return;
+        }
+        DeviceInfo info;
+        handler->getDeviceInfo(info);
+        std::ostringstream os;
+        os << info.name << "  base=$" << toHex(info.baseAddr, addrWidth())
+           << "  mask=$" << toHex(info.addrMask, addrWidth()) << "\n";
+        if (!info.registers.empty()) {
+            os << "  Registers:\n";
+            for (const auto& r : info.registers) {
+                os << "    $" << toHex(info.baseAddr + r.offset, addrWidth())
+                   << " " << std::left << std::setw(16) << r.name
+                   << " = $" << toHex(r.value, 2);
+                if (!r.description.empty()) os << "  " << r.description;
+                os << "\n";
+            }
+        }
+        if (!info.state.empty()) {
+            os << "  State:\n";
+            for (const auto& [k, v] : info.state)
+                os << "    " << k << " = " << v << "\n";
+        }
+        m_output(os.str());
+    } else if (cmd == "profile") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        int steps = 1000000, top = 20;
+        ss >> steps; ss >> top;
+        if (steps <= 0) steps = 1000000;
+        if (top <= 0) top = 20;
+
+        std::unordered_map<uint32_t, int> histogram;
+        uint64_t startCycles = m_ctx.cpu->cycles();
+        m_output("Profiling " + std::to_string(steps) + " steps...\n");
+        g_interrupted = 0;
+        for (int i = 0; i < steps && !g_interrupted; ++i) {
+            histogram[m_ctx.cpu->pc()]++;
+            if (m_ctx.machine && m_ctx.machine->schedulerStep)
+                m_ctx.machine->schedulerStep(*m_ctx.machine);
+            else
+                m_ctx.cpu->step();
+            if (m_ctx.dbg && m_ctx.dbg->isPaused()) break;
+        }
+        g_interrupted = 0;
+        uint64_t totalCycles = m_ctx.cpu->cycles() - startCycles;
+
+        std::vector<std::pair<uint32_t, int>> sorted(histogram.begin(), histogram.end());
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const auto& a, const auto& b) { return a.second > b.second; });
+        if ((int)sorted.size() > top) sorted.resize(top);
+
+        int totalSamples = 0;
+        for (const auto& [addr, cnt] : histogram) totalSamples += cnt;
+
+        std::ostringstream os;
+        os << "Profile: " << totalSamples << " instructions, "
+           << totalCycles << " cycles, " << histogram.size() << " unique addresses\n\n"
+           << std::left << std::setw(10) << "Addr" << std::setw(8) << "Count"
+           << std::setw(8) << "Pct" << "Instruction\n"
+           << std::string(50, '-') << "\n";
+        for (const auto& [addr, cnt] : sorted) {
+            double pct = totalSamples > 0 ? (100.0 * cnt / totalSamples) : 0;
+            os << "$" << std::left << std::setw(9) << toHex(addr, addrWidth())
+               << std::setw(8) << cnt;
+            char pctBuf[16]; std::snprintf(pctBuf, sizeof(pctBuf), "%5.1f%%", pct);
+            os << std::setw(8) << pctBuf;
+            // Symbol
+            if (m_ctx.dbg) {
+                std::string sym = m_ctx.dbg->symbols().getLabel(addr);
+                if (!sym.empty()) os << sym << ": ";
+            }
+            // Disassembly
+            if (m_ctx.disasm) {
+                char buf[64];
+                m_ctx.disasm->disasmOne(m_ctx.bus, addr, buf, sizeof(buf));
+                os << buf;
+            }
+            os << "\n";
+        }
+        m_output(os.str());
+    } else if (cmd == "measure") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        std::string startExpr, endExpr;
+        if (!(ss >> startExpr >> endExpr)) {
+            m_output("Syntax: measure <start_addr> <end_addr>\n");
+            m_output("  Runs from start until PC leaves [start, end). Reports cycles.\n");
+            return;
+        }
+        uint32_t startAddr, endAddr;
+        if (!parseAddr(startExpr, startAddr) || !parseAddr(endExpr, endAddr)) {
+            m_output("Error: Invalid address expression\n"); return;
+        }
+        m_ctx.cpu->setPc(startAddr);
+        uint64_t startCycles = m_ctx.cpu->cycles();
+        int instrCount = 0, maxSteps = 10000000;
+        for (int i = 0; i < maxSteps; ++i) {
+            uint32_t pc = m_ctx.cpu->pc();
+            if (pc < startAddr || pc >= endAddr) break;
+            if (m_ctx.machine && m_ctx.machine->schedulerStep)
+                m_ctx.machine->schedulerStep(*m_ctx.machine);
+            else
+                m_ctx.cpu->step();
+            instrCount++;
+            if (m_ctx.dbg && m_ctx.dbg->isPaused()) break;
+        }
+        uint64_t totalCycles = m_ctx.cpu->cycles() - startCycles;
+        double avgCpi = instrCount > 0 ? (double)totalCycles / instrCount : 0;
+        std::ostringstream os;
+        os << "Region $" << toHex(startAddr, addrWidth()) << " - $" << toHex(endAddr, addrWidth()) << ":\n"
+           << "  Instructions: " << instrCount << "\n"
+           << "  Total cycles: " << totalCycles << "\n"
+           << "  Avg cycles/instr: " << std::fixed << std::setprecision(1) << avgCpi << "\n"
+           << "  Final PC: $" << toHex(m_ctx.cpu->pc(), addrWidth()) << "\n";
+        m_output(os.str());
     } else if (cmd == "recordaudio") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string filename;
@@ -1757,7 +1961,12 @@ void CliInterpreter::printHelp() {
              "  snapshot delete <n> - Delete snapshot (or '*' for all)\n"
              "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
              "  personality <m>  - Switch MEGA65 I/O personality\n"
-             "  iomap [addr]     - Show I/O handler for address, or list all\n");
+             "  iomap [addr]     - Show I/O handler for address, or list all\n"
+             "  devinfo <name>   - Show device registers and state\n"
+             "  profile [n] [top]- Profile N steps, show top hotspots\n"
+             "  measure <s> <e>  - Measure cycles for address range [s,e)\n"
+             "  runto <cond>     - Run until condition expression is true\n"
+             "  undoinfo         - Show what backstep would undo\n");
 
     std::vector<std::string> pluginCmds;
     PluginCommandRegistry::instance().listCommands(pluginCmds);
