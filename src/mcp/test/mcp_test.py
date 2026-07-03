@@ -919,6 +919,61 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": auto_mid})
 
+    # --- Plugin tool integration (#17) ---
+    print("\n--- Plugin tool integration ---")
+
+    # Verify tools/list includes plugin tools (if any loaded)
+    res = client.request("tools/list")
+    tool_names = [t["name"] for t in res["result"]["tools"]]
+    assert "profile_cpu" in tool_names, "profile_cpu tool missing from tools/list"
+    assert "measure_region" in tool_names, "measure_region tool missing from tools/list"
+    print("  ✓ profile_cpu and measure_region in tools/list OK")
+
+    # --- Performance profiling tools (#19) ---
+    print("\n--- Performance profiling tools ---")
+
+    prof_mid = "prof_test"
+    client.call_tool("create_machine", {"machine_id": prof_mid, "machine_type": "c64"})
+
+    # Write a tight loop: LDA #$00 / NOP / JMP $1000
+    client.call_tool("write_memory", {
+        "machine_id": prof_mid, "addr": "$1000",
+        "bytes": [0xA9, 0x00, 0xEA, 0x4C, 0x00, 0x10]
+    })
+    client.call_tool("set_pc", {"machine_id": prof_mid, "addr": "$1000"})
+
+    # profile_cpu
+    res = client.call_tool("profile_cpu", {
+        "machine_id": prof_mid, "steps": 1000, "top": 5
+    })
+    text = res["result"]["content"][0]["text"]
+    data = json.loads(text)
+    assert "hotspots" in data, f"Expected hotspots in profile result: {text}"
+    assert len(data["hotspots"]) > 0, "Expected at least one hotspot"
+    assert data["total_steps"] > 0, "Expected total_steps > 0"
+    # $1000 (LDA) should be the top hotspot
+    top_addr = data["hotspots"][0]["addr"]
+    assert top_addr in ["$1000", "$1002", "$1003"], f"Expected loop address as top hotspot, got {top_addr}"
+    print(f"  ✓ profile_cpu OK ({data['total_steps']} steps, {len(data['hotspots'])} hotspots)")
+
+    # measure_region
+    client.call_tool("set_pc", {"machine_id": prof_mid, "addr": "$1000"})
+    # Write LDA #$42 / RTS at $2000 for a measurable region
+    client.call_tool("write_memory", {
+        "machine_id": prof_mid, "addr": "$2000",
+        "bytes": [0xA9, 0x42, 0x60]  # LDA #$42 / RTS
+    })
+    res = client.call_tool("measure_region", {
+        "machine_id": prof_mid, "addr": "$2000", "end_addr": "$2003"
+    })
+    text = res["result"]["content"][0]["text"]
+    data = json.loads(text)
+    assert data["instructions"] == 2, f"Expected 2 instructions, got {data['instructions']}"
+    assert data["total_cycles"] > 0, f"Expected cycles > 0"
+    print(f"  ✓ measure_region OK ({data['instructions']} instructions, {data['total_cycles']} cycles)")
+
+    client.call_tool("destroy_machine", {"machine_id": prof_mid})
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

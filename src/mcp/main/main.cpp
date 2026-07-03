@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include <unordered_map>
 
 #include "include/version.h"
 #include "minijson.h"
@@ -1292,6 +1293,47 @@ Json handleDescribe() {
                 "selected subtune in the accumulator, and returns song metadata "
                 "(title, author, copyright, play address, number of songs). "
                 "Use record_audio after loading to capture playback.",
+                schema);
+    }
+
+    // profile_cpu — hotspot analysis (#19)
+    {
+        Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ); props.oVal["machine_id"] = midProp;
+        Json stepsProp(Json::OBJ); stepsProp.oVal["type"] = Json("integer");
+        stepsProp.oVal["description"] = Json("Number of CPU steps to profile (default 1000000)");
+        props.oVal["steps"] = stepsProp;
+        Json topProp(Json::OBJ); topProp.oVal["type"] = Json("integer");
+        topProp.oVal["description"] = Json("Number of top hotspots to return (default 20)");
+        props.oVal["top"] = topProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("profile_cpu",
+                "Run the CPU for N steps, sampling PC at each instruction to build a "
+                "frequency histogram. Returns the top N addresses by execution count "
+                "with symbol annotations and percentages. Useful for hotspot analysis.",
+                schema);
+    }
+
+    // measure_region — cycle counting (#19)
+    {
+        Json schema(Json::OBJ); schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ); props.oVal["machine_id"] = midProp;
+        props.oVal["addr"] = addrProp;
+        Json endProp(Json::OBJ); endProp.oVal["type"] = Json("integer");
+        endProp.oVal["description"] = Json("End address of the region (exclusive). Execution stops when PC leaves [addr, end_addr).");
+        props.oVal["end_addr"] = endProp;
+        Json maxProp(Json::OBJ); maxProp.oVal["type"] = Json("integer");
+        maxProp.oVal["description"] = Json("Maximum steps before giving up (default 10000000)");
+        props.oVal["max_steps"] = maxProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id")); req.push_back(Json("addr")); req.push_back(Json("end_addr"));
+        schema.oVal["required"] = req;
+        addTool("measure_region",
+                "Set PC to addr and run until PC leaves the address range [addr, end_addr). "
+                "Returns total cycles consumed, instruction count, and average cycles per instruction. "
+                "Useful for benchmarking specific code regions.",
                 schema);
     }
 
@@ -4367,6 +4409,112 @@ Json handleToolsCall(const Json& params) {
 
                     textItem.oVal["text"] = Json(result.stringify());
                 }
+            }
+        }
+
+    } else if (name == "profile_cpu") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int steps = args.contains("steps") ? (int)args["steps"].nVal : 1000000;
+            int top   = args.contains("top")   ? (int)args["top"].nVal   : 20;
+            if (steps <= 0) steps = 1000000;
+            if (top <= 0) top = 20;
+
+            // Sample PC at each step
+            std::unordered_map<uint32_t, int> histogram;
+            uint64_t startCycles = ms->cpu->cycles();
+            for (int i = 0; i < steps; ++i) {
+                uint32_t pc = ms->cpu->pc();
+                histogram[pc]++;
+                if (ms->machine && ms->machine->schedulerStep)
+                    ms->machine->schedulerStep(*ms->machine);
+                else
+                    ms->cpu->step();
+                if (ms->dbg->isPaused()) break;
+            }
+            uint64_t totalCycles = ms->cpu->cycles() - startCycles;
+
+            // Sort by count descending
+            std::vector<std::pair<uint32_t, int>> sorted(histogram.begin(), histogram.end());
+            std::sort(sorted.begin(), sorted.end(),
+                      [](const auto& a, const auto& b) { return a.second > b.second; });
+            if ((int)sorted.size() > top) sorted.resize(top);
+
+            int totalSamples = 0;
+            for (const auto& [addr, cnt] : histogram) totalSamples += cnt;
+
+            Json result(Json::OBJ);
+            result.oVal["total_steps"] = Json(totalSamples);
+            result.oVal["total_cycles"] = Json((double)totalCycles);
+            result.oVal["unique_addresses"] = Json((int)histogram.size());
+
+            Json hotspots(Json::ARR);
+            for (const auto& [addr, cnt] : sorted) {
+                Json entry(Json::OBJ);
+                entry.oVal["addr"] = Json("$" + toHex(addr));
+                entry.oVal["count"] = Json(cnt);
+                double pct = totalSamples > 0 ? (100.0 * cnt / totalSamples) : 0;
+                entry.oVal["percent"] = Json(pct);
+                // Symbol annotation
+                if (ms->dbg) {
+                    std::string sym = ms->dbg->symbols().getLabel(addr);
+                    if (!sym.empty()) entry.oVal["symbol"] = Json(sym);
+                }
+                // Disassembly
+                if (ms->disasm) {
+                    char buf[64];
+                    ms->disasm->disasmOne(ms->bus, addr, buf, sizeof(buf));
+                    entry.oVal["instruction"] = Json(std::string(buf));
+                }
+                hotspots.push_back(entry);
+            }
+            result.oVal["hotspots"] = hotspots;
+            textItem.oVal["text"] = Json(result.stringify());
+        }
+
+    } else if (name == "measure_region") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t startAddr = 0, endAddr = 0;
+            if (!resolveAddr(args["addr"], ms->dbg, startAddr) ||
+                !resolveAddr(args["end_addr"], ms->dbg, endAddr)) {
+                textItem.oVal["text"] = Json("Error: Invalid address expression");
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                int maxSteps = args.contains("max_steps") ? (int)args["max_steps"].nVal : 10000000;
+                ms->cpu->setPc(startAddr);
+                uint64_t startCycles = ms->cpu->cycles();
+                int instrCount = 0;
+
+                for (int i = 0; i < maxSteps; ++i) {
+                    uint32_t pc = ms->cpu->pc();
+                    if (pc < startAddr || pc >= endAddr) break;
+                    if (ms->machine && ms->machine->schedulerStep)
+                        ms->machine->schedulerStep(*ms->machine);
+                    else
+                        ms->cpu->step();
+                    instrCount++;
+                    if (ms->dbg->isPaused()) break;
+                }
+                uint64_t totalCycles = ms->cpu->cycles() - startCycles;
+                double avgCpi = instrCount > 0 ? (double)totalCycles / instrCount : 0;
+
+                Json result(Json::OBJ);
+                result.oVal["start_addr"] = Json("$" + toHex(startAddr));
+                result.oVal["end_addr"] = Json("$" + toHex(endAddr));
+                result.oVal["instructions"] = Json(instrCount);
+                result.oVal["total_cycles"] = Json((double)totalCycles);
+                result.oVal["avg_cycles_per_instruction"] = Json(avgCpi);
+                result.oVal["final_pc"] = Json("$" + toHex(ms->cpu->pc()));
+                textItem.oVal["text"] = Json(result.stringify());
             }
         }
 
