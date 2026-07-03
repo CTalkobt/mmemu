@@ -32,4 +32,9 @@ enum {
     ID_LOAD_MACHINE_DIRECT,
     ID_LOAD_IMAGE_DIRECT,
     ID_TYPE_TEXT_DIRECT,
+    ID_TOOL_PROFILE,
+    ID_TOOL_MEASURE,
+    ID_TOOL_RUNTO,
+    ID_TOOL_DEVINFO,
+    ID_TOOL_RUNNER_BASE = wxID_HIGHEST + 500,  // dynamic tool IDs start here
 };

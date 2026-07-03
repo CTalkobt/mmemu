@@ -230,6 +230,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/dialogs/assemble_dialog.cpp \
 	src/gui/main/dialogs/image_dialogs.cpp \
 	src/gui/main/dialogs/calculator_dialog.cpp \
+	src/gui/main/dialogs/tool_runner_dialog.cpp \
 	src/cli/main/cli_interpreter.cpp \
 	src/gui/main/plugin_pane_manager.cpp \
 	src/cli/main/plugin_command_registry.cpp \

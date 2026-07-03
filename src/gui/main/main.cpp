@@ -21,6 +21,10 @@
 #include "dialogs/assemble_dialog.h"
 #include "dialogs/image_dialogs.h"
 #include "dialogs/calculator_dialog.h"
+#include "dialogs/tool_runner_dialog.h"
+#include "libdevices/main/device_info.h"
+#include "libdebug/main/expression_evaluator.h"
+#include <unordered_map>
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_pane_manager.h"
 #include "ikeyboard_capture_pane.h"
@@ -522,6 +526,11 @@ MmemuFrame::MmemuFrame()
     
     auto* menuTools = new wxMenu;
     menuTools->Append(ID_CALCULATOR, "Calculator\tCtrl-Shift-C");
+    menuTools->AppendSeparator();
+    menuTools->Append(ID_TOOL_PROFILE, "Profile CPU...");
+    menuTools->Append(ID_TOOL_MEASURE, "Measure Region...");
+    menuTools->Append(ID_TOOL_RUNTO,   "Run Until...");
+    menuTools->Append(ID_TOOL_DEVINFO, "Device Info...");
 
     auto* menuBar = new wxMenuBar;
     menuBar->Append(menuFile, "&File");
@@ -635,6 +644,186 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnNewMemView,    this, ID_NEW_MEM_VIEW);
     Bind(wxEVT_MENU, &MmemuFrame::OnRenameMemView, this, ID_RENAME_MEM_VIEW);
     Bind(wxEVT_MENU, [this](wxCommandEvent&){ CalculatorDialog(this, m_dbg).ShowModal(); }, ID_CALCULATOR);
+
+    // Tool menu bindings (#82)
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_cpu) return;
+        std::vector<ToolField> fields = {
+            {"steps", "Steps", "integer", "1000000", "Number of CPU steps to profile"},
+            {"top",   "Top N", "integer", "20",      "Number of top hotspots to show"}
+        };
+        ToolRunnerDialog dlg(this, "Profile CPU", fields, [this](const auto& args) -> ToolResult {
+            int steps = 1000000, top = 20;
+            try { steps = std::stoi(args.at("steps")); } catch (...) {}
+            try { top = std::stoi(args.at("top")); } catch (...) {}
+
+            std::unordered_map<uint32_t, int> histogram;
+            uint64_t startCycles = m_cpu->cycles();
+            for (int i = 0; i < steps; ++i) {
+                histogram[m_cpu->pc()]++;
+                if (m_machine && m_machine->schedulerStep)
+                    m_machine->schedulerStep(*m_machine);
+                else m_cpu->step();
+                if (m_dbg && m_dbg->isPaused()) break;
+            }
+            uint64_t totalCycles = m_cpu->cycles() - startCycles;
+            int totalSamples = 0;
+            for (const auto& [a,c] : histogram) totalSamples += c;
+
+            std::vector<std::pair<uint32_t,int>> sorted(histogram.begin(), histogram.end());
+            std::sort(sorted.begin(), sorted.end(), [](auto& a, auto& b){ return a.second > b.second; });
+            if ((int)sorted.size() > top) sorted.resize(top);
+
+            ToolResult result;
+            std::ostringstream os;
+            os << totalSamples << " instructions, " << totalCycles << " cycles, "
+               << histogram.size() << " unique addresses";
+            result.summary = os.str();
+            result.columns = {
+                {"addr", "Address", 90, false}, {"count", "Count", 70, true},
+                {"pct", "Pct", 60, true}, {"sym", "Symbol", 120, false},
+                {"instr", "Instruction", 200, false}
+            };
+            for (const auto& [addr, cnt] : sorted) {
+                ToolResultRow row;
+                char buf[16]; std::snprintf(buf, sizeof(buf), "$%04X", addr);
+                row.values["addr"] = buf;
+                row.values["count"] = std::to_string(cnt);
+                std::snprintf(buf, sizeof(buf), "%.1f%%", totalSamples > 0 ? 100.0*cnt/totalSamples : 0);
+                row.values["pct"] = buf;
+                if (m_dbg) {
+                    std::string sym = m_dbg->symbols().getLabel(addr);
+                    if (!sym.empty()) row.values["sym"] = sym;
+                }
+                if (m_disasm) {
+                    char dbuf[64];
+                    m_disasm->disasmOne(m_bus, addr, dbuf, sizeof(dbuf));
+                    row.values["instr"] = dbuf;
+                }
+                result.rows.push_back(row);
+            }
+            return result;
+        });
+        dlg.ShowModal();
+    }, ID_TOOL_PROFILE);
+
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_cpu) return;
+        std::vector<ToolField> fields = {
+            {"start", "Start Address", "address", "", "Start of region to measure"},
+            {"end",   "End Address",   "address", "", "End of region (exclusive)"}
+        };
+        ToolRunnerDialog dlg(this, "Measure Region", fields, [this](const auto& args) -> ToolResult {
+            uint32_t startAddr = 0, endAddr = 0;
+            if (m_dbg) {
+                ExpressionEvaluator::evaluate(args.at("start"), m_dbg, startAddr, 16);
+                ExpressionEvaluator::evaluate(args.at("end"), m_dbg, endAddr, 16);
+            }
+            m_cpu->setPc(startAddr);
+            uint64_t sc = m_cpu->cycles();
+            int ic = 0;
+            for (int i = 0; i < 10000000; ++i) {
+                uint32_t pc = m_cpu->pc();
+                if (pc < startAddr || pc >= endAddr) break;
+                if (m_machine && m_machine->schedulerStep)
+                    m_machine->schedulerStep(*m_machine);
+                else m_cpu->step();
+                ic++;
+                if (m_dbg && m_dbg->isPaused()) break;
+            }
+            uint64_t tc = m_cpu->cycles() - sc;
+            ToolResult result;
+            std::ostringstream os;
+            os << "Region $" << std::hex << std::uppercase << startAddr
+               << " - $" << endAddr << std::dec
+               << "\nInstructions: " << ic << "\nTotal cycles: " << tc
+               << "\nAvg cycles/instr: " << std::fixed << std::setprecision(1)
+               << (ic > 0 ? (double)tc/ic : 0)
+               << "\nFinal PC: $" << std::hex << m_cpu->pc();
+            result.summary = os.str();
+            return result;
+        });
+        dlg.ShowModal();
+    }, ID_TOOL_MEASURE);
+
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_cpu || !m_dbg) return;
+        std::vector<ToolField> fields = {
+            {"condition", "Condition", "expression", "", "Expression that must become true (e.g., A == $42)"}
+        };
+        ToolRunnerDialog dlg(this, "Run Until Condition", fields, [this](const auto& args) -> ToolResult {
+            std::string cond = args.at("condition");
+            m_dbg->resume();
+            int steps = 0;
+            bool condMet = false;
+            for (int i = 0; i < 10000000; ++i) {
+                if (m_machine && m_machine->schedulerStep)
+                    m_machine->schedulerStep(*m_machine);
+                else m_cpu->step();
+                steps++;
+                if (m_dbg->isPaused()) break;
+                if (ExpressionEvaluator::evaluateCondition(cond, m_dbg)) {
+                    condMet = true; break;
+                }
+            }
+            ToolResult result;
+            if (condMet)
+                result.summary = "Condition met after " + std::to_string(steps) + " steps.";
+            else if (m_dbg->isPaused())
+                result.summary = "Breakpoint hit after " + std::to_string(steps) + " steps.";
+            else
+                result.summary = "Max steps reached (" + std::to_string(steps) + ").";
+            return result;
+        });
+        dlg.ShowModal();
+    }, ID_TOOL_RUNTO);
+
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        if (!m_machine || !m_machine->ioRegistry) return;
+        std::vector<IOHandler*> handlers;
+        m_machine->ioRegistry->enumerate(handlers);
+        wxArrayString choices;
+        for (auto* h : handlers) choices.Add(h->name());
+        wxString sel = wxGetSingleChoice("Select device:", "Device Info", choices, this);
+        if (sel.empty()) return;
+        IOHandler* handler = m_machine->ioRegistry->findHandler(sel.ToStdString());
+        if (!handler) return;
+
+        DeviceInfo info;
+        handler->getDeviceInfo(info);
+
+        ToolResult result;
+        std::ostringstream os;
+        os << info.name << "  base=$" << std::hex << std::uppercase << info.baseAddr
+           << "  mask=$" << info.addrMask << std::dec;
+        for (const auto& [k,v] : info.state) os << "\n" << k << " = " << v;
+        result.summary = os.str();
+
+        if (!info.registers.empty()) {
+            result.columns = {
+                {"addr", "Address", 80, false}, {"name", "Register", 140, false},
+                {"value", "Value", 60, true}, {"desc", "Description", 250, false}
+            };
+            for (const auto& r : info.registers) {
+                ToolResultRow row;
+                char buf[16]; std::snprintf(buf, sizeof(buf), "$%04X", info.baseAddr + r.offset);
+                row.values["addr"] = buf;
+                row.values["name"] = r.name;
+                std::snprintf(buf, sizeof(buf), "$%02X", r.value);
+                row.values["value"] = buf;
+                row.values["desc"] = r.description;
+                result.rows.push_back(row);
+            }
+        }
+
+        ToolRunnerDialog dlg(this, "Device Info: " + info.name, {}, [result](const auto&) { return result; });
+        // Auto-run to populate immediately
+        wxCommandEvent dummy;
+        dlg.GetEventHandler()->ProcessEvent(
+            (dummy.SetEventType(wxEVT_BUTTON), dummy.SetId(wxID_OK), dummy));
+        dlg.ShowModal();
+    }, ID_TOOL_DEVINFO);
+
     Bind(wxEVT_TOOL, &MmemuFrame::OnKbdFocus, this, ID_KBD_FOCUS);
     Bind(wxEVT_TIMER, &MmemuFrame::OnTimer, this, ID_GUI_TIMER);
     
