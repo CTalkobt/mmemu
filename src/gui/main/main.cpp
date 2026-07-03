@@ -1032,39 +1032,63 @@ void MmemuFrame::OnReset(wxCommandEvent& event) {
 void MmemuFrame::OnFillMem(wxCommandEvent& event) {
     (void)event;
     if (!m_bus) return;
-    FillMemoryDialog dialog(this, m_dbg);
-    if (dialog.ShowModal() == wxID_OK) {
-        uint32_t addr = dialog.GetAddress();
-        uint32_t len = dialog.GetLength();
-        uint8_t val = dialog.GetValue();
-        for (uint32_t i = 0; i < len; ++i) m_bus->write8(addr + i, val);
+    std::vector<ToolField> fields = {
+        {"addr",  "Address",  "address", "0000", "Start address"},
+        {"len",   "Length",   "address", "100",  "Number of bytes to fill"},
+        {"value", "Value",    "address", "00",   "Fill byte value"}
+    };
+    ToolRunnerDialog dlg(this, "Fill Memory", fields, [this](const auto& args) -> ToolResult {
+        uint32_t addr = 0, len = 0, val = 0;
+        ExpressionEvaluator::evaluate(args.at("addr"),  m_dbg, addr, 16);
+        ExpressionEvaluator::evaluate(args.at("len"),   m_dbg, len, 16);
+        ExpressionEvaluator::evaluate(args.at("value"), m_dbg, val, 16);
+        for (uint32_t i = 0; i < len; ++i) m_bus->write8(addr + i, (uint8_t)val);
         for (auto* p : m_memPanes) p->RefreshValues();
-    }
+        ToolResult r;
+        r.summary = "Filled " + std::to_string(len) + " bytes at $" +
+                    (std::ostringstream() << std::hex << std::uppercase << addr).str();
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnCopyMem(wxCommandEvent& event) {
     (void)event;
     if (!m_bus) return;
-    CopyMemoryDialog dialog(this, m_dbg);
-    if (dialog.ShowModal() == wxID_OK) {
-        uint32_t src = dialog.GetSrcAddress();
-        uint32_t len = dialog.GetLength();
-        uint32_t dst = dialog.GetDstAddress();
+    std::vector<ToolField> fields = {
+        {"src", "Source Address",      "address", "0000", "Source start address"},
+        {"len", "Length",              "address", "100",  "Number of bytes"},
+        {"dst", "Destination Address", "address", "0000", "Destination start address"}
+    };
+    ToolRunnerDialog dlg(this, "Copy Memory", fields, [this](const auto& args) -> ToolResult {
+        uint32_t src = 0, len = 0, dst = 0;
+        ExpressionEvaluator::evaluate(args.at("src"), m_dbg, src, 16);
+        ExpressionEvaluator::evaluate(args.at("len"), m_dbg, len, 16);
+        ExpressionEvaluator::evaluate(args.at("dst"), m_dbg, dst, 16);
         std::vector<uint8_t> tmp(len);
         for (uint32_t i = 0; i < len; ++i) tmp[i] = m_bus->read8(src + i);
         for (uint32_t i = 0; i < len; ++i) m_bus->write8(dst + i, tmp[i]);
         for (auto* p : m_memPanes) p->RefreshValues();
-    }
+        ToolResult r;
+        r.summary = "Copied " + std::to_string(len) + " bytes";
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnSwapMem(wxCommandEvent& event) {
     (void)event;
     if (!m_bus) return;
-    SwapMemoryDialog dialog(this, m_dbg);
-    if (dialog.ShowModal() == wxID_OK) {
-        uint32_t addr1 = dialog.GetAddress1();
-        uint32_t len = dialog.GetLength();
-        uint32_t addr2 = dialog.GetAddress2();
+    std::vector<ToolField> fields = {
+        {"addr1", "Address 1", "address", "0000", "First region start"},
+        {"len",   "Length",    "address", "100",  "Number of bytes"},
+        {"addr2", "Address 2", "address", "0000", "Second region start"}
+    };
+    ToolRunnerDialog dlg(this, "Swap Memory", fields, [this](const auto& args) -> ToolResult {
+        uint32_t addr1 = 0, len = 0, addr2 = 0;
+        ExpressionEvaluator::evaluate(args.at("addr1"), m_dbg, addr1, 16);
+        ExpressionEvaluator::evaluate(args.at("len"),   m_dbg, len, 16);
+        ExpressionEvaluator::evaluate(args.at("addr2"), m_dbg, addr2, 16);
         for (uint32_t i = 0; i < len; ++i) {
             uint8_t v1 = m_bus->read8(addr1 + i);
             uint8_t v2 = m_bus->read8(addr2 + i);
@@ -1072,7 +1096,11 @@ void MmemuFrame::OnSwapMem(wxCommandEvent& event) {
             m_bus->write8(addr2 + i, v1);
         }
         for (auto* p : m_memPanes) p->RefreshValues();
-    }
+        ToolResult r;
+        r.summary = "Swapped " + std::to_string(len) + " bytes";
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnAssemble(wxCommandEvent& event) {
@@ -1109,68 +1137,85 @@ void MmemuFrame::OnAssemble(wxCommandEvent& event) {
 void MmemuFrame::OnGotoAddr(wxCommandEvent& event) {
     (void)event;
     if (!m_cpu) return;
-    GotoAddressDialog dialog(this, m_cpu->pc(), m_dbg);
-    if (dialog.ShowModal() == wxID_OK) {
-        uint32_t addr = dialog.GetAddress();
-        if (dialog.ShouldSetPC()) {
+    char pcBuf[16]; std::snprintf(pcBuf, sizeof(pcBuf), "%04X", m_cpu->pc());
+    std::vector<ToolField> fields = {
+        {"addr",  "Address",     "address", pcBuf, "Target address ($hex or expression)"},
+        {"setpc", "Set PC",      "boolean", "",    "Also set the program counter"}
+    };
+    ToolRunnerDialog dlg(this, "Go to Address", fields, [this](const auto& args) -> ToolResult {
+        uint32_t addr = 0;
+        ExpressionEvaluator::evaluate(args.at("addr"), m_dbg, addr, 16);
+        if (args.at("setpc") == "1") {
             m_cpu->setPc(addr);
             m_disasmPane->RefreshValues(m_cpu->pc());
         }
         if (auto* _mp = activeMemPane()) _mp->SetAddress(addr);
         for (auto* p : m_memPanes) p->RefreshValues();
-    }
+        ToolResult r;
+        r.summary = "Navigated to $" + (std::ostringstream() << std::hex << std::uppercase << addr).str();
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnSearchMem(wxCommandEvent& event) {
     (void)event;
     if (!m_cpu) return;
     uint32_t mask = m_bus->config().addrMask;
-    SearchMemoryDialog dialog(this, mask, m_dbg);
-    if (dialog.ShowModal() == wxID_OK) {
-        std::string pattern = dialog.GetPattern();
-        bool isHex = dialog.IsHex();
-        uint32_t startAddr = dialog.GetStartAddress() & mask;
-        uint32_t length = dialog.GetLength();
-        
+    char maskBuf[16]; std::snprintf(maskBuf, sizeof(maskBuf), "%X", mask + 1);
+    std::vector<ToolField> fields = {
+        {"pattern", "Pattern",       "string",  "",      "Hex bytes (e.g. A9 00) or ASCII text"},
+        {"mode",    "Mode",          "choice",  "Hex",   "Pattern format", {"Hex", "ASCII"}},
+        {"start",   "Start Address", "address", "0000",  "Search start address"},
+        {"len",     "Length",        "address", maskBuf,  "Search range length"}
+    };
+    ToolRunnerDialog dlg(this, "Search Memory", fields, [this, mask](const auto& args) -> ToolResult {
+        std::string pattern = args.at("pattern");
+        bool isHex = (args.at("mode") == "Hex");
+        uint32_t startAddr = 0, length = 0;
+        ExpressionEvaluator::evaluate(args.at("start"), m_dbg, startAddr, 16);
+        ExpressionEvaluator::evaluate(args.at("len"),   m_dbg, length, 16);
+        startAddr &= mask;
+
         m_lastSearchPattern.clear();
         if (isHex) {
             std::string cleanHex;
-            for (char c : pattern) { if (isxdigit(c)) cleanHex += c; }
+            for (char c : pattern) { if (std::isxdigit(c)) cleanHex += c; }
             for (size_t i = 0; i + 1 < cleanHex.length(); i += 2) {
-                try {
-                    m_lastSearchPattern.push_back((uint8_t)std::stoul(cleanHex.substr(i, 2), nullptr, 16));
-                } catch (...) {}
+                try { m_lastSearchPattern.push_back((uint8_t)std::stoul(cleanHex.substr(i, 2), nullptr, 16)); }
+                catch (...) {}
             }
         } else {
             for (char c : pattern) m_lastSearchPattern.push_back((uint8_t)c);
         }
-        
-        if (m_lastSearchPattern.empty()) return;
-        
+
+        ToolResult r;
+        if (m_lastSearchPattern.empty()) { r.summary = "Empty pattern."; return r; }
+
         uint32_t endAddr = (startAddr + length > mask + 1) ? (mask + 1) : (startAddr + length);
         uint32_t foundAddr = 0xFFFFFFFF;
-        
         if (endAddr >= m_lastSearchPattern.size()) {
             for (uint32_t i = startAddr; i <= endAddr - m_lastSearchPattern.size(); ++i) {
                 bool match = true;
                 for (size_t j = 0; j < m_lastSearchPattern.size(); ++j) {
-                    if (m_bus->peek8((i + j) & mask) != m_lastSearchPattern[j]) {
-                        match = false; break;
-                    }
+                    if (m_bus->peek8((i + j) & mask) != m_lastSearchPattern[j]) { match = false; break; }
                 }
                 if (match) { foundAddr = i; break; }
             }
         }
-        
         m_lastSearchFoundAddr = foundAddr;
         if (foundAddr != 0xFFFFFFFF) {
             if (auto* _mp = activeMemPane()) _mp->SetAddress(foundAddr);
             for (auto* p : m_memPanes) p->RefreshValues();
-            SetStatusText(wxString::Format("Pattern found at $%X", foundAddr));
+            char buf[32]; std::snprintf(buf, sizeof(buf), "Pattern found at $%X", foundAddr);
+            r.summary = buf;
+            SetStatusText(buf);
         } else {
-            wxMessageBox("Pattern not found", "Search", wxOK | wxICON_INFORMATION);
+            r.summary = "Pattern not found.";
         }
-    }
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnFindNext(wxCommandEvent& event) {
@@ -1234,36 +1279,45 @@ void MmemuFrame::OnFindPrior(wxCommandEvent& event) {
 }
 
 void MmemuFrame::OnLoadImage(wxCommandEvent& event) {
-    if (!m_bus) return;
-    std::string path = event.GetString().ToStdString();
-    LoadImageDialog dialog(this, path);
-    if (dialog.ShowModal() == wxID_OK) {
-        path = dialog.GetPath();
-        uint32_t addr = dialog.GetAddress();
+    if (!m_bus || !m_machine) return;
+    std::string initPath = event.GetString().ToStdString();
+    std::vector<ToolField> fields = {
+        {"path",      "File",          "file",    initPath, "Program or binary image file",
+         {}, "PRG files (*.prg)|*.prg|Binary files (*.bin)|*.bin|All files (*.*)|*.*"},
+        {"addr",      "Address",       "address", "",       "Override load address (blank = use PRG header)"},
+        {"autostart", "Auto Start",    "boolean", "",       "Set PC to load address after loading"}
+    };
+    ToolRunnerDialog dlg(this, "Load Image", fields, [this](const auto& args) -> ToolResult {
+        std::string path = args.at("path");
+        uint32_t addr = 0;
+        if (!args.at("addr").empty())
+            ExpressionEvaluator::evaluate(args.at("addr"), m_dbg, addr, 16);
+        bool autoStart = (args.at("autostart") == "1");
         IBus* loadBus = m_machine->buses[0].bus; // physical bus (#79)
         auto* loader = ImageLoaderRegistry::instance().findLoader(path);
-        if (loader) {
-            if (loader->load(path, loadBus, m_machine, addr)) {
-                SetStatusText("Loaded " + path);
-                if (dialog.GetAutoStart()) {
-                    uint32_t startAddr = addr;
-                    if (startAddr == 0 && std::string(loader->name()).find("PRG") != std::string::npos) {
-                        std::ifstream f(path, std::ios::binary);
-                        uint8_t h[2];
-                        f.read((char*)h, 2);
-                        startAddr = h[0] | (h[1] << 8);
-                    }
-                    m_cpu->setPc(startAddr);
-                    m_running = true;
-                    m_regPane->RefreshValues();
-                    m_disasmPane->RefreshValues(m_cpu->pc());
-                }
-                for (auto* p : m_memPanes) p->RefreshValues();
-            } else {
-                wxMessageBox("Failed to load image.", "Error", wxICON_ERROR);
-            }
+        ToolResult r;
+        if (!loader) { r.summary = "Error: No loader for file type"; return r; }
+        if (!loader->load(path, loadBus, m_machine, addr)) {
+            r.summary = "Error: Failed to load image"; return r;
         }
-    }
+        r.summary = "Loaded: " + path;
+        if (autoStart) {
+            uint32_t startAddr = addr;
+            if (startAddr == 0 && std::string(loader->name()).find("PRG") != std::string::npos) {
+                std::ifstream f(path, std::ios::binary);
+                uint8_t h[2]; f.read((char*)h, 2);
+                startAddr = h[0] | (h[1] << 8);
+            }
+            m_cpu->setPc(startAddr);
+            m_running = true;
+            m_regPane->RefreshValues();
+            m_disasmPane->RefreshValues(m_cpu->pc());
+        }
+        for (auto* p : m_memPanes) p->RefreshValues();
+        SetStatusText("Loaded " + path);
+        return r;
+    });
+    dlg.ShowModal();
 }
 
 void MmemuFrame::OnAttachCart(wxCommandEvent& event) {

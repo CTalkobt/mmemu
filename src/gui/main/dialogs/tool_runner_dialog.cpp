@@ -1,6 +1,7 @@
 #include "tool_runner_dialog.h"
 #include "libdebug/main/debug_context.h"
 #include "libcore/main/icore.h"
+#include <wx/filepicker.h>
 #include <algorithm>
 #include <sstream>
 
@@ -32,6 +33,33 @@ ToolRunnerDialog::ToolRunnerDialog(wxWindow* parent,
             if (!f.tooltip.empty()) cb->SetToolTip(f.tooltip);
             m_boolInputs[f.name] = cb;
             inputSizer->Add(cb, 1, wxEXPAND);
+        } else if (f.type == "choice") {
+            wxArrayString items;
+            int sel = 0;
+            for (int i = 0; i < (int)f.choices.size(); ++i) {
+                items.Add(f.choices[i]);
+                if (f.choices[i] == f.defaultVal) sel = i;
+            }
+            auto* ch = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, items);
+            ch->SetSelection(sel);
+            if (!f.tooltip.empty()) ch->SetToolTip(f.tooltip);
+            m_choiceInputs[f.name] = ch;
+            inputSizer->Add(ch, 1, wxEXPAND);
+        } else if (f.type == "file") {
+            auto* row = new wxBoxSizer(wxHORIZONTAL);
+            auto* tc = new wxTextCtrl(this, wxID_ANY, f.defaultVal);
+            auto* btn = new wxButton(this, wxID_ANY, "Browse...", wxDefaultPosition, wxSize(80, -1));
+            row->Add(tc, 1, wxEXPAND | wxRIGHT, 5);
+            row->Add(btn, 0);
+            std::string filter = f.fileFilter.empty() ? "All files (*.*)|*.*" : f.fileFilter;
+            btn->Bind(wxEVT_BUTTON, [tc, filter](wxCommandEvent&) {
+                wxFileDialog dlg(nullptr, "Select File", "", "", filter, wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+                if (dlg.ShowModal() == wxID_OK)
+                    tc->SetValue(dlg.GetPath());
+            });
+            if (!f.tooltip.empty()) tc->SetToolTip(f.tooltip);
+            m_textInputs[f.name] = tc;
+            inputSizer->Add(row, 1, wxEXPAND);
         } else {
             auto* tc = new wxTextCtrl(this, wxID_ANY, f.defaultVal);
             if (!f.tooltip.empty()) tc->SetToolTip(f.tooltip);
@@ -75,6 +103,8 @@ void ToolRunnerDialog::OnRun(wxCommandEvent&) {
     for (const auto& f : m_fields) {
         if (f.type == "boolean") {
             args[f.name] = m_boolInputs[f.name]->GetValue() ? "1" : "0";
+        } else if (f.type == "choice") {
+            args[f.name] = m_choiceInputs[f.name]->GetStringSelection().ToStdString();
         } else {
             args[f.name] = m_textInputs[f.name]->GetValue().ToStdString();
         }

@@ -23,9 +23,12 @@ struct MachineDescriptor;
 struct ToolField {
     std::string name;        // internal key
     std::string label;       // display label
-    std::string type;        // "integer", "string", "boolean", "expression", "address"
+    std::string type;        // "integer", "string", "boolean", "expression", "address",
+                             // "choice", "file"
     std::string defaultVal;  // default value as string
     std::string tooltip;     // description
+    std::vector<std::string> choices;  // for "choice" type: dropdown options
+    std::string fileFilter;  // for "file" type: e.g. "All files (*.*)|*.*"
 };
 
 struct ToolResultColumn {
@@ -62,6 +65,7 @@ private:
     std::vector<ToolField> m_fields;
     std::map<std::string, wxTextCtrl*> m_textInputs;
     std::map<std::string, wxCheckBox*> m_boolInputs;
+    std::map<std::string, wxChoice*>   m_choiceInputs;
     ToolCallback m_callback;
 
     wxTextCtrl*   m_summaryCtrl = nullptr;
