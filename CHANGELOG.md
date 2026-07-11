@@ -82,6 +82,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **F011 FDC stubs ($D080-$D09F)**: Status A ($D082) now returns 0 (not busy) instead of $FF. mflash polled $D082 bit 7 and hung when it read $FF (always busy).
 - **MAP upper-32K blocked in hypervisor mode**: MAP instruction offset/enable changes for $8000-$FFFF are blocked in hypervisor mode, matching xemu/real hardware. Only megabyte selection allowed.
 - **Hypervisor RAM restore after mflash**: Workaround for HICKUP.M65/mflash.prg version mismatch. Detects mflash→HYPPO return and restores zeroed hypervisor RAM region.
+- **45GS02 Y register corruption in hypervisor transitions**: Y register was always saved as 0 in `enterHypervisor()` and never restored in `exitHypervisor()`. SYSCALL traps and other hypervisor transitions would corrupt Y, breaking loop control variables and array indices. Now properly saves actual Y value on entry and restores it on exit.
+- **45GS02 infinite loops on repeating 0x42 instruction prefixes**: Unbounded prefix parsing loops in `step()`, `disassembleOne()`, and `disassembleEntry()` could hang indefinitely on code with repeating `0x42` bytes (common in compiler-generated binaries, padding, and data sections). Added `MAX_PREFIXES = 16` iteration limit to all three loops, preventing hangs while preserving correct instruction decoding.
+- **Disassembler incomplete 32-bit indirect opcode coverage**: `isInfiniteLoop()` and related analysis functions only checked 3 of 8 valid 32-bit indirect addressing opcodes (`0x12`, `0x92`, `0xB2`), missing `0x32`, `0x52`, `0x72`, `0xD2`, `0xF2`. Now checks all 8 opcodes, matching the instruction executor and enabling correct program analysis.
+- **PRG loader diagnostic logging**: Added logging to display load address range for all PRG files loaded (format: `"Loaded PRG ($2000-$22C1) 706 bytes"`). Helps debug address conflicts, truncation issues, and data section presence verification.
 
 ### Added
 - **MCP `run_until` tool**: Run the CPU until a condition expression becomes true, with configurable report output (regs, disasm, stack, mem). Supports compound conditions with `&&`, `||`.
