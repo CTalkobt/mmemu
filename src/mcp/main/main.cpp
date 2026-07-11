@@ -2181,8 +2181,15 @@ Json handleToolsCall(const Json& params) {
                         if (autoStart) {
                             ms->cpu->setPc(startAddr);
                         }
+                        // Calculate end address and size
+                        std::ifstream f(path, std::ios::binary | std::ios::ate);
+                        uint32_t fileSize = f.tellg();
+                        uint32_t dataSize = (fileSize > 2 && std::string(loader->name()).find("PRG") != std::string::npos) ? fileSize - 2 : fileSize;
+                        uint32_t endAddr = startAddr + dataSize - 1;
                         std::stringstream sss;
-                        sss << "Loaded '" << path << "' at $" << std::hex << startAddr;
+                        sss << "Loaded '" << path << "' ($" << std::hex << std::uppercase << std::setfill('0')
+                            << std::setw(4) << startAddr << "-$" << std::setw(4) << endAddr << ") "
+                            << std::dec << dataSize << " bytes";
                         textItem.oVal["text"] = Json(sss.str());
                     } else {
                         textItem.oVal["text"] = Json("Error: Failed to load image");
