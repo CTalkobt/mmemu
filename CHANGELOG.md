@@ -93,6 +93,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **HDOS trap virtualization framework**: HypervisorRegs intercepts trap 0 (DOS) from user mode, checks function code from A register, and can service requests from host filesystem. Initial stubs for get_drive_info, set_filename, find_file, chdir, cdrootdir, closeall.
 - **MEGA65 JSON machine descriptor** (`machines/mega65.json`): All ROM paths, BRAM files, SD card paths, I/O defaults defined in JSON. Factory reads config at startup.
 - **JsonMachineLoader SparseMemoryBus support**: Bus type field selects FlatMemoryBus or SparseMemoryBus.
+- **MCP `load_image` tool address range display**: Enhanced to show complete address information when loading programs. Output format: `"Loaded '<path>' ($<start>-$<end>) <count> bytes"`. Provides consistent visibility across CLI, GUI, and MCP frontends.
 
 ### Changed
 - **Version tracking**: Single source of truth in `VERSION` file; Makefile reads it to generate `version.h`. Version format changed from `MAJOR.MINOR.PATCH-GITHASH` to `MAJOR.MINOR.PATCH.GITHASH`.
