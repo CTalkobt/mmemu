@@ -1,8 +1,11 @@
 #include "prg_loader.h"
 #include "libcore/main/machine_desc.h"
+#include "include/util/logging.h"
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 bool PrgLoader::canLoad(const std::string& path) const {
     size_t dot = path.find_last_of('.');
@@ -36,9 +39,20 @@ bool PrgLoader::load(const std::string& path, IBus* bus, MachineDescriptor* mach
 
     uint8_t byte;
     uint32_t currentAddr = loadAddr;
+    uint32_t endAddr = loadAddr;
     while (file.read((char*)&byte, 1)) {
-        bus->write8(currentAddr++, byte);
+        bus->write8(currentAddr, byte);
+        endAddr = currentAddr;
+        currentAddr++;
     }
+
+    // Log the address range for debugging
+    auto logger = LogRegistry::instance().getLogger("prg_loader");
+    std::stringstream ss;
+    ss << "Loaded PRG (" << std::hex << std::uppercase << std::setfill('0')
+       << "$" << std::setw(4) << loadAddr << "-$" << std::setw(4) << endAddr << ") "
+       << std::dec << (endAddr - loadAddr + 1) << " bytes";
+    logger->info(ss.str());
 
     return true;
 }

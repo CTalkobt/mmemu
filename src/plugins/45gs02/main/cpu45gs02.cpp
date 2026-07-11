@@ -53,7 +53,7 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
     // Save current CPU state into virtualisation control registers
     m_hyperState.regA   = m_state.a;
     m_hyperState.regX   = m_state.x;
-    m_hyperState.regY   = 0; // Y not explicitly listed in save, but preserved
+    m_hyperState.regY   = m_state.y;
     m_hyperState.regZ   = m_state.z;
     m_hyperState.regB   = m_state.b;
     m_hyperState.spl    = m_state.sp & 0xFF;
@@ -96,6 +96,7 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
 void MOS45GS02::exitHypervisor() {
     m_state.a  = m_hyperState.regA;
     m_state.x  = m_hyperState.regX;
+    m_state.y  = m_hyperState.regY;
     m_state.z  = m_hyperState.regZ;
     m_state.b  = m_hyperState.regB;
     m_state.sp = m_hyperState.spl | ((uint16_t)m_hyperState.sph << 8);
@@ -328,7 +329,9 @@ int MOS45GS02::step() {
     }
 
     uint8_t op;
-    while (true) {
+    const int MAX_PREFIXES = 16;
+    int prefixCount = 0;
+    while (prefixCount < MAX_PREFIXES) {
         op = read8(m_state.pc++);
         m_state.cycles++;
         if (op == 0x42) {
@@ -336,6 +339,7 @@ int MOS45GS02::step() {
                 m_state.pc++;
                 m_state.cycles++;
                 isQuad = true;
+                prefixCount++;
                 continue;
             }
             break;
@@ -344,6 +348,7 @@ int MOS45GS02::step() {
             if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
                 next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
                 is32BitInd = true;
+                prefixCount++;
                 continue;
             }
             break;
@@ -1345,11 +1350,14 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
     bool isQuad = false;
     bool is32BitInd = false;
 
-    while (true) {
+    const int MAX_PREFIXES = 16;
+    int prefixCount = 0;
+    while (prefixCount < MAX_PREFIXES) {
         uint8_t op = bus->peek8(currentAddr);
         if (op == 0x42 && bus->peek8(currentAddr + 1) == 0x42) {
             isQuad = true;
             currentAddr += 2;
+            prefixCount++;
             continue;
         }
         if (op == 0xEA) {
@@ -1358,6 +1366,7 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
                 next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
                 is32BitInd = true;
                 currentAddr++;
+                prefixCount++;
                 continue;
             }
         }
@@ -1716,11 +1725,14 @@ int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
     }
 
     uint32_t currentAddr = addr;
-    // Skip prefixes to find the actual instruction opcode
-    while (true) {
+    // Skip prefixes to find the actual instruction opcode (with iteration limit to prevent infinite loops)
+    const int MAX_PREFIXES = 16;
+    int prefixCount = 0;
+    while (prefixCount < MAX_PREFIXES) {
         uint8_t prefixOp = bus->peek8(currentAddr);
         if (prefixOp == 0x42 && bus->peek8(currentAddr + 1) == 0x42) {
             currentAddr += 2;
+            prefixCount++;
             continue;
         }
         if (prefixOp == 0xEA) {
@@ -1728,6 +1740,7 @@ int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
             if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
                 next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
                 currentAddr++;
+                prefixCount++;
                 continue;
             }
         }
@@ -1794,13 +1807,18 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
     // Check for JMP * (infinite loop at current PC)
     if (bus) {
         uint32_t addr = m_state.pc;
-        // Skip prefixes
-        while (true) {
+        // Skip prefixes (with iteration limit to prevent infinite loops)
+        const int MAX_PREFIXES = 16;
+        int prefixCount = 0;
+        while (prefixCount < MAX_PREFIXES) {
             uint8_t op = bus->peek8(addr);
-            if (op == 0x42 && bus->peek8(addr + 1) == 0x42) { addr += 2; continue; }
+            if (op == 0x42 && bus->peek8(addr + 1) == 0x42) { addr += 2; prefixCount++; continue; }
             if (op == 0xEA) {
                 uint8_t next = bus->peek8(addr + 1);
-                if (next == 0xB2 || next == 0x92 || next == 0x12) { addr++; continue; }
+                if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
+                    next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
+                    addr++; prefixCount++; continue;
+                }
             }
             break;
         }
