@@ -62,7 +62,7 @@ LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_re
                     src/libdevices/main/ieee488.cpp
 LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main/variable_symbol.cpp \
 	src/libtoolchain/main/source_map.cpp src/libtoolchain/main/toolchain_registry.cpp \
-	src/libtoolchain/main/libtoolchain.cpp
+	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
@@ -264,6 +264,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdebug/test/test_expression_evaluator.cpp \
 	src/libtoolchain/test/test_toolchain.cpp \
 	src/libtoolchain/test/test_symbol_table_enhanced.cpp \
+	src/libtoolchain/test/test_debug_metadata.cpp \
 	src/libcore/test/test_machine_symbols.cpp \
 	src/plugins/6502/test/test_cpu6502.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \

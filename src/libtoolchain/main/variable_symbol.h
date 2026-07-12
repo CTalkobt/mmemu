@@ -70,6 +70,9 @@ public:
     // Load from debug symbols file (.debug_info format)
     bool loadDebugInfo(const std::string& path);
 
+    // Load from debug metadata (cc45 compiler format)
+    bool loadFromDebugMetadata(const std::string& path);
+
 private:
     // Function name -> { variable name -> VariableSymbol }
     std::map<std::string, std::map<std::string, VariableSymbol>> m_functionVariables;

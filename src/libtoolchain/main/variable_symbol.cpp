@@ -1,4 +1,5 @@
 #include "variable_symbol.h"
+#include "debug_metadata.h"
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -135,6 +136,61 @@ bool VariableSymbolTable::loadDebugInfo(const std::string& path) {
 
             var.functionName = currentFunction;
             addVariable(currentFunction, var);
+        }
+    }
+
+    return true;
+}
+
+static VariableType parseVariableType(const std::string& typeStr) {
+    if (typeStr == "int8" || typeStr == "I8") return VariableType::INT8;
+    if (typeStr == "int16" || typeStr == "I16") return VariableType::INT16;
+    if (typeStr == "int32" || typeStr == "I32") return VariableType::INT32;
+    if (typeStr == "uint8" || typeStr == "U8") return VariableType::UINT8;
+    if (typeStr == "uint16" || typeStr == "U16") return VariableType::UINT16;
+    if (typeStr == "uint32" || typeStr == "U32") return VariableType::UINT32;
+    if (typeStr == "char") return VariableType::CHAR;
+    if (typeStr == "ptr" || typeStr.find("*") != std::string::npos) return VariableType::POINTER;
+    if (typeStr.find("[") != std::string::npos) return VariableType::ARRAY;
+    if (typeStr.find("struct") != std::string::npos) return VariableType::STRUCT;
+    return VariableType::UNKNOWN;
+}
+
+bool VariableSymbolTable::loadFromDebugMetadata(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.good()) {
+        return false;
+    }
+
+    std::string line;
+    DebugMetadataRegistry registry;
+
+    while (std::getline(file, line)) {
+        if (!DebugMetadataParser::isDebugMetadataLine(line)) {
+            continue;
+        }
+
+        // Try to parse as variable
+        DebugVariable var;
+        if (DebugMetadataParser::parseVariableLine(line, var)) {
+            VariableSymbol sym;
+            sym.name = var.internalName;
+            sym.displayName = var.displayName;
+            sym.address = var.offset;
+            sym.size = var.size;
+            sym.type = parseVariableType(var.type);
+            sym.sourceLine = var.srcLine;
+            sym.functionName = var.functionName;
+            sym.isParameter = (var.scope == DebugScope::PARAMETER);
+            sym.isFrameRelative = true;  // Debug metadata offsets are frame-relative
+
+            addVariable(var.functionName, sym);
+        }
+
+        // Try to parse as struct definition
+        std::vector<DebugStructField> fields;
+        if (DebugMetadataParser::parseStructLine(line, fields)) {
+            registry.addStructFields(fields);
         }
     }
 
