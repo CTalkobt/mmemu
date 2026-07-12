@@ -35,7 +35,10 @@ public:
 private:
     void handleNormalCommand(const std::string& line);
     void handleAssemblyLine(const std::string& line);
-    void printHelp();
+    void printHelp(const std::string& category = "");
+    void printHelpOverview();
+    void printHelpCategory(const std::string& category);
+    void printDebuggingGuide();
     void dumpMemory(uint32_t addr, uint32_t len);
     void saveMemory(const std::string& path, uint32_t addr, uint32_t len);
     void showRegisters();

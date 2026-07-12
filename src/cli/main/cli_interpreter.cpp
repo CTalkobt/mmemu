@@ -95,7 +95,9 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     ss >> cmd;
 
     if (cmd == "help" || cmd == "?") {
-        printHelp();
+        std::string category;
+        ss >> category;
+        printHelp(category);
     } else if (cmd == "list") {
         std::vector<std::string> ids;
         MachineRegistry::instance().enumerate(ids);
@@ -1973,77 +1975,33 @@ void CliInterpreter::handleAssemblyLine(const std::string& line) {
     }
 }
 
-void CliInterpreter::printHelp() {
-    m_output("Available commands:\n"
-             "  help, ?          - Show this help\n"
-             "  list             - List available machine types\n"
-             "  create <id>      - Create a machine of the given type\n"
-             "  step [n]         - Step the CPU N times (default 1)\n"
-             "  run              - Run until a breakpoint or stop\n"
-             "  setpc <addr>     - Set the CPU program counter\n"
-             "  regs             - Show CPU registers\n"
-             "  regwrite <n> <v> - Write value V to register N\n"
-             "  m <addr> [len]   - Dump memory\n"
-             "  f <addr> <val> [len] - Fill memory range\n"
-             "  save <path> <addr> <len> - Save memory to binary file\n"
-             "  copy <src> <dst> <len> - Copy memory range\n"
-             "  swap <addr1> <addr2> <len> - Swap two memory ranges\n"
-             "  search <hex1>... - Search for hex pattern in memory (all matches)\n"
-             "  searcha <str>    - Search for ASCII string in memory (all matches)\n"
-             "  findnext         - Find next occurrence of last search pattern\n"
-             "  findprior        - Find prior occurrence of last search pattern\n"
-             "  disasm <addr> [n]- Disassemble N instructions\n"
-             "  asm <addr>       - Interactive assembly mode (end with '.')\n"
-             "  asm file <path>  - Assemble source file and load into memory\n"
-             "  type <text>      - Type text into the machine (supports \\n)\n"
-             "  key <name> <state>- Press/release a key (state: 1/0 or down/up)\n"
-             "  load <path> [addr]- Load a program/binary file\n"
-             "  screenshot <file>  - Save current screen to a PNG file\n"
-             "  recordaudio <f> <d>- Record D ms of audio to WAV file F\n"
-             "  sid load <path>  - Load a SID music file (C64)\n"
-             "  cart <path>      - Attach a cartridge image\n"
-             "  tape mount <path>   - Mount a .tap file for playback\n"
-             "  tape play           - Press Play (start/resume playback)\n"
-             "  tape stop           - Release all tape buttons\n"
-             "  tape rewind         - Rewind to start of tape\n"
-             "  tape record         - Press Record (capture write-line to memory buffer)\n"
-             "  tape stoprecord     - Release Record button (stops capture, buffer retained)\n"
-             "  tape save <path>    - Write captured buffer to a .tap file\n"
-             "  (record/stoprecord/save: use together to save a program to tape)\n"
-             "  disk mount <unit> <path> - Mount a disk image\n"
-             "  disk eject <unit>        - Eject a disk image\n"
-             "  eject            - Eject currently attached cartridge\n"
-             "  run [addr]       - Run from address (or last loaded address)\n"
-             "  sym <add|del|list|search|load|clear> - Symbol table management\n"
-             "  .<instr>         - Assemble and execute a single instruction\n"
-             "  analyze routine <addr> - Analyze routine flow and branch targets\n"
-             "  quit, q          - Exit the program\n"
-             "\nDebugging:\n"
-             "  break <addr>     - Set execution breakpoint at address\n"
-             "  watch read <addr> - Set read watchpoint at address\n"
-             "  watch write <addr>- Set write watchpoint at address\n"
-             "  delete <id>      - Delete breakpoint/watchpoint by id\n"
-             "  enable <id>      - Enable breakpoint/watchpoint\n"
-             "  disable <id>     - Disable breakpoint/watchpoint\n"
-             "  info breaks      - List all breakpoints and watchpoints\n"
-             "  stack [n]        - Show stack trace (default 8 most recent entries)\n"
-             "  trace dump [n]   - Dump instruction trace buffer\n"
-             "  trace clear      - Clear trace buffer\n"
-             "  trace filter <m> - Set trace filter (all, instructions, breakpoints, memory)\n"
-             "  snapshot save <n>- Save named machine state snapshot\n"
-             "  snapshot diff <a> <b> - Compare two snapshots\n"
-             "  snapshot list    - List saved snapshots\n"
-             "  snapshot delete <n> - Delete snapshot (or '*' for all)\n"
-             "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
-             "  personality <m>  - Switch MEGA65 I/O personality\n"
-             "  iomap [addr]     - Show I/O handler for address, or list all\n"
-             "  devinfo <name>   - Show device registers and state\n"
-             "  profile [n] [top]- Profile N steps, show top hotspots\n"
-             "  measure <s> <e>  - Measure cycles for address range [s,e)\n"
-             "  runto <cond>     - Run until condition expression is true\n"
-             "  undoinfo         - Show what backstep would undo\n"
-             "  heatmap <cmd>    - Memory access heat map (on/off/reset/top/page)\n"
-             "  raster           - Show current raster beam position\n");
+void CliInterpreter::printHelp(const std::string& category) {
+    if (category == "debugging") {
+        printDebuggingGuide();
+    } else if (category.empty()) {
+        printHelpOverview();
+    } else {
+        printHelpCategory(category);
+    }
+}
+
+void CliInterpreter::printHelpOverview() {
+    m_output("mmemu Debugger - Available Command Categories:\n"
+             "\nUse 'help <category>' for detailed information:\n"
+             "  help loading       - Program and cartridge loading\n"
+             "  help execution     - Running, stepping, and flow control\n"
+             "  help inspection    - Memory and register inspection\n"
+             "  help debugging     - Breakpoints, watchpoints, and debugging workflow\n"
+             "  help general       - General commands and utilities\n"
+             "\nQuick Start:\n"
+             "  1. Create a machine:  create c64\n"
+             "  2. Load a program:    load game.prg\n"
+             "  3. Set breakpoint:    break 2048\n"
+             "  4. Run:               run\n"
+             "  5. Step:              step\n"
+             "  6. Inspect:           regs  (show registers)\n"
+             "                        m 2048 16  (dump memory)\n"
+             "\nFor interactive debugging tutorial, type: help debugging\n");
 
     std::vector<std::string> pluginCmds;
     PluginCommandRegistry::instance().listCommands(pluginCmds);
@@ -2051,6 +2009,152 @@ void CliInterpreter::printHelp() {
         m_output("\nPlugin commands:\n");
         for (const auto& s : pluginCmds) m_output(s + "\n");
     }
+}
+
+void CliInterpreter::printHelpCategory(const std::string& category) {
+    if (category == "loading") {
+        m_output("LOADING - Program and Cartridge Loading Commands:\n"
+                 "  load <path> [addr]  - Load a program/binary file at address\n"
+                 "  cart <path>         - Attach a cartridge image\n"
+                 "  eject               - Eject currently attached cartridge\n"
+                 "  disk mount <unit> <path> - Mount a disk image to drive unit\n"
+                 "  disk eject <unit>   - Eject a disk image\n"
+                 "  tape mount <path>   - Mount a .tap file for playback\n"
+                 "  tape play           - Start/resume tape playback\n"
+                 "  tape stop           - Release all tape buttons\n"
+                 "  tape rewind         - Rewind tape to start\n"
+                 "  tape record         - Press Record button\n"
+                 "  tape stoprecord     - Release Record button\n"
+                 "  tape save <path>    - Write captured buffer to .tap file\n"
+                 "  sid load <path>     - Load a SID music file (C64)\n"
+                 "  sym load <path>     - Load symbol table from file\n"
+                 "\nExample workflow:\n"
+                 "  create c64\n"
+                 "  load game.prg 2048\n"
+                 "  run\n");
+    } else if (category == "execution") {
+        m_output("EXECUTION - Running, Stepping, and Flow Control:\n"
+                 "  run [addr]          - Run from address (or last loaded address)\n"
+                 "  step [n]            - Step CPU N times (default 1)\n"
+                 "  runto <cond>        - Run until condition expression is true\n"
+                 "  setpc <addr>        - Set CPU program counter\n"
+                 "  .<instr>            - Assemble and execute a single instruction\n"
+                 "  key <name> <state>  - Press/release a key (state: 1/0 or down/up)\n"
+                 "  type <text>         - Type text into the machine (supports \\n)\n"
+                 "\nExample debugging session:\n"
+                 "  break 2048          (set breakpoint at program start)\n"
+                 "  run                 (run until breakpoint)\n"
+                 "  step                (step one instruction)\n"
+                 "  regs                (see registers at breakpoint)\n");
+    } else if (category == "inspection") {
+        m_output("INSPECTION - Memory and Register Inspection:\n"
+                 "  regs                - Show all CPU registers\n"
+                 "  regwrite <n> <v>    - Write value V to register N\n"
+                 "  m <addr> [len]      - Dump memory (default 16 bytes)\n"
+                 "  disasm <addr> [n]   - Disassemble N instructions\n"
+                 "  search <hex...>     - Search for hex pattern in memory\n"
+                 "  searcha <str>       - Search for ASCII string in memory\n"
+                 "  findnext            - Find next match of last search\n"
+                 "  findprior           - Find previous match of last search\n"
+                 "  copy <src> <dst> <len> - Copy memory range\n"
+                 "  swap <addr1> <addr2> <len> - Swap two memory ranges\n"
+                 "  f <addr> <val> [len] - Fill memory range with value\n"
+                 "  save <path> <addr> <len> - Save memory to binary file\n"
+                 "  screenshot <file>   - Save current screen to PNG\n"
+                 "  recordaudio <f> <d> - Record D ms of audio to WAV file\n"
+                 "  stack [n]           - Show stack trace (default 8 entries)\n"
+                 "  devinfo <name>      - Show device registers and state\n"
+                 "  iomap [addr]        - Show I/O handler for address\n"
+                 "  heatmap <cmd>       - Memory access heat map\n"
+                 "  raster              - Show current raster beam position\n"
+                 "  profile [n] [top]   - Profile N steps, show top hotspots\n"
+                 "  measure <s> <e>     - Measure cycles for address range\n"
+                 "\nExample usage:\n"
+                 "  m 2048 32           (dump 32 bytes from 2048)\n"
+                 "  search 4C 20 A9     (find sequence of bytes)\n"
+                 "  disasm $8000        (disassemble from ROM area)\n");
+    } else if (category == "debugging") {
+        printDebuggingGuide();
+    } else if (category == "general") {
+        m_output("GENERAL - General Commands and Utilities:\n"
+                 "  help [category]     - Show help (or specific category help)\n"
+                 "  list                - List available machine types\n"
+                 "  create <id>         - Create a machine (c64, vic20, pet, mega65)\n"
+                 "  asm <addr>          - Interactive assembly mode (end with '.')\n"
+                 "  asm file <path>     - Assemble source file and load\n"
+                 "  sym <op> [args]     - Symbol management (add/del/list/search/load/clear)\n"
+                 "  log <list|level>    - Logging configuration\n"
+                 "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
+                 "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  analyze routine <addr> - Analyze routine flow and targets\n"
+                 "  quit, q             - Exit the program\n"
+                 "\nAll address values can be expressions with symbols and math.\n"
+                 "Example: break start_routine + 10\n");
+    } else {
+        m_output("Unknown help category: '" + category + "'\n");
+        m_output("Available categories: loading, execution, inspection, debugging, general\n");
+    }
+}
+
+void CliInterpreter::printDebuggingGuide() {
+    m_output("DEBUGGING - Complete Breakpoint and Watchpoint Guide\n"
+             "\n=== Basic Breakpoints ===\n"
+             "  break <addr>        - Set execution breakpoint at address\n"
+             "  break start + 10    - Breakpoint at symbol+offset\n"
+             "  delete <id>         - Delete breakpoint/watchpoint by id\n"
+             "  enable <id>         - Re-enable a disabled breakpoint\n"
+             "  disable <id>        - Disable without deleting\n"
+             "  info breaks         - List all breakpoints and watchpoints\n"
+             "\n=== Memory Watchpoints ===\n"
+             "  watch read <addr>   - Halt when address is READ\n"
+             "  watch write <addr>  - Halt when address is WRITTEN\n"
+             "  Example: watch write $2000  (halt on any write to 2000)\n"
+             "\n=== Inspection After Halt ===\n"
+             "  regs                - Show CPU registers at breakpoint\n"
+             "  m <addr> [len]      - Dump memory around the halt\n"
+             "  disasm <addr>       - Show instructions near halt\n"
+             "  stack               - Show call stack trace\n"
+             "\n=== Tracing and Flow ===\n"
+             "  trace dump [n]      - Show last N executed instructions\n"
+             "  trace clear         - Clear trace buffer\n"
+             "  trace filter <m>    - Set trace filter (all/instructions/memory)\n"
+             "  undoinfo            - Show what would be undone by backstep\n"
+             "\n=== Snapshots (Save/Restore State) ===\n"
+             "  snapshot save <name>  - Save current machine state\n"
+             "  snapshot list         - List saved snapshots\n"
+             "  snapshot diff <a> <b> - Compare two snapshots\n"
+             "  snapshot delete <n>   - Delete snapshot\n"
+             "\n=== Tutorial Workflow ===\n"
+             "\nStep 1: Set up machine\n"
+             "  create c64\n"
+             "  load program.prg 2048\n"
+             "\nStep 2: Set breakpoint at start of code\n"
+             "  break 2048\n"
+             "\nStep 3: Run program (will halt at breakpoint)\n"
+             "  run\n"
+             "\nStep 4: Inspect state at breakpoint\n"
+             "  regs                    (see CPU state)\n"
+             "  m 2048 32               (see memory around PC)\n"
+             "  disasm 2048 10          (see next instructions)\n"
+             "\nStep 5: Step through one instruction\n"
+             "  step                    (execute next instruction)\n"
+             "  regs                    (see new state)\n"
+             "\nStep 6: Continue running (if desired)\n"
+             "  run                     (continue to next breakpoint)\n"
+             "\nStep 7: Set memory watchpoint to catch writes\n"
+             "  watch write $2000\n"
+             "  run                     (halt when $2000 is written)\n"
+             "\nStep 8: Examine trace history\n"
+             "  trace dump              (show instruction history)\n"
+             "  trace filter instructions\n"
+             "\n=== Tips ===\n"
+             "- Use 'info breaks' to see all active breakpoints\n"
+             "- Breakpoints use expressions: break loop_start + 2\n"
+             "- Watchpoints catch both read and write operations\n"
+             "- Snapshots let you save/compare state at key points\n"
+             "- Trace buffer shows last ~1000 instructions executed\n"
+             "- Use 'help execution' for step and run details\n"
+             "- Use 'help inspection' for memory/register tools\n");
 }
 
 void CliInterpreter::dumpMemory(uint32_t addr, uint32_t len) {

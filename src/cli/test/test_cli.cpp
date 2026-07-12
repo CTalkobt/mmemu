@@ -19,7 +19,7 @@ TEST_CASE(cli_basic_commands) {
 
     // help command
     interpreter.processLine("help");
-    ASSERT(output.find("Available commands") != std::string::npos);
+    ASSERT(output.find("Available Command Categories") != std::string::npos);
     output.clear();
 
     // unknown command
