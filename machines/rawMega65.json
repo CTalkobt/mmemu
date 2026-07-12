@@ -14,6 +14,34 @@
         { "type": "mega65_math", "name": "MathUnit", "baseAddr": "0xD700" }
       ],
       "roms": []
+    },
+    {
+      "id": "rawMega65_io",
+      "displayName": "Raw MEGA65 with I/O (45GS02 + VIC-IV/SID/CIA hardware)",
+      "_note": "Minimal MEGA65 configuration for hardware register testing. Includes VIC-IV, SID, CIA1/CIA2, DMA, and math accelerator at standard I/O addresses. No ROMs, KERNAL, or bootloader. Suitable for cc45 compiler hardware tests.",
+      "assembler": "ca45",
+      "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
+      "cpu": { "type": "45GS02", "dataBus": "system", "codeBus": "system" },
+      "devices": [
+        { "type": "inline_color_ram", "name": "ColorRAM", "baseAddr": "0xD800", "size": 2048 },
+        { "type": "vic4",            "name": "VIC-IV",   "baseAddr": "0xD000",
+          "dmaBus": true, "colorRam": true },
+        { "type": "sid_pair",        "name": "SID",      "baseAddr": "0xD400" },
+        { "type": "6526",            "name": "CIA1",     "baseAddr": "0xDC00",
+          "clockHz": 985248 },
+        { "type": "6526",            "name": "CIA2",     "baseAddr": "0xDD00",
+          "clockHz": 985248 },
+        { "type": "hyper_serial",    "name": "HyperSerial", "baseAddr": "0xD6C0" },
+        { "type": "exit_trap",       "name": "ExitTrap", "baseAddr": "0xD6CF" },
+        { "type": "f018b_dma",       "name": "DMA",      "baseAddr": "0xD700" },
+        { "type": "mega65_math",     "name": "MathUnit", "baseAddr": "0xD700" },
+        { "type": "mega65_rtc",      "name": "RTC",      "baseAddr": "0xD6E0" }
+      ],
+      "roms": [],
+      "signals": [
+        { "name": "irq", "type": "shared", "sources": ["VIC-IV", "CIA1"] },
+        { "name": "nmi", "type": "nmi",    "sources": ["CIA2"] }
+      ]
     }
   ]
 }

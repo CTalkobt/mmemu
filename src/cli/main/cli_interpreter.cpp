@@ -780,8 +780,8 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             } else if (sub == "load-c64ide") {
                 // Load C64IDE symbol database based on current machine
                 std::string machine_type;
-                if (m_ctx.machine && m_ctx.machine->descriptor) {
-                    machine_type = m_ctx.machine->descriptor->id;
+                if (m_ctx.machine) {
+                    machine_type = m_ctx.machine->machineId;
                 }
 
                 std::string sym_path;
