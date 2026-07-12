@@ -16,6 +16,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "plugin_command_registry.h"
 #include "libdebug/main/expression_evaluator.h"
 #include "libdebug/main/debug_helpers.h"
+#include "libdebug/main/source_location_formatter.h"
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
@@ -2360,8 +2361,19 @@ void CliInterpreter::showCurrentSource() {
     }
 
     uint32_t pc = m_ctx.cpu->pc();
-    // Source location support requires integrating source map with DebugContext
-    // For now, provide placeholder
-    m_output("Source-level debugging not yet integrated.\n");
+
+    // Create CLI formatter for terminal hyperlinks
+    auto formatter = SourceLocationFormatterFactory::create(
+        SourceLocationFormatterFactory::Context::CLI);
+
+    // Example: create a formatted location (in future, get from source map)
+    FormattedSourceLocation loc;
+    loc.file = "[source not loaded]";
+    loc.line = -1;
+    loc.address = pc;
+
+    // For now, show placeholder
     m_output("Current PC: $" + toHex(pc, addrWidth()) + "\n");
+    m_output("Source location: " + formatter->format(loc) + "\n");
+    m_output("(source map integration coming in next phase)\n");
 }

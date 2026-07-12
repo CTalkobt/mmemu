@@ -66,6 +66,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
+	src/libdebug/main/source_location_formatter.cpp \
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
