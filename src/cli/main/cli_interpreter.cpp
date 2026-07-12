@@ -405,7 +405,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             if (breaks.empty()) {
                 m_output("No breakpoints set.\n");
             } else {
-                m_output("Num     Type        Disp Enb Address\n");
+                m_output("Num     Type        Enb Address      Hits  Condition/Size\n");
                 for (const auto& bp : breaks) {
                     std::stringstream row;
                     row << std::left << std::setw(8) << bp.id;
@@ -414,12 +414,26 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                         case BreakpointType::EXEC: type = "exec"; break;
                         case BreakpointType::READ_WATCH: type = "read"; break;
                         case BreakpointType::WRITE_WATCH: type = "write"; break;
+                        case BreakpointType::VALUE_WATCH: type = "value"; break;
                     }
                     if (bp.physical) type += " (phys)";
-                    row << std::left << std::setw(18) << type;
-                    row << (bp.enabled ? "y" : "n") << "  ";
+                    row << std::left << std::setw(12) << type;
+                    row << (bp.enabled ? "y" : "n") << "   ";
                     row << "$" << std::hex << std::uppercase << std::setfill('0')
-                        << std::setw(bp.physical ? 7 : 4) << bp.addr;
+                        << std::setw(bp.physical ? 7 : 4) << bp.addr << "  ";
+                    row << std::dec << std::setfill(' ') << std::setw(4) << bp.hitCount << "  ";
+
+                    if (bp.type == BreakpointType::VALUE_WATCH) {
+                        row << bp.watchSize << " bytes";
+                    } else if (!bp.condition.empty()) {
+                        row << bp.condition;
+                        if (bp.hitCountLimit > 0) {
+                            row << " (limit: " << bp.hitCountLimit << ")";
+                        }
+                    } else if (bp.hitCountLimit > 0) {
+                        row << "(hit limit: " << bp.hitCountLimit << ")";
+                    }
+
                     m_output(row.str() + "\n");
                 }
             }
@@ -434,6 +448,35 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         std::string expr;
         if (ss >> expr) {
+            // Check for "when" prefix for conditional breakpoints (#97)
+            if (expr == "when") {
+                // Parse: break when <condition> [count N]
+                std::string rest;
+                std::getline(ss, rest);
+
+                // Check for "count" modifier
+                int hitCountLimit = 0;
+                size_t countPos = rest.find(" count ");
+                if (countPos != std::string::npos) {
+                    std::string limitStr = rest.substr(countPos + 7);
+                    hitCountLimit = std::stoi(limitStr);
+                    rest = rest.substr(0, countPos);
+                }
+
+                // Create a temporary breakpoint at address 0 for condition testing
+                int id = m_ctx.dbg->breakpoints().add(0, BreakpointType::EXEC);
+                m_ctx.dbg->breakpoints().setCondition(id, rest);
+                if (hitCountLimit > 0) {
+                    m_ctx.dbg->breakpoints().setHitCountLimit(id, hitCountLimit);
+                }
+                m_output("Conditional breakpoint " + std::to_string(id) + " set: when " + rest);
+                if (hitCountLimit > 0) {
+                    m_output(" (stops at hit " + std::to_string(hitCountLimit) + ")");
+                }
+                m_output("\n");
+                return;
+            }
+
             // Check for "phys" prefix for physical-address breakpoints (#73)
             bool physical = false;
             if (expr == "phys") {
@@ -443,16 +486,35 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     return;
                 }
             }
+
             uint32_t addr;
             if (parseAddr(expr, addr)) {
+                // Check for "count" modifier
+                int hitCountLimit = 0;
+                std::string countStr;
+                if (ss >> countStr && countStr == "count") {
+                    if (!(ss >> hitCountLimit)) {
+                        m_output("Error: count requires a number\n");
+                        return;
+                    }
+                }
+
                 int id = m_ctx.dbg->breakpoints().add(addr, BreakpointType::EXEC, physical);
+                if (hitCountLimit > 0) {
+                    m_ctx.dbg->breakpoints().setHitCountLimit(id, hitCountLimit);
+                }
                 std::string prefix = physical ? "Physical breakpoint " : "Breakpoint ";
-                m_output(prefix + std::to_string(id) + " at $" + toHex(addr, physical ? 7 : addrWidth()) + "\n");
+                m_output(prefix + std::to_string(id) + " at $" + toHex(addr, physical ? 7 : addrWidth()));
+                if (hitCountLimit > 0) {
+                    m_output(" (stops at hit " + std::to_string(hitCountLimit) + ")");
+                }
+                m_output("\n");
             } else {
                 m_output("Error: Invalid address '" + expr + "'\n");
             }
         } else {
-            m_output("Syntax: break <address> | break phys <physical_address>\n");
+            m_output("Syntax: break <address> [count N] | break when <condition> [count N]\n");
+            m_output("        break phys <physical_address>\n");
         }
     } else if (cmd == "delete") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -462,6 +524,20 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_output("Deleted breakpoint " + std::to_string(id) + "\n");
         } else {
             m_output("Syntax: delete <id>\n");
+        }
+    } else if (cmd == "clear") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string expr;
+        if (ss >> expr) {
+            uint32_t addr;
+            if (parseAddr(expr, addr)) {
+                m_ctx.dbg->breakpoints().removeByAddress(addr);
+                m_output("Cleared breakpoint at $" + toHex(addr, addrWidth()) + "\n");
+            } else {
+                m_output("Error: Invalid address '" + expr + "'\n");
+            }
+        } else {
+            m_output("Syntax: clear <address>\n");
         }
     } else if (cmd == "enable") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -483,36 +559,64 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
     } else if (cmd == "watch") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
-        std::string typeStr, expr;
-        if (ss >> typeStr >> expr) {
-            // Check for "phys" modifier: watch read phys $addr
-            bool physical = false;
-            if (expr == "phys") {
-                physical = true;
-                if (!(ss >> expr)) {
-                    m_output("Syntax: watch <read|write> [phys] <address>\n");
-                    return;
-                }
-            }
-            uint32_t addr;
-            if (parseAddr(expr, addr)) {
-                BreakpointType type;
-                if (typeStr == "read") {
-                    type = BreakpointType::READ_WATCH;
-                } else if (typeStr == "write") {
-                    type = BreakpointType::WRITE_WATCH;
+        std::string typeStr;
+        if (!(ss >> typeStr)) {
+            m_output("Syntax: watch <read|write|value> [phys] <address> [size]\n");
+            return;
+        }
+
+        // Handle value watch: watch value <addr> <size>
+        if (typeStr == "value") {
+            std::string addrStr;
+            uint32_t size;
+            if (ss >> addrStr >> size) {
+                uint32_t addr;
+                if (parseAddr(addrStr, addr)) {
+                    int id = m_ctx.dbg->breakpoints().addWatch(addr, size);
+                    m_output("Value watch " + std::to_string(id) + " at $" + toHex(addr, addrWidth()) +
+                             " for " + std::to_string(size) + " bytes\n");
                 } else {
-                    m_output("Syntax: watch <read|write> [phys] <address>\n");
-                    return;
+                    m_output("Error: Invalid address '" + addrStr + "'\n");
                 }
-                int id = m_ctx.dbg->breakpoints().add(addr, type, physical);
-                std::string prefix = physical ? "Physical watchpoint " : "Watchpoint ";
-                m_output(prefix + std::to_string(id) + " at $" + toHex(addr, physical ? 7 : addrWidth()) + "\n");
             } else {
-                m_output("Error: Invalid address '" + expr + "'\n");
+                m_output("Syntax: watch value <address> <size>\n");
             }
+            return;
+        }
+
+        // Handle read/write watches
+        std::string expr;
+        if (!(ss >> expr)) {
+            m_output("Syntax: watch <read|write|value> [phys] <address> [size]\n");
+            return;
+        }
+
+        // Check for "phys" modifier: watch read phys $addr
+        bool physical = false;
+        if (expr == "phys") {
+            physical = true;
+            if (!(ss >> expr)) {
+                m_output("Syntax: watch <read|write> [phys] <address>\n");
+                return;
+            }
+        }
+
+        uint32_t addr;
+        if (parseAddr(expr, addr)) {
+            BreakpointType type;
+            if (typeStr == "read") {
+                type = BreakpointType::READ_WATCH;
+            } else if (typeStr == "write") {
+                type = BreakpointType::WRITE_WATCH;
+            } else {
+                m_output("Syntax: watch <read|write|value> [phys] <address> [size]\n");
+                return;
+            }
+            int id = m_ctx.dbg->breakpoints().add(addr, type, physical);
+            std::string prefix = physical ? "Physical watchpoint " : "Watchpoint ";
+            m_output(prefix + std::to_string(id) + " at $" + toHex(addr, physical ? 7 : addrWidth()) + "\n");
         } else {
-            m_output("Syntax: watch <read|write> [phys] <address>\n");
+            m_output("Error: Invalid address '" + expr + "'\n");
         }
     } else if (cmd == "print") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
