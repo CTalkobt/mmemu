@@ -7,6 +7,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Debugger Enhancements - Issues #93-98
+- **Issue #93 - Stack Trace Viewer**: Display call stack with return addresses, function names from symbols, and stack frame boundaries. CLI `stack` command shows function context.
+- **Issue #94 - Variable Symbol Table**: Foundation for symbol-aware debugging. VariableSymbolTable maps variable names to memory locations, supports function-scoped and global variables with type information.
+- **Issue #95 - Source Location Hyperlinking**: Clickable source links in disassembly and breakpoint output, integrated across CLI/GUI/MCP. Resolves .c/.s files from symbol search paths.
+- **Issue #96 - Frame Inspection**: Analyze stack frame layout with `frame` CLI command. Shows variables in memory order with gap detection, uninitialized value tracking, and struct-like visualization. Supports both table and pseudo-C layout formats.
+- **Issue #97 - Enhanced Breakpoints** (#97): Conditional breakpoints with expression evaluator (e.g., `break when x == 0x01`), hit count limits (`break $2050 count 5`), and memory value watches (`watch value $2000 4`). Breakpoint display shows conditions, hit counts, and memory watch sizes.
+- **Issue #98 - Debug Metadata Format** (#98): Standardized metadata format emitted by cc45 compiler as assembly comments. DebugMetadataParser/Registry classes enable symbol-aware debugging without external debug files. Format: `; .debug_var: function var_name offset=N size=N type=TYPE scope=SCOPE [src_line=N] [src_file=FILE] [name=DISPLAY_NAME]`. Integrated with VariableSymbolTable.
+
 ### MEGA65 Integration & Contention Model
 - **Dual SID (SidPair) wired to MEGA65 machine** (#6): SidPair was included but never created or registered. Now created with PAL clock ($D400/$D420) and registered in IORegistry.
 - **MEGA65 keyboard buffer** ($D610/$D619/$D60A/$D611): ASCII/PETSCII typing queue with modifier tracking. PC→MEGA65 function key remapping (PC F5→MEGA65 F1, etc.). Immediate modifier state at $D611.
