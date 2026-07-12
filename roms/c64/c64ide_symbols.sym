@@ -1,0 +1,226 @@
+; C64IDE Comprehensive Symbol Database
+; Extracted and adapted for mmemu
+; Includes KERNAL, BASIC, I/O registers, and zero-page locations
+
+; ============================================================================
+; KERNAL ROM ($E000-$FFFF)
+; ============================================================================
+
+; Vectors (in RAM, but point to ROM)
+IRQ = $FFFE
+NMI = $FFFA
+RESET = $FCE2
+
+; I/O and environment control
+IOBASE = $FFF3
+RESET_VEC = $FFFC
+
+; Core file I/O
+SETMSG = $FF90
+SETLFS = $FFBA
+SETNAM = $FFBD
+OPEN = $FFC0
+CLOSE = $FFC3
+CHKIN = $FFC6
+CHKOUT = $FFC9
+CLRCHN = $FFCC
+CHRIN = $FFCF
+CHROUT = $FFD2
+
+; Load/Save
+LOAD = $FFD5
+SAVE = $FFD8
+
+; Time
+SETTIM = $FFDB
+RDTIM = $FFDE
+UDTIM = $FFEA
+
+; Terminal
+SCREEN = $FFED
+PLOT = $FFF0
+GETIN = $FFE4
+
+; Misc
+STOP = $FFE1
+CLALL = $FFE7
+
+; ============================================================================
+; BASIC ROM ($A000-$BFFF)
+; ============================================================================
+
+; BASIC Entry Point
+BASIC_WARM_START = $A000
+BASIC_COLD_START = $E394
+
+; BASIC Routines
+STXAT = $E24C
+CROUT = $E55F
+CHROUT_BASIC = $E716
+PRINT_STR = $E716
+
+; ============================================================================
+; VIC-II Registers ($D000-$D02E)
+; ============================================================================
+
+D000 = $D000  ; Sprite 0 X position
+D001 = $D001  ; Sprite 0 Y position
+D002 = $D002  ; Sprite 1 X position
+D003 = $D003  ; Sprite 1 Y position
+D004 = $D004  ; Sprite 2 X position
+D005 = $D005  ; Sprite 2 Y position
+D006 = $D006  ; Sprite 3 X position
+D007 = $D007  ; Sprite 3 Y position
+D008 = $D008  ; Sprite 4 X position
+D009 = $D009  ; Sprite 4 Y position
+D00A = $D00A  ; Sprite 5 X position
+D00B = $D00B  ; Sprite 5 Y position
+D00C = $D00C  ; Sprite 6 X position
+D00D = $D00D  ; Sprite 6 Y position
+D00E = $D00E  ; Sprite 7 X position
+D00F = $D00F  ; Sprite 7 Y position
+
+D010 = $D010  ; Sprites X-coordinate MSBs
+D011 = $D011  ; VIC Control Register 1
+D012 = $D012  ; Raster line counter
+D013 = $D013  ; Light pen X
+D014 = $D014  ; Light pen Y
+D015 = $D015  ; Sprite enable register
+D016 = $D016  ; VIC Control Register 2
+D017 = $D017  ; Sprite expand Y register
+D018 = $D018  ; Memory setup register
+D019 = $D019  ; Interrupt register
+D01A = $D01A  ; Interrupt enable register
+D01B = $D01B  ; Sprite priority register
+D01C = $D01C  ; Sprite multicolor register
+D01D = $D01D  ; Sprite expand X register
+D01E = $D01E  ; Sprite-sprite collision register
+D01F = $D01F  ; Sprite-background collision register
+
+D020 = $D020  ; Border color
+D021 = $D021  ; Background color 0
+D022 = $D022  ; Background color 1
+D023 = $D023  ; Background color 2
+D024 = $D024  ; Background color 3
+D025 = $D025  ; Sprite multicolor 0
+D026 = $D026  ; Sprite multicolor 1
+D027 = $D027  ; Sprite 0 color
+D028 = $D028  ; Sprite 1 color
+D029 = $D029  ; Sprite 2 color
+D02A = $D02A  ; Sprite 3 color
+D02B = $D02B  ; Sprite 4 color
+D02C = $D02C  ; Sprite 5 color
+D02D = $D02D  ; Sprite 6 color
+D02E = $D02E  ; Sprite 7 color
+
+; ============================================================================
+; CIA1 Registers ($DC00-$DC0F)
+; ============================================================================
+
+CIA1_PRA = $DC00      ; Port A (keyboard rows)
+CIA1_PRB = $DC01      ; Port B (keyboard columns, joystick)
+CIA1_DDRA = $DC02     ; Data Direction Register A
+CIA1_DDRB = $DC03     ; Data Direction Register B
+CIA1_TA = $DC04       ; Timer A (low byte)
+CIA1_TA_H = $DC05     ; Timer A (high byte)
+CIA1_TB = $DC06       ; Timer B (low byte)
+CIA1_TB_H = $DC07     ; Timer B (high byte)
+CIA1_TOD_10THS = $DC08 ; TOD tenths
+CIA1_TOD_SEC = $DC09   ; TOD seconds
+CIA1_TOD_MIN = $DC0A   ; TOD minutes
+CIA1_TOD_HOUR = $DC0B  ; TOD hours
+CIA1_SDR = $DC0C       ; Serial Data Register
+CIA1_ICR = $DC0D       ; Interrupt Control Register
+CIA1_CRA = $DC0E       ; Control Register A
+CIA1_CRB = $DC0F       ; Control Register B
+
+; ============================================================================
+; CIA2 Registers ($DD00-$DD0F)
+; ============================================================================
+
+CIA2_PRA = $DD00      ; Port A (RS-232, IEC bus)
+CIA2_PRB = $DD01      ; Port B
+CIA2_DDRA = $DD02     ; Data Direction Register A
+CIA2_DDRB = $DD03     ; Data Direction Register B
+CIA2_TA = $DD04       ; Timer A (low byte)
+CIA2_TA_H = $DD05     ; Timer A (high byte)
+CIA2_TB = $DD06       ; Timer B (low byte)
+CIA2_TB_H = $DD07     ; Timer B (high byte)
+CIA2_TOD_10THS = $DD08 ; TOD tenths
+CIA2_TOD_SEC = $DD09   ; TOD seconds
+CIA2_TOD_MIN = $DD0A   ; TOD minutes
+CIA2_TOD_HOUR = $DD0B  ; TOD hours
+CIA2_SDR = $DD0C       ; Serial Data Register
+CIA2_ICR = $DD0D       ; Interrupt Control Register
+CIA2_CRA = $DD0E       ; Control Register A
+CIA2_CRB = $DD0F       ; Control Register B
+
+; ============================================================================
+; SID Registers ($D400-$D41F)
+; ============================================================================
+
+SID_V1_FREQ_LO = $D400  ; Voice 1 frequency (low byte)
+SID_V1_FREQ_HI = $D401  ; Voice 1 frequency (high byte)
+SID_V1_PW_LO = $D402    ; Voice 1 pulse width (low byte)
+SID_V1_PW_HI = $D403    ; Voice 1 pulse width (high byte)
+SID_V1_CTRL = $D404     ; Voice 1 control register
+SID_V1_ATK_DEC = $D405  ; Voice 1 attack/decay
+SID_V1_SUS_REL = $D406  ; Voice 1 sustain/release
+
+SID_V2_FREQ_LO = $D407  ; Voice 2 frequency (low byte)
+SID_V2_FREQ_HI = $D408  ; Voice 2 frequency (high byte)
+SID_V2_PW_LO = $D409    ; Voice 2 pulse width (low byte)
+SID_V2_PW_HI = $D40A    ; Voice 2 pulse width (high byte)
+SID_V2_CTRL = $D40B     ; Voice 2 control register
+SID_V2_ATK_DEC = $D40C  ; Voice 2 attack/decay
+SID_V2_SUS_REL = $D40D  ; Voice 2 sustain/release
+
+SID_V3_FREQ_LO = $D40E  ; Voice 3 frequency (low byte)
+SID_V3_FREQ_HI = $D40F  ; Voice 3 frequency (high byte)
+SID_V3_PW_LO = $D410    ; Voice 3 pulse width (low byte)
+SID_V3_PW_HI = $D411    ; Voice 3 pulse width (high byte)
+SID_V3_CTRL = $D412     ; Voice 3 control register
+SID_V3_ATK_DEC = $D413  ; Voice 3 attack/decay
+SID_V3_SUS_REL = $D414  ; Voice 3 sustain/release
+
+SID_FC_LO = $D415       ; Filter cutoff frequency (low byte)
+SID_FC_HI = $D416       ; Filter cutoff frequency (high byte)
+SID_RES_FILT = $D417    ; Resonance and filter select
+SID_MODE_VOL = $D418    ; Mode and main volume
+
+SID_POT_X = $D419       ; Potentiometer X (paddle)
+SID_POT_Y = $D41A       ; Potentiometer Y (paddle)
+SID_OSC3_OUT = $D41B    ; Oscillator 3 output
+SID_ENV3_OUT = $D41C    ; Envelope 3 output
+
+; ============================================================================
+; Zero-page locations (commonly used)
+; ============================================================================
+
+ZEROPAGE_INPUT_BUFFER = $0200  ; PETSCII input buffer
+ZEROPAGE_SCREEN_PTR = $D1      ; Pointer to screen
+ZEROPAGE_COLOR_PTR = $F1       ; Pointer to color RAM
+
+; ============================================================================
+; RAM locations
+; ============================================================================
+
+; Screen RAM
+SCREEN_RAM = $0400     ; Default screen memory
+COLOR_RAM = $D800      ; Color RAM
+
+; Sprite data
+SPRITE_POINTERS = $07F8 ; Sprite pointer base
+SPRITE_0_PTR = $07F8
+SPRITE_1_PTR = $07F9
+SPRITE_2_PTR = $07FA
+SPRITE_3_PTR = $07FB
+SPRITE_4_PTR = $07FC
+SPRITE_5_PTR = $07FD
+SPRITE_6_PTR = $07FE
+SPRITE_7_PTR = $07FF
+
+; Character ROM overlay address
+CHARGEN = $D000         ; When $01 bit 1 = 1, character ROM visible here
+BASIC = $A000           ; BASIC ROM start
+KERNAL = $E000          ; KERNAL ROM start

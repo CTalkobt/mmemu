@@ -7,7 +7,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
-### Debugger Enhancements - Issues #93-100
+### Debugger Enhancements & Symbol Import - Issues #92-100
+- **Issue #92 - C64IDE Symbol Database Import**: Comprehensive 150+ symbol database extracted from C64IDE including KERNAL/BASIC ROM entry points, VIC-II/SID/CIA registers, and special memory locations. New CLI command `sym load-c64ide` automatically loads symbols for current machine. Enables annotated disassembly and register-aware debugging without external symbol files.
 - **Issue #93 - Stack Trace Viewer**: Display call stack with return addresses, function names from symbols, and stack frame boundaries. CLI `stack` command shows function context.
 - **Issue #94 - Variable Symbol Table**: Foundation for symbol-aware debugging. VariableSymbolTable maps variable names to memory locations, supports function-scoped and global variables with type information.
 - **Issue #95 - Source Location Hyperlinking**: Clickable source links in disassembly and breakpoint output, integrated across CLI/GUI/MCP. Resolves .c/.s files from symbol search paths.

@@ -777,6 +777,31 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 } else {
                     m_output("Usage: sym load <path>\n");
                 }
+            } else if (sub == "load-c64ide") {
+                // Load C64IDE symbol database based on current machine
+                std::string machine_type;
+                if (m_ctx.machine && m_ctx.machine->descriptor) {
+                    machine_type = m_ctx.machine->descriptor->id;
+                }
+
+                std::string sym_path;
+                if (machine_type == "c64") {
+                    sym_path = "roms/c64/c64ide_symbols.sym";
+                } else if (machine_type == "vic20") {
+                    // Could add vic20ide_symbols.sym in future
+                    m_output("C64IDE symbols not available for VIC-20.\n");
+                    return;
+                } else {
+                    m_output("C64IDE symbols not available for this machine.\n");
+                    return;
+                }
+
+                if (m_ctx.dbg->symbols().loadSym(sym_path)) {
+                    m_output("Loaded C64IDE symbols from: " + sym_path + "\n");
+                } else {
+                    m_output("Failed to load C64IDE symbols from: " + sym_path + "\n");
+                    m_output("Make sure the file exists at: " + sym_path + "\n");
+                }
             } else if (sub == "clear") {
                 m_ctx.dbg->symbols().clear();
                 m_output("Symbol table cleared.\n");
@@ -784,7 +809,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_output("Unknown sym subcommand: " + sub + "\n");
             }
         } else {
-            m_output("Usage: sym <add|del|list|search|load|clear>\n");
+            m_output("Usage: sym <add|del|list|search|load|load-c64ide|clear>\n");
         }
     } else if (cmd == "tape") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
@@ -2456,6 +2481,8 @@ void CliInterpreter::printDebuggingGuide() {
              "  sym add <name> <addr>      - Manually add a symbol\n"
              "  sym list                   - List all defined symbols\n"
              "  sym search <query>         - Search for symbols by name\n"
+             "  sym load <file>            - Load symbols from .sym file\n"
+             "  sym load-c64ide            - Load C64IDE ROM symbol database\n"
              "\n=== Source-Level Debugging (requires .loc directives) ===\n"
              "  list                - Show source code around current PC\n"
              "  list 10-20          - Show source lines 10-20\n"
