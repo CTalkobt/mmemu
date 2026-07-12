@@ -17,6 +17,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdebug/main/expression_evaluator.h"
 #include "libdebug/main/debug_helpers.h"
 #include "libdebug/main/source_location_formatter.h"
+#include "libdebug/main/frame_analyzer.h"
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
@@ -570,6 +571,40 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 out << "  pushed by $" << std::setw(4) << e.pushedByPc << "\n";
             }
             m_output(out.str());
+        }
+    } else if (cmd == "frame") {
+        if (!m_ctx.dbg || !m_ctx.bus || !m_ctx.cpu) {
+            m_output("No machine created.\n");
+            return;
+        }
+        std::string sub;
+        bool verbose = false;
+        if (ss >> sub) {
+            if (sub == "verbose") {
+                verbose = true;
+            } else {
+                m_output("Usage: frame [verbose]\n");
+                return;
+            }
+        }
+
+        // Estimate frame pointer and size
+        uint32_t framePointer = 0x100;  // C64 stack page default
+        uint32_t frameSize = 256;
+
+        auto layout = FrameLayoutAnalyzer::analyzeCurrentFrame(m_ctx.dbg, m_ctx.bus, framePointer, frameSize);
+        if (layout.empty()) {
+            m_output("No frame information available.\n");
+            return;
+        }
+
+        if (verbose) {
+            m_output(FrameLayoutAnalyzer::formatFrameLayout(layout, framePointer, frameSize));
+            m_output("\n");
+            m_output(FrameLayoutAnalyzer::formatAsStructDefinition(layout));
+        } else {
+            // Simple format: just the struct definition
+            m_output(FrameLayoutAnalyzer::formatAsStructDefinition(layout));
         }
     } else if (cmd == "sym") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -2157,6 +2192,7 @@ void CliInterpreter::printDebuggingGuide() {
              "  list [lines]        - Show source code (requires .loc directives)\n"
              "  info locals         - Show local variables with values\n"
              "  info frame          - Show frame layout with variable addresses\n"
+             "  frame [verbose]     - Show frame structure (verbose for table + struct)\n"
              "  print <varname>     - Display typed value of a specific variable\n"
              "\n=== Source-Level Debugging (requires .loc directives) ===\n"
              "  list                - Show source code around current PC\n"
@@ -2286,32 +2322,24 @@ void CliInterpreter::showLocals() {
 }
 
 void CliInterpreter::showFrameLayout() {
-    if (!m_ctx.dbg || !m_ctx.bus) {
+    if (!m_ctx.dbg || !m_ctx.bus || !m_ctx.cpu) {
         m_output("No machine created.\n");
         return;
     }
 
-    auto info = DebugHelpers::getFrameLayoutInfo(m_ctx.dbg, m_ctx.bus);
-    if (info.variables.empty()) {
+    // Estimate frame pointer and size
+    uint32_t framePointer = 0x100;  // C64 stack page default
+    uint32_t frameSize = 256;
+
+    auto layout = FrameLayoutAnalyzer::analyzeCurrentFrame(m_ctx.dbg, m_ctx.bus, framePointer, frameSize);
+    if (layout.empty()) {
         m_output("No frame information available.\n");
         return;
     }
 
-    m_output("Frame Layout:\n");
-    m_output("Address | Offset | Variable                 | Type\n");
-    m_output("--------|--------|--------------------------|----------\n");
-
-    for (const auto& var : info.variables) {
-        std::ostringstream line;
-        line << std::hex << std::uppercase << std::setfill('0');
-        line << std::setw(7) << var.address << " | ";
-        line << std::dec << std::setfill(' ');
-        line << std::setw(6) << var.size << " | ";
-        line << std::left << std::setw(24) << var.displayName << " | ";
-        line << std::left << std::setw(8) << var.type;
-
-        m_output(line.str() + "\n");
-    }
+    m_output(FrameLayoutAnalyzer::formatFrameLayout(layout, framePointer, frameSize));
+    m_output("\n");
+    m_output(FrameLayoutAnalyzer::formatAsStructDefinition(layout));
 }
 
 void CliInterpreter::printVariable(const std::string& varName) {

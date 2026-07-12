@@ -66,7 +66,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
-	src/libdebug/main/source_location_formatter.cpp \
+	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
@@ -300,6 +300,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid_pair/test/test_sid_pair.cpp \
 	src/libdebug/test/test_stack_trace.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \
+	src/libdebug/test/test_frame_analyzer.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
