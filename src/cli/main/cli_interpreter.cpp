@@ -2116,6 +2116,58 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
            << "s to " << filename << " (" << (isStereo ? "stereo" : "mono")
            << ", " << sampleRate << " Hz, " << dataSize << " bytes)\n";
         m_output(os.str());
+    } else if (cmd == "load-debug-metadata") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string path;
+        if (ss >> path) {
+            if (m_ctx.dbg->variables().loadDebugInfo(path)) {
+                m_output("Debug metadata loaded from: " + path + "\n");
+            } else {
+                m_output("Error: Could not load debug metadata from: " + path + "\n");
+            }
+        } else {
+            m_output("Usage: load-debug-metadata <file>\n");
+        }
+    } else if (cmd == "vars") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string funcName;
+        if (ss >> funcName) {
+            auto vars = m_ctx.dbg->variables().getVariablesInFunction(funcName);
+            if (vars.empty()) {
+                m_output("No variables found for function: " + funcName + "\n");
+            } else {
+                std::stringstream out;
+                out << "Variables in " << funcName << ":\n";
+                out << std::setfill(' ') << std::left;
+                for (const auto* var : vars) {
+                    out << "  " << std::setw(20) << var->displayName
+                        << "  @" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << var->address
+                        << "  size=" << std::dec << var->size
+                        << "  type=" << formatVariableType(var->type);
+                    if (var->sourceLine >= 0) {
+                        out << "  line=" << var->sourceLine;
+                    }
+                    out << "\n";
+                }
+                m_output(out.str());
+            }
+        } else {
+            auto globals = m_ctx.dbg->variables().getGlobalVariables();
+            if (globals.empty()) {
+                m_output("No variables defined.\n");
+            } else {
+                std::stringstream out;
+                out << "Global Variables:\n";
+                out << std::setfill(' ') << std::left;
+                for (const auto* var : globals) {
+                    out << "  " << std::setw(20) << var->displayName
+                        << "  @" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << var->address
+                        << "  size=" << std::dec << var->size
+                        << "  type=" << formatVariableType(var->type) << "\n";
+                }
+                m_output(out.str());
+            }
+        }
     } else if (cmd == "quit" || cmd == "q") {
         m_ctx.quit = true;
     } else {
@@ -2298,6 +2350,13 @@ void CliInterpreter::printDebuggingGuide() {
              "  info frame          - Show frame layout with variable addresses\n"
              "  frame [verbose]     - Show frame structure (verbose for table + struct)\n"
              "  print <varname>     - Display typed value of a specific variable\n"
+             "\n=== Debug Metadata and Symbol Inspection ===\n"
+             "  load-debug-metadata <file> - Load debug symbols from assembly file\n"
+             "  vars                       - Show all global variables\n"
+             "  vars <function>            - Show local variables in a function\n"
+             "  sym add <name> <addr>      - Manually add a symbol\n"
+             "  sym list                   - List all defined symbols\n"
+             "  sym search <query>         - Search for symbols by name\n"
              "\n=== Source-Level Debugging (requires .loc directives) ===\n"
              "  list                - Show source code around current PC\n"
              "  list 10-20          - Show source lines 10-20\n"

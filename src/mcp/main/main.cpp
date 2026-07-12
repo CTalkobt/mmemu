@@ -1385,6 +1385,37 @@ Json handleDescribe() {
                 schema);
     }
 
+    // Debug Metadata Tools
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        props.oVal["path"] = pathProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("path"));
+        schema.oVal["required"] = req;
+        addTool("load_debug_metadata", "Load debug metadata from an assembly file (.s or .asm with debug metadata comments)", schema);
+    }
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        Json funcProp(Json::OBJ);
+        funcProp.oVal["type"] = Json("string");
+        funcProp.oVal["description"] = Json("Function name to query (e.g., '_main'). If omitted, lists global variables");
+        props.oVal["function_name"] = funcProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("list_variables", "List variables for a specific function or all global variables", schema);
+    }
+
     std::vector<std::string> pluginTools;
     PluginToolRegistry::instance().listTools(pluginTools);
     for (const auto& name : pluginTools) {
@@ -4666,6 +4697,65 @@ Json handleToolsCall(const Json& params) {
                 result.oVal["final_pc"] = Json("$" + toHex(ms->cpu->pc()));
                 textItem.oVal["text"] = Json(result.stringify());
             }
+        }
+
+    } else if (name == "load_debug_metadata") {
+        std::string mid = args["machine_id"].sVal;
+        std::string path = args["path"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (ms->dbg->variables().loadDebugInfo(path)) {
+            textItem.oVal["text"] = Json("Debug metadata loaded from: " + path);
+        } else {
+            textItem.oVal["text"] = Json("Error: Could not load debug metadata from: " + path);
+            textItem.oVal["isError"] = Json(true);
+        }
+
+    } else if (name == "list_variables") {
+        std::string mid = args["machine_id"].sVal;
+        std::string funcName = args.contains("function_name") ? args["function_name"].sVal : "";
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            std::stringstream ss;
+            if (!funcName.empty()) {
+                auto vars = ms->dbg->variables().getVariablesInFunction(funcName);
+                ss << "Variables in " << funcName << ":\n";
+                ss << std::left << std::setfill(' ');
+                if (vars.empty()) {
+                    ss << "  (none)\n";
+                } else {
+                    for (const auto* var : vars) {
+                        ss << "  " << std::setw(20) << var->displayName
+                           << "  @" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << var->address
+                           << "  size=" << std::dec << var->size
+                           << "  type=" << formatVariableType(var->type);
+                        if (var->sourceLine >= 0) {
+                            ss << "  line=" << var->sourceLine;
+                        }
+                        ss << "\n";
+                    }
+                }
+            } else {
+                auto globals = ms->dbg->variables().getGlobalVariables();
+                ss << "Global Variables:\n";
+                ss << std::left << std::setfill(' ');
+                if (globals.empty()) {
+                    ss << "  (none)\n";
+                } else {
+                    for (const auto* var : globals) {
+                        ss << "  " << std::setw(20) << var->displayName
+                           << "  @" << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << var->address
+                           << "  size=" << std::dec << var->size
+                           << "  type=" << formatVariableType(var->type) << "\n";
+                    }
+                }
+            }
+            textItem.oVal["text"] = Json(ss.str());
         }
 
     } else {
