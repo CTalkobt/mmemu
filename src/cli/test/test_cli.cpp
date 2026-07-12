@@ -27,6 +27,71 @@ TEST_CASE(cli_basic_commands) {
     ASSERT(output.find("Unknown command") != std::string::npos);
 }
 
+TEST_CASE(cli_help_system_categories) {
+    CliContext ctx;
+    std::string output;
+    CliInterpreter interpreter(ctx, [&](const std::string& s) { output += s; });
+
+    // Test main help shows all category headings
+    interpreter.processLine("help");
+    ASSERT(output.find("Available Command Categories") != std::string::npos);
+    ASSERT(output.find("help loading") != std::string::npos);
+    ASSERT(output.find("help execution") != std::string::npos);
+    ASSERT(output.find("help inspection") != std::string::npos);
+    ASSERT(output.find("help debugging") != std::string::npos);
+    ASSERT(output.find("help general") != std::string::npos);
+    ASSERT(output.find("Quick Start") != std::string::npos);
+    output.clear();
+
+    // Test each category has its heading
+    interpreter.processLine("help loading");
+    ASSERT(output.find("LOADING") != std::string::npos);
+    output.clear();
+
+    interpreter.processLine("help execution");
+    ASSERT(output.find("EXECUTION") != std::string::npos);
+    output.clear();
+
+    interpreter.processLine("help inspection");
+    ASSERT(output.find("INSPECTION") != std::string::npos);
+    output.clear();
+
+    interpreter.processLine("help debugging");
+    ASSERT(output.find("DEBUGGING") != std::string::npos);
+    ASSERT(output.find("Tutorial Workflow") != std::string::npos);
+    output.clear();
+
+    interpreter.processLine("help general");
+    ASSERT(output.find("GENERAL") != std::string::npos);
+    output.clear();
+
+    // Test invalid category
+    interpreter.processLine("help invalid");
+    ASSERT(output.find("Unknown help category") != std::string::npos);
+    ASSERT(output.find("Available categories") != std::string::npos);
+    output.clear();
+
+    // Test ? alias for help
+    interpreter.processLine("?");
+    ASSERT(output.find("Available Command Categories") != std::string::npos);
+}
+
+TEST_CASE(cli_help_debugging_structure) {
+    CliContext ctx;
+    std::string output;
+    CliInterpreter interpreter(ctx, [&](const std::string& s) { output += s; });
+
+    // Verify debugging help has all major sections
+    interpreter.processLine("help debugging");
+    ASSERT(output.find("Basic Breakpoints") != std::string::npos);
+    ASSERT(output.find("Memory Watchpoints") != std::string::npos);
+    ASSERT(output.find("Inspection After Halt") != std::string::npos);
+    ASSERT(output.find("Tracing and Flow") != std::string::npos);
+    ASSERT(output.find("Snapshots") != std::string::npos);
+    ASSERT(output.find("Tutorial Workflow") != std::string::npos);
+    ASSERT(output.find("Tips") != std::string::npos);
+}
+
 TEST_CASE(cli_state_management) {
     CliContext ctx;
     FlatMemoryBus bus("system", 16);
