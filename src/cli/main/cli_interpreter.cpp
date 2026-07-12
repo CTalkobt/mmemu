@@ -2309,3 +2309,59 @@ void CliInterpreter::printVariable(const std::string& varName) {
 
     m_output(out.str());
 }
+
+void CliInterpreter::showSourceLines(const std::string& file, int startLine, int endLine) {
+    // Check cache first
+    auto cacheIt = m_sourceFileCache.find(file);
+    std::vector<std::string> srcLines;
+
+    if (cacheIt == m_sourceFileCache.end()) {
+        // Load source file
+        std::ifstream f(file);
+        if (!f.is_open()) {
+            m_output("Source file not found: " + file + "\n");
+            return;
+        }
+
+        std::string line;
+        while (std::getline(f, line)) {
+            srcLines.push_back(line);
+        }
+        f.close();
+
+        m_sourceFileCache[file] = srcLines;
+    } else {
+        srcLines = cacheIt->second;
+    }
+
+    if (srcLines.empty()) {
+        m_output("No source lines available.\n");
+        return;
+    }
+
+    // Validate line range (1-indexed)
+    if (startLine < 1) startLine = 1;
+    if (endLine < startLine) endLine = startLine;
+    if (endLine > (int)srcLines.size()) endLine = srcLines.size();
+
+    m_output(file + " (" + std::to_string(startLine) + "-" + std::to_string(endLine) + "):\n");
+
+    for (int i = startLine - 1; i < endLine && i < (int)srcLines.size(); i++) {
+        std::ostringstream line;
+        line << std::right << std::setw(4) << (i + 1) << "  " << srcLines[i] << "\n";
+        m_output(line.str());
+    }
+}
+
+void CliInterpreter::showCurrentSource() {
+    if (!m_ctx.cpu || !m_ctx.dbg) {
+        m_output("No machine created.\n");
+        return;
+    }
+
+    uint32_t pc = m_ctx.cpu->pc();
+    // Source location support requires integrating source map with DebugContext
+    // For now, provide placeholder
+    m_output("Source-level debugging not yet integrated.\n");
+    m_output("Current PC: $" + toHex(pc, addrWidth()) + "\n");
+}

@@ -45,6 +45,8 @@ private:
     void showLocals();
     void showFrameLayout();
     void printVariable(const std::string& varName);
+    void showSourceLines(const std::string& file, int startLine, int endLine);
+    void showCurrentSource();
     [[nodiscard]] int addrWidth() const;
 
     CliContext& m_ctx;
@@ -55,4 +57,5 @@ private:
     std::vector<uint8_t> m_lastSearchPattern;
     uint32_t m_lastSearchFoundAddr = 0xFFFFFFFF;
     std::string m_traceFilter = "all"; // all, calls, io
+    std::map<std::string, std::vector<std::string>> m_sourceFileCache;  // filename -> lines
 };
