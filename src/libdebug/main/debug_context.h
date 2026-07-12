@@ -7,6 +7,7 @@
 #include "memory_heatmap.h"
 #include "libtoolchain/main/symbol_table.h"
 #include "libtoolchain/main/variable_symbol.h"
+#include "libtoolchain/main/source_map.h"
 #include <vector>
 #include <memory>
 
@@ -33,6 +34,7 @@ public:
     StackTrace&     stackTrace()  { return m_stackTrace; }
     SymbolTable&    symbols()     { return m_symbols; }
     VariableSymbolTable& variables() { return m_variables; }
+    SourceMap&      sourceMap()   { return m_sourceMap; }
     MemoryHeatMap&  heatmap()     { return m_heatmap; }
 
     int  saveSnapshot(const std::string& label);
@@ -81,6 +83,7 @@ private:
     StackTrace     m_stackTrace;
     SymbolTable    m_symbols;
     VariableSymbolTable m_variables;
+    SourceMap      m_sourceMap;
     MemoryHeatMap  m_heatmap;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;

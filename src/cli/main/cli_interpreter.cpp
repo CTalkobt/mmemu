@@ -521,6 +521,30 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Usage: print <variable_name>\n");
         }
+    } else if (cmd == "list") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string args;
+        if (std::getline(ss, args)) {
+            // Parse optional line range: "10-20" or "10" or empty
+            if (!args.empty()) {
+                size_t dashPos = args.find('-');
+                if (dashPos != std::string::npos) {
+                    int start = std::stoi(args.substr(0, dashPos));
+                    int end = std::stoi(args.substr(dashPos + 1));
+                    // Would need source filename - placeholder for now
+                    m_output("Source listing (lines " + std::to_string(start) + "-"
+                            + std::to_string(end) + ") requires source map integration.\n");
+                } else {
+                    int line = std::stoi(args);
+                    int start = std::max(1, line - 3);
+                    int end = line + 3;
+                    m_output("Source listing around line " + std::to_string(line)
+                            + " requires source map integration.\n");
+                }
+            }
+        } else {
+            showCurrentSource();
+        }
     } else if (cmd == "stack") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         int n = 8;
@@ -2130,9 +2154,16 @@ void CliInterpreter::printDebuggingGuide() {
              "  m <addr> [len]      - Dump memory around the halt\n"
              "  disasm <addr>       - Show instructions near halt\n"
              "  stack               - Show call stack trace\n"
+             "  list [lines]        - Show source code (requires .loc directives)\n"
              "  info locals         - Show local variables with values\n"
              "  info frame          - Show frame layout with variable addresses\n"
              "  print <varname>     - Display typed value of a specific variable\n"
+             "\n=== Source-Level Debugging (requires .loc directives) ===\n"
+             "  list                - Show source code around current PC\n"
+             "  list 10-20          - Show source lines 10-20\n"
+             "  break at line N     - Set breakpoint at source line (future)\n"
+             "  next                - Step to next source line (future)\n"
+             "  Note: Source locations display as clickable links in terminals\n"
              "\n=== Tracing and Flow ===\n"
              "  trace dump [n]      - Show last N executed instructions\n"
              "  trace clear         - Clear trace buffer\n"
@@ -2366,14 +2397,28 @@ void CliInterpreter::showCurrentSource() {
     auto formatter = SourceLocationFormatterFactory::create(
         SourceLocationFormatterFactory::Context::CLI);
 
-    // Example: create a formatted location (in future, get from source map)
-    FormattedSourceLocation loc;
-    loc.file = "[source not loaded]";
-    loc.line = -1;
-    loc.address = pc;
+    // Get source location from source map
+    auto srcLoc = m_ctx.dbg->sourceMap().addrToSource(pc);
 
-    // For now, show placeholder
-    m_output("Current PC: $" + toHex(pc, addrWidth()) + "\n");
-    m_output("Source location: " + formatter->format(loc) + "\n");
-    m_output("(source map integration coming in next phase)\n");
+    // Create formatted location with address context
+    FormattedSourceLocation loc;
+    if (srcLoc.line >= 0 && !srcLoc.file.empty()) {
+        loc.file = srcLoc.file;
+        loc.line = srcLoc.line;
+        loc.address = pc;
+
+        m_output("Current PC: $" + toHex(pc, addrWidth()) + "\n");
+        m_output("Source location: " + formatter->formatWithAddress(loc) + "\n");
+
+        // Show source code context if available
+        showSourceLines(srcLoc.file, std::max(1, srcLoc.line - 2), srcLoc.line + 2);
+    } else {
+        loc.file = "[no source]";
+        loc.line = -1;
+        loc.address = pc;
+
+        m_output("Current PC: $" + toHex(pc, addrWidth()) + "\n");
+        m_output("Source location: " + formatter->format(loc) + "\n");
+        m_output("(load .loc directives from assembly or .debug_info file to enable source display)\n");
+    }
 }
