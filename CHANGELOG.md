@@ -7,7 +7,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
-### Debugger Enhancements - Issues #93-99
+### Debugger Enhancements - Issues #93-100
 - **Issue #93 - Stack Trace Viewer**: Display call stack with return addresses, function names from symbols, and stack frame boundaries. CLI `stack` command shows function context.
 - **Issue #94 - Variable Symbol Table**: Foundation for symbol-aware debugging. VariableSymbolTable maps variable names to memory locations, supports function-scoped and global variables with type information.
 - **Issue #95 - Source Location Hyperlinking**: Clickable source links in disassembly and breakpoint output, integrated across CLI/GUI/MCP. Resolves .c/.s files from symbol search paths.
@@ -16,6 +16,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #98 - Debug Metadata Format** (#98): Standardized metadata format emitted by cc45 compiler as assembly comments. DebugMetadataParser/Registry classes enable symbol-aware debugging without external debug files. Format: `; .debug_var: function var_name offset=N size=N type=TYPE scope=SCOPE [src_line=N] [src_file=FILE] [name=DISPLAY_NAME]`. Integrated with VariableSymbolTable.
   - **Issue #98 Follow-up - Debug Metadata Tools**: CLI `load-debug-metadata` and `vars` commands, MCP `load_debug_metadata` and `list_variables` tools, GUI VariablePane widget. Complete end-to-end variable inspection across all frontends (CLI/GUI/MCP).
 - **Issue #99 - Execution History and Reverse Debugging**: User-facing tools for execution history inspection built on existing TraceBuffer infrastructure. CLI `log` command with filtering options (`log show`, `log show -memory`, `log show -calls`), MCP tools for remote access (`get_execution_history`, `get_memory_access_history`). Enables debugging workflow: hit breakpoint → examine what led to it → step backwards → inspect state.
+- **Issue #100 - GDB Protocol IDE Integration** (#100): Enhanced GDB Remote Serial Protocol server with mmemu-specific metadata exchange. New query commands: `qMmemuSymbols` (symbol table), `qMmemuVariables` (variable info), `qMmemuFrame` (frame info). Responses are hex-encoded JSON for compatibility. Enables IDE integration with VS Code, CLion, and other GDB-compatible debuggers. Full documentation for VS Code setup and debugging workflow.
 
 ### MEGA65 Integration & Contention Model
 - **Dual SID (SidPair) wired to MEGA65 machine** (#6): SidPair was included but never created or registered. Now created with PAL clock ($D400/$D420) and registered in IORegistry.

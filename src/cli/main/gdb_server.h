@@ -63,6 +63,11 @@ private:
     std::string handleInsertBreakpoint(const std::string& params);
     std::string handleRemoveBreakpoint(const std::string& params);
 
+    // Metadata handlers (Issue #100)
+    std::string handleQuerySymbols(const std::string& params);
+    std::string handleQueryVariables(const std::string& params);
+    std::string handleQueryFrameInfo();
+
     // Helpers
     static std::string toHexByte(uint8_t v);
     static std::string toHex16LE(uint16_t v);

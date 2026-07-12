@@ -3,6 +3,7 @@
 #include "libmem/main/ibus.h"
 #include "libdebug/main/debug_context.h"
 #include "libdebug/main/breakpoint_list.h"
+#include "libtoolchain/main/variable_symbol.h"
 
 #include <iostream>
 #include <sstream>
@@ -127,7 +128,8 @@ void GdbServer::sendError(int fd, int code) {
 
 std::string GdbServer::handleQuery(const std::string& pkt) {
     if (pkt.find("qSupported") == 0) {
-        return "PacketSize=4096;swbreak+;hwbreak-";
+        // Advertise mmemu-specific extensions for metadata
+        return "PacketSize=4096;swbreak+;hwbreak-;mmemu-symbols+;mmemu-variables+;mmemu-frame+";
     }
     if (pkt == "qAttached") {
         return "1"; // Attached to existing process
@@ -140,6 +142,16 @@ std::string GdbServer::handleQuery(const std::string& pkt) {
     }
     if (pkt.find("qsThreadInfo") == 0) {
         return "l"; // End of list
+    }
+    // mmemu-specific metadata queries (Issue #100)
+    if (pkt.find("qMmemuSymbols:") == 0) {
+        return handleQuerySymbols(pkt.substr(14)); // Skip "qMmemuSymbols:"
+    }
+    if (pkt.find("qMmemuVariables:") == 0) {
+        return handleQueryVariables(pkt.substr(16)); // Skip "qMmemuVariables:"
+    }
+    if (pkt == "qMmemuFrame") {
+        return handleQueryFrameInfo();
     }
     return ""; // Empty = unsupported
 }
@@ -410,4 +422,98 @@ void GdbServer::handleClient(int fd) {
 
         sendPacket(fd, reply);
     }
+}
+
+// mmemu-specific metadata handlers (Issue #100 - IDE integration)
+
+std::string GdbServer::handleQuerySymbols(const std::string& params) {
+    if (!m_dbg) return "";
+
+    // Return symbol table as hex-encoded JSON
+    // Format: qMmemuSymbols:search_pattern
+    // Response: JSON with symbols array
+    // Example response: {"symbols":[{"name":"main","addr":"0x2000"},{"name":"loop","addr":"0x2010"}]}
+
+    std::string response = "{\"symbols\":[";
+    const auto& symTable = m_dbg->symbols().symbols();
+    bool first = true;
+    for (const auto& [addr, label] : symTable) {
+        if (!first) response += ",";
+        response += "{\"name\":\"" + label + "\",\"addr\":\"0x";
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%04x", addr);
+        response += buf;
+        response += "\"}";
+        first = false;
+    }
+    response += "]}";
+
+    // Hex-encode the response
+    std::string encoded;
+    for (char c : response) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", (unsigned char)c);
+        encoded += hex;
+    }
+    return encoded;
+}
+
+std::string GdbServer::handleQueryVariables(const std::string& params) {
+    if (!m_dbg) return "";
+
+    // Return variable information as hex-encoded JSON
+    // Format: qMmemuVariables:function_name
+    // Response: JSON with variables array
+    // Example: {"variables":[{"name":"x","addr":"0x10","size":2,"type":"int16"}]}
+
+    std::string response = "{\"variables\":[";
+    auto vars = m_dbg->variables().getVariablesInFunction(params);
+    bool first = true;
+    for (const auto* var : vars) {
+        if (!first) response += ",";
+        response += "{\"name\":\"" + var->displayName + "\",\"addr\":\"0x";
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%04x", var->address);
+        response += buf;
+        response += "\",\"size\":" + std::to_string(var->size) + ",\"type\":\"" + formatVariableType(var->type) + "\"}";
+        first = false;
+    }
+    response += "]}";
+
+    // Hex-encode the response
+    std::string encoded;
+    for (char c : response) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", (unsigned char)c);
+        encoded += hex;
+    }
+    return encoded;
+}
+
+std::string GdbServer::handleQueryFrameInfo() {
+    if (!m_dbg || !m_dbg->cpu()) return "";
+
+    // Return frame information as hex-encoded JSON
+    // Response: {"pc":"0x2000","sp":"0xff","frameSize":256}
+
+    uint32_t pc = m_dbg->cpu()->pc();
+    uint32_t sp = m_dbg->cpu()->regRead(3); // SP is usually register 3
+
+    std::string response = "{\"pc\":\"0x";
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%04x", pc);
+    response += buf;
+    response += "\",\"sp\":\"0x";
+    snprintf(buf, sizeof(buf), "%02x", (unsigned int)sp);
+    response += buf;
+    response += "\",\"frameSize\":256}";
+
+    // Hex-encode the response
+    std::string encoded;
+    for (char c : response) {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02x", (unsigned char)c);
+        encoded += hex;
+    }
+    return encoded;
 }
