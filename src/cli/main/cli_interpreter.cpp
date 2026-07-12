@@ -2168,6 +2168,105 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_output(out.str());
             }
         }
+    } else if (cmd == "log") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string sub;
+        if (ss >> sub) {
+            if (sub == "show") {
+                auto& buf = m_ctx.dbg->trace();
+                if (buf.size() == 0) { m_output("Trace buffer empty.\n"); return; }
+
+                int count = 20;
+                std::string opt;
+                if (ss >> opt) {
+                    if (opt == "-memory") {
+                        std::string memAddr;
+                        if (ss >> memAddr) {
+                            uint32_t addr = 0;
+                            if (!parseAddr(memAddr, addr)) {
+                                m_output("Error: Invalid address '" + memAddr + "'\n");
+                                return;
+                            }
+                            // Show memory access pattern to this address
+                            std::stringstream out;
+                            out << "Memory access pattern for $" << std::hex << std::uppercase
+                                << std::setfill('0') << std::setw(addrWidth()) << addr << ":\n";
+                            int cycle = 0;
+                            for (size_t i = 0; i < buf.size(); ++i) {
+                                const auto& e = buf.at(i);
+                                for (const auto& mw : e.memWrites) {
+                                    if (mw.addr == addr) {
+                                        out << "  Cycle " << cycle << ": Updated from $"
+                                            << std::hex << std::uppercase << std::setfill('0')
+                                            << std::setw(2) << (int)mw.before << " (at $"
+                                            << std::setw(addrWidth()) << e.addr << " " << e.mnemonic << ")\n";
+                                    }
+                                }
+                                cycle++;
+                            }
+                            m_output(out.str());
+                        } else {
+                            m_output("Usage: log show -memory <address>\n");
+                        }
+                    } else if (opt == "-calls") {
+                        // Show only JSR/RTS instructions
+                        std::stringstream out;
+                        out << "Function call stack (last 20 calls):\n";
+                        int callCount = 0;
+                        for (size_t i = buf.size(); i > 0 && callCount < 20; --i) {
+                            const auto& e = buf.at(i - 1);
+                            if (e.mnemonic.find("JSR") != std::string::npos) {
+                                out << "  CALL from $" << std::hex << std::uppercase << std::setfill('0')
+                                    << std::setw(addrWidth()) << e.addr << " to ???\n";
+                                callCount++;
+                            } else if (e.mnemonic.find("RTS") != std::string::npos) {
+                                out << "  RETURN from $" << std::hex << std::uppercase << std::setfill('0')
+                                    << std::setw(addrWidth()) << e.addr << "\n";
+                                callCount++;
+                            }
+                        }
+                        m_output(out.str());
+                    } else if (opt == "-last") {
+                        // log show -last N
+                        try { count = std::stoi(opt.substr(5)); } catch (...) {}
+                        // Show last N instructions
+                        std::stringstream out;
+                        out << "Last " << count << " instructions executed:\n";
+                        int shown = 0;
+                        for (size_t i = buf.size(); i > 0 && shown < count; --i) {
+                            const auto& e = buf.at(i - 1);
+                            out << "  $" << std::hex << std::uppercase << std::setfill('0')
+                                << std::setw(addrWidth()) << e.addr << ": " << e.mnemonic << "\n";
+                            shown++;
+                        }
+                        m_output(out.str());
+                    }
+                } else {
+                    // Default: show last 20 instructions
+                    std::stringstream out;
+                    out << "Last 20 instructions executed:\n";
+                    int shown = 0;
+                    for (size_t i = buf.size(); i > 0 && shown < 20; --i) {
+                        const auto& e = buf.at(i - 1);
+                        out << "  $" << std::hex << std::uppercase << std::setfill('0')
+                            << std::setw(addrWidth()) << e.addr << ": " << e.mnemonic << "\n";
+                        shown++;
+                    }
+                    m_output(out.str());
+                }
+            } else if (sub == "clear") {
+                m_ctx.dbg->trace().clear();
+                m_output("Execution log cleared.\n");
+            } else {
+                m_output("Usage: log show [options] | log clear\n");
+                m_output("  log show              - Show last 20 instructions\n");
+                m_output("  log show -last N      - Show last N instructions\n");
+                m_output("  log show -memory ADDR - Show memory access pattern\n");
+                m_output("  log show -calls       - Show function call stack\n");
+            }
+        } else {
+            m_output("Usage: log show [options] | log clear\n");
+        }
     } else if (cmd == "quit" || cmd == "q") {
         m_ctx.quit = true;
     } else {
@@ -2363,6 +2462,14 @@ void CliInterpreter::printDebuggingGuide() {
              "  break at line N     - Set breakpoint at source line (future)\n"
              "  next                - Step to next source line (future)\n"
              "  Note: Source locations display as clickable links in terminals\n"
+             "\n=== Execution History & Reverse Debugging ===\n"
+             "  log show              - Show last 20 executed instructions\n"
+             "  log show -last N       - Show last N instructions\n"
+             "  log show -memory ADDR  - Show memory access pattern to address\n"
+             "  log show -calls        - Show function call/return stack\n"
+             "  log clear             - Clear execution history\n"
+             "  backstep              - Step backward one instruction\n"
+             "  backstep N            - Step backward N instructions\n"
              "\n=== Tracing and Flow ===\n"
              "  trace dump [n]      - Show last N executed instructions\n"
              "  trace clear         - Clear trace buffer\n"

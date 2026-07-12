@@ -1416,6 +1416,41 @@ Json handleDescribe() {
         addTool("list_variables", "List variables for a specific function or all global variables", schema);
     }
 
+    // Execution History Tools (Issue #99)
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        Json countProp(Json::OBJ);
+        countProp.oVal["type"] = Json("integer");
+        countProp.oVal["description"] = Json("Number of instructions to retrieve (default: 20)");
+        countProp.oVal["default"] = Json(20);
+        props.oVal["count"] = countProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("get_execution_history", "Get the last N executed instructions from trace buffer", schema);
+    }
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        Json addrProp(Json::OBJ);
+        addrProp.oVal["type"] = Json("string");
+        addrProp.oVal["description"] = Json("Memory address to track (e.g., '$FD' or 'symbol_name')");
+        props.oVal["address"] = addrProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("address"));
+        schema.oVal["required"] = req;
+        addTool("get_memory_access_history", "Get all memory accesses (reads/writes) to a specific address", schema);
+    }
+
     std::vector<std::string> pluginTools;
     PluginToolRegistry::instance().listTools(pluginTools);
     for (const auto& name : pluginTools) {
@@ -4756,6 +4791,83 @@ Json handleToolsCall(const Json& params) {
                 }
             }
             textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "get_execution_history") {
+        std::string mid = args["machine_id"].sVal;
+        int count = args.contains("count") ? (int)args["count"].nVal : 20;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            auto& buf = ms->dbg->trace();
+            if (buf.size() == 0) {
+                textItem.oVal["text"] = Json("(trace buffer empty)");
+            } else {
+                std::stringstream ss;
+                ss << "Last " << count << " executed instructions:\n";
+                int shown = 0;
+                for (size_t i = buf.size(); i > 0 && shown < count; --i) {
+                    const auto& e = buf.at(i - 1);
+                    ss << "$" << std::hex << std::uppercase << std::setfill('0')
+                       << std::setw(4) << e.addr << ": " << e.mnemonic;
+                    if (!e.regs.empty()) {
+                        ss << " [";
+                        bool first = true;
+                        for (auto& [rn, rv] : e.regs) {
+                            if (!first) ss << " ";
+                            ss << rn << "=$" << std::setw(2) << std::setfill('0') << (int)rv;
+                            first = false;
+                        }
+                        ss << "]";
+                    }
+                    ss << "\n";
+                    shown++;
+                }
+                textItem.oVal["text"] = Json(ss.str());
+            }
+        }
+
+    } else if (name == "get_memory_access_history") {
+        std::string mid = args["machine_id"].sVal;
+        std::string addrStr = args["address"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            uint32_t addr = 0;
+            if (!resolveAddr(addrStr, ms->dbg, addr)) {
+                textItem.oVal["text"] = Json("Error: Invalid address expression");
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                auto& buf = ms->dbg->trace();
+                if (buf.size() == 0) {
+                    textItem.oVal["text"] = Json("(trace buffer empty)");
+                } else {
+                    std::stringstream ss;
+                    ss << "Memory access history for $" << std::hex << std::uppercase
+                       << std::setfill('0') << std::setw(4) << addr << ":\n";
+                    int accessCount = 0;
+                    for (size_t i = 0; i < buf.size(); ++i) {
+                        const auto& e = buf.at(i);
+                        for (const auto& mw : e.memWrites) {
+                            if (mw.addr == addr) {
+                                ss << "  Cycle " << i << ": Updated from $"
+                                   << std::hex << std::uppercase << std::setfill('0')
+                                   << std::setw(2) << (int)mw.before
+                                   << " (from $" << std::setw(4) << e.addr << " " << e.mnemonic << ")\n";
+                                accessCount++;
+                            }
+                        }
+                    }
+                    if (accessCount == 0) {
+                        ss << "  (no accesses recorded)\n";
+                    }
+                    textItem.oVal["text"] = Json(ss.str());
+                }
+            }
         }
 
     } else {
