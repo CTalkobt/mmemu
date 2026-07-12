@@ -14,6 +14,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #96 - Frame Inspection**: Analyze stack frame layout with `frame` CLI command. Shows variables in memory order with gap detection, uninitialized value tracking, and struct-like visualization. Supports both table and pseudo-C layout formats.
 - **Issue #97 - Enhanced Breakpoints** (#97): Conditional breakpoints with expression evaluator (e.g., `break when x == 0x01`), hit count limits (`break $2050 count 5`), and memory value watches (`watch value $2000 4`). Breakpoint display shows conditions, hit counts, and memory watch sizes.
 - **Issue #98 - Debug Metadata Format** (#98): Standardized metadata format emitted by cc45 compiler as assembly comments. DebugMetadataParser/Registry classes enable symbol-aware debugging without external debug files. Format: `; .debug_var: function var_name offset=N size=N type=TYPE scope=SCOPE [src_line=N] [src_file=FILE] [name=DISPLAY_NAME]`. Integrated with VariableSymbolTable.
+  - **Issue #98 Follow-up - Debug Metadata Tools**: CLI `load-debug-metadata` and `vars` commands, MCP `load_debug_metadata` and `list_variables` tools, GUI VariablePane widget. Complete end-to-end variable inspection across all frontends (CLI/GUI/MCP).
 
 ### MEGA65 Integration & Contention Model
 - **Dual SID (SidPair) wired to MEGA65 machine** (#6): SidPair was included but never created or registered. Now created with PAL clock ($D400/$D420) and registered in IORegistry.
