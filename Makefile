@@ -60,11 +60,12 @@ LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_re
                     src/libdevices/main/ivideo_output.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
                     src/libdevices/main/ieee488.cpp
-LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main/source_map.cpp \
-	src/libtoolchain/main/toolchain_registry.cpp src/libtoolchain/main/libtoolchain.cpp
+LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main/variable_symbol.cpp \
+	src/libtoolchain/main/source_map.cpp src/libtoolchain/main/toolchain_registry.cpp \
+	src/libtoolchain/main/libtoolchain.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
-	src/libdebug/main/expression_evaluator.cpp \
+	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp

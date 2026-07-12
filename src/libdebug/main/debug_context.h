@@ -6,6 +6,7 @@
 #include "stack_trace.h"
 #include "memory_heatmap.h"
 #include "libtoolchain/main/symbol_table.h"
+#include "libtoolchain/main/variable_symbol.h"
 #include <vector>
 #include <memory>
 
@@ -31,6 +32,7 @@ public:
     TraceBuffer&    trace()       { return m_trace; }
     StackTrace&     stackTrace()  { return m_stackTrace; }
     SymbolTable&    symbols()     { return m_symbols; }
+    VariableSymbolTable& variables() { return m_variables; }
     MemoryHeatMap&  heatmap()     { return m_heatmap; }
 
     int  saveSnapshot(const std::string& label);
@@ -78,6 +80,7 @@ private:
     TraceBuffer    m_trace;
     StackTrace     m_stackTrace;
     SymbolTable    m_symbols;
+    VariableSymbolTable m_variables;
     MemoryHeatMap  m_heatmap;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;

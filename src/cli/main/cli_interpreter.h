@@ -42,6 +42,9 @@ private:
     void dumpMemory(uint32_t addr, uint32_t len);
     void saveMemory(const std::string& path, uint32_t addr, uint32_t len);
     void showRegisters();
+    void showLocals();
+    void showFrameLayout();
+    void printVariable(const std::string& varName);
     [[nodiscard]] int addrWidth() const;
 
     CliContext& m_ctx;

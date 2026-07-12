@@ -15,6 +15,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdevices/main/io_registry.h"
 #include "plugin_command_registry.h"
 #include "libdebug/main/expression_evaluator.h"
+#include "libdebug/main/debug_helpers.h"
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
@@ -420,6 +421,12 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     m_output(row.str() + "\n");
                 }
             }
+        } else if (sub == "locals") {
+            showLocals();
+        } else if (sub == "frame") {
+            showFrameLayout();
+        } else {
+            m_output("Usage: info <breaks|locals|frame>\n");
         }
     } else if (cmd == "break") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -504,6 +511,14 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         } else {
             m_output("Syntax: watch <read|write> [phys] <address>\n");
+        }
+    } else if (cmd == "print") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string varName;
+        if (ss >> varName) {
+            printVariable(varName);
+        } else {
+            m_output("Usage: print <variable_name>\n");
         }
     } else if (cmd == "stack") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -2114,6 +2129,9 @@ void CliInterpreter::printDebuggingGuide() {
              "  m <addr> [len]      - Dump memory around the halt\n"
              "  disasm <addr>       - Show instructions near halt\n"
              "  stack               - Show call stack trace\n"
+             "  info locals         - Show local variables with values\n"
+             "  info frame          - Show frame layout with variable addresses\n"
+             "  print <varname>     - Display typed value of a specific variable\n"
              "\n=== Tracing and Flow ===\n"
              "  trace dump [n]      - Show last N executed instructions\n"
              "  trace clear         - Clear trace buffer\n"
@@ -2206,4 +2224,88 @@ void CliInterpreter::saveMemory(const std::string& path, uint32_t addr, uint32_t
     }
     fclose(f);
     m_output("Saved " + std::to_string(len) + " bytes to " + path + "\n");
+}
+
+void CliInterpreter::showLocals() {
+    if (!m_ctx.dbg || !m_ctx.cpu || !m_ctx.bus) {
+        m_output("No machine created.\n");
+        return;
+    }
+
+    auto info = DebugHelpers::getLocalVariablesInfo(m_ctx.dbg, m_ctx.bus);
+    if (!info.hasVariables) {
+        m_output("No variables defined.\n");
+        return;
+    }
+
+    m_output("Local Variables:\n");
+    for (const auto& var : info.variables) {
+        std::string valueStr = DebugHelpers::formatVariableValue(var);
+
+        std::ostringstream line;
+        line << "  " << std::left << std::setw(20) << var.displayName;
+        line << " (" << std::left << std::setw(10) << var.type << ") @ ";
+        line << "$" << std::hex << std::uppercase << std::setfill('0')
+             << std::setw(addrWidth()) << var.address;
+        line << " = " << valueStr;
+
+        m_output(line.str() + "\n");
+    }
+}
+
+void CliInterpreter::showFrameLayout() {
+    if (!m_ctx.dbg || !m_ctx.bus) {
+        m_output("No machine created.\n");
+        return;
+    }
+
+    auto info = DebugHelpers::getFrameLayoutInfo(m_ctx.dbg, m_ctx.bus);
+    if (info.variables.empty()) {
+        m_output("No frame information available.\n");
+        return;
+    }
+
+    m_output("Frame Layout:\n");
+    m_output("Address | Offset | Variable                 | Type\n");
+    m_output("--------|--------|--------------------------|----------\n");
+
+    for (const auto& var : info.variables) {
+        std::ostringstream line;
+        line << std::hex << std::uppercase << std::setfill('0');
+        line << std::setw(7) << var.address << " | ";
+        line << std::dec << std::setfill(' ');
+        line << std::setw(6) << var.size << " | ";
+        line << std::left << std::setw(24) << var.displayName << " | ";
+        line << std::left << std::setw(8) << var.type;
+
+        m_output(line.str() + "\n");
+    }
+}
+
+void CliInterpreter::printVariable(const std::string& varName) {
+    if (!m_ctx.dbg || !m_ctx.bus) {
+        m_output("No machine created.\n");
+        return;
+    }
+
+    auto var = DebugHelpers::getVariableInfo(m_ctx.dbg, m_ctx.bus, varName);
+    if (var.name.empty()) {
+        m_output("Variable '" + varName + "' not found.\n");
+        return;
+    }
+
+    std::string valueStr = DebugHelpers::formatVariableValue(var);
+
+    std::ostringstream out;
+    out << var.displayName << " (" << var.type << ")\n";
+    out << "  Address: $" << std::hex << std::uppercase << std::setfill('0')
+        << std::setw(addrWidth()) << var.address << "\n";
+    out << "  Size: " << std::dec << var.size << " bytes\n";
+    out << "  Value: " << valueStr << "\n";
+
+    if (var.sourceLine >= 0) {
+        out << "  Source line: " << var.sourceLine << "\n";
+    }
+
+    m_output(out.str());
 }
