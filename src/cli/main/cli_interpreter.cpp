@@ -2145,7 +2145,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         std::string path;
         if (ss >> path) {
-            if (m_ctx.dbg->variables().loadDebugInfo(path)) {
+            if (m_ctx.dbg->variables().loadFromDebugMetadata(path)) {
                 m_output("Debug metadata loaded from: " + path + "\n");
             } else {
                 m_output("Error: Could not load debug metadata from: " + path + "\n");

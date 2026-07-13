@@ -4741,7 +4741,7 @@ Json handleToolsCall(const Json& params) {
         if (!ms) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
-        } else if (ms->dbg->variables().loadDebugInfo(path)) {
+        } else if (ms->dbg->variables().loadFromDebugMetadata(path)) {
             textItem.oVal["text"] = Json("Debug metadata loaded from: " + path);
         } else {
             textItem.oVal["text"] = Json("Error: Could not load debug metadata from: " + path);
