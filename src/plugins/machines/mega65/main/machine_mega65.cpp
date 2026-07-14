@@ -411,6 +411,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
         return val;
     });
 
+    // Wire $D030 bit 0 (CRAM2K) query to IOStub for color RAM view switching.
+    // Bit 0 of $D030 selects whether second KB of color RAM ($DC00-$DFFF)
+    // is mapped instead of C64 I/O chip range.
+    ioStub->setCram2kQuery([vic4]() -> bool {
+        uint8_t val = 0;
+        vic4->ioRead(nullptr, 0xD030, &val);
+        return (val & 0x01) != 0;  // Bit 0 = CRAM2K enable
+    });
+
     // Hypervisor query wired after CPU creation (see below)
 
     dma->setDmaBus(physBus);
