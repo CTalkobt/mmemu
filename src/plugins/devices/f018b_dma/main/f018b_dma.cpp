@@ -19,6 +19,11 @@ F018bDmaDevice::F018bDmaDevice(uint32_t base)
       m_inheritSrcMB(0), m_inheritSrcMBset(false),
       m_inheritDstMB(0), m_inheritDstMBset(false) {
     std::memset(m_regs, 0, sizeof(m_regs));
+    m_spiralMode.enabled = false;
+    m_spiralMode.phase = 0;
+    m_spiralMode.rowWidth = 40;  // Default to 40 bytes/row (VIC-IV standard)
+    m_spiralMode.bytesInPhase = 1;
+    m_spiralMode.bytesPhaseStep = 0;
 }
 
 void F018bDmaDevice::getDeviceInfo(DeviceInfo& out) const {
@@ -131,6 +136,11 @@ void F018bDmaDevice::startDma() {
     m_inheritDstMB = 0; m_inheritDstMBset = false;
     memset(&m_srcLine, 0, sizeof(m_srcLine));
     memset(&m_dstLine, 0, sizeof(m_dstLine));
+    // Reset spiral mode
+    m_spiralMode.enabled = false;
+    m_spiralMode.phase = 0;
+    m_spiralMode.bytesInPhase = 1;
+    m_spiralMode.bytesPhaseStep = 0;
 
     // Read and begin the first job
     if (!fetchAndBeginNextJob()) {
@@ -341,6 +351,28 @@ void F018bDmaDevice::stepAddress(uint32_t& accum, uint32_t base,
 
     if (!(lm.slopeType & 0x80)) {
         // Normal addressing: fixed-point accumulator step
+        // Check for spiral mode (applies to destination only during copy)
+        if (m_spiralMode.enabled && accum == m_dstAccum) {
+            // Spiral pattern: +1 (right), +40 (down), -1 (left), -40 (up), repeat
+            static const int32_t spiralSteps[] = { 1, 40, -1, -40 };
+            int32_t spiralStep = spiralSteps[m_spiralMode.phase];
+
+            accum += spiralStep;
+
+            // Increment counter within current phase
+            m_spiralMode.bytesPhaseStep++;
+            if (m_spiralMode.bytesPhaseStep >= m_spiralMode.bytesInPhase) {
+                m_spiralMode.bytesPhaseStep = 0;
+                m_spiralMode.phase = (m_spiralMode.phase + 1) & 3;
+
+                // Increase bytesInPhase every 2 phase transitions (after up phase)
+                if (m_spiralMode.phase == 0) {
+                    m_spiralMode.bytesInPhase++;
+                }
+            }
+            return;
+        }
+
         if (dir) accum -= step;
         else     accum += step;
         return;
@@ -538,8 +570,10 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
                     break;
 
                 case 0x53:  // Spiral mode
-                    // TODO: Implement Shallan Spiral pattern drawing
-                    // Draws spirals by updating destination address in spiral pattern
+                    m_spiralMode.enabled = true;
+                    m_spiralMode.phase = 0;      // Start at right (phase 0)
+                    m_spiralMode.bytesInPhase = 1;  // Start with 1 byte per phase
+                    m_spiralMode.bytesPhaseStep = 0;  // Reset step counter
                     break;
 
                 default:   break;

@@ -164,6 +164,17 @@ private:
     };
     LineMode m_srcLine, m_dstLine;
 
+    // Spiral Mode — draws Shallan Spiral pattern
+    // Spirals outward: right, down, left, up with increasing counts
+    struct SpiralMode {
+        bool     enabled;          // Spiral mode active (option 0x53)
+        uint8_t  phase;            // Current spiral phase: 0=right(+1), 1=down(+40), 2=left(-1), 3=up(-40)
+        uint16_t rowWidth;         // Width of one row in bytes (typically 40 for VIC-IV)
+        uint16_t bytesInPhase;     // Bytes to move in current phase before transition
+        uint16_t bytesPhaseStep;   // Bytes in current phase (for phase counter)
+    };
+    SpiralMode m_spiralMode;
+
     void stepAddress(uint32_t& accum, uint32_t base, uint16_t step,
                      bool hold, bool dir, LineMode& lm);
 
