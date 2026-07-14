@@ -34,8 +34,7 @@
         { "type": "hyper_serial",    "name": "HyperSerial", "baseAddr": "0xD6C0" },
         { "type": "exit_trap",       "name": "ExitTrap", "baseAddr": "0xD6CF" },
         { "type": "f018b_dma",       "name": "DMA",      "baseAddr": "0xD700" },
-        { "type": "mega65_math",     "name": "MathUnit", "baseAddr": "0xD700" },
-        { "type": "mega65_rtc",      "name": "RTC",      "baseAddr": "0xD6E0" }
+        { "type": "mega65_math",     "name": "MathUnit", "baseAddr": "0xD700" }
       ],
       "roms": [],
       "signals": [
