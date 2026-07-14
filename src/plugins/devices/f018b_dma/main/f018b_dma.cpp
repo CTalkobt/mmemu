@@ -523,6 +523,25 @@ void F018bDmaDevice::parseJobOptions(uint32_t& addr, DmaJob& job) {
                 case 0x07: m_transparency &= 0xFF; break;    // enable transparency
                 case 0x0A: job.useF018A = true; break;    // Use F018A revision
                 case 0x0B: job.useF018A = false; break;   // Use F018B revision
+
+                // Unimplemented modes (recognized but not yet functional)
+                case 0x0D:  // Floppy mode LSB
+                case 0x0E:  // Floppy mode MSB
+                case 0x0F:  // Floppy mode high
+                    // TODO: Implement floppy disk controller mode
+                    // Transfers raw flux data to/from floppy drive
+                    break;
+
+                case 0x10:  // SID mode
+                    // TODO: Implement SID sample playback mode
+                    // Allows direct SID register access for sample playback
+                    break;
+
+                case 0x53:  // Spiral mode
+                    // TODO: Implement Shallan Spiral pattern drawing
+                    // Draws spirals by updating destination address in spiral pattern
+                    break;
+
                 default:   break;
             }
         }
