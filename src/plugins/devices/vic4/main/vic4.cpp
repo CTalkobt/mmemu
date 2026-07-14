@@ -605,6 +605,11 @@ void VIC4::renderBitplanes16(uint32_t* buf) {
     int bpyOff = m_regs[0x3D];
     uint8_t bp16ens = m_extRegs[0x31]; // $D071
 
+    // Hardware-accurate bitplane bank selection from $D07C bits 0-2
+    // Selects which 128KB bank (0-7) bitplanes are fetched from
+    uint8_t bpBankSel = m_extRegs[0x34] & 0x07;  // $D07C bits 0-2
+    uint32_t bpBankBase = (uint32_t)bpBankSel * 0x20000;  // 128KB per bank
+
     bool h640 = (m_regs[REG_D031] & D031_H640) != 0;
     int pixScale = h640 ? 1 : 2;
     int pixelsPerLine = h640 ? 640 : 320;
@@ -613,8 +618,8 @@ void VIC4::renderBitplanes16(uint32_t* buf) {
     uint32_t bpAddrEven[8], bpAddrOdd[8];
     for (int i = 0; i < 8; ++i) {
         uint8_t reg = m_regs[0x33 + i];
-        bpAddrEven[i] = (uint32_t)(reg & 0x0F) << 13;
-        bpAddrOdd[i]  = (uint32_t)((reg >> 4) & 0x0F) << 13;
+        bpAddrEven[i] = bpBankBase + ((uint32_t)(reg & 0x0F) << 13);
+        bpAddrOdd[i]  = bpBankBase + ((uint32_t)((reg >> 4) & 0x0F) << 13);
     }
 
     int bytesPerRow = pixelsPerLine / 8;
