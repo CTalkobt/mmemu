@@ -61,15 +61,15 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
     m_hyperState.pflags = m_state.p;
     m_hyperState.pc     = m_state.pc;
 
-    // Save MAP state
+    // Save MAP state (all 8 blocks)
     if (m_mapMmu) {
         MapState ms = m_mapMmu->getMapState();
-        m_hyperState.mapLo0  = (ms.offsets[0] >> 0) & 0xFF;
-        m_hyperState.mapLo1  = (ms.offsets[0] >> 8) & 0xFF;
-        m_hyperState.mapHi0  = (ms.offsets[4] >> 0) & 0xFF;
-        m_hyperState.mapHi1  = (ms.offsets[4] >> 8) & 0xFF;
-        m_hyperState.mapLoMB = ms.enables & 0x0F;
-        m_hyperState.mapHiMB = (ms.enables >> 4) & 0x0F;
+        for (int i = 0; i < 8; i++) {
+            m_hyperState.mapOffsets[i][0] = (ms.offsets[i] >> 0) & 0xFF;
+            m_hyperState.mapOffsets[i][1] = (ms.offsets[i] >> 8) & 0xFF;
+            m_hyperState.mapOffsets[i][2] = (ms.offsets[i] >> 16) & 0xFF;
+        }
+        m_hyperState.mapEnables = ms.enables;
         m_hyperState.megabyteLow  = ms.megabyteLow;
         m_hyperState.megabyteHigh = ms.megabyteHigh;
     }
@@ -103,13 +103,16 @@ void MOS45GS02::exitHypervisor() {
     m_state.p  = m_hyperState.pflags;
     m_state.pc = m_hyperState.pc;
 
-    // Restore MAP state
+    // Restore MAP state (all 8 blocks)
     if (m_mapMmu) {
         MapState ms;
         memset(&ms, 0, sizeof(ms));
-        ms.offsets[0] = m_hyperState.mapLo0 | ((uint16_t)m_hyperState.mapLo1 << 8);
-        ms.offsets[4] = m_hyperState.mapHi0 | ((uint16_t)m_hyperState.mapHi1 << 8);
-        ms.enables    = m_hyperState.mapLoMB | (m_hyperState.mapHiMB << 4);
+        for (int i = 0; i < 8; i++) {
+            ms.offsets[i] = (uint32_t)m_hyperState.mapOffsets[i][0]
+                          | ((uint32_t)m_hyperState.mapOffsets[i][1] << 8)
+                          | ((uint32_t)m_hyperState.mapOffsets[i][2] << 16);
+        }
+        ms.enables      = m_hyperState.mapEnables;
         ms.megabyteLow  = m_hyperState.megabyteLow;
         ms.megabyteHigh = m_hyperState.megabyteHigh;
         m_mapMmu->setMapState(ms);
