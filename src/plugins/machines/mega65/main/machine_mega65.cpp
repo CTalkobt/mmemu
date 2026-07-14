@@ -17,7 +17,7 @@
 #include "plugins/devices/mega65_hypervisor/main/hypervisor_regs.h"
 #include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
-#include "plugins/devices/mega65_rtc/main/mega65_rtc.h"
+// #include "plugins/devices/mega65_rtc/main/mega65_rtc.h"  // DISABLED (issue #109)
 #include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
 #include "plugins/devices/sid_pair/main/sid_pair.h"
@@ -385,7 +385,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
     auto* sdcard   = new SdCardDevice(0xD680);
-    auto* rtc      = new Mega65Rtc(0xD700);  // RTC device (claims $D710-$D77F, rejects $D700-$D70F for F018B)
+    // NOTE: RTC/NVRAM accessed via I2C on real hardware, not direct memory mapping.
+    // Fake RTC at $D710-$D77F was incorrectly colliding with CPU speed control ($D710)
+    // and Audio DMA registers ($D711-$D73F). Disabled to fix issue #109.
+    // auto* rtc      = new Mega65Rtc(0xD700);  // DISABLED
     auto* ioStub   = new Mega65IoStub();
     auto* kbd      = new KbdMega65();
     auto* cia1     = new CIA6526("CIA1", 0xDC00);
@@ -455,8 +458,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(cia2);
     io->registerHandler(exitTrap);
     io->registerHandler(sdcard);
-    rtc->setPhysBus(physBus);
-    io->registerHandler(rtc);
+    // rtc registration disabled (issue #109: RTC accessed via I2C on real hardware)
     io->registerHandler(ioStub);  // Catch-all for $D600-$D6FF and colour RAM $D800-$DBFF
     io->registerHandler(kbd); // For discovery via IKeyboardMatrix interface
     dma->setIoRegistry(io);  // DMA needs I/O dispatch for bank byte bit 7
@@ -538,7 +540,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([math]() { delete math; });
     desc->deleters.push_back([serial]() { delete serial; });
     desc->deleters.push_back([exitTrap]() { delete exitTrap; });
-    desc->deleters.push_back([rtc]() { delete rtc; });
+    // rtc deleter removed (issue #109: RTC device disabled)
     desc->deleters.push_back([kbd]() { delete kbd; });
     desc->deleters.push_back([vic4]() { delete vic4; });
     desc->deleters.push_back([sidPair]() { delete sidPair; });
