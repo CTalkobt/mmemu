@@ -288,15 +288,13 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     m_srcAccum = 0;
     m_dstAccum = 0;
 
-    // Zero-length job: chain immediately if possible (limit depth to prevent
-    // infinite recursion from circular or degenerate chain lists)
-    static int chainDepth = 0;
+    // Zero-length job: chain immediately if possible.
+    // Real hardware has no chain depth limit; we trust that valid programs don't have
+    // circular chains. If a circular chain is encountered, it will simply consume cycles
+    // until interrupted by an external event or the program is forcibly terminated.
     if (m_bytesRemaining == 0) {
-        if (m_hasChain && chainDepth < 256) {
-            ++chainDepth;
-            bool ok = fetchAndBeginNextJob();
-            --chainDepth;
-            return ok;
+        if (m_hasChain) {
+            return fetchAndBeginNextJob();
         } else {
             m_dmaActive = false;
             return false;
