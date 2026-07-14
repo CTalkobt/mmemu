@@ -37,7 +37,7 @@ bool HypervisorRegs::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     switch (off) {
         case 0x00: *val = h.regA;   break; // $D640
         case 0x01: *val = h.regX;   break; // $D641
-        case 0x02: *val = 0;        break; // $D642 (REGY — not saved separately)
+        case 0x02: *val = h.regY;   break; // $D642
         case 0x03: *val = h.regZ;   break; // $D643
         case 0x04: *val = h.regB;   break; // $D644
         case 0x05: *val = h.spl;    break; // $D645
@@ -54,6 +54,12 @@ bool HypervisorRegs::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case 0x10: *val = h.port00;  break; // $D650
         case 0x11: *val = h.port01;  break; // $D651
         case 0x12: *val = h.vicMode; break; // $D652
+        // $D653-$D659: DMAgic & SD state (not yet fully implemented)
+        // These registers are for saving DMA list addresses, bank megabytes, and SD virtualization state
+        // For now, return 0 as stub values
+        case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18: case 0x19:
+            *val = 0;  // $D653-$D659: DMAgic/SD state stub
+            break;
         default:   *val = 0; break;
     }
     return true;
@@ -92,6 +98,7 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     switch (off) {
         case 0x00: h.regA   = val; break;
         case 0x01: h.regX   = val; break;
+        case 0x02: h.regY   = val; break;  // $D642
         case 0x03: h.regZ   = val; break;
         case 0x04: h.regB   = val; break;
         case 0x05: h.spl    = val; break;
@@ -108,6 +115,12 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case 0x10: h.port00  = val; break;
         case 0x11: h.port01  = val; break;
         case 0x12: h.vicMode = val; break;
+        // $D653-$D659: DMAgic & SD state (not yet fully implemented)
+        // These registers are for saving DMA list addresses, bank megabytes, and SD virtualization state
+        // For now, writes are silently ignored (stub implementation)
+        case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18: case 0x19:
+            // $D653-$D659: DMAgic/SD state stub — write ignored for now
+            break;
 
         case 0x3F: // $D67F — ENTEREXIT: exit hypervisor mode
             m_cpu->exitHypervisor();
