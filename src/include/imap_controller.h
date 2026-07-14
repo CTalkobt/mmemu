@@ -42,7 +42,15 @@ public:
         if (ms.enables & (1 << block)) {
             uint32_t offset = ms.offsets[block] & 0xFFFFF;
             uint32_t megabyte = (block < 4) ? ms.megabyteLow : ms.megabyteHigh;
-            return (megabyte + (offset << 8) + (vaddr & 0x1FFF)) & 0x0FFFFFFF;
+
+            // Hardware-accurate addressing with 12-bit wrap on bits 19:8
+            uint32_t offsetHigh12 = (offset >> 8) & 0xFFF;
+            uint32_t vaddrHigh = (vaddr >> 8) & 0xFF;
+            uint32_t sum12bit = (offsetHigh12 + vaddrHigh) & 0xFFF;
+            uint32_t vaddrLow8 = vaddr & 0xFF;
+            uint32_t physAddr = (sum12bit << 8) | vaddrLow8;
+
+            return megabyte + physAddr;
         }
         return vaddr;
     }

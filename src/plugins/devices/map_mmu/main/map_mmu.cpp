@@ -26,7 +26,23 @@ uint32_t MapMmu::translate(uint32_t vaddr) const {
         uint32_t offset = m_mapState.offsets[block] & 0xFFFFF;  // 20-bit offset
         uint32_t megabyte = (block < 4) ? m_mapState.megabyteLow
                                         : m_mapState.megabyteHigh;
-        return (megabyte + (offset << 8) + (vaddr & 0x1FFF)) & m_physBus->config().addrMask;
+
+        // HARDWARE-ACCURATE ADDRESSING:
+        // VHDL hardware does 12-bit addition on bits 19:8 with NO carry propagation into megabyte field.
+        // Bits 19:8 = (offset[19:8] + vaddr[15:8]) with 12-bit wrap (overflow discarded)
+        // Bits 7:0 = vaddr[7:0]
+        // This prevents spurious address wrapping when offset + vaddr overflows bit 19.
+        uint32_t offsetHigh12 = (offset >> 8) & 0xFFF;      // Extract bits 19:8 of offset
+        uint32_t vaddrHigh = (vaddr >> 8) & 0xFF;           // Extract bits 15:8 of vaddr
+        uint32_t sum12bit = (offsetHigh12 + vaddrHigh) & 0xFFF;  // 12-bit wrap, no carry to bit 20
+        uint32_t offsetLow8 = offset & 0xFF;                // Bits 7:0 of offset
+        uint32_t vaddrLow8 = vaddr & 0xFF;                  // Bits 7:0 of vaddr
+
+        // Combine: bits 19:8 (wrapped) | bits 7:0 (from vaddr or offset+vaddr)
+        // Since hardware takes vaddr[7:0] directly, we use that
+        uint32_t physAddr = (sum12bit << 8) | vaddrLow8;
+
+        return megabyte + physAddr;
     }
 
     return vaddr;  // Passthrough: physical address = virtual address (C64 mode)
