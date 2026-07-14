@@ -27,6 +27,7 @@ void MOS45GS02::reset() {
     m_state.a = 0; m_state.x = 0; m_state.y = 0; m_state.z = 0; m_state.b = 0;
     m_state.sp = 0x01FF; m_state.p = FLAG_I | FLAG_E; m_state.cycles = 0;
     m_state.irqLine = 0; m_state.nmiLine = 0; m_state.nmiPrev = 0; m_state.haltLine = 0;
+    m_state.mapInterruptInhibit = false;
     memset(&m_hyperState, 0, sizeof(m_hyperState));
 
     if (m_hyperRom) {
@@ -288,7 +289,8 @@ int MOS45GS02::step() {
     m_state.haltLine = 0;
 
     // NMI handling (edge-sensitive: triggers on 0→1 transition)
-    if (m_state.nmiLine && !m_state.nmiPrev) {
+    // Deferred if MAP interrupt inhibit flag is set
+    if (m_state.nmiLine && !m_state.nmiPrev && !m_state.mapInterruptInhibit) {
         m_state.nmiPrev = 1;
         push8((uint8_t)(m_state.pc >> 8));
         push8((uint8_t)(m_state.pc & 0xFF));
@@ -303,7 +305,8 @@ int MOS45GS02::step() {
     m_state.nmiPrev = m_state.nmiLine;
 
     // IRQ handling (level-sensitive: triggers while line asserted and I flag clear)
-    if (m_state.irqLine && !(m_state.p & FLAG_I)) {
+    // Deferred if MAP interrupt inhibit flag is set
+    if (m_state.irqLine && !(m_state.p & FLAG_I) && !m_state.mapInterruptInhibit) {
         push8((uint8_t)(m_state.pc >> 8));
         push8((uint8_t)(m_state.pc & 0xFF));
         push8((m_state.p & ~FLAG_B) | FLAG_E);
@@ -460,7 +463,11 @@ int MOS45GS02::step() {
         case 0x03: m_state.p |=  FLAG_E; break; // SEE
         case 0x0B: m_state.y = (uint8_t)((m_state.sp >> 8) & 0xFF); updateNZ(m_state.y); break; // TSY
         case 0x2B: m_state.sp = (m_state.sp & 0x00FF) | ((uint16_t)m_state.y << 8); break; // TYS
-        case 0xEA: break; // NOP (naked NOP)
+        case 0xEA: {  // EOM (End of Map) / NOP
+            // Clear interrupt inhibit flag set by MAP instruction
+            m_state.mapInterruptInhibit = false;
+            break;
+        }
         
         // --- 1. Load / Store ---
         case 0xA9: { // LDA #imm / LDQ #imm32
@@ -1315,6 +1322,8 @@ int MOS45GS02::step() {
 
                 m_mapMmu->setMapState(state);
             }
+            // Set interrupt inhibit flag: defer IRQ/NMI until EOM ($EA)
+            m_state.mapInterruptInhibit = true;
             m_state.cycles++;
             break;
         }

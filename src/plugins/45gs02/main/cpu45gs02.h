@@ -37,6 +37,9 @@ struct CPU45GS02State {
     uint8_t  nmiPrev;
     uint8_t  haltLine;
 
+    // MAP instruction interrupt inhibit: defer IRQ/NMI until EOM
+    bool     mapInterruptInhibit;  // true = interrupts deferred during MAP/EOM sequence
+
     // Hypervisor state
     bool     hypervisor;    // true = hypervisor mode active
 };
