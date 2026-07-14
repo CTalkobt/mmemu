@@ -4,7 +4,7 @@
 #include <string>
 
 /**
- * MEGA65 Hardware Math Accelerator + RNG
+ * MEGA65 Hardware Math Accelerator + RNG + Cycle Counters
  *
  * Register map (base $D700, 256 bytes):
  *
@@ -20,6 +20,9 @@
  *
  *   $D7EF        RNDREG   — Random byte (read advances LFSR)
  *   $D7FE        RNGSTAT  — bit 7: 1 = RNG not ready (always 0 in emu)
+ *
+ *   $D7F2-$D7F5  PHICYC   — Total PHI cycles (32-bit LE, read-only)
+ *   $D7F6-$D7F9  FRMECY   — Frame cycle counter (32-bit LE, read-only)
  */
 class Mega65MathDevice : public IOHandler {
 public:
@@ -36,7 +39,10 @@ public:
     void reset() override;
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
-    void tick(uint64_t /*cycles*/) override {}
+    void tick(uint64_t cycles) override;
+
+    // Update frame counter (called at start of each video frame)
+    void resetFrameCounter() { m_frameCounter = 0; }
 
     std::vector<std::string> deviceAliases() const override { return {"MEGA65MATH", "MATH"}; }
 
@@ -44,9 +50,12 @@ private:
     void computeMultiply();
     void computeDivide();
     void advanceRng();
+    void updateCycleCounters();
 
     uint32_t m_base;
     std::string m_name{"MEGA65 Math"};
     uint8_t m_regs[256];
-    uint32_t m_rngState;  // LFSR state
+    uint32_t m_rngState;        // LFSR state
+    uint32_t m_phiCounter;      // Total PHI cycles ($D7F2-$D7F5)
+    uint32_t m_frameCounter;    // Frame cycle counter ($D7F6-$D7F9)
 };
