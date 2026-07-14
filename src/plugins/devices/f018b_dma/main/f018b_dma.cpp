@@ -267,8 +267,9 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
         m_minterms[3] = (mintermBits & 0x80) ? 0xFF : 0x00;  //  src &  dst
     }
 
-    // IRQ on completion — command bit 3
-    m_irqOnDone = (job.commandLsb & 0x08) != 0;
+    // NOTE: Real MEGA65 hardware does NOT generate IRQs from DMAgic.
+    // Command bit 3 is reserved/unused. Hypervisor handles interrupt scheduling separately.
+    // m_irqOnDone = (job.commandLsb & 0x08) != 0;  // DISABLED per issue #101
 
     // Modulo mode: count LSB = columns, count MSB = rows, modulo value from job
     m_moduloActive = (m_srcModulo || m_dstModulo);
@@ -447,10 +448,9 @@ void F018bDmaDevice::tickOneByte() {
     if (m_bytesRemaining > 0) m_bytesRemaining--;
 
     if (m_bytesRemaining == 0) {
-        // Fire IRQ if requested (command bit 3)
-        if (m_irqOnDone && m_irqLine) {
-            m_irqLine->set(true);
-        }
+        // NOTE: Real MEGA65 hardware does NOT generate IRQs from DMAgic completion.
+        // The hypervisor handles interrupt scheduling separately.
+        // If an external agent needs to know DMA is done, they check isHaltRequested().
 
         // Current job done — if chain bit was set, read next job from list
         if (m_hasChain) {
