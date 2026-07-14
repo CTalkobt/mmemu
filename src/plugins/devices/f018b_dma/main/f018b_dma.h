@@ -159,7 +159,7 @@ private:
         uint32_t xCol;         // X card boundary offset (options $87/$88 or $97/$98)
         uint32_t yCol;         // Y card boundary offset (options $89/$8A or $99/$9A)
         uint16_t slope;        // Slope value added to accumulator each step ($8B/$8C or $9B/$9C)
-        uint16_t slopeAccum;   // Slope accumulator ($8D/$8E or $9D/$9E)
+        uint32_t slopeAccum;   // Slope accumulator (32-bit to properly detect overflow at 0x10000)
         uint8_t  slopeType;    // Control byte ($8F or $9F): bit7=enable, bit6=Y-major, bit5=negative
     };
     LineMode m_srcLine, m_dstLine;

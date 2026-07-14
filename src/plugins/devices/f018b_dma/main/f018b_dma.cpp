@@ -358,8 +358,8 @@ void F018bDmaDevice::stepAddress(uint32_t& accum, uint32_t base,
         if ((accum & (7u << (3 + 8))) == (7u << (3 + 8)))
             accum += lm.yCol;
 
-        if (lm.slopeAccum > 0xFFFF) {
-            lm.slopeAccum &= 0xFFFF;
+        if (lm.slopeAccum >= 0x10000) {
+            lm.slopeAccum -= 0x10000;
             // Minor axis (X) step
             if (lm.slopeType & 0x20) {
                 // Negative X
@@ -373,8 +373,8 @@ void F018bDmaDevice::stepAddress(uint32_t& accum, uint32_t base,
         // X is major axis: always step X, conditionally step Y on overflow
         accum += ((accum & 0x700) == 0x700) ? lm.xCol + 0x100 : 0x100;
 
-        if (lm.slopeAccum > 0xFFFF) {
-            lm.slopeAccum &= 0xFFFF;
+        if (lm.slopeAccum >= 0x10000) {
+            lm.slopeAccum -= 0x10000;
             // Minor axis (Y) step
             accum += (lm.slopeType & 0x20) ? (uint32_t)-0x800 : 0x800u;
         }
