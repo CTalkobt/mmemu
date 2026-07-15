@@ -59,6 +59,10 @@ struct HypervisorState {
     uint32_t megabyteLow, megabyteHigh;  // MAP megabyte base addresses
     uint8_t  port00, port01;
     uint8_t  vicMode;
+    // DMA state ($D653-$D659): saved during hypervisor transitions
+    uint8_t  dmaSrcMB;         // $D653 — Source megabyte (bits 27:20)
+    uint8_t  dmaDstMB;         // $D654 — Destination megabyte (bits 27:20)
+    uint32_t dmaListAddr;      // $D655-$D658 — DMA list address (28-bit)
 };
 
 /**

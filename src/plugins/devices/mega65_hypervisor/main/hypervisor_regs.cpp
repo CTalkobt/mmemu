@@ -54,12 +54,14 @@ bool HypervisorRegs::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case 0x10: *val = h.port00;  break; // $D650
         case 0x11: *val = h.port01;  break; // $D651
         case 0x12: *val = h.vicMode; break; // $D652
-        // $D653-$D659: DMAgic & SD state (not yet fully implemented)
-        // These registers are for saving DMA list addresses, bank megabytes, and SD virtualization state
-        // For now, return 0 as stub values
-        case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18: case 0x19:
-            *val = 0;  // $D653-$D659: DMAgic/SD state stub
-            break;
+        // $D653-$D659: DMAgic state (saved DMA registers)
+        case 0x13: *val = h.dmaSrcMB;          break; // $D653 — Source megabyte
+        case 0x14: *val = h.dmaDstMB;          break; // $D654 — Destination megabyte
+        case 0x15: *val = (h.dmaListAddr & 0xFF);           break; // $D655 — DMA list addr LSB (bits 7:0)
+        case 0x16: *val = ((h.dmaListAddr >> 8) & 0xFF);    break; // $D656 — DMA list addr (bits 15:8)
+        case 0x17: *val = ((h.dmaListAddr >> 16) & 0xFF);   break; // $D657 — DMA list addr (bits 23:16)
+        case 0x18: *val = ((h.dmaListAddr >> 24) & 0x0F);   break; // $D658 — DMA list addr bits 27:24 (upper nibble only, 4 bits)
+        case 0x19: *val = 0;  break; // $D659 — SD virtualization (not yet implemented)
         default:   *val = 0; break;
     }
     return true;
@@ -115,11 +117,22 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case 0x10: h.port00  = val; break;
         case 0x11: h.port01  = val; break;
         case 0x12: h.vicMode = val; break;
-        // $D653-$D659: DMAgic & SD state (not yet fully implemented)
-        // These registers are for saving DMA list addresses, bank megabytes, and SD virtualization state
-        // For now, writes are silently ignored (stub implementation)
-        case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18: case 0x19:
-            // $D653-$D659: DMAgic/SD state stub — write ignored for now
+        // $D653-$D659: DMAgic state (saved DMA registers for hypervisor)
+        case 0x13: h.dmaSrcMB = val; break;  // $D653 — Source megabyte (bits 27:20)
+        case 0x14: h.dmaDstMB = val; break;  // $D654 — Destination megabyte (bits 27:20)
+        case 0x15:  // $D655 — DMA list address LSB (bits 7:0)
+            h.dmaListAddr = (h.dmaListAddr & 0x0FFFFF00u) | val;
+            break;
+        case 0x16:  // $D656 — DMA list address (bits 15:8)
+            h.dmaListAddr = (h.dmaListAddr & 0x0FFF00FFu) | ((uint32_t)val << 8);
+            break;
+        case 0x17:  // $D657 — DMA list address (bits 23:16)
+            h.dmaListAddr = (h.dmaListAddr & 0x0F00FFFFu) | ((uint32_t)val << 16);
+            break;
+        case 0x18:  // $D658 — DMA list address bits 27:24 (upper 4 bits only)
+            h.dmaListAddr = (h.dmaListAddr & 0x00FFFFFFu) | ((uint32_t)(val & 0x0F) << 24);
+            break;
+        case 0x19:  // $D659 — SD virtualization (not yet implemented)
             break;
 
         case 0x3F: // $D67F — ENTEREXIT: exit hypervisor mode
