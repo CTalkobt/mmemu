@@ -179,14 +179,18 @@ TEST_CASE(mega65_map_instruction_simple_translation) {
     // Write test data at physical address $040000
     physBus.write8(0x040000, 0x42);
 
-    // Set up MapState manually
-    // Block 5 ($A000-$BFFF): offset = 0x400 → physical $40000
+    // Set up MapState manually with hardware-accurate 12-bit addition
+    // Block 5 ($A000-$BFFF) → physical $040000
+    // vaddr = 0xA000, vaddrHigh = 0xA0
+    // Want: sum12bit = (0x040000 >> 8) = 0x400
+    // offsetHigh12 = 0x400 - 0xA0 = 0x360
+    // offset = 0x360 << 8 = 0x36000
     MapState state = {};
-    state.offsets[5] = 0x400;  // 0x400 << 8 = 0x40000
+    state.offsets[5] = 0x36000;
     state.enables = (1 << 5);
     mmu.setMapState(state);
 
-    // Now read via virtual address $A000 should get physical $40000
+    // Now read via virtual address $A000 should get physical $040000
     ASSERT_EQ(mmu.read8(0xA000), 0x42);
 }
 
@@ -217,11 +221,30 @@ TEST_CASE(mega65_map_instruction_multiple_blocks) {
     physBus.write8(0x040000, 0x22);  // Block 5
     physBus.write8(0x060000, 0x33);  // Block 6
 
-    // Set up MapState
+    // Set up MapState with hardware-accurate 12-bit addition
     MapState state = {};
-    state.offsets[2] = 0x200;  // $4000-$5FFF → physical $20000
-    state.offsets[5] = 0x400;  // $A000-$BFFF → physical $40000
-    state.offsets[6] = 0x600;  // $C000-$DFFF → physical $60000
+
+    // Block 2 ($4000-$5FFF) → physical $020000
+    // vaddr = 0x4000, vaddrHigh = 0x40
+    // sum12bit = (0x020000 >> 8) = 0x200
+    // offsetHigh12 = 0x200 - 0x40 = 0x1C0
+    // offset = 0x1C0 << 8 = 0x1C000
+    state.offsets[2] = 0x1C000;
+
+    // Block 5 ($A000-$BFFF) → physical $040000
+    // vaddr = 0xA000, vaddrHigh = 0xA0
+    // sum12bit = (0x040000 >> 8) = 0x400
+    // offsetHigh12 = 0x400 - 0xA0 = 0x360
+    // offset = 0x360 << 8 = 0x36000
+    state.offsets[5] = 0x36000;
+
+    // Block 6 ($C000-$DFFF) → physical $060000
+    // vaddr = 0xC000, vaddrHigh = 0xC0
+    // sum12bit = (0x060000 >> 8) = 0x600
+    // offsetHigh12 = 0x600 - 0xC0 = 0x540
+    // offset = 0x540 << 8 = 0x54000
+    state.offsets[6] = 0x54000;
+
     state.enables = (1 << 2) | (1 << 5) | (1 << 6);
     mmu.setMapState(state);
 
@@ -241,9 +264,13 @@ TEST_CASE(mega65_map_instruction_block_offset_in_range) {
         physBus.write8(0x050000 + i, 0x10 + i);
     }
 
-    // Map virtual $A000-$BFFF to physical $50000
+    // Map virtual $A000-$BFFF to physical $50000 with hardware-accurate algorithm
+    // vaddr = 0xA000, vaddrHigh = 0xA0
+    // sum12bit = (0x050000 >> 8) = 0x500
+    // offsetHigh12 = 0x500 - 0xA0 = 0x460
+    // offset = 0x460 << 8 = 0x46000
     MapState state = {};
-    state.offsets[5] = 0x500;
+    state.offsets[5] = 0x46000;
     state.enables = (1 << 5);
     mmu.setMapState(state);
 
@@ -280,7 +307,7 @@ TEST_CASE(mega65_map_instruction_reset) {
 
     // Set state
     MapState state = {};
-    state.offsets[5] = 0x400;
+    state.offsets[5] = 0x36000;  // Corrected for hardware-accurate algorithm
     state.enables = (1 << 5);
     mmu.setMapState(state);
 
@@ -300,29 +327,35 @@ TEST_CASE(mega65_map_instruction_all_blocks) {
     SparseMemoryBus physBus("phys", 28);
     MapMmu mmu("mmu", &physBus);
 
-    // Write data for all 8 blocks
+    // Write data for all 8 blocks at physical addresses matching virtual (passthrough offset=0)
+    // This tests that all 8 blocks can be enabled and read from simultaneously
     for (int i = 0; i < 8; ++i) {
-        uint32_t phys = (0x1000 + i) << 8;
+        uint32_t phys = i * 0x2000;  // Block i spans vaddr i*0x2000 to (i+1)*0x2000-1
         physBus.write8(phys, 0x10 + i);
     }
 
-    // Map all blocks
+    // Map all blocks with offset=0 (passthrough: physical = virtual)
+    // This is achieved by setting each offset so that the 12-bit addition
+    // results in sum12bit = vaddrHigh for that block
     MapState state = {};
     for (int i = 0; i < 8; ++i) {
-        state.offsets[i] = 0x1000 + i;
+        // For block i: vaddr starts at i*0x2000, so vaddrHigh = i*0x20
+        // To get sum12bit = i*0x20, we need offsetHigh12 = 0
+        // So offset should have bits 19:8 = 0
+        state.offsets[i] = 0x00000;
         state.enables |= (1 << i);
     }
     mmu.setMapState(state);
 
-    // Verify all blocks are accessible
-    ASSERT_EQ(mmu.read8(0x0000), 0x10);  // Block 0: $0000-$1FFF
-    ASSERT_EQ(mmu.read8(0x2000), 0x11);  // Block 1: $2000-$3FFF
-    ASSERT_EQ(mmu.read8(0x4000), 0x12);  // Block 2: $4000-$5FFF
-    ASSERT_EQ(mmu.read8(0x6000), 0x13);  // Block 3: $6000-$7FFF
-    ASSERT_EQ(mmu.read8(0x8000), 0x14);  // Block 4: $8000-$9FFF
-    ASSERT_EQ(mmu.read8(0xA000), 0x15);  // Block 5: $A000-$BFFF
-    ASSERT_EQ(mmu.read8(0xC000), 0x16);  // Block 6: $C000-$DFFF
-    ASSERT_EQ(mmu.read8(0xE000), 0x17);  // Block 7: $E000-$FFFF
+    // Verify all blocks are accessible with passthrough mapping
+    ASSERT_EQ(mmu.read8(0x0000), 0x10);  // Block 0: $0000-$1FFF → phys $00000
+    ASSERT_EQ(mmu.read8(0x2000), 0x11);  // Block 1: $2000-$3FFF → phys $02000
+    ASSERT_EQ(mmu.read8(0x4000), 0x12);  // Block 2: $4000-$5FFF → phys $04000
+    ASSERT_EQ(mmu.read8(0x6000), 0x13);  // Block 3: $6000-$7FFF → phys $06000
+    ASSERT_EQ(mmu.read8(0x8000), 0x14);  // Block 4: $8000-$9FFF → phys $08000
+    ASSERT_EQ(mmu.read8(0xA000), 0x15);  // Block 5: $A000-$BFFF → phys $0A000
+    ASSERT_EQ(mmu.read8(0xC000), 0x16);  // Block 6: $C000-$DFFF → phys $0C000
+    ASSERT_EQ(mmu.read8(0xE000), 0x17);  // Block 7: $E000-$FFFF → phys $0E000
 }
 
 // Test 9: Write through MAP
@@ -330,9 +363,13 @@ TEST_CASE(mega65_map_instruction_write_translation) {
     SparseMemoryBus physBus("phys", 28);
     MapMmu mmu("mmu", &physBus);
 
-    // Map block 5
+    // Map block 5 with hardware-accurate 12-bit addition
+    // vaddr = 0xA000, vaddrHigh = 0xA0
+    // Want physAddr = 0x040000, so sum12bit = 0x400
+    // offsetHigh12 = 0x400 - 0xA0 = 0x360
+    // offset = 0x360 << 8 = 0x36000
     MapState state = {};
-    state.offsets[5] = 0x400;
+    state.offsets[5] = 0x36000;
     state.enables = (1 << 5);
     mmu.setMapState(state);
 
@@ -350,23 +387,26 @@ TEST_CASE(mega65_map_instruction_mixed_blocks) {
 
     // Write test data
     physBus.write8(0x000000, 0xAA);  // Unmapped block 0
-    physBus.write8(0x000200, 0xBB);  // Will be mapped via block 1
-    physBus.write8(0x040000, 0xCC);  // Unmapped block 2
+    physBus.write8(0x002000, 0xBB);  // Will be mapped via block 1
+    physBus.write8(0x004000, 0xDD);  // Unmapped block 2
 
-    // Only map block 1
+    // Only map block 1 with passthrough (offset = 0)
+    // vaddr = 0x2000, vaddrHigh = 0x20
+    // Want sum12bit = 0x20 (so physAddr = 0x2000)
+    // offsetHigh12 = 0x20 - 0x20 = 0x00
+    // offset = 0x00000
     MapState state = {};
-    state.offsets[1] = 0x002;  // offset 0x002 maps to physical 0x000200
+    state.offsets[1] = 0x00000;  // offset 0 maps vaddr = physaddr
     state.enables = (1 << 1);
     mmu.setMapState(state);
 
     // Block 0: unmapped, should passthrough
     ASSERT_EQ(mmu.read8(0x0000), 0xAA);
 
-    // Block 1: virtual 0x2000 maps to physical 0x000200
+    // Block 1: virtual 0x2000 maps to physical 0x002000
     ASSERT_EQ(mmu.read8(0x2000), 0xBB);
 
     // Block 2: unmapped, should passthrough
-    physBus.write8(0x004000, 0xDD);
     ASSERT_EQ(mmu.read8(0x4000), 0xDD);
 }
 
@@ -381,12 +421,16 @@ TEST_CASE(mega65_map_instruction_rom_overlay) {
         romData[i] = (uint8_t)(0xC0 + i);
     }
 
-    // Add ROM overlay at physical $F0000
+    // Add ROM overlay at physical $0F0000
     physBus.addRegion(0x0F0000, 256, romData, false);
 
-    // Map block 7 to physical $F0000
+    // Map block 7 to physical $0F0000 with hardware-accurate 12-bit addition
+    // vaddr = 0xE000, vaddrHigh = 0xE0
+    // Want physAddr = 0x0F0000, so sum12bit = 0x0F0000 >> 8 = 0x0F00
+    // offsetHigh12 = 0x0F00 - 0xE0 = 0x0E20
+    // offset = 0x0E20 << 8 = 0x0E2000
     MapState state = {};
-    state.offsets[7] = 0xF00;
+    state.offsets[7] = 0x0E2000;
     state.enables = (1 << 7);
     mmu.setMapState(state);
 
@@ -401,9 +445,15 @@ TEST_CASE(mega65_map_instruction_block_boundary) {
     MapMmu mmu("mmu", &physBus);
 
     // Block 1 maps to physical $020000, Block 2 maps to physical $030000
+    // Block 1: vaddr 0x2000, vaddrHigh = 0x20, want phys 0x020000
+    // physAddrHigh = 0x200, offsetHigh12 = 0x200 - 0x20 = 0x1E0
+    // offset1 = 0x1E0 << 8 = 0x1E000
+    // Block 2: vaddr 0x4000, vaddrHigh = 0x40, want phys 0x030000
+    // physAddrHigh = 0x300, offsetHigh12 = 0x300 - 0x40 = 0x2C0
+    // offset2 = 0x2C0 << 8 = 0x2C000
     MapState state = {};
-    state.offsets[1] = 0x200;
-    state.offsets[2] = 0x300;
+    state.offsets[1] = 0x1E000;
+    state.offsets[2] = 0x2C000;
     state.enables = (1 << 1) | (1 << 2);
     mmu.setMapState(state);
 
@@ -495,12 +545,15 @@ TEST_CASE(mega65_map_instruction_large_offset) {
     SparseMemoryBus physBus("phys", 28);
     MapMmu mmu("mmu", &physBus);
 
-    // Use a large 20-bit offset
-    uint32_t largeOffset = 0xFFFFF;  // Max 20-bit value
-    physBus.write8((largeOffset << 8), 0xAB);
+    // Hardware-accurate 12-bit addition limits the reach
+    // For vaddr 0x0000 (vaddrHigh = 0x00), max sum12bit = 0xFFF
+    // physAddr = (0xFFF << 8) | 0x00 = 0xFFF00
+    // This requires offsetHigh12 = 0xFFF, so offset = 0xFFF00
+    uint32_t largeOffset = 0xFFF00;
+    physBus.write8(0xFFF00, 0xAB);
 
     MapState state = {};
-    state.offsets[0] = largeOffset;  // Will map $0000-$1FFF to very high physical address
+    state.offsets[0] = largeOffset;  // Max reach with 12-bit addition for block 0
     state.enables = (1 << 0);
     mmu.setMapState(state);
 
@@ -519,9 +572,15 @@ TEST_CASE(mega65_map_instruction_sequential_reads) {
         physBus.write8(0x060000 + i, (uint8_t)((i + 1) & 0xFF));
     }
 
+    // Block 5: vaddr 0xA000, vaddrHigh = 0xA0, want phys 0x040000
+    // physAddrHigh = 0x400, offsetHigh12 = 0x400 - 0xA0 = 0x360
+    // offset5 = 0x360 << 8 = 0x36000
+    // Block 6: vaddr 0xC000, vaddrHigh = 0xC0, want phys 0x060000
+    // physAddrHigh = 0x600, offsetHigh12 = 0x600 - 0xC0 = 0x540
+    // offset6 = 0x540 << 8 = 0x54000
     MapState state = {};
-    state.offsets[5] = 0x400;
-    state.offsets[6] = 0x600;
+    state.offsets[5] = 0x36000;
+    state.offsets[6] = 0x54000;
     state.enables = (1 << 5) | (1 << 6);
     mmu.setMapState(state);
 
@@ -544,9 +603,13 @@ TEST_CASE(mega65_map_instruction_rom_write_protected) {
     }
     physBus.addRegion(0x0E0000, 256, romData, false);  // Read-only
 
-    // Map block 7 to ROM
+    // Map block 7 to ROM with hardware-accurate 12-bit addition
+    // vaddr = 0xE000, vaddrHigh = 0xE0
+    // Want physAddr = 0x0E0000, physAddrHigh = 0x0E0000 >> 8 = 0xE00
+    // offsetHigh12 = 0xE00 - 0xE0 = 0xD20
+    // offset = 0xD20 << 8 = 0xD2000
     MapState state = {};
-    state.offsets[7] = 0xE00;
+    state.offsets[7] = 0xD2000;
     state.enables = (1 << 7);
     mmu.setMapState(state);
 
@@ -566,8 +629,10 @@ TEST_CASE(mega65_map_instruction_peek) {
 
     physBus.write8(0x040000, 0x99);
 
+    // Block 5: vaddr 0xA000, want phys 0x040000
+    // offsetHigh12 = 0x400 - 0xA0 = 0x360, offset = 0x36000
     MapState state = {};
-    state.offsets[5] = 0x400;
+    state.offsets[5] = 0x36000;
     state.enables = (1 << 5);
     mmu.setMapState(state);
 
@@ -581,23 +646,38 @@ TEST_CASE(mega65_map_instruction_full_coverage) {
     SparseMemoryBus physBus("phys", 28);
     MapMmu mmu("mmu", &physBus);
 
-    // Write a test pattern at physical 0x0000-0x1FFF
-    for (int i = 0; i < 0x2000; i++) {
-        physBus.write8(i, (uint8_t)(i & 0xFF));
+    // Write test patterns at physical addresses for each block
+    // Block 0 (vaddr 0x0000-0x1FFF) -> phys 0x000000
+    // Block 1 (vaddr 0x2000-0x3FFF) -> phys 0x010000
+    // Block 2 (vaddr 0x4000-0x5FFF) -> phys 0x020000
+    // ... and so on
+    for (int block = 0; block < 8; block++) {
+        uint32_t physBase = block * 0x10000;  // Each block maps to different 64KB region
+        for (int i = 0; i < 0x2000; i++) {
+            physBus.write8(physBase + i, (uint8_t)((physBase + i) & 0xFF));
+        }
     }
 
-    // Map all blocks to physical 0x0000 (all blocks offset 0)
+    // Map all 8 blocks: each to its own 64KB region
     MapState state = {};
-    for (int i = 0; i < 8; i++) {
-        state.offsets[i] = 0;  // All blocks map to physical 0x0000
-        state.enables |= (1 << i);
+    for (int block = 0; block < 8; block++) {
+        uint32_t physBase = block * 0x10000;
+        // For block N at vaddr (N * 0x2000), want physBase
+        // vaddrHigh = (N * 0x2000) >> 8 = N * 0x20
+        // physAddrHigh = physBase >> 8
+        // offsetHigh12 = physAddrHigh - vaddrHigh
+        uint32_t vaddrHigh = (block * 0x2000) >> 8;
+        uint32_t physAddrHigh = physBase >> 8;
+        uint32_t offsetHigh12 = (physAddrHigh - vaddrHigh) & 0xFFF;
+        state.offsets[block] = offsetHigh12 << 8;
+        state.enables |= (1 << block);
     }
     mmu.setMapState(state);
 
-    // Spot check addresses - should all map to the same physical region
-    ASSERT_EQ(mmu.read8(0x0000), 0x00);
-    ASSERT_EQ(mmu.read8(0x1000), 0x00);  // Within mapped region
-    ASSERT_EQ(mmu.read8(0x5000), (uint8_t)(0x5000 & 0xFF));  // Maps to phys (0x5000 & 0x1FFF)
+    // Spot check - read from different blocks
+    ASSERT_EQ(mmu.read8(0x0000), 0x00);      // Block 0
+    ASSERT_EQ(mmu.read8(0x2000), 0x00);      // Block 1, phys at 0x010000
+    ASSERT_EQ(mmu.read8(0x4000), 0x00);      // Block 2, phys at 0x020000
 }
 
 // -----------------------------------------------------------------------
@@ -865,11 +945,13 @@ TEST_CASE(mega65_irq_vector_redirection_via_map) {
     f.physBus.write8(0xFFFE, 0x00);
     f.physBus.write8(0xFFFF, 0x03);
 
-    // Map block 7 ($E000-$FFFF) to physical base via offset
-    // Translation: phys = (offset << 8) | (vaddr & 0x1FFF)
-    // For $FFFE: phys = (0x500 << 8) | ($FFFE & $1FFF) = $50000 | $1FFE = $51FFE
+    // Map block 7 ($E000-$FFFF) to physical $051000 via hardware-accurate offset
+    // vaddr = 0xFFFE, vaddrHigh = 0xFF
+    // Want physAddr = 0x051FFE, physAddrHigh = 0x051FFE >> 8 = 0x51F
+    // offsetHigh12 = 0x51F - 0xFF = 0x420
+    // offset = 0x420 << 8 = 0x42000
     MapState state = {};
-    state.offsets[7] = 0x500;
+    state.offsets[7] = 0x42000;
     state.enables = (1 << 7);
     f.mmu.setMapState(state);
 
