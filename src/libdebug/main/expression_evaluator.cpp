@@ -3,6 +3,7 @@
 #include "libcore/main/icore.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
+#include "libtoolchain/main/variable_symbol.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -338,8 +339,41 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
             result = (double)symAddr;
             return true;
         }
-        // Device derived values: "DEVICE.NAME" pattern (e.g. VIC4.SCREEN)
+        // Try to resolve as a variable name (with optional struct field access)
         auto dotPos = expr.find('.');
+        std::string varName = (dotPos != std::string::npos) ? expr.substr(0, dotPos) : expr;
+        const VariableSymbol* var = dbg->variables().findGlobalVariable(varName);
+        if (var) {
+            // Variable found - read its value from memory
+            if (var->address < (1u << dbg->bus()->config().addrBits)) {
+                uint32_t value = 0;
+                for (uint32_t i = 0; i < var->size && i < 4; i++) {
+                    value |= (dbg->bus()->peek8(var->address + i) << (i * 8));
+                }
+
+                // Handle struct field access if present (e.g., point.x)
+                if (dotPos != std::string::npos) {
+                    std::string fieldName = expr.substr(dotPos + 1);
+                    for (const auto& field : var->fields) {
+                        if (field.name == fieldName) {
+                            // Extract field value
+                            uint32_t fieldValue = 0;
+                            for (uint32_t i = 0; i < field.size && field.offset + i < var->size; i++) {
+                                fieldValue |= (dbg->bus()->peek8(var->address + field.offset + i) << (i * 8));
+                            }
+                            result = (double)fieldValue;
+                            return true;
+                        }
+                    }
+                    return false;  // Field not found
+                }
+
+                result = (double)value;
+                return true;
+            }
+        }
+
+        // Device derived values: "DEVICE.NAME" pattern (e.g. VIC4.SCREEN)
         if (dotPos != std::string::npos && dbg->ioRegistry()) {
             std::string devPart = expr.substr(0, dotPos);
             std::string valPart = expr.substr(dotPos + 1);
