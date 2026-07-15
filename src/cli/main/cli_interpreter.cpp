@@ -730,23 +730,15 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "list") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         std::string args;
-        if (std::getline(ss, args)) {
-            // Parse optional line range: "10-20" or "10" or empty
-            if (!args.empty()) {
-                size_t dashPos = args.find('-');
-                if (dashPos != std::string::npos) {
-                    int start = std::stoi(args.substr(0, dashPos));
-                    int end = std::stoi(args.substr(dashPos + 1));
-                    // Would need source filename - placeholder for now
-                    m_output("Source listing (lines " + std::to_string(start) + "-"
-                            + std::to_string(end) + ") requires source map integration.\n");
-                } else {
-                    int line = std::stoi(args);
-                    int start = std::max(1, line - 3);
-                    int end = line + 3;
-                    m_output("Source listing around line " + std::to_string(line)
-                            + " requires source map integration.\n");
-                }
+        if (ss >> std::ws && std::getline(ss, args)) {
+            // Remove leading/trailing whitespace
+            size_t start = args.find_first_not_of(" \t");
+            size_t end = args.find_last_not_of(" \t");
+            if (start != std::string::npos) {
+                args = args.substr(start, end - start + 1);
+                handleListCommand(args);
+            } else {
+                showCurrentSource();
             }
         } else {
             showCurrentSource();
@@ -2859,4 +2851,65 @@ void CliInterpreter::showCurrentSource() {
         m_output("Source location: " + formatter->format(loc) + "\n");
         m_output("(load .loc directives from assembly or .debug_info file to enable source display)\n");
     }
+}
+
+void CliInterpreter::handleListCommand(const std::string& args) {
+    // Parse list command arguments:
+    // - "10" or "10-20" (source line range from current source file)
+    // - "filename:10" (show around line 10 in specific file)
+    // - "filename:10-20" (show lines 10-20 in specific file)
+
+    if (!m_ctx.cpu || !m_ctx.dbg) {
+        m_output("No machine created.\n");
+        return;
+    }
+
+    // Check if args contain filename:
+    size_t colonPos = args.find(':');
+    std::string filename;
+    std::string lineSpec;
+
+    if (colonPos != std::string::npos) {
+        // filename:line or filename:line-line format
+        filename = args.substr(0, colonPos);
+        lineSpec = args.substr(colonPos + 1);
+    } else {
+        // Get current source file from PC
+        uint32_t pc = m_ctx.cpu->pc();
+        auto srcLoc = m_ctx.dbg->sourceMap().addrToSource(pc);
+
+        if (srcLoc.file.empty()) {
+            m_output("Cannot determine current source file. Use 'list filename:line' instead.\n");
+            return;
+        }
+        filename = srcLoc.file;
+        lineSpec = args;
+    }
+
+    // Parse line specification: "10" or "10-20"
+    int startLine, endLine;
+    size_t dashPos = lineSpec.find('-');
+
+    if (dashPos != std::string::npos) {
+        // Range: "10-20"
+        try {
+            startLine = std::stoi(lineSpec.substr(0, dashPos));
+            endLine = std::stoi(lineSpec.substr(dashPos + 1));
+        } catch (const std::exception& e) {
+            m_output("Invalid line range format. Use: 'list 10-20' or 'list filename:10-20'\n");
+            return;
+        }
+    } else {
+        // Single line: "10" - show context around it
+        try {
+            int line = std::stoi(lineSpec);
+            startLine = std::max(1, line - 3);
+            endLine = line + 3;
+        } catch (const std::exception& e) {
+            m_output("Invalid line number. Use: 'list 10' or 'list filename:10'\n");
+            return;
+        }
+    }
+
+    showSourceLines(filename, startLine, endLine);
 }

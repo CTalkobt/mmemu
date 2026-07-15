@@ -47,6 +47,7 @@ private:
     void printVariable(const std::string& varName);
     void showSourceLines(const std::string& file, int startLine, int endLine);
     void showCurrentSource();
+    void handleListCommand(const std::string& args);
     [[nodiscard]] int addrWidth() const;
 
     CliContext& m_ctx;
