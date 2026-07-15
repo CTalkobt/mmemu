@@ -802,6 +802,17 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     m_output("Failed to load C64IDE symbols from: " + sym_path + "\n");
                     m_output("Make sure the file exists at: " + sym_path + "\n");
                 }
+            } else if (sub == "load-o45") {
+                std::string path;
+                if (ss >> path) {
+                    if (m_ctx.dbg->loadDebugSymbolsFromO45(path)) {
+                        m_output("Debug symbols loaded from .o45 file: " + path + "\n");
+                    } else {
+                        m_output("Failed to load debug symbols from .o45 file: " + path + "\n");
+                    }
+                } else {
+                    m_output("Usage: sym load-o45 <path>\n");
+                }
             } else if (sub == "clear") {
                 m_ctx.dbg->symbols().clear();
                 m_output("Symbol table cleared.\n");
@@ -809,7 +820,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_output("Unknown sym subcommand: " + sub + "\n");
             }
         } else {
-            m_output("Usage: sym <add|del|list|search|load|load-c64ide|clear>\n");
+            m_output("Usage: sym <add|del|list|search|load|load-c64ide|load-o45|clear>\n");
         }
     } else if (cmd == "tape") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
@@ -2483,6 +2494,7 @@ void CliInterpreter::printDebuggingGuide() {
              "  sym search <query>         - Search for symbols by name\n"
              "  sym load <file>            - Load symbols from .sym file\n"
              "  sym load-c64ide            - Load C64IDE ROM symbol database\n"
+             "  sym load-o45 <file>        - Load debug symbols from .o45 object file\n"
              "\n=== Source-Level Debugging (requires .loc directives) ===\n"
              "  list                - Show source code around current PC\n"
              "  list 10-20          - Show source lines 10-20\n"

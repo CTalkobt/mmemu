@@ -38,27 +38,26 @@ TEST_CASE(neg_single_sets_flags) {
 
 TEST_CASE(neg_double_prefix_behavior) {
     NegPrefixTestFixture t;
+    t.cpu.setExperimentalPrefixMode(true);  // Use peek-ahead (fixed) behavior for this test
 
     // NEG / NEG followed by RTS
-    // According to Bobby's analysis, the second NEG becomes the actual instruction
-    t.poke(0x2000, 0x42);  // NEG (prefix or actual?)
-    t.poke(0x2001, 0x42);  // NEG (prefix or actual?)
+    // With experimental (peek-ahead) mode: RTS doesn't support QUAD, so first NEG executes normally
+    t.poke(0x2000, 0x42);  // NEG (NOT consumed as prefix - RTS doesn't support QUAD)
+    t.poke(0x2001, 0x42);  // NEG (will execute after first NEG in next step)
     t.poke(0x2002, 0x60);  // RTS
 
     t.cpu.regWrite(0, 0x42);  // A = 0x42
     uint32_t p_before = t.cpu.regRead(7);
 
-    t.cpu.step();  // Execute instruction(s)
+    t.cpu.step();  // Execute first NEG
 
     uint32_t a = t.cpu.regRead(0);
     uint32_t p_after = t.cpu.regRead(7);
 
-    // If first NEG is a prefix and second NEG is actual:
-    // A = -0x42 = 0xBE (sets N flag)
-    // If both are somehow skipped: A = 0x42
-    // This test documents the actual behavior
-
+    // In experimental mode, NEG/NEG is NOT consumed as prefix (RTS doesn't support QUAD)
+    // So first NEG executes: A = -0x42 = 0xBE (sets N flag)
     ASSERT_NE(a, 0x42);  // A should have changed
+    ASSERT_EQ(a, 0xBE);  // NEG 0x42 = 0xBE
 }
 
 TEST_CASE(stq_does_not_set_flags) {

@@ -37,6 +37,15 @@ public:
     SourceMap&      sourceMap()   { return m_sourceMap; }
     MemoryHeatMap&  heatmap()     { return m_heatmap; }
 
+    /**
+     * Load debug symbols from an .o45 object file.
+     * Extracts OPT_DEBUG_SYMBOLS metadata and populates the VariableSymbolTable.
+     *
+     * @param path File path to .o45 object file
+     * @return true if debug symbols were successfully loaded
+     */
+    bool loadDebugSymbolsFromO45(const std::string& path);
+
     int  saveSnapshot(const std::string& label);
     bool restoreSnapshot(int index);
     bool deleteSnapshot(int index);

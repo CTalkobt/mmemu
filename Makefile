@@ -69,7 +69,8 @@ LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debu
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
 	src/libdebug/main/stack_trace.cpp \
-	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp
+	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp \
+	src/libdebug/main/o45_object_loader.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
 
 # Plugin Sources

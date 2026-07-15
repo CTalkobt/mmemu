@@ -2,6 +2,7 @@
 #include <string>
 #include <memory>
 #include <csignal>
+#include <cstdlib>
 #include "cli_interpreter.h"
 #include "gdb_server.h"
 #include "plugin_loader/main/plugin_loader.h"
@@ -29,17 +30,23 @@ int main(int argc, char *argv[]) {
 
     LogRegistry::instance().init();
 
-    // Parse verbosity flags early so logging is active for plugin loading
+    // Parse verbosity flags and experimental mode early so logging is active for plugin loading
     int verbosity = 0;
+    bool experimentalMode = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-vv" || arg == "--trace")   { verbosity = 2; }
         else if (arg == "-v" || arg == "--verbose") { if (verbosity < 1) verbosity = 1; }
+        else if (arg == "--experimental") { experimentalMode = true; }
     }
     if (verbosity >= 2)
         LogRegistry::instance().setGlobalLevel(spdlog::level::trace);
     else if (verbosity >= 1)
         LogRegistry::instance().setGlobalLevel(spdlog::level::debug);
+
+    // Set experimental mode via environment variable for machine factory to pick up
+    if (experimentalMode)
+        setenv("MMSIM_EXPERIMENTAL_PREFIX", "1", 1);
 
     PluginLoader::instance().setCommandRegisterFn([](const PluginCommandInfo* info) {
         PluginCommandRegistry::instance().registerCommand(info);
@@ -62,6 +69,7 @@ int main(int argc, char *argv[]) {
                       << "  -t, --type <text>     Type text into the machine\n"
                       << "  --run                 Auto-start the loaded program\n"
                       << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
+                      << "  --experimental        Enable experimental features (45GS02 NEG/NEG peek-ahead)\n"
                       << "  -v, --verbose         Enable debug logging\n"
                       << "  -vv, --trace          Enable trace logging (very verbose)\n"
                       << "  -h, -?, --help        Show this help\n";

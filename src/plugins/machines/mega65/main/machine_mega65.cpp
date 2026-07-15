@@ -587,6 +587,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // -----------------------------------------------------------------------
     auto* cpu45 = static_cast<MOS45GS02*>(cpu);
 
+    // Set experimental prefix mode: default (false) = NEG/NEG always consumes as QUAD prefix
+    // (current "buggy" behavior for compatibility); experimental (true) = NEG/NEG only consumes
+    // if next instruction supports QUAD (peek-ahead, fixes flag contamination with STQ).
+    // Can be set via environment variable or future CLI flag.
+    const char* expMode = std::getenv("MMSIM_EXPERIMENTAL_PREFIX");
+    if (expMode && std::string(expMode) == "1") {
+        cpu45->setExperimentalPrefixMode(true);
+    }
+
     // Wire signals — use SharedIrqManager for proper wired-OR that drives
     // the CPU's IRQ/NMI pins.  SharedSignalLine doesn't push to the CPU.
     auto* irqMgr = new SharedIrqManager(cpu45);

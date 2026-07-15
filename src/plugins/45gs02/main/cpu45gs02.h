@@ -144,6 +144,12 @@ public:
     HypervisorState& hyperState() { return m_hyperState; }
     const HypervisorState& hyperState() const { return m_hyperState; }
 
+    // Experimental mode: NEG/NEG prefix behavior
+    // Default (experimental=false): NEG/NEG always consumes as QUAD prefix (current "buggy" behavior)
+    // Experimental (experimental=true): NEG/NEG only consumes if QUAD instruction follows
+    void setExperimentalPrefixMode(bool enable) { m_experimentalPrefixMode = enable; }
+    bool isExperimentalPrefixMode() const { return m_experimentalPrefixMode; }
+
     // Access hypervisor RAM (writable copy) for bus overlay
     uint8_t* hyperRam() const { return m_hyperRam; }
     uint32_t hyperRomSize() const { return m_hyperRomSize; }
@@ -157,6 +163,8 @@ private:
     const uint8_t*  m_hyperRom     = nullptr;
     uint8_t*        m_hyperRam     = nullptr;  // writable copy for hypervisor mode
     uint32_t        m_hyperRomSize = 0;
+
+    bool            m_experimentalPrefixMode = false;  // false = buggy (always consume NEG/NEG), true = fixed (peek-ahead)
 
     // Helper for address translation (MAP)
     uint32_t translate(uint16_t addr);

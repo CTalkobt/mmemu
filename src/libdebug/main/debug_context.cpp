@@ -1,4 +1,6 @@
 #include "debug_context.h"
+#include "o45_object_loader.h"
+#include "o45_symbol_parser.h"
 #include "include/mmemu_plugin_api.h"
 #include "libcore/main/image_loader.h"
 #include "include/util/logging.h"
@@ -266,17 +268,32 @@ std::vector<uint32_t> DebugContext::diffSnapshots(int idxA, int idxB) {
     std::vector<uint32_t> diffs;
     if (idxA < 0 || idxA >= (int)m_snapshots.size()) return diffs;
     if (idxB < 0 || idxB >= (int)m_snapshots.size()) return diffs;
-    
+
     const auto& snapA = m_snapshots[idxA];
     const auto& snapB = m_snapshots[idxB];
-    
+
     if (snapA.busState.size() != snapB.busState.size()) return diffs;
-    
+
     for (uint32_t i = 0; i < snapA.busState.size(); ++i) {
         if (snapA.busState[i] != snapB.busState[i]) {
             diffs.push_back(i);
         }
     }
-    
+
     return diffs;
+}
+
+bool DebugContext::loadDebugSymbolsFromO45(const std::string& path) {
+    // Load debug symbols from .o45 object file
+    std::vector<uint8_t> debugData;
+    if (!O45ObjectLoader::loadDebugSymbols(path, debugData)) {
+        return false;
+    }
+
+    // Parse debug symbols and populate VariableSymbolTable
+    if (!O45SymbolParser::populateTable(debugData, m_variables)) {
+        return false;
+    }
+
+    return true;
 }
