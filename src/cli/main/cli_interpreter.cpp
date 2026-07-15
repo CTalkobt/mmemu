@@ -405,7 +405,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             if (breaks.empty()) {
                 m_output("No breakpoints set.\n");
             } else {
-                m_output("Num     Type        Enb Address      Hits  Condition/Size\n");
+                m_output("Num     Type        Enb Location              Hits  Condition/Size\n");
                 for (const auto& bp : breaks) {
                     std::stringstream row;
                     row << std::left << std::setw(8) << bp.id;
@@ -419,8 +419,21 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     if (bp.physical) type += " (phys)";
                     row << std::left << std::setw(12) << type;
                     row << (bp.enabled ? "y" : "n") << "   ";
-                    row << "$" << std::hex << std::uppercase << std::setfill('0')
-                        << std::setw(bp.physical ? 7 : 4) << bp.addr << "  ";
+
+                    // Try to show source location, fall back to address
+                    SourceLocation srcLoc = m_ctx.dbg->sourceMap().addrToSource(bp.addr);
+                    if (!srcLoc.file.empty() && srcLoc.line > 0) {
+                        // Show source location
+                        std::string srcDisplay = srcLoc.file + ":" + std::to_string(srcLoc.line);
+                        row << std::left << std::setw(23) << srcDisplay;
+                    } else {
+                        // Fall back to address
+                        std::stringstream addrStr;
+                        addrStr << "$" << std::hex << std::uppercase << std::setfill('0')
+                                << std::setw(bp.physical ? 7 : 4) << bp.addr;
+                        row << std::left << std::setw(23) << addrStr.str();
+                    }
+
                     row << std::dec << std::setfill(' ') << std::setw(4) << bp.hitCount << "  ";
 
                     if (bp.type == BreakpointType::VALUE_WATCH) {
