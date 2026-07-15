@@ -595,6 +595,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     const char* expMode = std::getenv("MMSIM_EXPERIMENTAL_PREFIX");
     if (expMode && std::string(expMode) == "1") {
         cpu45->setExperimentalPrefixMode(true);
+        // Also enable experimental DMA operations (SWAP, MIX, MODULO)
+        dma->setExperimentalDmaOps(true);
     }
 
     // Wire signals — use SharedIrqManager for proper wired-OR that drives

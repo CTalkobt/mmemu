@@ -69,7 +69,8 @@ int main(int argc, char *argv[]) {
                       << "  -t, --type <text>     Type text into the machine\n"
                       << "  --run                 Auto-start the loaded program\n"
                       << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
-                      << "  --experimental        Enable experimental features (45GS02 NEG/NEG peek-ahead)\n"
+                      << "  --experimental        Enable experimental features (45GS02 prefix peek-ahead,\n"
+                      << "                        F018B DMA SWAP/MIX/MODULO operations)\n"
                       << "  -v, --verbose         Enable debug logging\n"
                       << "  -vv, --trace          Enable trace logging (very verbose)\n"
                       << "  -h, -?, --help        Show this help\n";

@@ -171,17 +171,12 @@ void HdosHandler::onHyppoLeave(uint8_t func, MOS45GS02* cpu) {
 
     if (func == 0x2E && carry) {
         // setname succeeded — capture the filename from HYPPO
-        // Filename is at address (Y << 8) in user memory
-        uint8_t inY = h.regX; // FIXME: need the input Y, not output
+        // The input Y register contained filename buffer address (high byte)
+        (void)h.regY; // Y register contains address high byte, but we read from HYPPO buffer
         // For now, read from the setname buffer that HYPPO stores
-        // The filename was passed in Y (high byte) as a pointer.
-        // We'll read it from the transfer area or directly.
-        // Simplified: read from the CPU's data bus at the address HYPPO stored
         if (m_physBus) {
             // HYPPO copies filename to its internal buffer; we read from user space
-            // The pointer was in input Y register (high byte), address = Y*256
-            // Since we don't have the original input Y saved, we'll read from
-            // a known location. HYPPO stores the current filename at $BD00.
+            // HYPPO stores the current filename at $FFF0100 (hypervisor space).
             m_setnameFn.clear();
             for (int i = 0; i < 63; i++) {
                 uint8_t ch = m_physBus->peek8(0xFFF0100 + i); // Hypervisor filename buffer
@@ -192,7 +187,7 @@ void HdosHandler::onHyppoLeave(uint8_t func, MOS45GS02* cpu) {
     }
     if (func == 0x3A && carry) {
         // Set transfer area — Y register has high byte of address
-        m_transferArea = h.regX << 8; // FIXME: same issue with Y
+        m_transferArea = h.regY << 8; // Y register contains address high byte
     }
 }
 
