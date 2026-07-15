@@ -7,7 +7,7 @@
 
 F018bDmaDevice::F018bDmaDevice(uint32_t base)
     : m_base(base), m_bus(nullptr), m_dmaListAddr(0), m_dmaActive(false),
-      m_enhancedMode(false), m_hasChain(false), m_bytesRemaining(0),
+      m_enhancedMode(false), m_experimentalDmaOps(false), m_hasChain(false), m_bytesRemaining(0),
       m_srcAccum(0), m_dstAccum(0), m_srcBase(0), m_dstBase(0),
       m_srcStep(0x0100), m_dstStep(0x0100), m_fillByte(0),
       m_currentOp(DMA_COPY), m_srcDir(false), m_dstDir(false),
@@ -256,15 +256,17 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
         m_dstDir    = (job.commandLsb & 0x20) != 0;  // command bit 5
         m_srcHold   = (job.commandMsb & 0x02) != 0;  // subcommand bit 1
         m_dstHold   = (job.commandMsb & 0x08) != 0;  // subcommand bit 3
-        m_srcModulo = (job.commandMsb & 0x01) != 0;  // subcommand bit 0
-        m_dstModulo = (job.commandMsb & 0x04) != 0;  // subcommand bit 2
+        // MODULO is experimental (not in real hardware) — only enable if experimental ops are on
+        m_srcModulo = m_experimentalDmaOps && ((job.commandMsb & 0x01) != 0);  // subcommand bit 0
+        m_dstModulo = m_experimentalDmaOps && ((job.commandMsb & 0x04) != 0);  // subcommand bit 2
     } else {
         m_srcDir    = (job.srcFlags & 0x04) != 0;    // bank byte bit 6
         m_dstDir    = (job.dstFlags & 0x04) != 0;    // bank byte bit 6
         m_srcHold   = (job.srcFlags & 0x01) != 0;    // bank byte bit 4
         m_dstHold   = (job.dstFlags & 0x01) != 0;    // bank byte bit 4
-        m_srcModulo = (job.srcFlags & 0x02) != 0;    // bank byte bit 5
-        m_dstModulo = (job.dstFlags & 0x02) != 0;    // bank byte bit 5
+        // MODULO is experimental (not in real hardware) — only enable if experimental ops are on
+        m_srcModulo = m_experimentalDmaOps && ((job.srcFlags & 0x02) != 0);    // bank byte bit 5
+        m_dstModulo = m_experimentalDmaOps && ((job.dstFlags & 0x02) != 0);    // bank byte bit 5
     }
 
     // MIX minterms — 4 boolean masks derived from command/subcommand bits 4-7.
@@ -282,7 +284,8 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
     // m_irqOnDone = (job.commandLsb & 0x08) != 0;  // DISABLED per issue #101
 
     // Modulo mode: count LSB = columns, count MSB = rows, modulo value from job
-    m_moduloActive = (m_srcModulo || m_dstModulo);
+    // NOTE: MODULO is not supported in real MEGA65 hardware (pre-PR #887), enable only if experimental ops are on
+    m_moduloActive = m_experimentalDmaOps && (m_srcModulo || m_dstModulo);
     if (m_moduloActive) {
         m_colLimit = (job.count & 0xFF) ? (job.count & 0xFF) : 256;
         m_rowLimit = (job.count >> 8) ? (job.count >> 8) : 256;
@@ -291,6 +294,22 @@ bool F018bDmaDevice::fetchAndBeginNextJob() {
         m_moduloValue = job.modulo;
         // Override bytesRemaining — modulo uses its own counters
         m_bytesRemaining = (uint32_t)m_colLimit * m_rowLimit;
+    } else if (m_srcModulo || m_dstModulo) {
+        // Modulo requested but experimental ops disabled — use standard addressing
+        m_bytesRemaining = job.count ? job.count : 65536;
+    }
+
+    // Issue #3 Fix: Line mode and modulo addressing are mutually exclusive.
+    // If both would be enabled for a channel, disable line mode (modulo takes precedence).
+    if (m_moduloActive) {
+        if (m_srcModulo && (m_srcLine.slopeType & 0x80)) {
+            // Source has both modulo and line mode enabled — disable line mode
+            m_srcLine.slopeType &= ~0x80;
+        }
+        if (m_dstModulo && (m_dstLine.slopeType & 0x80)) {
+            // Destination has both modulo and line mode enabled — disable line mode
+            m_dstLine.slopeType &= ~0x80;
+        }
     }
 
     // Set up transparency for this job
@@ -436,6 +455,11 @@ void F018bDmaDevice::tickOneByte() {
             break;
         }
         case DMA_SWAP: {
+            if (!m_experimentalDmaOps) {
+                // Real MEGA65 hardware doesn't support SWAP — abort like the real device
+                m_dmaActive = false;
+                break;
+            }
             uint8_t s = dmaRead(srcAddr, m_srcIo);
             uint8_t d = dmaRead(dstAddr, m_dstIo);
             dmaWrite(dstAddr, s, m_dstIo);
@@ -443,6 +467,11 @@ void F018bDmaDevice::tickOneByte() {
             break;
         }
         case DMA_MIX: {
+            if (!m_experimentalDmaOps) {
+                // Real MEGA65 hardware doesn't support MIX — abort like the real device
+                m_dmaActive = false;
+                break;
+            }
             // MINTERM: combine source and dest using 4 boolean masks
             uint8_t s = dmaRead(srcAddr, m_srcIo);
             uint8_t d = dmaRead(dstAddr, m_dstIo);

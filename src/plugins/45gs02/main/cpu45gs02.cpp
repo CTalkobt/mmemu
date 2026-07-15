@@ -342,11 +342,38 @@ int MOS45GS02::step() {
         m_state.cycles++;
         if (op == 0x42) {
             if (read8(m_state.pc) == 0x42) {
-                m_state.pc++;
-                m_state.cycles++;
-                isQuad = true;
-                prefixCount++;
-                continue;
+                // NEG/NEG prefix detected. Check if the following instruction supports QUAD.
+                // Peek ahead to see what comes after the second NEG.
+                uint8_t afterNegNeg = read8(m_state.pc + 1);
+
+                // Instructions that support QUAD (32-bit) mode: LDA, STA, ADC, SBC, CMP, etc.
+                // These use the QUAD prefix. If NEG/NEG is followed by one of these, consume as prefix.
+                // Otherwise, execute NEG as a normal instruction.
+                bool supportsQuad = false;
+                switch (afterNegNeg) {
+                    // Load/Store instructions that support QUAD
+                    case 0x85: case 0xA9: case 0xA5: case 0xB5: case 0xAD: case 0xBD: case 0xB9:
+                    case 0xA1: case 0xB1: case 0xB2: case 0xA2: case 0xB6: case 0xAE: case 0xBE:
+                    // ADC/SBC/CMP instructions that support QUAD
+                    case 0x69: case 0x65: case 0x75: case 0x6D: case 0x7D: case 0x79: case 0x61: case 0x71:
+                    case 0xE9: case 0xE5: case 0xF5: case 0xED: case 0xFD: case 0xF9: case 0xE1: case 0xF1:
+                    case 0xC9: case 0xC5: case 0xD5: case 0xCD: case 0xDD: case 0xD9: case 0xC1: case 0xD1:
+                        supportsQuad = true;
+                        break;
+                }
+
+                if (supportsQuad) {
+                    // Consume the NEG/NEG prefix and set QUAD mode
+                    m_state.pc++;
+                    m_state.cycles++;
+                    isQuad = true;
+                    prefixCount++;
+                    continue;
+                } else {
+                    // NEG/NEG not followed by a QUAD instruction.
+                    // Execute the first NEG as a regular instruction, not as a prefix.
+                    break;
+                }
             }
             break;
         } else if (op == 0xEA) {

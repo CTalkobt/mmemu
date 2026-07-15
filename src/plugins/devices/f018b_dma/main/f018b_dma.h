@@ -55,6 +55,7 @@ public:
     void setDmaBus(IBus* bus) override { m_bus = bus; }
     void setIoRegistry(IORegistry* io) { m_ioRegistry = io; }
     void setIrqLine(ISignalLine* line) { m_irqLine = line; }
+    void setExperimentalDmaOps(bool enable) { m_experimentalDmaOps = enable; }
     bool isHaltRequested() const override { return m_dmaActive; }
 
     void reset() override;
@@ -119,6 +120,7 @@ private:
     uint32_t m_dmaListAddr;     // 28-bit pointer into job list (advances as bytes are read)
     bool m_dmaActive;           // Set during execution; CPU halts while true
     bool m_enhancedMode;        // Enhanced DMA Jobs mode (triggered via $D705)
+    bool m_experimentalDmaOps;  // Enable SWAP, MIX, MODULO (not in real hardware)
 
     // Current job state
     bool     m_hasChain;        // Current job's chain bit — read next job when done

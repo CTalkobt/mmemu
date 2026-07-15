@@ -3,8 +3,6 @@
 #include "libmem/main/memory_bus.h"
 #include "libtoolchain/main/idisasm.h"
 
-namespace {
-
 struct TestFixture {
     FlatMemoryBus bus{"test", 16};
     MOS45GS02 cpu;
@@ -24,8 +22,6 @@ struct TestFixture {
 
     void step(int n = 1) { for (int i = 0; i < n; i++) cpu.step(); }
 };
-
-} // namespace
 
 TEST_CASE(gs02_register_access) {
     TestFixture t;

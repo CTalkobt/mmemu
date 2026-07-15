@@ -5,13 +5,11 @@
 #include "plugins/45gs02/main/cpu45gs02.h"
 #include "libmem/main/memory_bus.h"
 
-namespace {
-
-struct TestFixture {
+struct NegPrefixTestFixture {
     FlatMemoryBus bus{"test", 16};
     MOS45GS02 cpu;
 
-    TestFixture() {
+    NegPrefixTestFixture() {
         cpu.setDataBus(&bus);
         cpu.reset();
         cpu.regWrite(6, 0x2000); // PC = $2000
@@ -20,10 +18,8 @@ struct TestFixture {
     void poke(uint16_t addr, uint8_t val) { bus.write8(addr, val); }
 };
 
-} // namespace
-
 TEST_CASE(neg_single_sets_flags) {
-    TestFixture t;
+    NegPrefixTestFixture t;
 
     // Single NEG A should set N flag
     t.poke(0x2000, 0x42);  // NEG
@@ -41,7 +37,7 @@ TEST_CASE(neg_single_sets_flags) {
 }
 
 TEST_CASE(neg_double_prefix_behavior) {
-    TestFixture t;
+    NegPrefixTestFixture t;
 
     // NEG / NEG followed by RTS
     // According to Bobby's analysis, the second NEG becomes the actual instruction
@@ -66,7 +62,7 @@ TEST_CASE(neg_double_prefix_behavior) {
 }
 
 TEST_CASE(stq_does_not_set_flags) {
-    TestFixture t;
+    NegPrefixTestFixture t;
 
     // STQ should not set any flags
     t.poke(0x2000, 0x85);  // STA zp (becomes STQ in quad mode)
