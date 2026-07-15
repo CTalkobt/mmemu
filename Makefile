@@ -69,7 +69,7 @@ LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debu
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
 	src/libdebug/main/stack_trace.cpp \
-	src/libdebug/main/observer_registry.cpp
+	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
 
 # Plugin Sources
@@ -318,11 +318,13 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libcore/test/test_sim_config.cpp \
 	src/plugins/45gs02/test/test_cpu45gs02.cpp \
 	src/plugins/45gs02/test/test_neg_prefix_flags.cpp \
+	src/plugins/45gs02/test/test_neg_prefix_modes.cpp \
 	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp
 
-LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp
+LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp \
+	src/libdebug/test/test_o45_symbol_parser.cpp
 LIBCORE_TEST_SRCS = src/libcore/test/test_c_compatibility.c
 PLUGINLOADER_TEST_SRCS = src/plugin_loader/test/test_plugin_extension.cpp
 PLUGIN_VICEIMPORTER_TEST_SRCS = src/plugins/viceImporter/test/test_vice_importer.cpp
