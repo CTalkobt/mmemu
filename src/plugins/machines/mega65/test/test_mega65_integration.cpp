@@ -123,16 +123,21 @@ TEST_CASE(mega65_integration_mmu_translation) {
     
     // 2. Test MAP translation
     // Map block 0 ($0000-$1FFF) to physical Bank 1 ($010000)
+    // With hardware-accurate 12-bit addition:
+    // vaddr = 0x0234, vaddrHigh = 0x02
+    // Want phys = 0x010234, physAddrHigh = 0x010234 >> 8 = 0x102
+    // offsetHigh12 = 0x102 - 0x02 = 0x100
+    // offset = 0x100 << 8 = 0x10000
     MapState state;
     std::memset(&state, 0, sizeof(state));
-    state.offsets[0] = 0x0100; // physical $010000 >> 8
-    state.enables = 0x01;      // enable block 0
+    state.offsets[0] = 0x10000;  // Correct offset for hardware algorithm
+    state.enables = 0x01;        // enable block 0
     mmu->setMapState(state);
-    
+
     uint32_t physMappedAddr = 0x010234;
     uint8_t mappedVal = 0xBB;
     static_cast<SparseMemoryBus*>(physBus)->write8(physMappedAddr, mappedVal);
-    
+
     // Virtual $0234 should now read from physical $010234
     ASSERT_EQ(mmuBus->read8(0x0234), mappedVal);
     
