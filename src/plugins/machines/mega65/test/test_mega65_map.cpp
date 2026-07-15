@@ -99,19 +99,18 @@ TEST_CASE(mega65_map_per_block_offsets) {
 TEST_CASE(mega65_map_end_to_end_data_access) {
     MapTestFixture f;
 
-    // Place test data at physical $030000
-    f.physBus.write8(0x030000, 0x42);
+    // Place test data at physical $008300
+    // With hardware-accurate 12-bit addition (issue #103):
+    // MAP sets offset = ((Z & 0x0F) << 8) | Y = 0x280
+    // CPU adds block offset: stored_offset[4] = (4 * 0x20) + 0x280 = 0x300
+    // Translation: offsetHigh12 = (0x300 >> 8) & 0xFFF = 0x03
+    //              vaddrHigh (from vaddr 0x8000) = 0x80
+    //              sum12bit = (0x03 + 0x80) & 0xFFF = 0x83
+    //              physAddr = (0x83 << 8) | 0x00 = 0x8300
+    f.physBus.write8(0x008300, 0x42);
 
-    // Map block 4 ($8000-$9FFF) with mb_offset so that $8000 → phys $030000
-    // stored_offset[4] = block_base/256 + mb_offset = 0x80 + mb_offset
-    // We want stored_offset[4] = 0x300, so mb_offset = 0x300 - 0x80 = 0x280
-    // A = low byte = 0x80, X[3:0] = high byte = 0x02, X[7:4] = enable bit 0 (block 4) = 0x1
-    // Wait — enables for upper half come from Z, not X.
-    // Lower enables = X[7:4], upper enables = Z[7:4]
-    // We want to enable block 4 (bit 0 of upper enables) → Z[7:4] = 0x1 → Z = 0x1?
-    // Upper offset = ((Z & 0x0F) << 8) | Y = ((Z[3:0]) << 8) | Y
-    // mb_offset = 0x280, so Y = 0x80, Z[3:0] = 0x02, Z[7:4] = 0x01
-    // Z = 0x12
+    // Z[7:4] = 0x01 enables block 4 (upper half)
+    // Z[3:0] = 0x02, Y = 0x80 sets offset = 0x280
     // Code runs from $0200 (block 1, unmapped) — safe.
     uint8_t code[] = {
         0xA9, 0x00,   // LDA #$00
@@ -119,7 +118,7 @@ TEST_CASE(mega65_map_end_to_end_data_access) {
         0xA0, 0x80,   // LDY #$80  (upper offset low byte)
         0xA3, 0x12,   // LDZ #$12  (enable block 4, offset high nybble = 2)
         0x5C,         // MAP
-        0xAD, 0x00, 0x80,  // LDA $8000 (should read from phys $030000)
+        0xAD, 0x00, 0x80,  // LDA $8000 (should read from phys $008200)
     };
     f.loadCode(0x0200, code, sizeof(code));
 
