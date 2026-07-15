@@ -240,6 +240,66 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_output("Reversed " + std::to_string(reversed) + " instruction(s).\n");
             showRegisters();
         }
+    } else if (cmd == "next") {
+        if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
+
+        // Get current source line
+        uint32_t startPC = m_ctx.cpu->pc();
+        auto startLoc = m_ctx.dbg->sourceMap().addrToSource(startPC);
+
+        if (startLoc.file.empty()) {
+            m_output("No source mapping for current PC. Load source (.loc directives) to use 'next'.\n");
+            return;
+        }
+
+        m_output("Stepping to next source line...\n");
+        m_ctx.dbg->resume();
+
+        int steps = 0;
+        const int MAX_STEPS = 10000000;  // Safety limit to prevent infinite loops
+
+        // Execute instructions until we reach a different source line
+        while (steps < MAX_STEPS && !g_interrupted) {
+            if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                m_ctx.machine->schedulerStep(*m_ctx.machine);
+            } else {
+                m_ctx.cpu->step();
+            }
+            ++steps;
+
+            // Check if we hit a breakpoint
+            if (m_ctx.dbg->isPaused()) {
+                m_output("Breakpoint hit.\n");
+                break;
+            }
+
+            // Check if program ended
+            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
+                m_output("Program end reached.\n");
+                break;
+            }
+
+            // Check if we reached a new source line
+            uint32_t currentPC = m_ctx.cpu->pc();
+            auto currentLoc = m_ctx.dbg->sourceMap().addrToSource(currentPC);
+
+            // Stop if we're on a different line in the same file, or different file entirely
+            if (!currentLoc.file.empty() &&
+                (currentLoc.file != startLoc.file || currentLoc.line != startLoc.line)) {
+                m_output("Reached source line " + std::to_string(currentLoc.line) + " in " + currentLoc.file + "\n");
+                break;
+            }
+        }
+
+        if (steps >= MAX_STEPS) {
+            m_output("Warning: Step limit reached (possible infinite loop)\n");
+        }
+        if (g_interrupted) {
+            m_output("Interrupted.\n");
+            g_interrupted = 0;
+        }
+
+        showRegisters();
     } else if (cmd == "undoinfo") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         auto& tb = m_ctx.dbg->trace();
@@ -2495,6 +2555,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
         m_output("EXECUTION - Running, Stepping, and Flow Control:\n"
                  "  run [addr]          - Run from address (or last loaded address)\n"
                  "  step [n]            - Step CPU N times (default 1)\n"
+                 "  next                - Step to next source line (requires .loc directives)\n"
                  "  runto <cond>        - Run until condition expression is true\n"
                  "  setpc <addr>        - Set CPU program counter\n"
                  "  .<instr>            - Assemble and execute a single instruction\n"
@@ -2504,6 +2565,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  break 2048          (set breakpoint at program start)\n"
                  "  run                 (run until breakpoint)\n"
                  "  step                (step one instruction)\n"
+                 "  next                (step to next source line)\n"
                  "  regs                (see registers at breakpoint)\n");
     } else if (category == "inspection") {
         m_output("INSPECTION - Memory and Register Inspection:\n"
@@ -2591,8 +2653,8 @@ void CliInterpreter::printDebuggingGuide() {
              "\n=== Source-Level Debugging (requires .loc directives) ===\n"
              "  list                - Show source code around current PC\n"
              "  list 10-20          - Show source lines 10-20\n"
-             "  break at line N     - Set breakpoint at source line (future)\n"
-             "  next                - Step to next source line (future)\n"
+             "  break at line N     - Set breakpoint at source line\n"
+             "  next                - Step to next source line\n"
              "  Note: Source locations display as clickable links in terminals\n"
              "\n=== Execution History & Reverse Debugging ===\n"
              "  log show              - Show last 20 executed instructions\n"
