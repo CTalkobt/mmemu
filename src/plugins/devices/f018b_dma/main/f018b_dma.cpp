@@ -105,6 +105,15 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
         startDma();
     }
 
+    // $D706: ETRIGMAPD — write triggers Enhanced DMA with MAP'd 16-bit address translation
+    else if (offset == 0x06) {
+        m_enhancedMode = true;
+        m_regs[0x00] = val; // update ADDRLSBTRIG's value to match
+        // TODO: Translate MAP'd 16-bit address to flat 28-bit using m_mapController
+        // For now, treat like ETRIG (flat 28-bit address)
+        startDma();
+    }
+
     return true;
 }
 

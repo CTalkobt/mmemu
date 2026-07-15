@@ -8,6 +8,7 @@
 #include "plugins/devices/map_mmu/main/c64_bank_controller.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include "plugins/devices/f018b_dma/main/f018b_dma.h"
+#include "plugins/devices/audio_dma/main/audio_dma.h"
 #include "plugins/devices/mega65_math/main/mega65_math.h"
 #include "plugins/devices/hyper_serial/main/hyper_serial.h"
 #include "plugins/devices/exit_trap/main/exit_trap.h"
@@ -381,6 +382,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // -----------------------------------------------------------------------
     auto* keyReg   = new KeyRegister();
     auto* dma      = new F018bDmaDevice(0xD700);
+    auto* audio    = new AudioDmaDevice(0xD710);
     auto* math     = new Mega65MathDevice(0xD700);
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
@@ -423,6 +425,9 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Hypervisor query wired after CPU creation (see below)
 
     dma->setDmaBus(physBus);
+    audio->setDmaBus(physBus);
+    audio->setSampleRate(44100);        // Default 44.1 kHz
+    audio->setClockHz(40000000);        // MEGA65 40 MHz clock
     vic4->setDmaBus(physBus);
     vic4->setCharRom(romBuf + 0xD000, 4096);
 
@@ -459,6 +464,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(bankCtrl);
     io->registerHandler(keyReg);
     io->registerHandler(dma);
+    io->registerHandler(audio);
     io->registerHandler(math);
     io->registerHandler(serial);
     io->registerHandler(vic4);
@@ -546,6 +552,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->deleters.push_back([bankCtrl]() { delete bankCtrl; });
     desc->deleters.push_back([keyReg]() { delete keyReg; });
     desc->deleters.push_back([dma]() { delete dma; });
+    desc->deleters.push_back([audio]() { delete audio; });
     desc->deleters.push_back([math]() { delete math; });
     desc->deleters.push_back([serial]() { delete serial; });
     desc->deleters.push_back([exitTrap]() { delete exitTrap; });

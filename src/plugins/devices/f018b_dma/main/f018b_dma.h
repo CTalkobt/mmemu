@@ -56,6 +56,7 @@ public:
     void setIoRegistry(IORegistry* io) { m_ioRegistry = io; }
     void setIrqLine(ISignalLine* line) { m_irqLine = line; }
     void setExperimentalDmaOps(bool enable) { m_experimentalDmaOps = enable; }
+    void setMapController(class IMapController* map) { m_mapController = map; }
     bool isHaltRequested() const override { return m_dmaActive; }
 
     void reset() override;
@@ -116,6 +117,7 @@ private:
     std::string m_name{"F018B DMA"};
     IBus* m_bus;
     IORegistry* m_ioRegistry = nullptr;
+    class IMapController* m_mapController = nullptr;
     uint8_t m_regs[16];         // Register shadow: $D700–$D70F
     uint32_t m_dmaListAddr;     // 28-bit pointer into job list (advances as bytes are read)
     bool m_dmaActive;           // Set during execution; CPU halts while true
