@@ -1,6 +1,7 @@
 #include "f018b_dma.h"
 #include "libmem/main/ibus.h"
 #include "include/mmemu_plugin_api.h"
+#include "include/imap_controller.h"
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -109,8 +110,38 @@ bool F018bDmaDevice::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     else if (offset == 0x06) {
         m_enhancedMode = true;
         m_regs[0x00] = val; // update ADDRLSBTRIG's value to match
-        // TODO: Translate MAP'd 16-bit address to flat 28-bit using m_mapController
-        // For now, treat like ETRIG (flat 28-bit address)
+        // Translate MAP'd 16-bit address to flat 28-bit using m_mapController
+        if (m_mapController) {
+            uint16_t vaddr = (m_regs[0x01] << 8) | val;
+            uint32_t physAddr = m_mapController->resolvePhysical(vaddr);
+            // Store the translated address in the upper registers for startDma()
+            // We need to bypass the normal register-based assembly
+            m_dmaListAddr = physAddr & 0x0FFFFFFF;
+            m_enhancedMode = true;
+
+            // Skip register-based assembly and go straight to fetching the first job
+            if (!fetchAndBeginNextJob()) {
+                m_dmaActive = false;
+                return true;
+            }
+            m_dmaActive = true;
+
+            // Reset inherited options for a new DMA trigger
+            m_transparency = 0x100; // disabled by default
+            m_transparencyVal = 0;
+            m_inheritSrcMB = 0; m_inheritSrcMBset = false;
+            m_inheritDstMB = 0; m_inheritDstMBset = false;
+            memset(&m_srcLine, 0, sizeof(m_srcLine));
+            memset(&m_dstLine, 0, sizeof(m_dstLine));
+            // Reset spiral mode
+            m_spiralMode.enabled = false;
+            m_spiralMode.phase = 0;
+            m_spiralMode.bytesInPhase = 1;
+            m_spiralMode.bytesPhaseStep = 0;
+
+            return true;
+        }
+        // Fallback: treat like ETRIG if no MAP controller available
         startDma();
     }
 

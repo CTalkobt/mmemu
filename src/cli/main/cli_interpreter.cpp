@@ -448,6 +448,91 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         std::string expr;
         if (ss >> expr) {
+            // Check for "at" prefix for source-level breakpoints (#95)
+            if (expr == "at") {
+                // Parse: break at line N [count N]
+                std::string lineExpr;
+                if (!(ss >> lineExpr)) {
+                    m_output("Syntax: break at line <N> [count N] | break at <file>:<N>\n");
+                    return;
+                }
+
+                // Parse line number, optionally with filename (file:line format)
+                std::string filename;
+                int lineNum = -1;
+
+                size_t colonPos = lineExpr.find(':');
+                if (colonPos != std::string::npos) {
+                    // file:line format
+                    filename = lineExpr.substr(0, colonPos);
+                    std::stringstream ss2(lineExpr.substr(colonPos + 1));
+                    ss2 >> lineNum;
+                } else {
+                    // Just line number
+                    if (lineExpr == "line") {
+                        if (!(ss >> lineNum)) {
+                            m_output("Error: Expected line number after 'line'\n");
+                            return;
+                        }
+                    } else {
+                        std::stringstream ss2(lineExpr);
+                        ss2 >> lineNum;
+                    }
+                }
+
+                if (lineNum <= 0) {
+                    m_output("Error: Invalid line number\n");
+                    return;
+                }
+
+                // Check for "count" modifier
+                int hitCountLimit = 0;
+                std::string countStr;
+                if (ss >> countStr && countStr == "count") {
+                    if (!(ss >> hitCountLimit)) {
+                        m_output("Error: count requires a number\n");
+                        return;
+                    }
+                }
+
+                // Convert source line to address via SourceMap
+                uint32_t addr;
+                if (!filename.empty()) {
+                    addr = m_ctx.dbg->sourceMap().sourceToAddr(filename, lineNum);
+                } else {
+                    // If no filename specified, use the first file in source map
+                    auto files = m_ctx.dbg->sourceMap().getSourceFiles();
+                    if (files.empty()) {
+                        m_output("Error: No source map loaded. Load an assembly file with .loc directives.\n");
+                        return;
+                    }
+                    addr = m_ctx.dbg->sourceMap().sourceToAddr(files[0], lineNum);
+                }
+
+                if (addr == 0xFFFFFFFF) {
+                    m_output("Error: Source line " + std::to_string(lineNum));
+                    if (!filename.empty()) m_output(" in " + filename);
+                    m_output(" not found in source map\n");
+                    return;
+                }
+
+                int id = m_ctx.dbg->breakpoints().add(addr, BreakpointType::EXEC);
+                if (hitCountLimit > 0) {
+                    m_ctx.dbg->breakpoints().setHitCountLimit(id, hitCountLimit);
+                }
+
+                m_output("Breakpoint " + std::to_string(id) + " at ");
+                if (!filename.empty()) {
+                    m_output(filename + ":");
+                }
+                m_output(std::to_string(lineNum) + " (address $" + toHex(addr, addrWidth()) + ")");
+                if (hitCountLimit > 0) {
+                    m_output(" (stops at hit " + std::to_string(hitCountLimit) + ")");
+                }
+                m_output("\n");
+                return;
+            }
+
             // Check for "when" prefix for conditional breakpoints (#97)
             if (expr == "when") {
                 // Parse: break when <condition> [count N]
@@ -513,7 +598,10 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_output("Error: Invalid address '" + expr + "'\n");
             }
         } else {
-            m_output("Syntax: break <address> [count N] | break when <condition> [count N]\n");
+            m_output("Syntax: break <address> [count N]\n");
+            m_output("        break when <condition> [count N]\n");
+            m_output("        break at line <N> [count N]\n");
+            m_output("        break at <file>:<N> [count N]\n");
             m_output("        break phys <physical_address>\n");
         }
     } else if (cmd == "delete") {

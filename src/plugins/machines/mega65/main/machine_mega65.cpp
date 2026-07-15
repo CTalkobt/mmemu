@@ -425,6 +425,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Hypervisor query wired after CPU creation (see below)
 
     dma->setDmaBus(physBus);
+    dma->setMapController(mmu);  // Wire MAP controller for ETRIGMAPD ($D706) address translation
     audio->setDmaBus(physBus);
     audio->setSampleRate(44100);        // Default 44.1 kHz
     audio->setClockHz(40000000);        // MEGA65 40 MHz clock
