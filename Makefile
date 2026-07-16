@@ -246,6 +246,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/cli_interpreter.cpp \
 	src/cli/main/gdb_server.cpp \
+	src/cli/main/serial_monitor_server.cpp \
 	src/cli/main/plugin_command_registry.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \

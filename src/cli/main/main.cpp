@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include "cli_interpreter.h"
 #include "gdb_server.h"
+#include "serial_monitor_server.h"
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_command_registry.h"
 #include "include/util/logging.h"
@@ -64,16 +65,17 @@ int main(int argc, char *argv[]) {
         if (arg == "--help" || arg == "-h" || arg == "-?") {
             std::cout << "Usage: mmemu-cli [options]\n"
                       << "Options:\n"
-                      << "  -m, --machine <id>    Create a machine on startup\n"
-                      << "  -i, --mount <path>    Mount a disk/tape/program image\n"
-                      << "  -t, --type <text>     Type text into the machine\n"
-                      << "  --run                 Auto-start the loaded program\n"
-                      << "  --gdb-port <port>     Start GDB RSP server on <port>\n"
-                      << "  --experimental        Enable experimental features (45GS02 prefix peek-ahead,\n"
-                      << "                        F018B DMA SWAP/MIX/MODULO operations)\n"
-                      << "  -v, --verbose         Enable debug logging\n"
-                      << "  -vv, --trace          Enable trace logging (very verbose)\n"
-                      << "  -h, -?, --help        Show this help\n";
+                      << "  -m, --machine <id>        Create a machine on startup\n"
+                      << "  -i, --mount <path>        Mount a disk/tape/program image\n"
+                      << "  -t, --type <text>         Type text into the machine\n"
+                      << "  --run                     Auto-start the loaded program\n"
+                      << "  --gdb-port <port>         Start GDB RSP server on <port>\n"
+                      << "  --serial-monitor-port <p> Start MEGA65 serial monitor server on <p>\n"
+                      << "  --experimental            Enable experimental features (45GS02 prefix peek-ahead,\n"
+                      << "                            F018B DMA SWAP/MIX/MODULO operations)\n"
+                      << "  -v, --verbose             Enable debug logging\n"
+                      << "  -vv, --trace              Enable trace logging (very verbose)\n"
+                      << "  -h, -?, --help            Show this help\n";
             return 0;
         }
     }
@@ -92,8 +94,9 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
     });
 
-    // Process other command line args (machine, mount, type, gdb, run)
+    // Process other command line args (machine, mount, type, gdb, run, serial-monitor)
     uint16_t gdbPort = 0;
+    uint16_t serialMonitorPort = 0;
     bool autoRun = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -107,6 +110,8 @@ int main(int argc, char *argv[]) {
             autoRun = true;
         } else if (arg == "--gdb-port" && i + 1 < argc) {
             gdbPort = std::stoi(argv[++i]);
+        } else if (arg == "--serial-monitor-port" && i + 1 < argc) {
+            serialMonitorPort = std::stoi(argv[++i]);
         }
     }
 
@@ -127,6 +132,20 @@ int main(int argc, char *argv[]) {
         }
     } else if (gdbPort > 0) {
         std::cerr << "Warning: --gdb-port requires a machine (-m). GDB server not started.\n";
+    }
+
+    // Start Serial Monitor server if requested
+    std::unique_ptr<SerialMonitorServer> serialMonitorServer;
+    if (serialMonitorPort > 0 && ctx.cpu && ctx.bus) {
+        serialMonitorServer = std::make_unique<SerialMonitorServer>(ctx.cpu, ctx.bus, ctx.dbg);
+        if (serialMonitorServer->start(serialMonitorPort)) {
+            std::cout << "Serial Monitor server listening on port " << serialMonitorPort << "\n";
+        } else {
+            std::cerr << "Error: Failed to start Serial Monitor server on port " << serialMonitorPort << "\n";
+            serialMonitorServer.reset();
+        }
+    } else if (serialMonitorPort > 0) {
+        std::cerr << "Warning: --serial-monitor-port requires a machine (-m). Server not started.\n";
     }
 
     std::cout << "Type 'help' for a list of commands.\n";
