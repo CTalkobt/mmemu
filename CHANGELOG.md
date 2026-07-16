@@ -7,8 +7,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
-### Debugger Enhancements & Symbol Import - Issues #92-100
-- **Issue #92 - C64IDE Symbol Database Import**: Comprehensive 150+ symbol database extracted from C64IDE including KERNAL/BASIC ROM entry points, VIC-II/SID/CIA registers, and special memory locations. New CLI command `sym load-c64ide` automatically loads symbols for current machine. Enables annotated disassembly and register-aware debugging without external symbol files.
+### IDE Integration & Debugger Bridges - Issues #88, #92-100
+- **Issue #88 - VICE Monitor Protocol Support**: Complete VICE remote monitor protocol implementation enabling compatibility with VICE-based debugging tools and IDEs (C64IDE, etc.) as emulation backend. ViceMonitorProtocol class implements command dispatch for register/memory/breakpoint/disassembly operations. ViceMonitorServer provides TCP server on configurable port (default 6510, VICE standard). Supports address parsing (hex/$XXXX, 0xXXXX, decimal, binary), register access through ICore interface, memory operations via IBus, breakpoint management through DebugContext. New `--vice-monitor-port` CLI flag. Comprehensive VICE_PROTOCOL.md documentation. Enables C64IDE, mflash, and other VICE-compatible tools to use mmemu without modification.
+- **Issue #92 - C64IDE Symbol Database Import**: Comprehensive 150+ symbol database extracted from C64IDE including KERNAL/BASIC ROM entry points, VIC-II/SID/CIA registers, and special memory locations. New CLI command `sym load-c64ide` automatically loads symbols for current machine (`roms/c64/c64ide_symbols.sym`, `roms/vic20/vic20_symbols.sym`). Enables annotated disassembly and register-aware debugging without external symbol files.
 - **Issue #93 - Stack Trace Viewer**: Display call stack with return addresses, function names from symbols, and stack frame boundaries. CLI `stack` command shows function context.
 - **Issue #94 - Variable Symbol Table**: Foundation for symbol-aware debugging. VariableSymbolTable maps variable names to memory locations, supports function-scoped and global variables with type information.
 - **Issue #95 - Source Location Hyperlinking**: Clickable source links in disassembly and breakpoint output, integrated across CLI/GUI/MCP. Resolves .c/.s files from symbol search paths.
