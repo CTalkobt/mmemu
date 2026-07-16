@@ -15,6 +15,7 @@ struct Breakpoint {
     uint32_t       addr;
     BreakpointType type;
     std::string    condition;      // Condition expression (e.g., "x == 0x01")
+    std::string    luaAction;      // Lua script to execute on breakpoint hit (Issue #24)
     int            hitCount;       // Current hit count
     int            hitCountLimit;  // Stop when hitCount reaches this (0 = unlimited)
     bool           enabled;
@@ -43,6 +44,7 @@ public:
     void removeByAddress(uint32_t addr);  // Clear breakpoint at address
     void setEnabled(int id, bool enabled);
     void setCondition(int id, const std::string& condition);
+    void setLuaAction(int id, const std::string& luaCode);  // Issue #24: Lua breakpoint actions
     void setHitCountLimit(int id, int limit);
     void clearHitCounts();
 

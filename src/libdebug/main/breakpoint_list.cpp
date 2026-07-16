@@ -86,6 +86,15 @@ void BreakpointList::setCondition(int id, const std::string& condition) {
     }
 }
 
+void BreakpointList::setLuaAction(int id, const std::string& luaCode) {
+    for (auto& b : m_breakpoints) {
+        if (b.id == id) {
+            b.luaAction = luaCode;
+            return;
+        }
+    }
+}
+
 void BreakpointList::setHitCountLimit(int id, int limit) {
     for (auto& b : m_breakpoints) {
         if (b.id == id) {

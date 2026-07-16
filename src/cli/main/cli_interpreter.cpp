@@ -823,6 +823,13 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                         row << "(hit limit: " << bp.hitCountLimit << ")";
                     }
 
+                    // Show Lua action if present (Issue #24)
+                    if (!bp.luaAction.empty()) {
+                        row << " [Lua: " << bp.luaAction.substr(0, 30);
+                        if (bp.luaAction.length() > 30) row << "...";
+                        row << "]";
+                    }
+
                     m_output(row.str() + "\n");
                 }
             }
@@ -963,12 +970,35 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
 
             uint32_t addr;
             if (parseAddr(expr, addr)) {
-                // Check for "count" modifier
+                // Check for optional modifiers: count N, action "code"
                 int hitCountLimit = 0;
-                std::string countStr;
-                if (ss >> countStr && countStr == "count") {
-                    if (!(ss >> hitCountLimit)) {
-                        m_output("Error: count requires a number\n");
+                std::string luaAction;
+                std::string modifier;
+
+                while (ss >> modifier) {
+                    if (modifier == "count") {
+                        if (!(ss >> hitCountLimit)) {
+                            m_output("Error: count requires a number\n");
+                            return;
+                        }
+                    } else if (modifier == "action") {
+                        // Read rest of line as Lua action
+                        std::getline(ss, luaAction);
+                        // Trim leading whitespace
+                        size_t start = luaAction.find_first_not_of(" \t");
+                        if (start != std::string::npos) {
+                            luaAction = luaAction.substr(start);
+                        }
+                        // Trim quotes if present
+                        if (!luaAction.empty() && luaAction[0] == '"') {
+                            luaAction = luaAction.substr(1);
+                        }
+                        if (!luaAction.empty() && luaAction.back() == '"') {
+                            luaAction.pop_back();
+                        }
+                        break; // action consumes rest of line
+                    } else {
+                        m_output("Unknown modifier: " + modifier + "\n");
                         return;
                     }
                 }
@@ -977,10 +1007,17 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 if (hitCountLimit > 0) {
                     m_ctx.dbg->breakpoints().setHitCountLimit(id, hitCountLimit);
                 }
+                if (!luaAction.empty()) {
+                    m_ctx.dbg->breakpoints().setLuaAction(id, luaAction);
+                }
+
                 std::string prefix = physical ? "Physical breakpoint " : "Breakpoint ";
                 m_output(prefix + std::to_string(id) + " at $" + toHex(addr, physical ? 7 : addrWidth()));
                 if (hitCountLimit > 0) {
                     m_output(" (stops at hit " + std::to_string(hitCountLimit) + ")");
+                }
+                if (!luaAction.empty()) {
+                    m_output(" [Lua action]");
                 }
                 m_output("\n");
             } else {
@@ -2959,6 +2996,8 @@ void CliInterpreter::printDebuggingGuide() {
              "\n=== Basic Breakpoints ===\n"
              "  break <addr>        - Set execution breakpoint at address\n"
              "  break start + 10    - Breakpoint at symbol+offset\n"
+             "  break $2000 action \"mmemu.log('hit')\" - Lua action on breakpoint (Issue #24)\n"
+             "  break $2000 count 5 - Stop after 5 hits\n"
              "  delete <id>         - Delete breakpoint/watchpoint by id\n"
              "  enable <id>         - Re-enable a disabled breakpoint\n"
              "  disable <id>        - Disable without deleting\n"
