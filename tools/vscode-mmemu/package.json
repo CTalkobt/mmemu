@@ -1,0 +1,225 @@
+{
+  "name": "vscode-mmemu",
+  "displayName": "MEGA65 Emulator Debugger",
+  "description": "VS Code extension for MEGA65 emulator (mmemu) debugging",
+  "version": "0.1.0",
+  "publisher": "CTalkobt",
+  "engines": {
+    "vscode": "^1.75.0",
+    "node": ">=16.0.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Formatters"
+  ],
+  "keywords": [
+    "mega65",
+    "emulator",
+    "debugger",
+    "assembly",
+    "6502",
+    "45gs02"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CTalkobt/mmemu"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onDebugResolve:mmemu",
+    "onDebugInitialConfigurations",
+    "onView:mmemu.variables",
+    "onView:mmemu.memory"
+  ],
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "mmemu",
+        "languages": [
+          "asm",
+          "plaintext"
+        ],
+        "label": "MEGA65 Emulator",
+        "program": "./out/debugAdapter.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "host",
+              "port"
+            ],
+            "properties": {
+              "host": {
+                "type": "string",
+                "description": "mmemu serial monitor hostname",
+                "default": "localhost"
+              },
+              "port": {
+                "type": "number",
+                "description": "mmemu serial monitor port",
+                "default": 6502
+              },
+              "timeout": {
+                "type": "number",
+                "description": "Connection timeout in milliseconds",
+                "default": 5000
+              },
+              "program": {
+                "type": "string",
+                "description": "Path to PRG file or assembly file to load"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop on entry to first instruction",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "name": "MEGA65 (localhost:6502)",
+            "type": "mmemu",
+            "request": "launch",
+            "host": "localhost",
+            "port": 6502,
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "MEGA65: Connect to emulator",
+            "description": "Connect to running mmemu instance",
+            "body": {
+              "name": "MEGA65 Debug",
+              "type": "mmemu",
+              "request": "launch",
+              "host": "localhost",
+              "port": 6502
+            }
+          }
+        ]
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mmemu",
+          "title": "MEGA65 Emulator",
+          "icon": "media/mmemu.svg"
+        }
+      ]
+    },
+    "views": {
+      "mmemu": [
+        {
+          "id": "mmemu.variables",
+          "name": "Variables",
+          "when": "debugState == stopped"
+        },
+        {
+          "id": "mmemu.memory",
+          "name": "Memory",
+          "when": "debugState == stopped"
+        },
+        {
+          "id": "mmemu.breakpoints",
+          "name": "Breakpoints"
+        },
+        {
+          "id": "mmemu.disassembly",
+          "name": "Disassembly",
+          "when": "debugState == stopped"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mmemu.connectEmulator",
+        "title": "MEGA65: Connect to Emulator",
+        "category": "MEGA65"
+      },
+      {
+        "command": "mmemu.disconnect",
+        "title": "MEGA65: Disconnect",
+        "category": "MEGA65"
+      },
+      {
+        "command": "mmemu.readMemory",
+        "title": "MEGA65: Read Memory",
+        "category": "MEGA65"
+      },
+      {
+        "command": "mmemu.dumpMemory",
+        "title": "MEGA65: Dump Memory to File",
+        "category": "MEGA65"
+      },
+      {
+        "command": "mmemu.setBreakpoint",
+        "title": "MEGA65: Set Breakpoint",
+        "category": "MEGA65"
+      }
+    ],
+    "configuration": {
+      "title": "MEGA65 Emulator",
+      "properties": {
+        "mmemu.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "Default host for MEGA65 emulator"
+        },
+        "mmemu.port": {
+          "type": "number",
+          "default": 6502,
+          "description": "Default port for MEGA65 emulator serial monitor"
+        },
+        "mmemu.timeout": {
+          "type": "number",
+          "default": 5000,
+          "description": "Connection timeout in milliseconds"
+        },
+        "mmemu.autoConnect": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically connect on activation"
+        },
+        "mmemu.showHexValues": {
+          "type": "boolean",
+          "default": true,
+          "description": "Display memory values in hexadecimal"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "mmemu.connectEmulator",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "esbuild": "npm run esbuild-base -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/vscode": "^1.75.0",
+    "@typescript-eslint/eslint-plugin": "^5.45.0",
+    "@typescript-eslint/parser": "^5.45.0",
+    "esbuild": "^0.17.0",
+    "eslint": "^8.29.0",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "vscode-debugadapter": "^1.51.0",
+    "vscode-debugprotocol": "^1.51.0"
+  }
+}
