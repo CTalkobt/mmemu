@@ -564,3 +564,62 @@ TEST_CASE(mega65_integration_machine_id) {
     delete desc;
 }
 
+TEST_CASE(mega65_integration_mapped_dma) {
+    // Test MAP'd DMA using ETRIGMAPD with full MEGA65 system
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+
+    if (desc->onReset) desc->onReset(*desc);
+
+    auto* mmuBus = desc->cpus[0].dataBus;
+    auto* physBus = desc->buses[0].bus;
+
+    // Set up source data at virtual $1000
+    mmuBus->write8(0x1000, 0xAA);
+    mmuBus->write8(0x1001, 0xBB);
+    mmuBus->write8(0x1002, 0xCC);
+
+    // Set up DMA list at virtual $2000 to copy 3 bytes from $1000 to $3000
+    uint32_t listAddr = 0x2000;
+    mmuBus->write8(listAddr + 0, 0x00);      // No options
+    mmuBus->write8(listAddr + 1, 0x00);      // COPY operation
+    mmuBus->write8(listAddr + 2, 0x03);      // Count = 3 bytes
+    mmuBus->write8(listAddr + 3, 0x00);
+
+    mmuBus->write8(listAddr + 4, 0x00);      // Src = $1000
+    mmuBus->write8(listAddr + 5, 0x10);
+    mmuBus->write8(listAddr + 6, 0x00);
+
+    mmuBus->write8(listAddr + 7, 0x00);      // Dst = $3000
+    mmuBus->write8(listAddr + 8, 0x30);
+    mmuBus->write8(listAddr + 9, 0x00);
+
+    mmuBus->write8(listAddr + 10, 0x00);     // Modulo
+    mmuBus->write8(listAddr + 11, 0x00);
+
+    // Get DMA device
+    auto* dma = dynamic_cast<F018bDmaDevice*>(desc->ioRegistry->findHandler("F018B DMA"));
+    ASSERT(dma != nullptr);
+
+    // Trigger DMA using ETRIGMAPD with virtual address $2000
+    // ($2000 is in block 1, 16-31KB, and will be handled by MapMmu passthrough initially)
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD701, 0x20);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD702, 0x00);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD706, 0x00);  // ETRIGMAPD
+
+    // Run schedulerStep until DMA is done
+    int limit = 500;
+    while (dma->isHaltRequested() && limit-- > 0) {
+        desc->schedulerStep(*desc);
+    }
+    ASSERT(!dma->isHaltRequested());
+
+    // Verify destination RAM has the copied data
+    ASSERT_EQ((int)mmuBus->read8(0x3000), 0xAA);
+    ASSERT_EQ((int)mmuBus->read8(0x3001), 0xBB);
+    ASSERT_EQ((int)mmuBus->read8(0x3002), 0xCC);
+
+    delete desc;
+}
+
