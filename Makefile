@@ -1,6 +1,6 @@
 # mmemu — Multi Machine Emulator
 # Top-level Makefile
-.PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage
+.PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage sdk sdk-cpp sdk-python
 
 all: cli gui mcp plugins
 
@@ -778,6 +778,38 @@ serve: $(MCP_BIN) plugins
 	@echo "============================================"
 	@exec $(CURDIR)/$(MCP_BIN)
 
+sdk: sdk-python sdk-cpp
+	@echo "✓ SDKs built"
+
+sdk-python:
+	@echo "============================================"
+	@echo " Python SDK (ready to use)"
+	@echo "============================================"
+	@echo "SDK location: sdk/python/"
+	@echo ""
+	@echo "Quick start:"
+	@echo "  python3 sdk/python/examples/memory_inspector.py --host localhost --port 2000"
+	@echo "  python3 sdk/python/examples/breakpoint_manager.py list"
+	@echo ""
+	@echo "Documentation:"
+	@echo "  sdk/python/README.md"
+	@echo "  sdk/python/mmemu_serial_monitor.py"
+
+sdk-cpp:
+	@echo "============================================"
+	@echo " C++ SDK"
+	@echo "============================================"
+	@mkdir -p sdk/cpp/build
+	@cd sdk/cpp/build && cmake .. && $(MAKE) -j $(JOBS)
+	@echo ""
+	@echo "SDK location: sdk/cpp/"
+	@echo ""
+	@echo "Quick start:"
+	@echo "  ./sdk/cpp/build/memory_inspector --host localhost --port 2000"
+	@echo ""
+	@echo "Documentation:"
+	@echo "  sdk/cpp/README.md (see sdk/cpp/CMakeLists.txt for build config)"
+
 man:
 	mkdir -p $(MANDIR)
 	@echo "Generating man pages from documentation..."
@@ -789,7 +821,7 @@ man:
 	@pandoc -s -t man README.md -o $(MANDIR)/mmemu.1
 
 clean:
-	rm -rf $(BINDIR) $(LIBDIR) $(ILIBDIR) $(MANDIR) $(COVDIR)
+	rm -rf $(BINDIR) $(LIBDIR) $(ILIBDIR) $(MANDIR) $(COVDIR) sdk/cpp/build
 	find src tests -name "*.o" -o -name "*.d" -o -name "*.gcno" -o -name "*.gcda" | xargs rm -f 2>/dev/null; true
 
 # Auto-generated header dependency files (produced by -MMD -MP).
