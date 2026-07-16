@@ -1,6 +1,7 @@
 #include "cli_interpreter.h"
 #include <csignal>
 #include "include/util/logging.h"
+#include "vice_snapshot.h"
 
 // Global interrupt flag — set by SIGINT handler, checked by run loops.
 // Defined here (not in main.cpp) so the test binary can link it too.
@@ -698,6 +699,42 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         } else {
             m_output("Syntax: load <path> [address]\n");
+        }
+    } else if (cmd == "load-vice") {
+        if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
+        std::string path;
+        if (ss >> path) {
+            if (ViceSnapshotLoader::load(path, m_ctx.cpu, m_ctx.bus, m_ctx.dbg,
+                                        m_ctx.machine ? m_ctx.machine->ioRegistry : nullptr)) {
+                m_output("Loaded VICE snapshot: " + path + "\n");
+                showRegisters();
+            } else {
+                m_output("Failed to load VICE snapshot: " + ViceSnapshotLoader::getLastError() + "\n");
+            }
+        } else {
+            m_output("Syntax: load-vice <path>\n");
+        }
+    } else if (cmd == "save-vice") {
+        if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
+        std::string path;
+        if (ss >> path) {
+            // Determine machine type from current machine
+            std::string machineType = "C64";
+            if (m_ctx.machine && m_ctx.machine->displayName.find("VIC-20") != std::string::npos) {
+                machineType = "VIC20";
+            } else if (m_ctx.machine && m_ctx.machine->displayName.find("MEGA65") != std::string::npos) {
+                machineType = "MEGA65";
+            } else if (m_ctx.machine && m_ctx.machine->displayName.find("PET") != std::string::npos) {
+                machineType = "PET";
+            }
+            if (ViceSnapshotSaver::save(path, machineType, m_ctx.cpu, m_ctx.bus, m_ctx.dbg,
+                                       m_ctx.machine ? m_ctx.machine->ioRegistry : nullptr)) {
+                m_output("Saved VICE snapshot: " + path + "\n");
+            } else {
+                m_output("Failed to save VICE snapshot: " + ViceSnapshotSaver::getLastError() + "\n");
+            }
+        } else {
+            m_output("Syntax: save-vice <path>\n");
         }
     } else if (cmd == "info") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -2777,6 +2814,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
     if (category == "loading") {
         m_output("LOADING - Program and Cartridge Loading Commands:\n"
                  "  load <path> [addr]  - Load a program/binary file at address\n"
+                 "  load-vice <path>    - Load a VICE snapshot (.vsf) file\n"
+                 "  save-vice <path>    - Save current state to VICE snapshot file\n"
                  "  cart <path>         - Attach a cartridge image\n"
                  "  eject               - Eject currently attached cartridge\n"
                  "  disk mount <unit> <path> - Mount a disk image to drive unit\n"
@@ -2793,7 +2832,13 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "\nExample workflow:\n"
                  "  create c64\n"
                  "  load game.prg 2048\n"
-                 "  run\n");
+                 "  run\n"
+                 "\nVICE Snapshot Examples:\n"
+                 "  create c64\n"
+                 "  load-vice saved_state.vsf\n"
+                 "  break 2000\n"
+                 "  run\n"
+                 "  save-vice current_state.vsf\n");
     } else if (category == "execution") {
         m_output("EXECUTION - Running, Stepping, and Flow Control:\n"
                  "  run [arg]           - Run (interruptible with periodic status)\n"

@@ -249,6 +249,7 @@ CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/serial_monitor_server.cpp \
 	src/cli/main/vice_monitor_protocol.cpp \
 	src/cli/main/vice_monitor_server.cpp \
+	src/cli/main/vice_snapshot.cpp \
 	src/cli/main/plugin_command_registry.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \
