@@ -300,6 +300,67 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
 
         showRegisters();
+    } else if (cmd == "finish") {
+        if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
+
+        int startDepth = m_ctx.dbg->stackTrace().depth();
+
+        if (startDepth == 0) {
+            m_output("Not inside a function call (stack depth is 0).\n");
+            return;
+        }
+
+        m_output("Running until function returns...\n");
+        m_ctx.dbg->resume();
+
+        int steps = 0;
+        const int MAX_STEPS = 10000000;  // Safety limit
+
+        // Execute instructions until stack depth decreases (return from function)
+        while (steps < MAX_STEPS && !g_interrupted) {
+            if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                m_ctx.machine->schedulerStep(*m_ctx.machine);
+            } else {
+                m_ctx.cpu->step();
+            }
+            ++steps;
+
+            // Check if we hit a breakpoint
+            if (m_ctx.dbg->isPaused()) {
+                m_output("Breakpoint hit.\n");
+                break;
+            }
+
+            // Check if program ended
+            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
+                m_output("Program end reached.\n");
+                break;
+            }
+
+            // Check if we've returned from the function (stack depth decreased)
+            int currentDepth = m_ctx.dbg->stackTrace().depth();
+            if (currentDepth < startDepth) {
+                uint32_t returnPC = m_ctx.cpu->pc();
+                auto loc = m_ctx.dbg->sourceMap().addrToSource(returnPC);
+                if (!loc.file.empty()) {
+                    m_output("Function returned at $" + toHex(returnPC) +
+                             " (" + loc.file + ":" + std::to_string(loc.line) + ")\n");
+                } else {
+                    m_output("Function returned at $" + toHex(returnPC) + "\n");
+                }
+                break;
+            }
+        }
+
+        if (steps >= MAX_STEPS) {
+            m_output("Warning: Step limit reached (possible infinite loop)\n");
+        }
+        if (g_interrupted) {
+            m_output("Interrupted.\n");
+            g_interrupted = 0;
+        }
+
+        showRegisters();
     } else if (cmd == "undoinfo") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         auto& tb = m_ctx.dbg->trace();
@@ -2569,6 +2630,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  run breakpoint      - Run until next breakpoint (ignores program end)\n"
                  "  step [n]            - Step CPU N times (default 1)\n"
                  "  next                - Step to next source line (requires .loc directives)\n"
+                 "  finish              - Run until current function returns\n"
                  "  runto <cond>        - Run until condition expression is true\n"
                  "  setpc <addr>        - Set CPU program counter\n"
                  "  .<instr>            - Assemble and execute a single instruction\n"
@@ -2672,6 +2734,7 @@ void CliInterpreter::printDebuggingGuide() {
              "  list 10-20          - Show source lines 10-20\n"
              "  break at line N     - Set breakpoint at source line\n"
              "  next                - Step to next source line\n"
+             "  finish              - Run until current function returns\n"
              "  Note: Source locations display as clickable links in terminals\n"
              "\n=== Execution History & Reverse Debugging ===\n"
              "  log show              - Show last 20 executed instructions\n"
