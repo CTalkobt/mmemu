@@ -249,7 +249,7 @@ The simulator now features a pluggable assembler system with per-machine selecti
 
 ## Current Development Focus
 
-**Phase 21: MEGA65 Machine Integration** (In Progress)
+**Phase 21: MEGA65 Machine Integration** ✅ Complete
 - Phase 19 ✓ Complete: `SparseMemoryBus` and `MapMmu` implemented with unit tests
 - ✓ MAP instruction fixed (correct 8×8KB block encoding, per-block offsets)
 - ✓ C64BankController for ROM banking in C64 compatibility mode
@@ -261,7 +261,8 @@ The simulator now features a pluggable assembler system with per-machine selecti
 - ✓ Audio DMA: 4 channels, loop mode, sine wave, volume control, IAudioOutput integration (19 tests)
 - ✓ Line Drawing Enhancements: slope initialization, X/Y-major modes, texture scaling (9 tests)
 - ✓ Inline DMA Lists: Enhanced DMA job options ($D705/$D706 triggers), option parsing (7 tests)
-- Remaining: MEGA65 integration tests, MAP'd address translation ($D706)
+- ✓ MAP'd DMA testing: ETRIGMAPD ($D706) with 4 unit tests + 1 integration test (5 tests)
+- ✓ MEGA65 integration tests: Full system MAP'd DMA validation
 
 See `todo.md` for the full roadmap.
 
