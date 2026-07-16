@@ -2,6 +2,7 @@
 #include <csignal>
 #include "include/util/logging.h"
 #include "vice_snapshot.h"
+#include "lua_engine.h"
 
 // Global interrupt flag — set by SIGINT handler, checked by run loops.
 // Defined here (not in main.cpp) so the test binary can link it too.
@@ -735,6 +736,41 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         } else {
             m_output("Syntax: save-vice <path>\n");
+        }
+    } else if (cmd == "script") {
+        if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
+        std::string subcmd;
+        if (ss >> subcmd) {
+            if (subcmd == "run") {
+                std::string path;
+                if (ss >> path) {
+                    LuaEngine engine(m_ctx.cpu, m_ctx.bus, m_ctx.dbg);
+                    if (engine.executeFile(path)) {
+                        m_output("Script executed: " + path + "\n");
+                    } else {
+                        m_output("Script error: " + engine.getLastError() + "\n");
+                    }
+                } else {
+                    m_output("Syntax: script run <path>\n");
+                }
+            } else if (subcmd == "eval") {
+                std::string code;
+                std::getline(ss, code);
+                if (!code.empty()) {
+                    LuaEngine engine(m_ctx.cpu, m_ctx.bus, m_ctx.dbg);
+                    if (engine.executeString(code)) {
+                        m_output("Code executed.\n");
+                    } else {
+                        m_output("Error: " + engine.getLastError() + "\n");
+                    }
+                } else {
+                    m_output("Syntax: script eval <lua code>\n");
+                }
+            } else {
+                m_output("Usage: script <run|eval>\n");
+            }
+        } else {
+            m_output("Usage: script <run|eval>\n");
         }
     } else if (cmd == "info") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -2903,6 +2939,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  asm <addr>          - Interactive assembly mode (end with '.')\n"
                  "  asm file <path>     - Assemble source file and load\n"
                  "  sym <op> [args]     - Symbol management (add/del/list/search/load/clear)\n"
+                 "  script run <path>   - Run a Lua script file\n"
+                 "  script eval <code>  - Execute Lua code inline\n"
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
