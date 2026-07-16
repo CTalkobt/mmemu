@@ -19,6 +19,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #99 - Execution History and Reverse Debugging**: User-facing tools for execution history inspection built on existing TraceBuffer infrastructure. CLI `log` command with filtering options (`log show`, `log show -memory`, `log show -calls`), MCP tools for remote access (`get_execution_history`, `get_memory_access_history`). Enables debugging workflow: hit breakpoint → examine what led to it → step backwards → inspect state.
 - **Issue #100 - GDB Protocol IDE Integration** (#100): Enhanced GDB Remote Serial Protocol server with mmemu-specific metadata exchange. New query commands: `qMmemuSymbols` (symbol table), `qMmemuVariables` (variable info), `qMmemuFrame` (frame info). Responses are hex-encoded JSON for compatibility. Enables IDE integration with VS Code, CLion, and other GDB-compatible debuggers. Full documentation for VS Code setup and debugging workflow.
 
+### Serial Monitor Server - Issues #112-115
+- **Issue #112 - Phase 1: Core Implementation** ✅ Complete: TCP socket listener with register/memory/disassemble/PC commands, text-based protocol over localhost.
+- **Issue #113 - Phase 2: Advanced Commands** ✅ Complete: Breakpoint/watchpoint management, trace/history inspection, UART divisor configuration, debug metadata access.
+- **Issue #114 - Phase 3: Tool Integration** ✅ Complete: Full command dispatch, Python integration tests, MCP tool bridges.
+- **Issue #115 - Phase 4: IDE Integration** ✅ Complete: 
+  - **Python Client Library** (`tools/mmemu_client_py/`): Production-ready TCP client with full serial monitor protocol support, address parsing, register/memory/breakpoint/watchpoint/disassembly operations, debug metadata access, and utility functions. Includes `setup.py` for pip installation.
+  - **Example Tools**: `memory_dump.py` (memory export), `breakpoint_manager.py` (interactive editor), `variable_inspector.py` (variable display with types).
+  - **VS Code Extension** (`tools/vscode-mmemu/`): TypeScript/Node.js client, extension entry point, tree views for variables/memory/breakpoints, Debug Adapter Protocol factory, command integration, keyboard shortcuts.
+  - **Protocol Documentation** (`PROTOCOL.md`): Complete reference for serial monitor text-based protocol, command formats, response examples, address parsing, error handling.
+  - **Architecture & Integration Guide** (`PHASE4_IMPLEMENTATION.md`): Comprehensive implementation status, file structure, usage examples, testing procedures, future enhancements roadmap.
+
 ### MEGA65 Integration & Contention Model
 - **Issue #70 - Raw MEGA65 with I/O Hardware** (#70): New machine variant `rawMega65_io` provides minimal MEGA65 configuration for hardware register testing. Includes 45GS02 CPU with VIC-IV, SID (SidPair), CIA1/CIA2, F018B DMA, math accelerator, and RTC at standard I/O addresses. No KERNAL/HYPPO/boot sequence. Enables cc45 compiler hardware register tests and isolated I/O device testing. Configured via JSON machine descriptor with proper device wiring and signal connections (IRQ/NMI).
 - **Dual SID (SidPair) wired to MEGA65 machine** (#6): SidPair was included but never created or registered. Now created with PAL clock ($D400/$D420) and registered in IORegistry.
