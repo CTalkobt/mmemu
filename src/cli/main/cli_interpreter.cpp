@@ -211,19 +211,99 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         showRegisters();
     } else if (cmd == "step") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
-        int n = 1;
-        if (ss >> n) {} else { n = 1; }
-        if (m_ctx.dbg) m_ctx.dbg->resume();  // clear any prior breakpoint pause
-        for (int i = 0; i < n; ++i) {
+
+        // Check if argument is provided
+        std::string arg;
+        bool hasArg = !!(ss >> arg);
+
+        if (hasArg) {
+            // Old behavior: execute N CPU instructions
+            int n = 1;
+            try { n = std::stoi(arg); } catch (...) { n = 1; }
+            if (m_ctx.dbg) m_ctx.dbg->resume();
+            for (int i = 0; i < n; ++i) {
+                if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                    m_ctx.machine->schedulerStep(*m_ctx.machine);
+                } else {
+                    m_ctx.cpu->step();
+                }
+                if (m_ctx.dbg && m_ctx.dbg->isPaused()) break;
+                if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
+            }
+            showRegisters();
+        } else if (m_ctx.dbg) {
+            // New behavior: source-level step (Phase 4 - step-into)
+            // Step to next source line, following function calls
+            uint32_t startPC = m_ctx.cpu->pc();
+            auto startLoc = m_ctx.dbg->sourceMap().addrToSource(startPC);
+
+            if (startLoc.file.empty()) {
+                // No source mapping - fall back to one instruction
+                m_output("No source mapping for current PC. Executing one instruction.\n");
+                if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                    m_ctx.machine->schedulerStep(*m_ctx.machine);
+                } else {
+                    m_ctx.cpu->step();
+                }
+            } else {
+                // Source-level step: execute until we reach a different source line
+                m_output("Stepping to next source line (following function calls)...\n");
+                m_ctx.dbg->resume();
+
+                int steps = 0;
+                const int MAX_STEPS = 10000000;
+
+                // Execute instructions until we reach a different source line
+                while (steps < MAX_STEPS && !g_interrupted) {
+                    if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                        m_ctx.machine->schedulerStep(*m_ctx.machine);
+                    } else {
+                        m_ctx.cpu->step();
+                    }
+                    ++steps;
+
+                    // Check if we hit a breakpoint
+                    if (m_ctx.dbg->isPaused()) {
+                        m_output("Breakpoint hit.\n");
+                        break;
+                    }
+
+                    // Check if program ended
+                    if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
+                        m_output("Program end reached.\n");
+                        break;
+                    }
+
+                    // Check if we reached a new source line
+                    uint32_t currentPC = m_ctx.cpu->pc();
+                    auto currentLoc = m_ctx.dbg->sourceMap().addrToSource(currentPC);
+
+                    // Stop if we're on a different line (in any file)
+                    if (!currentLoc.file.empty() &&
+                        (currentLoc.file != startLoc.file || currentLoc.line != startLoc.line)) {
+                        m_output("Reached source line " + std::to_string(currentLoc.line) + " in " + currentLoc.file + "\n");
+                        break;
+                    }
+                }
+
+                if (steps >= MAX_STEPS) {
+                    m_output("Warning: Step limit reached (possible infinite loop)\n");
+                }
+                if (g_interrupted) {
+                    m_output("Interrupted.\n");
+                    g_interrupted = 0;
+                }
+            }
+            showRegisters();
+        } else {
+            // No source mapping available, just execute one instruction
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);
             } else {
                 m_ctx.cpu->step();
             }
-            if (m_ctx.dbg && m_ctx.dbg->isPaused()) break;
-            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
+            showRegisters();
         }
-        showRegisters();
     } else if (cmd == "backstep" || cmd == "bs") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         if (!m_ctx.dbg) { m_output("No debug context.\n"); return; }
@@ -2720,8 +2800,10 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "                        arg: [addr] run from address or decimal step count\n"
                  "                        e.g., 'run 5000000' runs 5M steps, 'run 2048' runs from 2048\n"
                  "  run breakpoint      - Run until next breakpoint (ignores program end)\n"
-                 "  step [n]            - Step CPU N times (default 1)\n"
-                 "  next                - Step to next source line (requires .loc directives)\n"
+                 "  step [n]            - Step CPU N times, or to next source line if no arg\n"
+                 "                        step 5 executes 5 instructions (CPU-level)\n"
+                 "                        step (no arg) steps to next source line, following calls\n"
+                 "  next                - Step to next source line (skips over function calls)\n"
                  "  until <line>        - Run until reaching source line (requires .loc directives)\n"
                  "  finish              - Run until current function returns\n"
                  "  runto <cond>        - Run until condition expression is true\n"
@@ -2826,10 +2908,12 @@ void CliInterpreter::printDebuggingGuide() {
              "  list                - Show source code around current PC\n"
              "  list 10-20          - Show source lines 10-20\n"
              "  break at line N     - Set breakpoint at source line\n"
-             "  next                - Step to next source line\n"
+             "  step                - Step to next source line, following function calls\n"
+             "  next                - Step to next source line, skipping function calls\n"
              "  until <line>        - Run until reaching specific source line\n"
              "  until file:line     - Run until line in specific file\n"
              "  finish              - Run until current function returns\n"
+             "  Note: step (step-into) follows JSR calls, next (step-over) skips them\n"
              "  Note: Source locations display as clickable links in terminals\n"
              "\n=== Execution History & Reverse Debugging ===\n"
              "  log show              - Show last 20 executed instructions\n"

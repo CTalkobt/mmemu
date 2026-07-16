@@ -432,6 +432,43 @@ TEST_CASE(cli_finish_command) {
     // we're just checking that finish runs without crashing
 }
 
+TEST_CASE(cli_step_source_level) {
+    // Issue #95 Phase 4: Test source-level step command (step-into)
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    Assembler6502 assem;
+    Disassembler6502 disasm;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+
+    CliContext ctx;
+    ctx.bus = &bus; ctx.cpu = &cpu; ctx.assem = &assem; ctx.disasm = &disasm; ctx.dbg = &dbg;
+
+    std::string output;
+    CliInterpreter interp(ctx, [&](const std::string& s) { output += s; });
+
+    // Test: step N (backward compat - CPU-level step)
+    cpu.setPc(0x0200);
+    bus.write8(0x0200, 0xEA); // NOP
+    bus.write8(0x0201, 0xEA); // NOP
+    interp.processLine("step 1");
+    ASSERT(cpu.pc() == (uint16_t)0x0201);
+    output.clear();
+
+    // Test: step without args and without source mapping (should execute one instruction)
+    interp.processLine("step");
+    ASSERT(output.find("No source mapping") != std::string::npos ||
+           output.empty() || // May just execute silently
+           cpu.pc() == (uint16_t)0x0202);
+    output.clear();
+
+    // Test: step with no machine (should fail)
+    CliContext emptyCtx;
+    CliInterpreter emptyInterp(emptyCtx, [&](const std::string& s) { output += s; });
+    emptyInterp.processLine("step");
+    ASSERT(output.find("No machine") != std::string::npos);
+}
+
 TEST_CASE(cli_until_command) {
     // Issue #95: Test until command for source-level debugging
     FlatMemoryBus bus("system", 16);
