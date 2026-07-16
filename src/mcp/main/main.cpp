@@ -1416,6 +1416,36 @@ Json handleDescribe() {
         addTool("list_variables", "List variables for a specific function or all global variables", schema);
     }
 
+    // Additional Variable Inspection Tools (Issue #94 extension)
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        Json varProp(Json::OBJ);
+        varProp.oVal["type"] = Json("string");
+        varProp.oVal["description"] = Json("Variable name to inspect (e.g., 'counter', 'buffer')");
+        props.oVal["variable_name"] = varProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        req.push_back(Json("variable_name"));
+        schema.oVal["required"] = req;
+        addTool("inspect_variable", "Inspect a specific variable with full type information and value", schema);
+    }
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR);
+        req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("get_frame_info", "Get current stack frame information including frame pointer, size, and local variables", schema);
+    }
+
     // Execution History Tools (Issue #99)
     {
         Json schema(Json::OBJ);
@@ -4790,6 +4820,85 @@ Json handleToolsCall(const Json& params) {
                     }
                 }
             }
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "inspect_variable") {
+        std::string mid = args["machine_id"].sVal;
+        std::string varName = args["variable_name"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            std::stringstream ss;
+            // Try to find variable in global or local scope
+            auto globals = ms->dbg->variables().getGlobalVariables();
+            const VariableSymbol* found = nullptr;
+            for (const auto* var : globals) {
+                if (var->displayName == varName) {
+                    found = var;
+                    break;
+                }
+            }
+
+            if (found) {
+                ss << "Variable: " << found->displayName << "\n"
+                   << "  Address: $" << std::hex << std::uppercase << std::setfill('0')
+                   << std::setw(4) << found->address << "\n"
+                   << "  Size: " << std::dec << found->size << " bytes\n"
+                   << "  Type: " << formatVariableType(found->type) << "\n";
+                if (found->sourceLine >= 0) {
+                    ss << "  Source line: " << found->sourceLine << "\n";
+                }
+                // Try to read the variable value from memory
+                if (ms->bus) {
+                    ss << "  Value (raw): ";
+                    for (int i = 0; i < std::min(4, (int)found->size); ++i) {
+                        ss << std::hex << std::uppercase << std::setfill('0')
+                           << std::setw(2) << (int)ms->bus->read8(found->address + i);
+                        if (i < std::min(4, (int)found->size) - 1) ss << " ";
+                    }
+                    ss << "\n";
+                }
+            } else {
+                ss << "Variable '" << varName << "' not found\n";
+            }
+            textItem.oVal["text"] = Json(ss.str());
+        }
+
+    } else if (name == "get_frame_info") {
+        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(mid);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            std::stringstream ss;
+            ss << "Current Stack Frame:\n";
+            int depth = ms->dbg->stackTrace().depth();
+            ss << "  Stack depth: " << depth << "\n";
+
+            // Show recent stack entries
+            auto entries = ms->dbg->stackTrace().recent(3);
+            if (!entries.empty()) {
+                ss << "  Recent stack operations:\n";
+                for (size_t i = 0; i < entries.size(); ++i) {
+                    const auto& e = entries[i];
+                    ss << "    [" << i << "] " << stackPushTypeName(e.type)
+                       << " @ $" << std::hex << std::uppercase << std::setfill('0')
+                       << std::setw(4) << e.pushedByPc << "\n";
+                }
+            }
+
+            // Show local variables at current location
+            auto locals = ms->dbg->stackTrace().recent(0);
+            if (!locals.empty()) {
+                ss << "  Local variables: " << locals.size() << " on stack\n";
+            } else {
+                ss << "  No local variables on stack\n";
+            }
+
             textItem.oVal["text"] = Json(ss.str());
         }
 

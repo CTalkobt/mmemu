@@ -432,6 +432,71 @@ TEST_CASE(cli_finish_command) {
     // we're just checking that finish runs without crashing
 }
 
+TEST_CASE(cli_variable_inspection) {
+    // Issue #94: Test variable inspection commands
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+
+    CliContext ctx;
+    ctx.bus = &bus; ctx.cpu = &cpu; ctx.dbg = &dbg;
+
+    std::string output;
+    CliInterpreter interp(ctx, [&](const std::string& s) { output += s; });
+
+    // Test: vars command with no variables defined
+    interp.processLine("vars");
+    ASSERT(output.find("No variables defined") != std::string::npos);
+    output.clear();
+
+    // Test: vars with function name (no variables in function)
+    interp.processLine("vars main");
+    ASSERT(output.find("No variables found") != std::string::npos ||
+           output.find("No variables") != std::string::npos);
+    output.clear();
+
+    // Test: print command with no variable (should show usage or error)
+    interp.processLine("print");
+    ASSERT(output.find("Usage") != std::string::npos ||
+           output.find("variable") != std::string::npos);
+    output.clear();
+
+    // Test: print with non-existent variable
+    interp.processLine("print nonexistent_var");
+    // Should output something (either "not found" or empty)
+    ASSERT(!output.empty());
+    output.clear();
+
+    // Test: info locals with no machine symbols
+    interp.processLine("info locals");
+    // Should output something even if no locals found
+    ASSERT(!output.empty());
+    output.clear();
+
+    // Test: info frame (should work even without frame data)
+    interp.processLine("info frame");
+    // Should output something (frame info or "no information available")
+    ASSERT(!output.empty());
+    output.clear();
+
+    // Test: info breaks (should show no breakpoints initially)
+    interp.processLine("info breaks");
+    ASSERT(output.find("No breakpoints") != std::string::npos);
+    output.clear();
+
+    // Test: frame command (should work or show usage)
+    interp.processLine("frame");
+    // Should produce some output
+    ASSERT(!output.empty());
+    output.clear();
+
+    // Test: frame verbose (should work or show usage)
+    interp.processLine("frame verbose");
+    // Should produce some output
+    ASSERT(!output.empty());
+}
+
 TEST_CASE(cli_save_memory) {
     FlatMemoryBus bus("system", 16);
     MOS6502 cpu;
