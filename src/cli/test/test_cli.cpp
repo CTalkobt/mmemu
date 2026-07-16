@@ -432,6 +432,44 @@ TEST_CASE(cli_finish_command) {
     // we're just checking that finish runs without crashing
 }
 
+TEST_CASE(cli_until_command) {
+    // Issue #95: Test until command for source-level debugging
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+
+    CliContext ctx;
+    ctx.bus = &bus; ctx.cpu = &cpu; ctx.dbg = &dbg;
+
+    std::string output;
+    CliInterpreter interp(ctx, [&](const std::string& s) { output += s; });
+
+    // Test: until without source mapping (should fail with message)
+    cpu.setPc(0x0200);
+    interp.processLine("until 10");
+    ASSERT(output.find("Cannot determine current source file") != std::string::npos ||
+           output.find("No source mapping") != std::string::npos ||
+           output.find("Usage") != std::string::npos);
+    output.clear();
+
+    // Test: until with invalid syntax
+    interp.processLine("until");
+    ASSERT(output.find("Usage") != std::string::npos);
+    output.clear();
+
+    // Test: until with invalid line number
+    interp.processLine("until abc");
+    ASSERT(output.find("Invalid line number") != std::string::npos ||
+           output.find("Cannot determine") != std::string::npos);
+    output.clear();
+
+    // Test: until with file:line format (should handle gracefully even without source)
+    interp.processLine("until test.s:42");
+    // Should produce some output (error or execution message)
+    ASSERT(!output.empty());
+}
+
 TEST_CASE(cli_variable_inspection) {
     // Issue #94: Test variable inspection commands
     FlatMemoryBus bus("system", 16);

@@ -361,6 +361,98 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
 
         showRegisters();
+    } else if (cmd == "until") {
+        if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
+
+        // Parse: until <line_number> or until <filename>:<line_number>
+        std::string lineSpec;
+        if (!(ss >> lineSpec)) {
+            m_output("Usage: until <line> or until <filename>:<line>\n");
+            return;
+        }
+
+        // Determine target file and line
+        std::string targetFile;
+        int targetLine = -1;
+
+        size_t colonPos = lineSpec.find(':');
+        if (colonPos != std::string::npos) {
+            // Format: filename:line
+            targetFile = lineSpec.substr(0, colonPos);
+            try {
+                targetLine = std::stoi(lineSpec.substr(colonPos + 1));
+            } catch (...) {
+                m_output("Invalid line number in '" + lineSpec + "'\n");
+                return;
+            }
+        } else {
+            // Format: just line number - use current file
+            uint32_t pc = m_ctx.cpu->pc();
+            auto srcLoc = m_ctx.dbg->sourceMap().addrToSource(pc);
+            if (srcLoc.file.empty()) {
+                m_output("Cannot determine current source file. Use 'until <filename>:<line>'\n");
+                return;
+            }
+            targetFile = srcLoc.file;
+            try {
+                targetLine = std::stoi(lineSpec);
+            } catch (...) {
+                m_output("Invalid line number: " + lineSpec + "\n");
+                return;
+            }
+        }
+
+        if (targetLine <= 0) {
+            m_output("Line number must be > 0\n");
+            return;
+        }
+
+        m_output("Continuing until " + targetFile + ":" + std::to_string(targetLine) + "\n");
+        m_ctx.dbg->resume();
+
+        int steps = 0;
+        const int MAX_STEPS = 10000000;
+
+        // Execute until we reach the target line
+        while (steps < MAX_STEPS && !g_interrupted) {
+            if (m_ctx.machine && m_ctx.machine->schedulerStep) {
+                m_ctx.machine->schedulerStep(*m_ctx.machine);
+            } else {
+                m_ctx.cpu->step();
+            }
+            ++steps;
+
+            // Check if we hit a breakpoint
+            if (m_ctx.dbg->isPaused()) {
+                m_output("Breakpoint hit.\n");
+                break;
+            }
+
+            // Check if program ended
+            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
+                m_output("Program end reached.\n");
+                break;
+            }
+
+            // Check if we've reached the target line
+            uint32_t currentPC = m_ctx.cpu->pc();
+            auto currentLoc = m_ctx.dbg->sourceMap().addrToSource(currentPC);
+
+            if (!currentLoc.file.empty() && currentLoc.file == targetFile && currentLoc.line == targetLine) {
+                m_output("Reached " + targetFile + ":" + std::to_string(targetLine) + "\n");
+                break;
+            }
+        }
+
+        if (steps >= MAX_STEPS) {
+            m_output("Warning: Step limit reached (target line not found)\n");
+        }
+        if (g_interrupted) {
+            m_output("Interrupted.\n");
+            g_interrupted = 0;
+        }
+
+        showRegisters();
     } else if (cmd == "undoinfo") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         auto& tb = m_ctx.dbg->trace();
@@ -2630,6 +2722,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  run breakpoint      - Run until next breakpoint (ignores program end)\n"
                  "  step [n]            - Step CPU N times (default 1)\n"
                  "  next                - Step to next source line (requires .loc directives)\n"
+                 "  until <line>        - Run until reaching source line (requires .loc directives)\n"
                  "  finish              - Run until current function returns\n"
                  "  runto <cond>        - Run until condition expression is true\n"
                  "  setpc <addr>        - Set CPU program counter\n"
@@ -2734,6 +2827,8 @@ void CliInterpreter::printDebuggingGuide() {
              "  list 10-20          - Show source lines 10-20\n"
              "  break at line N     - Set breakpoint at source line\n"
              "  next                - Step to next source line\n"
+             "  until <line>        - Run until reaching specific source line\n"
+             "  until file:line     - Run until line in specific file\n"
              "  finish              - Run until current function returns\n"
              "  Note: Source locations display as clickable links in terminals\n"
              "\n=== Execution History & Reverse Debugging ===\n"
