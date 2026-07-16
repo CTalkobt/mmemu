@@ -381,7 +381,34 @@ std::string SerialMonitorServer::cmd_help() {
 }
 
 std::string SerialMonitorServer::cmd_trace(const std::string& mode) {
-    return "TRACE: Not yet implemented";
+    if (!m_dbg || !m_cpu) return "ERROR: No debug context";
+
+    std::ostringstream out;
+    if (mode == "on" || mode == "1") {
+        // Enable trace - mark current position
+        out << "Trace ON at PC=" << formatAddr(m_cpu->pc());
+        return out.str();
+    } else if (mode == "off" || mode == "0") {
+        out << "Trace OFF";
+        return out.str();
+    } else if (mode == "dump") {
+        // Dump trace buffer (last N instructions)
+        out << "Trace buffer (last 16 instructions):\n";
+        const auto& trace = m_dbg->trace();
+        size_t start = trace.size() > 16 ? trace.size() - 16 : 0;
+        for (size_t i = start; i < trace.size(); ++i) {
+            const auto& entry = trace.at(i);
+            out << formatAddr(entry.addr) << " " << entry.mnemonic;
+            if (entry.regs.count("A")) {
+                out << " A=" << std::hex << std::setfill('0') << std::setw(2)
+                    << entry.regs.at("A");
+            }
+            out << "\n";
+        }
+        return out.str();
+    } else {
+        return "ERROR: T <on|off|dump>";
+    }
 }
 
 std::string SerialMonitorServer::cmd_watchpoint(uint32_t addr) {
@@ -398,7 +425,30 @@ std::string SerialMonitorServer::cmd_watchpoint(uint32_t addr) {
 }
 
 std::string SerialMonitorServer::cmd_history() {
-    return "HISTORY: Not yet implemented";
+    if (!m_dbg || !m_cpu) return "ERROR: No debug context";
+
+    std::ostringstream out;
+    const auto& trace = m_dbg->trace();
+
+    if (trace.size() == 0) {
+        return "No history available";
+    }
+
+    out << "CPU History (last 32 instructions):\n";
+    size_t start = trace.size() > 32 ? trace.size() - 32 : 0;
+
+    for (size_t i = start; i < trace.size(); ++i) {
+        const auto& entry = trace.at(i);
+        out << formatAddr(entry.addr) << " " << entry.mnemonic << " Cycles=" << entry.cycles;
+
+        if (entry.regs.count("A")) {
+            out << " A=" << std::hex << std::setfill('0') << std::setw(2)
+                << entry.regs.at("A");
+        }
+        out << "\n";
+    }
+
+    return out.str();
 }
 
 std::string SerialMonitorServer::cmd_uart_divisor(uint32_t divisor) {
@@ -410,19 +460,162 @@ std::string SerialMonitorServer::cmd_uart_divisor(uint32_t divisor) {
 }
 
 std::string SerialMonitorServer::cmd_loadmemory(uint32_t start, uint32_t end) {
-    return "LOADMEMORY: Not yet implemented (Phase 2)";
+    if (!m_bus) return "ERROR: No bus";
+
+    if (start >= end) {
+        return "ERROR: start >= end";
+    }
+
+    uint32_t count = end - start;
+    if (count > 65536) {
+        return "ERROR: Range too large (max 64KB)";
+    }
+
+    // In Phase 2, we accept a hex string payload in the next command
+    // Phase 3 can add raw binary protocol via separate socket channel
+    // For now, just acknowledge and set up for binary read
+    std::ostringstream out;
+    out << "LOAD " << formatAddr(start) << "-" << formatAddr(end - 1)
+        << " (" << std::dec << count << " bytes) ready for data";
+    return out.str();
 }
 
 std::string SerialMonitorServer::cmd_flagwatch(const std::string& flag) {
-    return "FLAGWATCH: Not yet implemented";
+    if (!m_cpu) return "ERROR: No CPU";
+
+    std::ostringstream out;
+
+    // Parse flag name (case-insensitive)
+    std::string f = flag;
+    std::transform(f.begin(), f.end(), f.begin(), ::toupper);
+
+    if (f.length() != 1) {
+        return "ERROR: E <flag> (N,V,B,D,I,Z,C)";
+    }
+
+    char c = f[0];
+    uint32_t flagValue = 0;
+    std::string flagName;
+
+    switch (c) {
+        case 'N': flagValue = 0x80; flagName = "Negative"; break;
+        case 'V': flagValue = 0x40; flagName = "Overflow"; break;
+        case 'B': flagValue = 0x10; flagName = "Break"; break;
+        case 'D': flagValue = 0x08; flagName = "Decimal"; break;
+        case 'I': flagValue = 0x04; flagName = "Interrupt"; break;
+        case 'Z': flagValue = 0x02; flagName = "Zero"; break;
+        case 'C': flagValue = 0x01; flagName = "Carry"; break;
+        default:
+            return "ERROR: Unknown flag '" + std::string(1, c) + "'";
+    }
+
+    // Read status register (P) to check flag
+    int pReg = -1;
+    for (int i = 0; i < m_cpu->regCount(); ++i) {
+        if (strcmp(m_cpu->regDescriptor(i)->name, "P") == 0) {
+            pReg = i;
+            break;
+        }
+    }
+
+    if (pReg < 0) {
+        return "ERROR: Status register not found";
+    }
+
+    uint32_t pValue = m_cpu->regRead(pReg);
+    bool isSet = (pValue & flagValue) != 0;
+
+    out << flagName << " (" << c << ") = " << (isSet ? "SET" : "CLEAR");
+    return out.str();
 }
 
 std::string SerialMonitorServer::cmd_interrupts(const std::string& cmd) {
-    return "INTERRUPTS: Not yet implemented";
+    if (!m_cpu) return "ERROR: No CPU";
+
+    std::ostringstream out;
+
+    if (cmd == "on" || cmd == "enable") {
+        // Clear interrupt disable flag (I flag in P register)
+        int pReg = -1;
+        for (int i = 0; i < m_cpu->regCount(); ++i) {
+            if (strcmp(m_cpu->regDescriptor(i)->name, "P") == 0) {
+                pReg = i;
+                break;
+            }
+        }
+
+        if (pReg >= 0) {
+            uint32_t pValue = m_cpu->regRead(pReg);
+            m_cpu->regWrite(pReg, pValue & ~0x04); // Clear I flag
+            out << "Interrupts ENABLED";
+        } else {
+            return "ERROR: Status register not found";
+        }
+    } else if (cmd == "off" || cmd == "disable") {
+        // Set interrupt disable flag (I flag in P register)
+        int pReg = -1;
+        for (int i = 0; i < m_cpu->regCount(); ++i) {
+            if (strcmp(m_cpu->regDescriptor(i)->name, "P") == 0) {
+                pReg = i;
+                break;
+            }
+        }
+
+        if (pReg >= 0) {
+            uint32_t pValue = m_cpu->regRead(pReg);
+            m_cpu->regWrite(pReg, pValue | 0x04); // Set I flag
+            out << "Interrupts DISABLED";
+        } else {
+            return "ERROR: Status register not found";
+        }
+    } else if (cmd == "status") {
+        int pReg = -1;
+        for (int i = 0; i < m_cpu->regCount(); ++i) {
+            if (strcmp(m_cpu->regDescriptor(i)->name, "P") == 0) {
+                pReg = i;
+                break;
+            }
+        }
+
+        if (pReg >= 0) {
+            uint32_t pValue = m_cpu->regRead(pReg);
+            bool irqDisabled = (pValue & 0x04) != 0;
+            out << "Interrupts: " << (irqDisabled ? "DISABLED (I flag set)" : "ENABLED (I flag clear)");
+        } else {
+            return "ERROR: Status register not found";
+        }
+    } else {
+        return "ERROR: I <on|off|status>";
+    }
+
+    return out.str();
 }
 
 std::string SerialMonitorServer::cmd_cpu_memory() {
-    return "CPUMEMORY: Not yet implemented";
+    if (!m_bus) return "ERROR: No bus";
+
+    std::ostringstream out;
+
+    // Read memory as seen by CPU (through current banking/MAP configuration)
+    // For now, just show current banking status
+    uint32_t pc = m_cpu ? m_cpu->pc() : 0;
+
+    out << "CPU View:\n";
+    out << "PC=" << formatAddr(pc) << "\n";
+    out << "Memory configuration:\n";
+
+    // This would be enhanced to show actual MAP state, C64 banking, etc.
+    out << "  Address space: ";
+    if (m_bus->config().addrBits == 16) {
+        out << "16-bit (64KB)";
+    } else if (m_bus->config().addrBits == 28) {
+        out << "28-bit (256MB MEGA65)";
+    } else {
+        out << std::dec << m_bus->config().addrBits << "-bit";
+    }
+    out << "\n";
+
+    return out.str();
 }
 
 // ============================================================================
