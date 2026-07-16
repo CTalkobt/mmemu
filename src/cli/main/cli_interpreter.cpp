@@ -397,6 +397,8 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         g_interrupted = 0;
         m_ctx.dbg->resume();
         int steps = 0;
+        const int STATUS_INTERVAL = 100000; // Report status every 100k steps
+        int nextStatusAt = STATUS_INTERVAL;
         while (!m_ctx.dbg->isPaused() && !g_interrupted) {
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);
@@ -406,6 +408,14 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             ++steps;
             if (!breakpointOnly && m_ctx.cpu->isProgramEnd(m_ctx.bus)) break;
             if (maxSteps > 0 && steps >= maxSteps) break;
+
+            // Periodic status reporting to show responsiveness
+            if (steps >= nextStatusAt) {
+                uint32_t pc = m_ctx.cpu->pc();
+                m_output("  " + std::to_string(steps) + " steps, PC=$" +
+                        toHex(pc >> 20, 2) + ":" + toHex(pc & 0xFFFFF, 5) + "\n");
+                nextStatusAt += STATUS_INTERVAL;
+            }
         }
         if (g_interrupted) {
             m_output("Interrupted.\n");
@@ -2553,7 +2563,10 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  run\n");
     } else if (category == "execution") {
         m_output("EXECUTION - Running, Stepping, and Flow Control:\n"
-                 "  run [addr]          - Run from address (or last loaded address)\n"
+                 "  run [arg]           - Run (interruptible with periodic status)\n"
+                 "                        arg: [addr] run from address or decimal step count\n"
+                 "                        e.g., 'run 5000000' runs 5M steps, 'run 2048' runs from 2048\n"
+                 "  run breakpoint      - Run until next breakpoint (ignores program end)\n"
                  "  step [n]            - Step CPU N times (default 1)\n"
                  "  next                - Step to next source line (requires .loc directives)\n"
                  "  runto <cond>        - Run until condition expression is true\n"
@@ -2566,7 +2579,11 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  run                 (run until breakpoint)\n"
                  "  step                (step one instruction)\n"
                  "  next                (step to next source line)\n"
-                 "  regs                (see registers at breakpoint)\n");
+                 "  regs                (see registers at breakpoint)\n"
+                 "\nNotes:\n"
+                 "  - Ctrl-C interrupts 'run' at any time\n"
+                 "  - Status updates every 100k steps during long runs\n"
+                 "  - 'run' without args continues from last breakpoint or loaded program\n");
     } else if (category == "inspection") {
         m_output("INSPECTION - Memory and Register Inspection:\n"
                  "  regs                - Show all CPU registers\n"

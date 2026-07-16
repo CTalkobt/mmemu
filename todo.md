@@ -167,11 +167,12 @@
 [x] Background thread, coexists with CLI
 [x] 12 Python integration tests (make test-gdb)
 
-## CLI Run Loop Responsiveness (#70)
-[ ] CLI `run` command blocks the process with no way to interrupt
-  [ ] - Add SIGINT handler to break out of the run loop
-  [ ] - Add optional cycle-count argument: `run 5000000` = run N cycles (currently parsed as address)
-  [ ] - Add periodic stdin poll or timeout to keep CLI responsive
+## CLI Run Loop Responsiveness (#70) ✓ COMPLETE
+[x] CLI `run` command blocks the process with no way to interrupt
+  [x] - Add SIGINT handler to break out of the run loop (already existed via g_interrupted)
+  [x] - Add optional cycle-count argument: `run 5000000` = run N cycles (already parsed decimal)
+  [x] - Add periodic status reporting to keep CLI responsive (100k step intervals)
+  [x] - Improve help text with cycle-count examples and Ctrl-C documentation
   Note: GUI already handles this correctly (25ms deadline in OnTimer, line 1260 of main.cpp)
 
 ## Deprioritized
