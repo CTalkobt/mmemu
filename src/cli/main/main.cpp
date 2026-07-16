@@ -6,6 +6,7 @@
 #include "cli_interpreter.h"
 #include "gdb_server.h"
 #include "serial_monitor_server.h"
+#include "vice_monitor_server.h"
 #include "plugin_loader/main/plugin_loader.h"
 #include "plugin_command_registry.h"
 #include "include/util/logging.h"
@@ -71,6 +72,7 @@ int main(int argc, char *argv[]) {
                       << "  --run                     Auto-start the loaded program\n"
                       << "  --gdb-port <port>         Start GDB RSP server on <port>\n"
                       << "  --serial-monitor-port <p> Start MEGA65 serial monitor server on <p>\n"
+                      << "  --vice-monitor-port <p>   Start VICE protocol monitor server on <p> (default: 6510)\n"
                       << "  --experimental            Enable experimental features (45GS02 prefix peek-ahead,\n"
                       << "                            F018B DMA SWAP/MIX/MODULO operations)\n"
                       << "  -v, --verbose             Enable debug logging\n"
@@ -94,9 +96,10 @@ int main(int argc, char *argv[]) {
         std::cout.flush();
     });
 
-    // Process other command line args (machine, mount, type, gdb, run, serial-monitor)
+    // Process other command line args (machine, mount, type, gdb, run, serial-monitor, vice-monitor)
     uint16_t gdbPort = 0;
     uint16_t serialMonitorPort = 0;
+    uint16_t viceMonitorPort = 0;
     bool autoRun = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -112,6 +115,8 @@ int main(int argc, char *argv[]) {
             gdbPort = std::stoi(argv[++i]);
         } else if (arg == "--serial-monitor-port" && i + 1 < argc) {
             serialMonitorPort = std::stoi(argv[++i]);
+        } else if (arg == "--vice-monitor-port" && i + 1 < argc) {
+            viceMonitorPort = std::stoi(argv[++i]);
         }
     }
 
@@ -146,6 +151,20 @@ int main(int argc, char *argv[]) {
         }
     } else if (serialMonitorPort > 0) {
         std::cerr << "Warning: --serial-monitor-port requires a machine (-m). Server not started.\n";
+    }
+
+    // Start VICE Monitor server if requested
+    std::unique_ptr<ViceMonitorServer> viceMonitorServer;
+    if (viceMonitorPort > 0 && ctx.cpu && ctx.bus) {
+        viceMonitorServer = std::make_unique<ViceMonitorServer>(ctx.cpu, ctx.bus, ctx.dbg);
+        if (viceMonitorServer->start(viceMonitorPort)) {
+            std::cout << "VICE Monitor server listening on port " << viceMonitorPort << " (VICE protocol compatible)\n";
+        } else {
+            std::cerr << "Error: Failed to start VICE Monitor server on port " << viceMonitorPort << "\n";
+            viceMonitorServer.reset();
+        }
+    } else if (viceMonitorPort > 0) {
+        std::cerr << "Warning: --vice-monitor-port requires a machine (-m). Server not started.\n";
     }
 
     std::cout << "Type 'help' for a list of commands.\n";
