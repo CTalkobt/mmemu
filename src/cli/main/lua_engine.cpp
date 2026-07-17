@@ -164,6 +164,66 @@ static int lua_on_interrupt(lua_State* L) {
     return 0;
 }
 
+// Issue #24 Phase 4.3: Snapshot integration
+static int lua_save_snapshot(lua_State* L) {
+    // save_snapshot(label) -> snapshot_id
+    const char* label = luaL_checkstring(L, 1);
+
+    DebugContext* dbg = static_cast<DebugContext*>(lua_touserdata(L, lua_upvalueindex(1)));
+    if (!dbg) {
+        lua_pushstring(L, "DebugContext not available");
+        lua_error(L);
+        return 0;
+    }
+
+    int snapshotId = dbg->saveSnapshot(label);
+    lua_pushinteger(L, snapshotId);
+    return 1;
+}
+
+static int lua_load_snapshot(lua_State* L) {
+    // load_snapshot(snapshot_id) -> success
+    int snapshotId = luaL_checkinteger(L, 1);
+
+    DebugContext* dbg = static_cast<DebugContext*>(lua_touserdata(L, lua_upvalueindex(1)));
+    if (!dbg) {
+        lua_pushstring(L, "DebugContext not available");
+        lua_error(L);
+        return 0;
+    }
+
+    bool success = dbg->restoreSnapshot(snapshotId);
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+static int lua_list_snapshots(lua_State* L) {
+    // list_snapshots() -> table of {id, label}
+    DebugContext* dbg = static_cast<DebugContext*>(lua_touserdata(L, lua_upvalueindex(1)));
+    if (!dbg) {
+        lua_pushstring(L, "DebugContext not available");
+        lua_error(L);
+        return 0;
+    }
+
+    const auto& snapshots = dbg->snapshots();
+    lua_newtable(L);
+
+    for (size_t i = 0; i < snapshots.size(); ++i) {
+        lua_newtable(L);  // Create entry table
+
+        lua_pushinteger(L, i);  // id
+        lua_setfield(L, -2, "id");
+
+        lua_pushstring(L, snapshots[i].label.c_str());  // label
+        lua_setfield(L, -2, "label");
+
+        lua_rawseti(L, -2, i + 1);  // Add to results table
+    }
+
+    return 1;
+}
+
 #endif // HAVE_LUA
 
 LuaEngine::LuaEngine(ICore* cpu, IBus* bus, DebugContext* dbg)
@@ -241,6 +301,19 @@ void LuaEngine::setupGlobals() {
     lua_pushlightuserdata(m_lua, m_dbg);
     lua_pushcclosure(m_lua, lua_on_interrupt, 1);
     lua_setfield(m_lua, mmemu_table, "on_interrupt");
+
+    // Snapshot API (Issue #24 Phase 4.3)
+    lua_pushlightuserdata(m_lua, m_dbg);
+    lua_pushcclosure(m_lua, lua_save_snapshot, 1);
+    lua_setfield(m_lua, mmemu_table, "save_snapshot");
+
+    lua_pushlightuserdata(m_lua, m_dbg);
+    lua_pushcclosure(m_lua, lua_load_snapshot, 1);
+    lua_setfield(m_lua, mmemu_table, "load_snapshot");
+
+    lua_pushlightuserdata(m_lua, m_dbg);
+    lua_pushcclosure(m_lua, lua_list_snapshots, 1);
+    lua_setfield(m_lua, mmemu_table, "list_snapshots");
 
     // Set global mmemu table
     lua_setglobal(m_lua, "mmemu");

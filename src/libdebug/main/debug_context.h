@@ -90,6 +90,7 @@ private:
     std::string formatState(ICore* cpu);
     void executeLuaBreakpointAction(const Breakpoint& bp);  // Issue #24: Execute Lua on breakpoint
     void executeLuaCycleEvents(uint64_t currentCycle);      // Issue #24 Phase 4.2: Cycle events
+    void fireInterruptEvent(const std::string& type);       // Issue #24 Phase 4.2.2: Interrupt events
 
     ICore* m_cpu;
     IBus*  m_bus;

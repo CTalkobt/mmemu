@@ -397,3 +397,41 @@ void DebugContext::executeLuaCycleEvents(uint64_t currentCycle) {
     }
 #endif
 }
+
+// Issue #24 Phase 4.2.2: Execute Lua interrupt event handler
+void DebugContext::fireInterruptEvent(const std::string& type) {
+#ifdef HAVE_LUA_ENGINE
+    if (!m_cpu || !m_bus || !m_luaEventRegistry) {
+        return;  // Cannot execute without context
+    }
+
+    // Get handler for this interrupt type
+    const auto* handlerName = m_luaEventRegistry->getInterruptHandler(type);
+    if (!handlerName) {
+        return;  // No handler registered for this type
+    }
+
+    try {
+        // Create a Lua engine with current machine context
+        LuaEngine engine(m_cpu, m_bus, this);
+
+        // Call the registered Lua function
+        if (!engine.callFunction(*handlerName)) {
+            auto logger = LogRegistry::instance().getLogger("lua");
+            if (logger) {
+                logger->warn("[Interrupt Event] Handler '{}' for {} failed: {}", *handlerName, type, engine.getLastError());
+            }
+        } else {
+            auto logger = LogRegistry::instance().getLogger("lua");
+            if (logger) {
+                logger->debug("[Interrupt Event] Handler '{}' executed for {}", *handlerName, type);
+            }
+        }
+    } catch (const std::exception& e) {
+        auto logger = LogRegistry::instance().getLogger("lua");
+        if (logger) {
+            logger->error("[Interrupt Event] Lua execution exception: {}", e.what());
+        }
+    }
+#endif
+}
