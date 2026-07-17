@@ -55,6 +55,12 @@ public:
      */
     static bool isEnabled();
 
+    /**
+     * Create a performance tracker for test profiling
+     * @return New TestPerformanceTracker instance (caller owns it)
+     */
+    static class TestPerformanceTracker* createPerformanceTracker();
+
 private:
     static std::shared_ptr<TestPersistence> persistence;
     static bool enabled;

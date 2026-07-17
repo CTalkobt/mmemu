@@ -1,4 +1,5 @@
 #include "test_runner_integration.h"
+#include "test_performance_tracker.h"
 #include <iostream>
 #include <chrono>
 #include <iomanip>
@@ -76,4 +77,25 @@ void TestRunnerIntegration::setEnabled(bool isEnabled) {
 
 bool TestRunnerIntegration::isEnabled() {
     return enabled;
+}
+
+TestPerformanceTracker* TestRunnerIntegration::createPerformanceTracker() {
+    return new TestPerformanceTracker();
+}
+
+// Export for test harness (using void* to avoid header inclusion)
+void* createTestPerformanceTracker() {
+    return TestRunnerIntegration::createPerformanceTracker();
+}
+
+void deleteTestPerformanceTracker(void* tracker) {
+    delete static_cast<TestPerformanceTracker*>(tracker);
+}
+
+uint64_t startTestTracking(void* tracker, const std::string& testName) {
+    return static_cast<TestPerformanceTracker*>(tracker)->startTest(testName);
+}
+
+void endTestTracking(void* tracker, uint64_t handle) {
+    static_cast<TestPerformanceTracker*>(tracker)->endTest(handle);
 }

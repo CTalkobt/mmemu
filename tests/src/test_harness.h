@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <memory>
 
 // Simple hand-rolled test harness for mmemu
 // Documentation: Add TEST_CASE("name") { ... } and use ASSERT(expr)
@@ -61,16 +62,46 @@ struct TestRegistrar {
         exit(1); \
     }
 
-inline int runAllTests() {
+// Forward declare performance tracker functions (avoiding TestPerformanceTracker inclusion)
+extern void* createTestPerformanceTracker();
+extern void deleteTestPerformanceTracker(void* tracker);
+extern uint64_t startTestTracking(void* tracker, const std::string& testName);
+extern void endTestTracking(void* tracker, uint64_t handle);
+
+inline int runAllTests(bool enablePerformance = false) {
     int passed = 0;
     auto& cases = getTestCases();
     std::cout << "Running " << cases.size() << " tests..." << std::endl;
+
+    // Conditionally enable performance tracking
+    void* tracker = nullptr;
+    if (enablePerformance) {
+        tracker = createTestPerformanceTracker();
+    }
+
     for (auto& tc : cases) {
         std::cout << "  [ RUN      ] " << tc.name << std::endl;
+
+        uint64_t perfHandle = 0;
+        if (tracker) {
+            perfHandle = startTestTracking(tracker, tc.name);
+        }
+
         tc.func();
+
+        if (tracker) {
+            endTestTracking(tracker, perfHandle);
+        }
+
         std::cout << "  [       OK ] " << tc.name << std::endl;
         passed++;
     }
+
+    if (tracker) {
+        std::cout << "\nPerformance data saved to: ~/.local/share/mmemu/test-performance.json" << std::endl;
+        deleteTestPerformanceTracker(tracker);
+    }
+
     std::cout << "Passed " << passed << " / " << cases.size() << " tests." << std::endl;
     return 0;
 }
