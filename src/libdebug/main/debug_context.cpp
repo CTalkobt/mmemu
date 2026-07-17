@@ -10,6 +10,14 @@
 #include <iomanip>
 #include <string>
 
+// Issue #24: Lua breakpoint action support
+#ifdef __has_include
+#if __has_include("lua_engine.h")
+#include "lua_engine.h"
+#define HAVE_LUA_ENGINE 1
+#endif
+#endif
+
 static std::string toHex(uint32_t v) {
     std::ostringstream ss;
     ss << std::uppercase << std::hex << v;
@@ -66,6 +74,9 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
         m_lastPausedAddr = entry.addr;
         m_paused = true;
         cont = false;
+
+        // Issue #24: Execute Lua breakpoint action if present
+        executeLuaBreakpointAction(*bp);
     }
 
     if (!cont) return false;
@@ -296,4 +307,46 @@ bool DebugContext::loadDebugSymbolsFromO45(const std::string& path) {
     }
 
     return true;
+}
+
+// Issue #24: Execute Lua breakpoint action scripts
+void DebugContext::executeLuaBreakpointAction(const Breakpoint& bp) {
+#ifdef HAVE_LUA_ENGINE
+    if (bp.luaAction.empty()) {
+        return;  // No action to execute
+    }
+
+    if (!m_cpu || !m_bus) {
+        return;  // Cannot execute without CPU and bus context
+    }
+
+    try {
+        // Create a Lua engine with current machine context
+        LuaEngine engine(m_cpu, m_bus, this);
+
+        // Execute the Lua action
+        if (!engine.executeString(bp.luaAction)) {
+            // Log error but don't crash debugger
+            auto logger = LogRegistry::instance().getLogger("lua");
+            if (logger) {
+                logger->warn("[Breakpoint {}] Lua action failed: {}", bp.id, engine.getLastError());
+            }
+        } else {
+            // Log successful execution
+            auto logger = LogRegistry::instance().getLogger("lua");
+            if (logger) {
+                logger->debug("[Breakpoint {}] Lua action executed", bp.id);
+            }
+        }
+    } catch (const std::exception& e) {
+        // Catch any C++ exceptions and log them
+        auto logger = LogRegistry::instance().getLogger("lua");
+        if (logger) {
+            logger->error("[Breakpoint {}] Lua execution exception: {}", bp.id, e.what());
+        }
+    }
+#else
+    // Lua engine not available - silently skip (Issue #24 Phase 4 deferred)
+    // Users without lua5.4-dev will see the breakpoint action stored but not executed
+#endif
 }

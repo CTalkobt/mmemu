@@ -11,6 +11,9 @@
 #include <vector>
 #include <memory>
 
+// Forward declaration for Lua integration (Issue #24)
+class LuaEngine;
+
 struct SystemSnapshot {
     std::string label;
     std::vector<uint8_t> cpuState;
@@ -83,6 +86,7 @@ private:
     void monitorKernal(ICore* cpu, const DisasmEntry& entry);
     void monitorBasic(ICore* cpu, const DisasmEntry& entry);
     std::string formatState(ICore* cpu);
+    void executeLuaBreakpointAction(const Breakpoint& bp);  // Issue #24: Execute Lua on breakpoint
 
     ICore* m_cpu;
     IBus*  m_bus;
