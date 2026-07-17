@@ -224,13 +224,19 @@ make clean cli
   - Pattern fill and memory dump diagnostics
   - **Test Results**: 8/8 passing on emulator backend
 
-### Phase 5.2: Hardware Backend ✅ COMPLETE
-- ✅ Serial protocol design (text-based commands)
-- ✅ SerialPort wrapper for cross-platform support
-- ✅ Mock mode for testing without hardware
-- ✅ 8/8 tests passing on HardwareBackend
-- ✅ Full documentation with implementation guide
-- 🔄 TODO: MEGA65 hypervisor serial monitor (hardware-side)
+### Phase 5.1: JTAG Loopback Device ✅ COMPLETE
+- ✅ TCP client wrapper (jtag_loopback.lua)
+- ✅ Connects to mmemu SerialMonitorServer (localhost:6502)
+- ✅ Text command protocol (newline-framed)
+- ✅ Ready for real hardware via TE0790-03 JTAG adapter
+
+### Phase 5.2: Hardware Backend with JTAG ✅ COMPLETE
+- ✅ MEGA65 Matrix Mode Monitor protocol (from book Section K)
+- ✅ Memory operations via M/S commands
+- ✅ Register access via R command
+- ✅ Execution control via G command
+- ✅ Full backend_interface implementation
+- 🔄 TODO: MEGA65 hypervisor serial monitor (hardware-side implementation)
 
 ### Phase 6+: Advanced Features (FUTURE)
 - Lua JIT compilation for performance
