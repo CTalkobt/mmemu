@@ -304,47 +304,62 @@ See `todo.md` for the full roadmap.
 
 ## Hardware Validation & Cross-Validation Testing
 
-The emulator can be cross-validated against real MEGA65 hardware to verify emulation accuracy. The **Hardware Test Runner Bridge** provides a unified interface for running identical test programs on both targets.
+The emulator can be cross-validated against real MEGA65 hardware and xemu-xmega65 to verify emulation accuracy. The **Hardware Test Runner Bridge** supports three-way comparison:
+- **mmsim** — Our MEGA65 emulator
+- **xemu-xmega65** — Alternative MEGA65 emulator (via subprocess)
+- **Real MEGA65 hardware** — Physical system via serial/JTAG
 
 ### Components
 
-- **HardwareTestBridge** — Unified interface for emulator (TCP to SerialMonitorServer) and hardware (serial port) communication
-- **CrossValidationRunner** — Orchestrates test execution on one or both targets with automatic result comparison
+- **HardwareTestBridge** — Unified interface for emulator, hardware, and xemu
+  - EmulatorTestBridge: TCP to SerialMonitorServer
+  - HardwarePortBridge: Direct serial port (USB-UART adapter)
+  - XemuTestBridge: Subprocess-based xemu-xmega65 integration
+- **CrossValidationRunner** — Orchestrates test execution with automatic result comparison
+- **Factory methods**: `withXemu()`, `withHardware()`, `withBoth()`, `withAll()`
 - **Serial Monitor Protocol** — Text-based commands: M (read), S (write), R (registers), D (disasm), G (setPC), T (step)
 
 ### Quick Start
 
 ```cpp
-// Cross-validate: run same test on both emulator and hardware
-auto runner = CrossValidationRunner::withBoth(
-    "127.0.0.1", 6502,              // Emulator
-    "/dev/ttyUSB0", 2000000         // Hardware serial port
+// Compare two emulators (mmsim vs xemu)
+auto runner = CrossValidationRunner::withXemu();
+
+// Compare emulator vs real hardware
+auto runner = CrossValidationRunner::withHardware("/dev/ttyUSB0");
+
+// Full three-way validation (mmsim vs xemu vs hardware)
+auto runner = CrossValidationRunner::withAll(
+    "127.0.0.1", 6502,              // mmsim
+    "/usr/local/bin/xemu-xmega65",  // xemu
+    "/dev/ttyUSB0", 2000000         // real hardware
 );
 
 std::vector<CrossValidationRunner::TestCase> tests = {
-    {.name = "arithmetic", .programPath = "tests/arithmetic.bin", 
-     .programAddr = 0x0800, .resultAddr = 0x2000, .resultSize = 256}
+    {.name = "arithmetic", .programPath = "tests/45gs02/arithmetic.bin", 
+     .programAddr = 0x2000, .resultAddr = 0x0400, .resultSize = 16}
 };
 
 auto results = runner->runTests(tests);
 for (const auto& [name, result] : results) {
-    if (result.overallPass()) {
-        printf("✓ %s: PASS (emulator and hardware match)\n", name.c_str());
-    } else if (!result.resultsMatch) {
+    if (result.resultsMatch) {
+        printf("✓ %s: All targets match\n", name.c_str());
+    } else {
         printf("✗ %s: Results differ\n", name.c_str());
     }
 }
 ```
 
-### Hardware Setup
+### Hardware & Emulator Setup
 
-- MEGA65 with serial monitor support
-- USB-to-UART adapter (FTDI/CP2102)
-- Connect to JTAG/serial connector pins 2-3 (RX/TX)
+- **mmsim**: Start with `./bin/mmemu-cli -m rawMega65`
+- **xemu-xmega65**: Install with `apt-get install xemu-xmega65`
+- **Real MEGA65**: USB-to-UART adapter (FTDI/CP2102) to JTAG pins 2-3
 
 ### See Also
 
-- **HARDWARE_VALIDATION.md** — Complete API reference, examples, and debugging guide
+- **HARDWARE_VALIDATION.md** — Complete hardware integration guide and API reference
+- **XEMU_VALIDATION.md** — xemu-xmega65 integration with examples
 - **tests/src/test_cross_validation.cpp** — Integration tests (7 tests)
 - **src/cli/main/hardware_test_bridge.h** — Bridge class definition
 - **src/cli/main/cross_validation_runner.h** — Runner class definition

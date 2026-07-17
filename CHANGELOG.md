@@ -21,6 +21,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #99 - Execution History and Reverse Debugging**: User-facing tools for execution history inspection built on existing TraceBuffer infrastructure. CLI `log` command with filtering options (`log show`, `log show -memory`, `log show -calls`), MCP tools for remote access (`get_execution_history`, `get_memory_access_history`). Enables debugging workflow: hit breakpoint → examine what led to it → step backwards → inspect state.
 - **Issue #100 - GDB Protocol IDE Integration** (#100): Enhanced GDB Remote Serial Protocol server with mmemu-specific metadata exchange. New query commands: `qMmemuSymbols` (symbol table), `qMmemuVariables` (variable info), `qMmemuFrame` (frame info). Responses are hex-encoded JSON for compatibility. Enables IDE integration with VS Code, CLion, and other GDB-compatible debuggers. Full documentation for VS Code setup and debugging workflow.
 
+### Hardware & Emulator Cross-Validation Testing Framework
+- **Extended Bridge Support**: Added XemuTestBridge for subprocess-based xemu-xmega65 integration. Launches xemu with `-dumpmem` flag, captures memory results. Enables three-way comparison (mmsim vs xemu vs real hardware).
+- **Enhanced CrossValidationRunner**: New factory methods `withXemu()` (two-emulator comparison) and `withAll()` (three-way validation). ComparisonResult now includes xemuPass, xemuMemory, xemuOutput fields.
+- **Three-Way Validation Logic**: Uses mmsim as reference. Compares against xemu and hardware independently. Helps distinguish emulation bugs (mmsim differs from both) vs hardware-specific quirks (mmsim and xemu agree, hardware differs).
+- **Virtual runTest Method**: Allows XemuTestBridge to override test execution via subprocess model.
+- **Documentation**: New XEMU_VALIDATION.md with complete examples, factory method reference, result interpretation guide, performance notes.
+
 ### Hardware Cross-Validation Testing Framework
 - **Hardware Test Runner Bridge**: Unified interface for running test programs on emulator (TCP to SerialMonitorServer) and real MEGA65 hardware (USB-UART serial port). Implements MEGA65 serial monitor protocol (M, S, R, D, G, T commands). Two backends: EmulatorTestBridge (TCP), HardwarePortBridge (serial port with termios configuration).
 - **CrossValidationRunner**: High-level test orchestration with factory methods `withEmulator()`, `withHardware()`, `withBoth()`. Supports batch test execution, automatic memory comparison, detailed diff reporting. Gracefully degrades when hardware/emulator unavailable.
