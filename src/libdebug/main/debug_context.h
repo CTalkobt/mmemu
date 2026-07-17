@@ -5,6 +5,7 @@
 #include "trace_buffer.h"
 #include "stack_trace.h"
 #include "memory_heatmap.h"
+#include "lua_event_registry.h"
 #include "libtoolchain/main/symbol_table.h"
 #include "libtoolchain/main/variable_symbol.h"
 #include "libtoolchain/main/source_map.h"
@@ -39,6 +40,7 @@ public:
     VariableSymbolTable& variables() { return m_variables; }
     SourceMap&      sourceMap()   { return m_sourceMap; }
     MemoryHeatMap&  heatmap()     { return m_heatmap; }
+    LuaEventRegistry& luaEvents() { return *m_luaEventRegistry; }
 
     /**
      * Load debug symbols from an .o45 object file.
@@ -87,6 +89,7 @@ private:
     void monitorBasic(ICore* cpu, const DisasmEntry& entry);
     std::string formatState(ICore* cpu);
     void executeLuaBreakpointAction(const Breakpoint& bp);  // Issue #24: Execute Lua on breakpoint
+    void executeLuaCycleEvents(uint64_t currentCycle);      // Issue #24 Phase 4.2: Cycle events
 
     ICore* m_cpu;
     IBus*  m_bus;
@@ -98,6 +101,7 @@ private:
     VariableSymbolTable m_variables;
     SourceMap      m_sourceMap;
     MemoryHeatMap  m_heatmap;
+    std::unique_ptr<LuaEventRegistry> m_luaEventRegistry;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;
     std::vector<SystemSnapshot> m_snapshots;
@@ -105,4 +109,5 @@ private:
     uint32_t    m_lastPausedAddr  = ~0u;
     uint32_t    m_resumeSkipAddr  = ~0u;
     std::string m_lastHitMessage;
+    uint64_t    m_cycleCounter    = 0;
 };

@@ -70,7 +70,7 @@ LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debu
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp \
-	src/libdebug/main/o45_object_loader.cpp
+	src/libdebug/main/o45_object_loader.cpp src/libdebug/main/lua_event_registry.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
 
 # Plugin Sources
@@ -314,6 +314,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdebug/test/test_stack_trace.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \
 	src/libdebug/test/test_frame_analyzer.cpp \
+	src/libdebug/test/test_lua_event_registry.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \

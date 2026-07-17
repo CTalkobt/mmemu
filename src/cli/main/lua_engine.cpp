@@ -129,6 +129,41 @@ static int lua_log(lua_State* L) {
     return 0;
 }
 
+// Issue #24 Phase 4.2: Machine event hooks
+static int lua_on_cycle(lua_State* L) {
+    // on_cycle(interval, function_name)
+    uint64_t interval = luaL_checkinteger(L, 1);
+    const char* funcName = luaL_checkstring(L, 2);
+
+    // Get DebugContext from upvalue
+    DebugContext* dbg = static_cast<DebugContext*>(lua_touserdata(L, lua_upvalueindex(1)));
+    if (!dbg) {
+        lua_pushstring(L, "DebugContext not available");
+        lua_error(L);
+        return 0;
+    }
+
+    dbg->luaEvents().registerCycleEvent(interval, funcName);
+    return 0;
+}
+
+static int lua_on_interrupt(lua_State* L) {
+    // on_interrupt(type, function_name)
+    const char* type = luaL_checkstring(L, 1);
+    const char* funcName = luaL_checkstring(L, 2);
+
+    // Get DebugContext from upvalue
+    DebugContext* dbg = static_cast<DebugContext*>(lua_touserdata(L, lua_upvalueindex(1)));
+    if (!dbg) {
+        lua_pushstring(L, "DebugContext not available");
+        lua_error(L);
+        return 0;
+    }
+
+    dbg->luaEvents().registerInterruptEvent(type, funcName);
+    return 0;
+}
+
 #endif // HAVE_LUA
 
 LuaEngine::LuaEngine(ICore* cpu, IBus* bus, DebugContext* dbg)
@@ -197,6 +232,15 @@ void LuaEngine::setupGlobals() {
 
     lua_pushcclosure(m_lua, lua_log, 0);
     lua_setfield(m_lua, mmemu_table, "log");
+
+    // Event hook API (Issue #24 Phase 4.2)
+    lua_pushlightuserdata(m_lua, m_dbg);
+    lua_pushcclosure(m_lua, lua_on_cycle, 1);
+    lua_setfield(m_lua, mmemu_table, "on_cycle");
+
+    lua_pushlightuserdata(m_lua, m_dbg);
+    lua_pushcclosure(m_lua, lua_on_interrupt, 1);
+    lua_setfield(m_lua, mmemu_table, "on_interrupt");
 
     // Set global mmemu table
     lua_setglobal(m_lua, "mmemu");

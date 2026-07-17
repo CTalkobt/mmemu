@@ -1,6 +1,7 @@
 #include "debug_context.h"
 #include "o45_object_loader.h"
 #include "o45_symbol_parser.h"
+#include "lua_event_registry.h"
 #include "include/mmemu_plugin_api.h"
 #include "libcore/main/image_loader.h"
 #include "include/util/logging.h"
@@ -27,7 +28,7 @@ static std::string toHex(uint32_t v) {
 #include "observer_registry.h"
 
 DebugContext::DebugContext(ICore* cpu, IBus* bus)
-    : m_cpu(cpu), m_bus(bus) {
+    : m_cpu(cpu), m_bus(bus), m_luaEventRegistry(std::make_unique<LuaEventRegistry>()) {
 }
 
 bool DebugContext::needsDisasm() const {
@@ -61,6 +62,9 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
 
     m_trace.push(te);
 
+    // Track cycle count for Lua event system
+    m_cycleCounter += cpu->cycles();
+
     // On resume, skip the breakpoint at the address we just paused on (one step).
     if (entry.addr == m_resumeSkipAddr) {
         m_resumeSkipAddr = ~0u;
@@ -78,6 +82,9 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
         // Issue #24: Execute Lua breakpoint action if present
         executeLuaBreakpointAction(*bp);
     }
+
+    // Issue #24 Phase 4.2: Execute Lua cycle events
+    executeLuaCycleEvents(m_cycleCounter);
 
     if (!cont) return false;
 
@@ -348,5 +355,45 @@ void DebugContext::executeLuaBreakpointAction(const Breakpoint& bp) {
 #else
     // Lua engine not available - silently skip (Issue #24 Phase 4 deferred)
     // Users without lua5.4-dev will see the breakpoint action stored but not executed
+#endif
+}
+
+// Issue #24 Phase 4.2: Execute Lua cycle event handlers
+void DebugContext::executeLuaCycleEvents(uint64_t currentCycle) {
+#ifdef HAVE_LUA_ENGINE
+    if (!m_cpu || !m_bus || !m_luaEventRegistry) {
+        return;  // Cannot execute without context
+    }
+
+    // Get all handlers that should fire
+    auto handlers = m_luaEventRegistry->getReadyCycleHandlers(currentCycle);
+    if (handlers.empty()) {
+        return;  // No handlers to execute
+    }
+
+    try {
+        // Create a Lua engine with current machine context
+        LuaEngine engine(m_cpu, m_bus, this);
+
+        for (const auto& functionName : handlers) {
+            // Call the registered Lua function
+            if (!engine.callFunction(functionName)) {
+                auto logger = LogRegistry::instance().getLogger("lua");
+                if (logger) {
+                    logger->warn("[Cycle Event] Handler '{}' failed: {}", functionName, engine.getLastError());
+                }
+            } else {
+                auto logger = LogRegistry::instance().getLogger("lua");
+                if (logger) {
+                    logger->debug("[Cycle Event] Handler '{}' executed at cycle {}", functionName, currentCycle);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        auto logger = LogRegistry::instance().getLogger("lua");
+        if (logger) {
+            logger->error("[Cycle Event] Lua execution exception: {}", e.what());
+        }
+    }
 #endif
 }
