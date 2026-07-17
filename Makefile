@@ -319,6 +319,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \
 	src/libdebug/test/test_frame_analyzer.cpp \
 	src/libdebug/test/test_lua_event_registry.cpp \
+	tests/src/test_mcp_integration.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
