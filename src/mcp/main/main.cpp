@@ -5063,12 +5063,34 @@ void mcpCleanup() {
 // ---------------------------------------------------------------------------
 
 #ifdef TEST_BUILD
+
+// Global initialization flag for test environment
+static bool g_mcp_test_initialized = false;
+
+static void initializeTestEnvironment() {
+    if (g_mcp_test_initialized) return;
+
+    // Initialize logging
+    LogRegistry::instance().init();
+
+    // Load plugins
+    PluginLoader::instance().loadFromStandardLocations();
+
+    // Load configuration
+    SimConfig::instance().load();
+
+    g_mcp_test_initialized = true;
+}
+
 namespace MCPTest {
     Json invokeTool(const std::string& toolName, const Json& arguments) {
+        initializeTestEnvironment();
         return dispatchToolInternal(toolName, arguments);
     }
 
     std::string createTestMachine(const std::string& machineType, const std::string& instanceId) {
+        initializeTestEnvironment();
+
         std::string id = instanceId;
         if (id.empty()) {
             // Auto-generate instance ID
