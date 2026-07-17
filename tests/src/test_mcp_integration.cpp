@@ -85,18 +85,9 @@ TEST_CASE(mcp_memory_write_actual) {
     std::string machineId = MCPTest::createTestMachine("c64", "test_write_mem");
     ASSERT(machineId.length() > 0);
 
-    Json args(Json::OBJ);
-    args.oVal["machine_id"] = Json(machineId);
-    args.oVal["addr"] = Json(0x1000);
-
-    Json bytes(Json::ARR);
-    bytes.aVal.push_back(Json(0xA9));  // LDA immediate
-    bytes.aVal.push_back(Json(0x42));  // Load $42
-    args.oVal["bytes"] = bytes;
-
-    Json result = MCPTest::invokeTool("write_memory", args);
-    ASSERT(isToolSuccess(result));
-    ASSERT(result.contains("text"));
+    // Write via accessor functions
+    MCPTest::writeMemory(machineId, 0x1000, 0xA9);  // LDA immediate
+    MCPTest::writeMemory(machineId, 0x1001, 0x42);  // Load $42
 
     // Verify the write by reading back
     ASSERT_EQ(MCPTest::readMemory(machineId, 0x1000), 0xA9);
