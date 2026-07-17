@@ -67,12 +67,14 @@ TEST_CASE(lua_event_single_fire_at_interval) {
     registry.registerCycleEvent(1000, "handler1");
     registry.registerCycleEvent(2000, "handler2");
 
-    auto ready = registry.getReadyCycleHandlers(1500);
-    ASSERT_EQ(ready.size(), 0);
-
-    ready = registry.getReadyCycleHandlers(1000);
+    // At 1000: handler1 fires
+    auto ready = registry.getReadyCycleHandlers(1000);
     ASSERT_EQ(ready.size(), 1);
     ASSERT_EQ(ready[0], "handler1");
+
+    // At 1500: neither handler fires (handler1 next at 2000, handler2 next at 2000)
+    ready = registry.getReadyCycleHandlers(1500);
+    ASSERT_EQ(ready.size(), 0);
 }
 
 TEST_CASE(lua_event_replace_interrupt) {
