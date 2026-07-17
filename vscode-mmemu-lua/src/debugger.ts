@@ -130,6 +130,19 @@ export class MmemuDebugger extends EventEmitter {
         return result.slice(0, size);
     }
 
+    async evaluateLua(expression: string): Promise<string> {
+        if (!expression.trim()) {
+            return '';
+        }
+
+        try {
+            const response = await this.executeCommand(`script eval "return ${expression}"`);
+            return response.trim();
+        } catch (error) {
+            throw new Error(`Lua evaluation error: ${error}`);
+        }
+    }
+
     private async executeCommand(command: string): Promise<string> {
         if (!this.socket) {
             throw new Error('Not connected to mmemu');

@@ -87,6 +87,46 @@
         "command": "mmemu.showMemory",
         "title": "mmemu: Show Memory",
         "description": "Display memory viewer"
+      },
+      {
+        "command": "mmemu.showConsole",
+        "title": "mmemu: Show Debug Console",
+        "description": "Show the Lua debug console"
+      },
+      {
+        "command": "mmemu.hideConsole",
+        "title": "mmemu: Hide Debug Console",
+        "description": "Hide the Lua debug console"
+      },
+      {
+        "command": "mmemu.clearConsole",
+        "title": "mmemu: Clear Debug Console",
+        "description": "Clear all output from debug console"
+      },
+      {
+        "command": "mmemu.evaluateInConsole",
+        "title": "mmemu: Evaluate in Console",
+        "description": "Evaluate a Lua expression in the debug console"
+      },
+      {
+        "command": "mmemu.addWatchExpression",
+        "title": "mmemu: Add Watch Expression",
+        "description": "Add an expression to the watch panel"
+      },
+      {
+        "command": "mmemu.removeWatchExpression",
+        "title": "mmemu: Remove Watch Expression",
+        "description": "Remove an expression from the watch panel"
+      },
+      {
+        "command": "mmemu.clearWatchExpressions",
+        "title": "mmemu: Clear All Watches",
+        "description": "Clear all watch expressions"
+      },
+      {
+        "command": "mmemu.editWatchExpression",
+        "title": "mmemu: Edit Watch Expression",
+        "description": "Edit an expression in the watch panel"
       }
     ],
     "keybindings": [
@@ -113,8 +153,38 @@
         "key": "ctrl+shift+c",
         "mac": "cmd+shift+c",
         "when": "editorLangId == lua-mmemu"
+      },
+      {
+        "command": "mmemu.evaluateInConsole",
+        "key": "ctrl+alt+e",
+        "mac": "cmd+alt+e",
+        "when": "editorLangId == lua-mmemu"
+      },
+      {
+        "command": "mmemu.addWatchExpression",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w",
+        "when": "editorLangId == lua-mmemu"
       }
     ],
+    "viewsContainers": {
+      "debug": [
+        {
+          "id": "mmemu-debug",
+          "title": "mmemu",
+          "icon": "$(debug)"
+        }
+      ]
+    },
+    "views": {
+      "mmemu-debug": [
+        {
+          "id": "mmemu.watchExpressions",
+          "name": "Watch Expressions",
+          "when": "debugType == mmemu-lua"
+        }
+      ]
+    },
     "configuration": {
       "title": "mmemu Lua Debugger",
       "properties": {

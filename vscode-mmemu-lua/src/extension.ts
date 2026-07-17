@@ -1,8 +1,12 @@
 import * as vscode from 'vscode';
 import { MmemuDebugger } from './debugger';
+import { ConsoleProvider } from './debug-console';
+import { WatchExpressionProvider } from './watch-provider';
 
 let mmemuDebugger: MmemuDebugger | undefined;
 let statusBar: vscode.StatusBarItem;
+let consoleProvider: ConsoleProvider | undefined;
+let watchProvider: WatchExpressionProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('mmemu Lua extension activated');
@@ -15,6 +19,15 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Initialize debugger
     mmemuDebugger = new MmemuDebugger();
+
+    // Initialize console provider
+    consoleProvider = new ConsoleProvider(mmemuDebugger);
+    context.subscriptions.push(consoleProvider);
+
+    // Initialize watch expression provider
+    watchProvider = new WatchExpressionProvider(mmemuDebugger);
+    vscode.window.registerTreeDataProvider('mmemu.watchExpressions', watchProvider);
+    context.subscriptions.push(watchProvider);
 
     // Register commands
     registerCommand(context, 'mmemu.debug', cmdStartDebugger);
@@ -34,8 +47,12 @@ export function activate(context: vscode.ExtensionContext) {
         mmemuDebugger.on('disconnected', () => {
             statusBar.text = '$(debug-disconnect) mmemu: disconnected';
         });
-        mmemuDebugger.on('breakpoint', (line: number) => {
+        mmemuDebugger.on('breakpoint', async (line: number) => {
             statusBar.text = `$(debug-pause) mmemu: paused at line ${line}`;
+            // Refresh watch expressions when breakpoint is hit
+            if (watchProvider) {
+                await watchProvider.refreshAll();
+            }
         });
     }
 
