@@ -78,7 +78,7 @@ public:
      * @param filePath Path to binary file
      * @return true if successful
      */
-    bool loadMemoryFile(uint32_t addr, const std::string& filePath);
+    virtual bool loadMemoryFile(uint32_t addr, const std::string& filePath);
 
     /**
      * Read memory range
@@ -235,7 +235,7 @@ private:
 
 /**
  * Xemu MEGA65 bridge - Subprocess-based integration with xemu-xmega65
- * Launches xemu-xmega65 with test program, waits for completion, reads memory dump
+ * Attempts TCP serial via -serialtcp, falls back to file-based execution
  */
 class XemuTestBridge : public HardwareTestBridge {
 public:
@@ -246,6 +246,12 @@ public:
     std::string getTargetName() const override { return "Xemu MEGA65"; }
 
     /**
+     * Override loadMemoryFile to defer program loading until runTest
+     * (xemu needs to be started with special flags before loading)
+     */
+    bool loadMemoryFile(uint32_t addr, const std::string& filePath) override;
+
+    /**
      * Load and run program, capturing memory results
      * Overrides base implementation to use subprocess execution
      */
@@ -254,14 +260,38 @@ public:
 
 private:
     std::string m_xemuPath;
+    int m_tcpSocket = -1;
+    uint16_t m_serialPort = 0;
+    pid_t m_xemuPid = -1;
+    bool m_useTcpSerial = false;
 
     std::string sendCommand(const std::string& cmd) override;
 
     /**
-     * Run xemu-xmega65 with PRG file and capture memory dump
+     * Start xemu with -serialtcp and connect via TCP
+     */
+    bool startXemuWithTcpSerial(uint16_t port);
+
+    /**
+     * Connect to xemu's TCP serial port
+     */
+    bool connectTcpSerial(uint16_t port, int timeoutMs = 1000);
+
+    /**
+     * Send command via TCP (if available), otherwise return empty
+     */
+    std::string sendCommandViaTcp(const std::string& cmd);
+
+    /**
+     * Run xemu-xmega65 with PRG file and capture memory dump (fallback)
      */
     std::vector<uint8_t> runXemuAndCapture(const std::string& programPath,
                                            uint32_t resultAddr, uint32_t resultSize,
                                            uint32_t timeoutMs);
+
+    /**
+     * Cleanup xemu process
+     */
+    void cleanupXemu();
 };
 

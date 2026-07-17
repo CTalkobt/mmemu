@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <errno.h>
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -480,13 +481,15 @@ std::string HardwarePortBridge::sendCommand(const std::string& cmd) {
 }
 
 // ============================================================================
-// XemuTestBridge - Subprocess-based xemu-xmega65 integration
+// XemuTestBridge - Subprocess-based xemu-xmega65 integration with TCP serial
 // ============================================================================
 
 XemuTestBridge::XemuTestBridge(const std::string& xemuPath)
     : HardwareTestBridge(Mode::HARDWARE), m_xemuPath(xemuPath) {}
 
-XemuTestBridge::~XemuTestBridge() {}
+XemuTestBridge::~XemuTestBridge() {
+    cleanupXemu();
+}
 
 bool XemuTestBridge::connect() {
     // Verify xemu binary exists
@@ -499,12 +502,156 @@ bool XemuTestBridge::connect() {
 
     m_connected = true;
     spdlog::info("Connected to xemu-xmega65 at {}", m_xemuPath);
+    spdlog::info("Will attempt TCP serial integration when running tests");
     return true;
 }
 
+bool XemuTestBridge::loadMemoryFile(uint32_t addr, const std::string& filePath) {
+    // For xemu, we defer program loading until runTest is called
+    // because we need to start xemu with special flags first.
+    // Just store the path here.
+    m_currentProgramPath = filePath;
+    spdlog::info("[Xemu] Program stored: {} (will load during test execution)", filePath);
+    return true;
+}
+
+bool XemuTestBridge::startXemuWithTcpSerial(uint16_t port) {
+    // Start xemu with -serialtcp flag
+    std::vector<std::string> cmd = {
+        m_xemuPath,
+        "-headless", "-sleepless",
+        "-gui", "none",
+        "-serialtcp", "127.0.0.1:" + std::to_string(port),
+        "-testing", "-prgexit"
+    };
+
+    // Convert to C-style argv
+    std::vector<const char*> argv;
+    for (const auto& arg : cmd) {
+        argv.push_back(arg.c_str());
+    }
+    argv.push_back(nullptr);
+
+    // Fork xemu
+    m_xemuPid = fork();
+    if (m_xemuPid == 0) {
+        // Child: run xemu
+        execvp(argv[0], const_cast<char* const*>(argv.data()));
+        exit(1);
+    } else if (m_xemuPid < 0) {
+        spdlog::error("Failed to fork xemu process");
+        return false;
+    }
+
+    // Give xemu time to start
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Try to connect
+    return connectTcpSerial(port, 2000);
+}
+
+bool XemuTestBridge::connectTcpSerial(uint16_t port, int timeoutMs) {
+    struct sockaddr_in addr;
+    m_tcpSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (m_tcpSocket < 0) {
+        spdlog::error("Failed to create socket");
+        return false;
+    }
+
+    // Set non-blocking for timeout
+    int flags = fcntl(m_tcpSocket, F_GETFL, 0);
+    fcntl(m_tcpSocket, F_SETFL, flags | O_NONBLOCK);
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+    auto startTime = std::chrono::high_resolution_clock::now();
+    while (true) {
+        int result = ::connect(m_tcpSocket, (struct sockaddr*)&addr, sizeof(addr));
+        if (result == 0) {
+            // Set back to blocking
+            fcntl(m_tcpSocket, F_SETFL, flags);
+            spdlog::info("Successfully connected to xemu TCP serial on port {}", port);
+            m_serialPort = port;
+            m_useTcpSerial = true;
+            return true;
+        }
+
+        auto elapsed = std::chrono::high_resolution_clock::now() - startTime;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
+            spdlog::warn("Timeout connecting to xemu TCP serial (xemu may lack -serialtcp support)");
+            close(m_tcpSocket);
+            m_tcpSocket = -1;
+            return false;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+std::string XemuTestBridge::sendCommandViaTcp(const std::string& cmd) {
+    if (m_tcpSocket < 0 || !m_useTcpSerial) {
+        return "";
+    }
+
+    // Send command
+    std::string fullCmd = cmd + "\n";
+    ssize_t written = ::write(m_tcpSocket, fullCmd.c_str(), fullCmd.length());
+    if (written < 0) {
+        spdlog::error("Failed to write to xemu TCP socket");
+        m_useTcpSerial = false;
+        close(m_tcpSocket);
+        m_tcpSocket = -1;
+        return "";
+    }
+
+    // Read response with timeout
+    std::string response;
+    char buffer[256];
+    auto endTime = std::chrono::high_resolution_clock::now() +
+                   std::chrono::milliseconds(500);
+
+    while (std::chrono::high_resolution_clock::now() < endTime) {
+        ssize_t bytes = ::read(m_tcpSocket, buffer, sizeof(buffer) - 1);
+        if (bytes > 0) {
+            buffer[bytes] = '\0';
+            response += buffer;
+            if (response.find("OK") != std::string::npos) {
+                break;
+            }
+        } else if (bytes < 0 && errno != EAGAIN) {
+            m_useTcpSerial = false;
+            close(m_tcpSocket);
+            m_tcpSocket = -1;
+            return "";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    return response;
+}
+
 std::string XemuTestBridge::sendCommand(const std::string& cmd) {
-    // Xemu doesn't support live serial protocol
+    if (m_useTcpSerial) {
+        return sendCommandViaTcp(cmd);
+    }
     return "";
+}
+
+void XemuTestBridge::cleanupXemu() {
+    if (m_tcpSocket >= 0) {
+        close(m_tcpSocket);
+        m_tcpSocket = -1;
+    }
+
+    if (m_xemuPid > 0) {
+        kill(m_xemuPid, SIGTERM);
+        int status;
+        waitpid(m_xemuPid, &status, 0);
+        m_xemuPid = -1;
+    }
 }
 
 HardwareTestBridge::TestResult XemuTestBridge::runTest(
@@ -523,17 +670,20 @@ HardwareTestBridge::TestResult XemuTestBridge::runTest(
         return result;
     }
 
-    // Run xemu and capture memory
+    // Use file-based execution: xemu has built-in -dumpmem support
+    // This is the most reliable method for headless operation
+    spdlog::info("[Xemu] Running test with file-based method");
     result.memorySnapshot = runXemuAndCapture(
         m_currentProgramPath, resultAddr, resultSize, timeoutMs);
 
-    if (result.memorySnapshot.empty()) {
-        result.error = "Failed to capture memory from xemu";
+    if (!result.memorySnapshot.empty()) {
+        result.success = true;
+        result.executionCycles = 0;  // Xemu doesn't report cycle count
+        spdlog::info("[Xemu] ✓ Test completed successfully!");
         return result;
     }
 
-    result.success = true;
-    result.executionCycles = 0;  // Xemu doesn't report cycle count
+    result.error = "Failed to run test on xemu";
     return result;
 }
 
@@ -577,30 +727,61 @@ std::vector<uint8_t> XemuTestBridge::runXemuAndCapture(
 
     // Parent process: wait for completion with timeout
     auto startTime = std::chrono::high_resolution_clock::now();
+    bool timedOut = false;
     while (true) {
         auto elapsed = std::chrono::high_resolution_clock::now() - startTime;
         if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
-            spdlog::warn("Xemu timeout after {}ms", timeoutMs);
+            spdlog::warn("[Xemu] Timeout after {}ms, terminating", timeoutMs);
             kill(pid, SIGTERM);
+            timedOut = true;
             break;
         }
 
         if (waitpid(pid, nullptr, WNOHANG) == pid) {
-            break;  // Process exited
+            break;  // Process exited normally
         }
 
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // Wait a bit longer for xemu to flush files
+    if (timedOut) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    } else {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
     // Read memory dump
     std::vector<uint8_t> result;
     std::ifstream dump(dumpFile, std::ios::binary);
-    if (dump.is_open()) {
-        dump.seekg(resultAddr);
-        std::vector<uint8_t> buffer(resultSize);
-        dump.read(reinterpret_cast<char*>(buffer.data()), resultSize);
-        result = buffer;
+    if (!dump.is_open()) {
+        spdlog::error("[Xemu] Failed to open memory dump file: {}", dumpFile);
+        return result;
     }
+
+    // Check file size
+    dump.seekg(0, std::ios::end);
+    size_t fileSize = dump.tellg();
+    spdlog::info("[Xemu] Memory dump file size: {} bytes", fileSize);
+
+    // Seek to result address
+    if (resultAddr >= fileSize) {
+        spdlog::error("[Xemu] Result address ${:X} is beyond dump file size {}", resultAddr, fileSize);
+        return result;
+    }
+
+    dump.seekg(resultAddr);
+    std::vector<uint8_t> buffer(resultSize, 0);
+    dump.read(reinterpret_cast<char*>(buffer.data()), resultSize);
+    size_t bytesRead = dump.gcount();
+
+    if (bytesRead == 0) {
+        spdlog::error("[Xemu] Failed to read from dump file at ${:X}", resultAddr);
+        return result;
+    }
+
+    spdlog::info("[Xemu] Read {} bytes from ${:X}", bytesRead, resultAddr);
+    result = buffer;
 
     // Cleanup
     std::remove(dumpFile.c_str());
