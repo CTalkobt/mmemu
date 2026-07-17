@@ -15,6 +15,7 @@ BACKENDS="-mmemu"
 TEST_FILES=()
 VERBOSE=""
 MACHINE="c64"
+REPORT_OPTS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,18 @@ while [[ $# -gt 0 ]]; do
             VERBOSE="-verbose"
             shift
             ;;
+        -report)
+            REPORT_OPTS="-report"
+            shift
+            ;;
+        -report-html)
+            REPORT_OPTS="-report-html"
+            shift
+            ;;
+        -report-file)
+            REPORT_OPTS="-report-file $2"
+            shift 2
+            ;;
         -machine)
             MACHINE="$2"
             shift 2
@@ -35,18 +48,22 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: ./run-tests.sh [options] [test-files...]"
             echo ""
             echo "Options:"
-            echo "  -mmemu         Test on mmsim only (default)"
-            echo "  -xmega65       Test on xemu-xmega65 only"
-            echo "  -real          Test on real MEGA65 hardware"
-            echo "  -all           Test on all available backends"
-            echo "  -machine TYPE  Machine preset (default: c64)"
-            echo "  -verbose, -v   Verbose output"
-            echo "  -help, -h      Show this help"
+            echo "  -mmemu              Test on mmsim only (default)"
+            echo "  -xmega65            Test on xemu-xmega65 only"
+            echo "  -real               Test on real MEGA65 hardware"
+            echo "  -all                Test on all available backends"
+            echo "  -machine TYPE       Machine preset (default: c64)"
+            echo "  -verbose, -v        Verbose output"
+            echo "  -report             Generate consolidated markdown report"
+            echo "  -report-html        Generate consolidated HTML report"
+            echo "  -report-file <path> Write report to file instead of stdout"
+            echo "  -help, -h           Show this help"
             echo ""
             echo "Examples:"
-            echo "  ./run-tests.sh                              # Test arithmetic.bin on mmsim"
-            echo "  ./run-tests.sh -all tests/45gs02/*.bin      # All backends, all tests"
-            echo "  ./run-tests.sh -xmega65 -machine mega65     # xemu only, MEGA65 machine"
+            echo "  ./run-tests.sh                                # Test arithmetic.bin on mmsim"
+            echo "  ./run-tests.sh -all tests/45gs02/*.bin        # All backends, all tests"
+            echo "  ./run-tests.sh -mmemu -xmega65 -report        # Generate markdown report"
+            echo "  ./run-tests.sh -all -report-html -report-file results.html  # HTML report"
             exit 0
             ;;
         *)
@@ -102,15 +119,20 @@ if ./bin/mmemu-test-runner \
     $BACKENDS \
     -machine "$MACHINE" \
     $VERBOSE \
+    $REPORT_OPTS \
     "${TEST_FILES[@]}"; then
 
     RESULT=$?
-    echo ""
-    echo -e "${GREEN}✅ All tests passed${NC}"
+    if [ -z "$REPORT_OPTS" ]; then
+        echo ""
+        echo -e "${GREEN}✅ All tests passed${NC}"
+    fi
 else
     RESULT=$?
-    echo ""
-    echo -e "${RED}❌ Some tests failed${NC}"
+    if [ -z "$REPORT_OPTS" ]; then
+        echo ""
+        echo -e "${RED}❌ Some tests failed${NC}"
+    fi
 fi
 
 # Cleanup

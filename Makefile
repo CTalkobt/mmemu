@@ -694,6 +694,7 @@ $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
 # Test runner binary (unified multi-backend test framework)
 TEST_RUNNER_OBJS = src/cli/main/test_runner_main.o \
 	src/cli/main/unified_test_runner.o \
+	src/cli/main/test_report_generator.o \
 	src/cli/main/hardware_test_bridge.o \
 	src/cli/main/cross_validation_runner.o \
 	src/cli/main/lua_engine.o
