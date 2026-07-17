@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { MmemuDebugger } from './debugger';
 
-let debugger: MmemuDebugger | undefined;
+let mmemuDebugger: MmemuDebugger | undefined;
 let statusBar: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
@@ -14,7 +14,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(statusBar);
 
     // Initialize debugger
-    debugger = new MmemuDebugger();
+    mmemuDebugger = new MmemuDebugger();
 
     // Register commands
     registerCommand(context, 'mmemu.debug', cmdStartDebugger);
@@ -27,14 +27,14 @@ export function activate(context: vscode.ExtensionContext) {
     registerCommand(context, 'mmemu.showMemory', cmdShowMemory);
 
     // Listen for debugger state changes
-    if (debugger) {
-        debugger.on('connected', () => {
+    if (mmemuDebugger) {
+        mmemuDebugger.on('connected', () => {
             statusBar.text = '$(debug-connect) mmemu: connected';
         });
-        debugger.on('disconnected', () => {
+        mmemuDebugger.on('disconnected', () => {
             statusBar.text = '$(debug-disconnect) mmemu: disconnected';
         });
-        debugger.on('breakpoint', (line: number) => {
+        mmemuDebugger.on('breakpoint', (line: number) => {
             statusBar.text = `$(debug-pause) mmemu: paused at line ${line}`;
         });
     }
@@ -47,8 +47,8 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
-    if (debugger) {
-        debugger.disconnect();
+    if (mmemuDebugger) {
+        mmemuDebugger.disconnect();
     }
 }
 
@@ -57,14 +57,14 @@ function registerCommand(context: vscode.ExtensionContext, id: string, handler: 
 }
 
 async function cmdStartDebugger() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     try {
         const config = vscode.workspace.getConfiguration('mmemu');
         const host = config.get<string>('host') || 'localhost';
         const port = config.get<number>('port') || 9999;
 
-        await debugger.connect(host, port);
+        await mmemuDebugger.connect(host, port);
         vscode.window.showInformationMessage(`Connected to mmemu at ${host}:${port}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to connect to mmemu: ${error}`);
@@ -72,7 +72,7 @@ async function cmdStartDebugger() {
 }
 
 async function cmdRunScript() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -82,7 +82,7 @@ async function cmdRunScript() {
 
     try {
         const scriptPath = editor.document.uri.fsPath;
-        await debugger.runScript(scriptPath);
+        await mmemuDebugger.runScript(scriptPath);
         vscode.window.showInformationMessage(`Script executed: ${scriptPath}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to run script: ${error}`);
@@ -90,27 +90,27 @@ async function cmdRunScript() {
 }
 
 async function cmdStepInto() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     try {
-        await debugger.stepInto();
+        await mmemuDebugger.stepInto();
     } catch (error) {
         vscode.window.showErrorMessage(`Step failed: ${error}`);
     }
 }
 
 async function cmdContinue() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     try {
-        await debugger.continue();
+        await mmemuDebugger.continue();
     } catch (error) {
         vscode.window.showErrorMessage(`Continue failed: ${error}`);
     }
 }
 
 async function cmdInspect() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -127,7 +127,7 @@ async function cmdInspect() {
 
     const varName = editor.document.getText(word);
     try {
-        const value = await debugger.inspectVariable(varName);
+        const value = await mmemuDebugger.inspectVariable(varName);
         vscode.window.showInformationMessage(`${varName} = ${value}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to inspect variable: ${error}`);
@@ -135,7 +135,7 @@ async function cmdInspect() {
 }
 
 async function cmdSetBreakpoint() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -145,7 +145,7 @@ async function cmdSetBreakpoint() {
 
     const line = editor.selection.active.line + 1;
     try {
-        await debugger.toggleBreakpoint(editor.document.uri.fsPath, line);
+        await mmemuDebugger.toggleBreakpoint(editor.document.uri.fsPath, line);
         vscode.window.showInformationMessage(`Breakpoint toggled at line ${line}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to set breakpoint: ${error}`);
@@ -153,10 +153,10 @@ async function cmdSetBreakpoint() {
 }
 
 async function cmdShowRegisters() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     try {
-        const registers = await debugger.getRegisters();
+        const registers = await mmemuDebugger.getRegisters();
         const message = Object.entries(registers)
             .map(([name, value]) => `${name}: $${(value as number).toString(16).toUpperCase().padStart(2, '0')}`)
             .join('\n');
@@ -167,7 +167,7 @@ async function cmdShowRegisters() {
 }
 
 async function cmdShowMemory() {
-    if (!debugger) return;
+    if (!mmemuDebugger) return;
 
     const input = await vscode.window.showInputBox({
         prompt: 'Enter memory address (hex)',
@@ -178,7 +178,7 @@ async function cmdShowMemory() {
 
     try {
         const addr = parseInt(input, 16);
-        const bytes = await debugger.readMemory(addr, 256);
+        const bytes = await mmemuDebugger.readMemory(addr, 256);
         const hex = bytes.map(b => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
         vscode.window.showInformationMessage(`Memory at 0x${addr.toString(16).toUpperCase()}:\n${hex}`);
     } catch (error) {

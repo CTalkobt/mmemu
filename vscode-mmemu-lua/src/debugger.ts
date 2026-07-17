@@ -58,15 +58,15 @@ export class MmemuDebugger extends EventEmitter {
     }
 
     async runScript(scriptPath: string): Promise<void> {
-        return this.executeCommand(`script run ${scriptPath}`);
+        await this.executeCommand(`script run ${scriptPath}`);
     }
 
     async stepInto(): Promise<void> {
-        return this.executeCommand('step');
+        await this.executeCommand('step');
     }
 
     async continue(): Promise<void> {
-        return this.executeCommand('run');
+        await this.executeCommand('run');
     }
 
     async toggleBreakpoint(file: string, line: number): Promise<void> {
