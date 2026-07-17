@@ -244,7 +244,20 @@ make clean cli
 - Only needed for heavy batch automation workflows
 - Decision: Skip for now, revisit if users report performance issues
 
-### Phase 6.5: VS Code Extension (🔄 IN PROGRESS)
+### Phase 6.5: VS Code Extension ✅ COMPLETE
+- ✅ VS Code extension with full debugging support
+- ✅ Breakpoint management (toggle, sync)
+- ✅ Script execution (Ctrl+Shift+E)
+- ✅ Step execution (Ctrl+Shift+I)
+- ✅ Continue execution (Ctrl+Shift+C)
+- ✅ Variable inspection
+- ✅ Register display
+- ✅ Memory viewer
+- ✅ Syntax highlighting with mmemu API
+- ✅ Configuration system
+- ✅ Error handling
+- ✅ Documentation (README + architecture guide)
+- Status: Ready for VS Code Marketplace
 
 ## Example: Regression Test Suite
 
@@ -388,20 +401,25 @@ Issue #24 (Lua Scripting) is **production-ready** with phases 1-5 implemented:
 
 **Status**: Phases 1-6 Complete ✅ PRODUCTION READY
 **Tests**: 660+ unit tests passing
-**Documentation**: 3,000+ lines
+**Documentation**: 4,000+ lines (including VS Code guide)
 **Example Scripts**: 20+ (utilities, patterns, device I/O, profiling)
-**Core Code**: 7,800+ lines
+**Core Code**: 9,300+ lines (including VS Code extension)
 **Lua Functions**: 180+ utility and device functions
-**Commits**: 13 (Framework → Phase 6 Complete)
+**VS Code Extension**: 1,500+ lines (extension + debugger + syntax)
+**Commits**: 15 (Framework → Phase 6.5 Complete)
 
 ### Completion Summary
 - ✅ Phases 1-4: Framework, integration, machine events
 - ✅ Phases 5-5.2: Backend abstraction, JTAG serial monitor
-- ✅ Phase 6: Advanced features (utilities, device I/O, profiling)
+- ✅ Phase 6: Advanced features (stdlib, device_io, profiler)
+- ✅ Phase 6.5: VS Code extension with full debugging
 
-### Remaining (Future)
-- 🔄 Phase 6.4: Lua JIT compilation (design ready)
-- 📋 Phase 6.5: VS Code extension (design ready)
+### Deferred (Not Needed Yet)
+- ⏭️ Phase 6.4: Lua JIT compilation (marginal gain, low priority)
+
+### Future (Post-Phase 6)
+- 📋 Phase 6.5.1: Debug console, watch expressions, call stack
+- 📋 VS Code Marketplace publication
 - 🎯 Phase 7+: Community plugins, advanced features
 
 **Lua Scripting enables:**
