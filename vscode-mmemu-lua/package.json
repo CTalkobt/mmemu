@@ -172,6 +172,31 @@
         "command": "mmemu.exportPerformanceData",
         "title": "mmemu: Export Performance Data",
         "description": "Export performance data as JSON"
+      },
+      {
+        "command": "mmemu.viewTestHistory",
+        "title": "mmemu: View Test History",
+        "description": "Display history for selected test"
+      },
+      {
+        "command": "mmemu.clearTestHistory",
+        "title": "mmemu: Clear Test History",
+        "description": "Clear all recorded test history"
+      },
+      {
+        "command": "mmemu.exportTestHistory",
+        "title": "mmemu: Export Test History",
+        "description": "Export test history as CSV"
+      },
+      {
+        "command": "mmemu.compareTestStatus",
+        "title": "mmemu: Compare Test Status",
+        "description": "Compare test results between commits"
+      },
+      {
+        "command": "mmemu.toggleTestHistoryDisplay",
+        "title": "mmemu: Toggle Test History Display",
+        "description": "Show/hide test history information in tree"
       }
     ],
     "keybindings": [
@@ -267,6 +292,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show variables panel when breakpoint is hit"
+        },
+        "mmemu.showTestHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show test history information in test explorer"
         }
       }
     },

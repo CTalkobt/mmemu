@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { MmemuDebugger } from './debugger';
+import { TestPersistence } from './test-persistence';
 
 /**
  * Test case representation
@@ -22,6 +23,7 @@ export interface TestCase {
 class TestItem extends vscode.TreeItem {
     constructor(
         public readonly test: TestCase,
+        private persistence: TestPersistence,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None
     ) {
         super(test.name, collapsibleState);
@@ -52,7 +54,17 @@ class TestItem extends vscode.TreeItem {
                 this.description = 'pending';
         }
 
-        this.tooltip = `Test: ${this.test.name} (${this.test.file}:${this.test.line})`;
+        // Add persistence info to description
+        const statusDesc = this.persistence.getStatusDescription(this.test.name);
+        const changeCount = this.persistence.getStatusChangeCount(this.test.name);
+        if (statusDesc !== 'No history') {
+            this.description += ` • ${statusDesc}`;
+            if (changeCount > 0) {
+                this.description += ` [${changeCount} changes]`;
+            }
+        }
+
+        this.tooltip = `Test: ${this.test.name} (${this.test.file}:${this.test.line})\n${statusDesc}`;
         this.command = {
             title: 'Run Test',
             command: 'mmemu.runTest',
@@ -67,6 +79,7 @@ class TestItem extends vscode.TreeItem {
 export class TestExplorerProvider implements vscode.TreeDataProvider<TestCase>, vscode.Disposable {
     private tests: Map<string, TestCase> = new Map();
     private mmemuDebugger: MmemuDebugger;
+    private persistence: TestPersistence;
     private disposables: vscode.Disposable[] = [];
     private testIdCounter = 0;
 
@@ -77,6 +90,7 @@ export class TestExplorerProvider implements vscode.TreeDataProvider<TestCase>, 
 
     constructor(mmemuDebugger: MmemuDebugger) {
         this.mmemuDebugger = mmemuDebugger;
+        this.persistence = new TestPersistence();
         this.setupCommands();
         this.setupFileWatching();
     }
@@ -150,7 +164,7 @@ export class TestExplorerProvider implements vscode.TreeDataProvider<TestCase>, 
      * Get tree item
      */
     getTreeItem(element: TestCase): vscode.TreeItem {
-        return new TestItem(element);
+        return new TestItem(element, this.persistence);
     }
 
     /**
@@ -226,7 +240,36 @@ export class TestExplorerProvider implements vscode.TreeDataProvider<TestCase>, 
             test.error = error instanceof Error ? error.message : String(error);
         }
 
+        // Record test result
+        this.recordTestResult(test);
+
         this._onDidChangeTreeData.fire(test);
+    }
+
+    /**
+     * Record test result with persistence
+     */
+    private async recordTestResult(test: TestCase): Promise<void> {
+        const hasChanged = await this.persistence.recordTestRun(test.name, test.file, {
+            timestamp: new Date().toISOString(),
+            status: test.status as 'pass' | 'fail' | 'skip',
+            duration: test.duration || 0,
+            error: test.error,
+        });
+
+        // Show notification if status changed
+        if (hasChanged) {
+            const gitHash = this.persistence.getLastGitHash(test.name);
+            if (test.status === 'pass') {
+                vscode.window.showInformationMessage(
+                    `✓ ${test.name} fixed (${gitHash})`
+                );
+            } else if (test.status === 'fail') {
+                vscode.window.showErrorMessage(
+                    `✗ ${test.name} regressed (${gitHash})`
+                );
+            }
+        }
     }
 
     /**

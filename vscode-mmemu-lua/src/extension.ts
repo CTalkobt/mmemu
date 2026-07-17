@@ -64,6 +64,11 @@ export function activate(context: vscode.ExtensionContext) {
     registerCommand(context, 'mmemu.setBreakpoint', cmdSetBreakpoint);
     registerCommand(context, 'mmemu.showRegisters', cmdShowRegisters);
     registerCommand(context, 'mmemu.showMemory', cmdShowMemory);
+    registerCommand(context, 'mmemu.viewTestHistory', () => cmdViewTestHistory(testExplorerProvider));
+    registerCommand(context, 'mmemu.clearTestHistory', () => cmdClearTestHistory(testExplorerProvider));
+    registerCommand(context, 'mmemu.exportTestHistory', () => cmdExportTestHistory(testExplorerProvider));
+    registerCommand(context, 'mmemu.compareTestStatus', () => cmdCompareTestStatus(testExplorerProvider));
+    registerCommand(context, 'mmemu.toggleTestHistoryDisplay', () => cmdToggleTestHistoryDisplay(testExplorerProvider));
 
     // Listen for debugger state changes
     if (mmemuDebugger) {
@@ -227,4 +232,110 @@ async function cmdShowMemory() {
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to read memory: ${error}`);
     }
+}
+
+async function cmdViewTestHistory(provider: TestExplorerProvider | undefined) {
+    if (!provider) return;
+
+    const tests = provider.getAllTests();
+    const testNames = tests.map(t => ({label: t.name, description: t.file}));
+
+    const selected = await vscode.window.showQuickPick(testNames, {
+        placeHolder: 'Select test to view history'
+    });
+
+    if (!selected) return;
+
+    const persistence = (provider as any).persistence;
+    const history = persistence.getTestHistory(selected.label);
+
+    if (history.length === 0) {
+        vscode.window.showInformationMessage(`No history for ${selected.label}`);
+        return;
+    }
+
+    const message = history.reverse().map((run: any, i: number) =>
+        `${i + 1}. ${run.status.toUpperCase()} (${run.gitHash}) - ${run.duration}ms - ${run.timestamp}`
+    ).join('\n');
+
+    vscode.window.showInformationMessage(`History for ${selected.label}:\n${message}`);
+}
+
+async function cmdClearTestHistory(provider: TestExplorerProvider | undefined) {
+    if (!provider) return;
+
+    const confirm = await vscode.window.showWarningMessage(
+        'Clear all test history?',
+        'Clear', 'Cancel'
+    );
+
+    if (confirm === 'Clear') {
+        const persistence = (provider as any).persistence;
+        await persistence.clearAllHistory();
+        vscode.window.showInformationMessage('Test history cleared');
+        provider.clearAllTests();
+    }
+}
+
+async function cmdExportTestHistory(provider: TestExplorerProvider | undefined) {
+    if (!provider) return;
+
+    const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file('test-history.csv'),
+        filters: {'CSV': ['csv']}
+    });
+
+    if (!uri) return;
+
+    const persistence = (provider as any).persistence;
+    const csv = persistence.exportAllAsCSV();
+
+    try {
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, 'utf-8'));
+        vscode.window.showInformationMessage(`Test history exported to ${uri.fsPath}`);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to export: ${error}`);
+    }
+}
+
+async function cmdCompareTestStatus(provider: TestExplorerProvider | undefined) {
+    if (!provider) return;
+
+    const tests = provider.getAllTests();
+    const testNames = tests.map(t => ({label: t.name, description: t.file}));
+
+    const selected = await vscode.window.showQuickPick(testNames, {
+        placeHolder: 'Select test to compare'
+    });
+
+    if (!selected) return;
+
+    const persistence = (provider as any).persistence;
+    const history = persistence.getTestHistory(selected.label);
+    const changes = persistence.getStatusChangeCount(selected.label);
+
+    let message = `Test: ${selected.label}\n`;
+    message += `Total runs: ${history.length}\n`;
+    message += `Status changes: ${changes}\n\n`;
+
+    if (history.length > 1) {
+        const first = history[0];
+        const last = history[history.length - 1];
+        message += `First run: ${first.status} (${first.gitHash})\n`;
+        message += `Last run: ${last.status} (${last.gitHash})`;
+    }
+
+    vscode.window.showInformationMessage(message);
+}
+
+async function cmdToggleTestHistoryDisplay(provider: TestExplorerProvider | undefined) {
+    if (!provider) return;
+
+    const config = vscode.workspace.getConfiguration('mmemu');
+    const current = config.get<boolean>('showTestHistory') ?? true;
+
+    await config.update('showTestHistory', !current, vscode.ConfigurationTarget.Workspace);
+    vscode.window.showInformationMessage(
+        `Test history display ${!current ? 'enabled' : 'disabled'}`
+    );
 }
