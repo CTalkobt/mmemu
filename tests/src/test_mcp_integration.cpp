@@ -1,440 +1,396 @@
 #include "../src/test_harness.h"
+#include "mcp/main/mcp_test_interface.h"
 #include "minijson.h"
 #include <iostream>
-#include <sstream>
 
-// Mock MCP tool responses for testing
-// In a real scenario, these would be actual tool invocations
-struct MCPToolTest {
-    std::string toolName;
-    Json arguments;
+// Global test machine for all tests
+static std::string g_testMachineId;
 
-    MCPToolTest(const std::string& name) : toolName(name) {
-        arguments = Json(Json::OBJ);
+// Helper to verify tool response
+static bool isToolSuccess(const Json& result) {
+    return !result.contains("error") || !result["error"].bVal;
+}
+
+static std::string getToolError(const Json& result) {
+    if (result.contains("error")) {
+        if (result["error"].type == Json::STR) {
+            return result["error"].sVal;
+        }
+        return "Tool error";
     }
-};
-
-// Helper to simulate tool response (in actual tests, this would call the real tool)
-static Json mockToolCall(const std::string& toolName, const Json& args) {
-    Json response(Json::OBJ);
-    response.oVal["type"] = Json("text");
-
-    // This is a placeholder - real tests would invoke actual tools
-    response.oVal["text"] = Json("Tool: " + toolName);
-    return response;
+    return "";
 }
 
-TEST_CASE(mcp_machine_create_c64) {
-    MCPToolTest tool("create_machine");
-    tool.arguments.oVal["machine_type"] = Json("c64");
+TEST_CASE(mcp_tool_system_basic) {
+    // Verify MCP test interface is available
+    std::string machineId = MCPTest::createTestMachine("c64", "test_c64");
+    ASSERT(machineId.length() > 0);
 
-    // In real test, this would call the actual MCP tool
-    // For now, verify the test framework works
-    ASSERT(tool.toolName == "create_machine");
-    ASSERT_EQ(tool.arguments.oVal["machine_type"].sVal, "c64");
+    // Verify machine was created
+    auto machines = MCPTest::listTestMachines();
+    ASSERT(machines.size() > 0);
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_machine_create_vic20) {
-    MCPToolTest tool("create_machine");
-    tool.arguments.oVal["machine_type"] = Json("vic20");
+TEST_CASE(mcp_machine_create_c64_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_c64_create");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT(tool.toolName == "create_machine");
-    ASSERT_EQ(tool.arguments.oVal["machine_type"].sVal, "vic20");
+    // Verify basic machine operations work
+    MCPTest::writeMemory(machineId, 0x0800, 0xAA);
+    uint8_t val = MCPTest::readMemory(machineId, 0x0800);
+    ASSERT_EQ(val, 0xAA);
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_machine_list) {
-    MCPToolTest tool("list_instances");
+TEST_CASE(mcp_machine_create_vic20_actual) {
+    std::string machineId = MCPTest::createTestMachine("vic20", "test_vic20_create");
+    ASSERT(machineId.length() > 0);
 
-    // Verify tool structure
-    ASSERT(tool.toolName == "list_instances");
+    // Verify machine was created by checking we can access it
+    uint64_t cycles = MCPTest::getCycles(machineId);
+    ASSERT(cycles >= 0);
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_memory_read_basic) {
-    MCPToolTest tool("read_memory");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x1000);
-    tool.arguments.oVal["size"] = Json(16);
+TEST_CASE(mcp_memory_read_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_read_mem");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x1000);
-    ASSERT_EQ(tool.arguments.oVal["size"].nVal, 16);
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x0800);
+    args.oVal["size"] = Json(16);
+
+    Json result = MCPTest::invokeTool("read_memory", args);
+    ASSERT(isToolSuccess(result));
+    ASSERT(result.contains("text"));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_memory_write_basic) {
-    MCPToolTest tool("write_memory");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x2000);
+TEST_CASE(mcp_memory_write_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_write_mem");
+    ASSERT(machineId.length() > 0);
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x1000);
 
     Json bytes(Json::ARR);
     bytes.aVal.push_back(Json(0xA9));  // LDA immediate
-    bytes.aVal.push_back(Json(0x42));  // value
-    tool.arguments.oVal["bytes"] = bytes;
+    bytes.aVal.push_back(Json(0x42));  // Load $42
+    args.oVal["bytes"] = bytes;
 
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x2000);
-    ASSERT_EQ(tool.arguments.oVal["bytes"].aVal.size(), 2);
+    Json result = MCPTest::invokeTool("write_memory", args);
+    ASSERT(isToolSuccess(result));
+    ASSERT(result.contains("text"));
+
+    // Verify the write by reading back
+    ASSERT_EQ(MCPTest::readMemory(machineId, 0x1000), 0xA9);
+    ASSERT_EQ(MCPTest::readMemory(machineId, 0x1001), 0x42);
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_memory_copy) {
-    MCPToolTest tool("copy_memory");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["src"] = Json(0x1000);
-    tool.arguments.oVal["dest"] = Json(0x2000);
-    tool.arguments.oVal["size"] = Json(256);
+TEST_CASE(mcp_cpu_step_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_step");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["src"].nVal, 0x1000);
-    ASSERT_EQ(tool.arguments.oVal["dest"].nVal, 0x2000);
-    ASSERT_EQ(tool.arguments.oVal["size"].nVal, 256);
+    uint64_t initialCycles = MCPTest::getCycles(machineId);
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["count"] = Json(5);
+
+    Json result = MCPTest::invokeTool("step_cpu", args);
+    ASSERT(isToolSuccess(result));
+
+    uint64_t finalCycles = MCPTest::getCycles(machineId);
+    ASSERT(finalCycles > initialCycles);
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_memory_fill) {
-    MCPToolTest tool("fill_memory");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x3000);
-    tool.arguments.oVal["size"] = Json(512);
-    tool.arguments.oVal["value"] = Json(0xFF);
+TEST_CASE(mcp_registers_read_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_read_regs");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x3000);
-    ASSERT_EQ(tool.arguments.oVal["size"].nVal, 512);
-    ASSERT_EQ(tool.arguments.oVal["value"].nVal, 0xFF);
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+
+    Json result = MCPTest::invokeTool("read_registers", args);
+    ASSERT(isToolSuccess(result));
+    ASSERT(result.contains("text"));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_memory_search_pattern) {
-    MCPToolTest tool("search_memory");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0000);
-    tool.arguments.oVal["size"] = Json(0x10000);
+TEST_CASE(mcp_register_write_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_write_reg");
+    ASSERT(machineId.length() > 0);
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["reg"] = Json("A");
+    args.oVal["value"] = Json(0x42);
+
+    Json result = MCPTest::invokeTool("write_register", args);
+    ASSERT(isToolSuccess(result));
+
+    // Verify the write
+    uint32_t val = MCPTest::readRegister(machineId, "A");
+    ASSERT_EQ(val, 0x42);
+
+    MCPTest::destroyTestMachine(machineId);
+}
+
+TEST_CASE(mcp_set_pc_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_set_pc");
+    ASSERT(machineId.length() > 0);
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x0800);
+
+    Json result = MCPTest::invokeTool("set_pc", args);
+    ASSERT(isToolSuccess(result));
+
+    // Verify the PC was set
+    uint32_t pc = MCPTest::readRegister(machineId, "PC");
+    ASSERT_EQ(pc, 0x0800);
+
+    MCPTest::destroyTestMachine(machineId);
+}
+
+TEST_CASE(mcp_disassemble_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_disasm");
+    ASSERT(machineId.length() > 0);
+
+    // Write some code to disassemble
+    MCPTest::writeMemory(machineId, 0x0800, 0xA9);  // LDA immediate
+    MCPTest::writeMemory(machineId, 0x0801, 0x42);  // value
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x0800);
+    args.oVal["count"] = Json(3);
+
+    Json result = MCPTest::invokeTool("disassemble", args);
+    ASSERT(isToolSuccess(result));
+    ASSERT(result.contains("text"));
+
+    MCPTest::destroyTestMachine(machineId);
+}
+
+TEST_CASE(mcp_memory_copy_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_copy_mem");
+    ASSERT(machineId.length() > 0);
+
+    // Write source data
+    for (int i = 0; i < 16; ++i) {
+        MCPTest::writeMemory(machineId, 0x0800 + i, i);
+    }
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["src"] = Json(0x0800);
+    args.oVal["dest"] = Json(0x0900);
+    args.oVal["size"] = Json(16);
+
+    Json result = MCPTest::invokeTool("copy_memory", args);
+    ASSERT(isToolSuccess(result));
+
+    // Verify copy
+    for (int i = 0; i < 16; ++i) {
+        uint8_t val = MCPTest::readMemory(machineId, 0x0900 + i);
+        ASSERT_EQ(val, i);
+    }
+
+    MCPTest::destroyTestMachine(machineId);
+}
+
+TEST_CASE(mcp_memory_fill_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_fill_mem");
+    ASSERT(machineId.length() > 0);
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x2000);
+    args.oVal["size"] = Json(32);
+    args.oVal["value"] = Json(0xAA);
+
+    Json result = MCPTest::invokeTool("fill_memory", args);
+    ASSERT(isToolSuccess(result));
+
+    // Verify fill
+    for (int i = 0; i < 32; ++i) {
+        uint8_t val = MCPTest::readMemory(machineId, 0x2000 + i);
+        ASSERT_EQ(val, 0xAA);
+    }
+
+    MCPTest::destroyTestMachine(machineId);
+}
+
+TEST_CASE(mcp_search_memory_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_search_mem");
+    ASSERT(machineId.length() > 0);
+
+    // Write a pattern to search for
+    MCPTest::writeMemory(machineId, 0x1000, 0x48);  // PHA
+    MCPTest::writeMemory(machineId, 0x1001, 0xEA);  // NOP
+
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["addr"] = Json(0x0000);
+    args.oVal["size"] = Json(0x10000);
 
     Json pattern(Json::ARR);
     pattern.aVal.push_back(Json(0x48));  // PHA
     pattern.aVal.push_back(Json(0xEA));  // NOP
-    tool.arguments.oVal["pattern"] = pattern;
+    args.oVal["pattern"] = pattern;
 
-    ASSERT_EQ(tool.arguments.oVal["pattern"].aVal.size(), 2);
+    Json result = MCPTest::invokeTool("search_memory", args);
+    ASSERT(isToolSuccess(result));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_cpu_step) {
-    MCPToolTest tool("step_cpu");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["count"] = Json(1);
+TEST_CASE(mcp_snapshot_operations_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_snapshot");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 1);
+    // Save a snapshot
+    Json saveArgs(Json::OBJ);
+    saveArgs.oVal["machine_id"] = Json(machineId);
+    saveArgs.oVal["name"] = Json("test_snap_1");
+
+    Json saveResult = MCPTest::invokeTool("snapshot_save", saveArgs);
+    ASSERT(isToolSuccess(saveResult));
+
+    // List snapshots
+    Json listArgs(Json::OBJ);
+    listArgs.oVal["machine_id"] = Json(machineId);
+
+    Json listResult = MCPTest::invokeTool("snapshot_list", listArgs);
+    ASSERT(isToolSuccess(listResult));
+
+    // Delete snapshot
+    Json deleteArgs(Json::OBJ);
+    deleteArgs.oVal["machine_id"] = Json(machineId);
+    deleteArgs.oVal["name"] = Json("test_snap_1");
+
+    Json deleteResult = MCPTest::invokeTool("snapshot_delete", deleteArgs);
+    ASSERT(isToolSuccess(deleteResult));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_cpu_step_multiple) {
-    MCPToolTest tool("step_cpu");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["count"] = Json(100);
+TEST_CASE(mcp_symbol_operations_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_symbols");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 100);
+    // Add a symbol
+    Json addArgs(Json::OBJ);
+    addArgs.oVal["machine_id"] = Json(machineId);
+    addArgs.oVal["name"] = Json("START");
+    addArgs.oVal["addr"] = Json(0x0800);
+
+    Json addResult = MCPTest::invokeTool("add_symbol", addArgs);
+    ASSERT(isToolSuccess(addResult));
+
+    // List symbols
+    Json listArgs(Json::OBJ);
+    listArgs.oVal["machine_id"] = Json(machineId);
+
+    Json listResult = MCPTest::invokeTool("list_symbols", listArgs);
+    ASSERT(isToolSuccess(listResult));
+
+    // Remove symbol
+    Json removeArgs(Json::OBJ);
+    removeArgs.oVal["machine_id"] = Json(machineId);
+    removeArgs.oVal["name"] = Json("START");
+
+    Json removeResult = MCPTest::invokeTool("remove_symbol", removeArgs);
+    ASSERT(isToolSuccess(removeResult));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_cpu_run) {
-    MCPToolTest tool("run_cpu");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["timeout"] = Json(5000);
+TEST_CASE(mcp_device_info_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_devices");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["timeout"].nVal, 5000);
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+    args.oVal["device_name"] = Json("VIC-II");
+
+    Json result = MCPTest::invokeTool("get_device_info", args);
+    ASSERT(isToolSuccess(result));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_cpu_reverse_step) {
-    MCPToolTest tool("reverse_step");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["count"] = Json(1);
+TEST_CASE(mcp_undo_info_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_undo");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 1);
+    // Step to create trace entries
+    Json stepArgs(Json::OBJ);
+    stepArgs.oVal["machine_id"] = Json(machineId);
+    stepArgs.oVal["count"] = Json(10);
+    MCPTest::invokeTool("step_cpu", stepArgs);
+
+    // Get undo info
+    Json args(Json::OBJ);
+    args.oVal["machine_id"] = Json(machineId);
+
+    Json result = MCPTest::invokeTool("undo_info", args);
+    ASSERT(isToolSuccess(result));
+    ASSERT(result.contains("text"));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_cpu_set_pc) {
-    MCPToolTest tool("set_pc");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0800);
+TEST_CASE(mcp_trace_operations_actual) {
+    std::string machineId = MCPTest::createTestMachine("c64", "test_trace");
+    ASSERT(machineId.length() > 0);
 
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x0800);
+    // Set trace filter
+    Json filterArgs(Json::OBJ);
+    filterArgs.oVal["machine_id"] = Json(machineId);
+    filterArgs.oVal["filter"] = Json("all");
+
+    Json filterResult = MCPTest::invokeTool("set_trace_filter", filterArgs);
+    ASSERT(isToolSuccess(filterResult));
+
+    // Get trace buffer
+    Json bufferArgs(Json::OBJ);
+    bufferArgs.oVal["machine_id"] = Json(machineId);
+    bufferArgs.oVal["count"] = Json(10);
+
+    Json bufferResult = MCPTest::invokeTool("get_trace_buffer", bufferArgs);
+    ASSERT(isToolSuccess(bufferResult));
+
+    MCPTest::destroyTestMachine(machineId);
 }
 
-TEST_CASE(mcp_registers_read) {
-    MCPToolTest tool("read_registers");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "read_registers");
-}
-
-TEST_CASE(mcp_register_write) {
-    MCPToolTest tool("write_register");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["reg"] = Json("A");
-    tool.arguments.oVal["value"] = Json(0x42);
-
-    ASSERT_EQ(tool.arguments.oVal["reg"].sVal, "A");
-    ASSERT_EQ(tool.arguments.oVal["value"].nVal, 0x42);
-}
-
-TEST_CASE(mcp_breakpoint_set) {
-    MCPToolTest tool("set_breakpoint");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x1000);
-    tool.arguments.oVal["mode"] = Json("EXEC");
-
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x1000);
-    ASSERT_EQ(tool.arguments.oVal["mode"].sVal, "EXEC");
-}
-
-TEST_CASE(mcp_breakpoint_list) {
-    MCPToolTest tool("list_breakpoints");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "list_breakpoints");
-}
-
-TEST_CASE(mcp_breakpoint_delete) {
-    MCPToolTest tool("delete_breakpoint");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["bp_id"] = Json(0);
-
-    ASSERT_EQ(tool.arguments.oVal["bp_id"].nVal, 0);
-}
-
-TEST_CASE(mcp_watchpoint_set) {
-    MCPToolTest tool("set_watchpoint");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x2000);
-    tool.arguments.oVal["mode"] = Json("WRITE");
-
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x2000);
-    ASSERT_EQ(tool.arguments.oVal["mode"].sVal, "WRITE");
-}
-
-TEST_CASE(mcp_disassemble_basic) {
-    MCPToolTest tool("disassemble");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0800);
-    tool.arguments.oVal["count"] = Json(10);
-
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x0800);
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 10);
-}
-
-TEST_CASE(mcp_assembler_basic) {
-    MCPToolTest tool("asm");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0800);
-    tool.arguments.oVal["code"] = Json("LDA #$42");
-
-    ASSERT_EQ(tool.arguments.oVal["code"].sVal, "LDA #$42");
-}
-
-TEST_CASE(mcp_snapshot_save) {
-    MCPToolTest tool("snapshot_save");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["name"] = Json("snapshot_1");
-
-    ASSERT_EQ(tool.arguments.oVal["name"].sVal, "snapshot_1");
-}
-
-TEST_CASE(mcp_snapshot_list) {
-    MCPToolTest tool("snapshot_list");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "snapshot_list");
-}
-
-TEST_CASE(mcp_snapshot_delete) {
-    MCPToolTest tool("snapshot_delete");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["name"] = Json("snapshot_1");
-
-    ASSERT_EQ(tool.arguments.oVal["name"].sVal, "snapshot_1");
-}
-
-TEST_CASE(mcp_snapshot_diff) {
-    MCPToolTest tool("snapshot_diff");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["snapshot1"] = Json("snap1");
-    tool.arguments.oVal["snapshot2"] = Json("snap2");
-
-    ASSERT_EQ(tool.arguments.oVal["snapshot1"].sVal, "snap1");
-    ASSERT_EQ(tool.arguments.oVal["snapshot2"].sVal, "snap2");
-}
-
-TEST_CASE(mcp_device_list) {
-    MCPToolTest tool("list_devices");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "list_devices");
-}
-
-TEST_CASE(mcp_device_info) {
-    MCPToolTest tool("get_device_info");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["device_name"] = Json("VIC-II");
-
-    ASSERT_EQ(tool.arguments.oVal["device_name"].sVal, "VIC-II");
-}
-
-TEST_CASE(mcp_symbol_add) {
-    MCPToolTest tool("add_symbol");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["name"] = Json("START");
-    tool.arguments.oVal["addr"] = Json(0x0800);
-
-    ASSERT_EQ(tool.arguments.oVal["name"].sVal, "START");
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x0800);
-}
-
-TEST_CASE(mcp_symbol_list) {
-    MCPToolTest tool("list_symbols");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "list_symbols");
-}
-
-TEST_CASE(mcp_symbol_remove) {
-    MCPToolTest tool("remove_symbol");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["name"] = Json("START");
-
-    ASSERT_EQ(tool.arguments.oVal["name"].sVal, "START");
-}
-
-TEST_CASE(mcp_trace_buffer_info) {
-    MCPToolTest tool("get_trace_buffer");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["count"] = Json(100);
-
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 100);
-}
-
-TEST_CASE(mcp_trace_filter) {
-    MCPToolTest tool("set_trace_filter");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["filter"] = Json("breakpoints");
-
-    ASSERT_EQ(tool.arguments.oVal["filter"].sVal, "breakpoints");
-}
-
-TEST_CASE(mcp_profile_cpu) {
-    MCPToolTest tool("profile_cpu");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["duration"] = Json(1000);
-
-    ASSERT_EQ(tool.arguments.oVal["duration"].nVal, 1000);
-}
-
-TEST_CASE(mcp_heatmap_basic) {
-    MCPToolTest tool("get_heatmap");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0000);
-    tool.arguments.oVal["size"] = Json(0x10000);
-
-    ASSERT_EQ(tool.arguments.oVal["size"].nVal, 0x10000);
-}
-
-TEST_CASE(mcp_cartridge_attach) {
-    MCPToolTest tool("attach_cartridge");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["path"] = Json("/path/to/cartridge.crt");
-
-    ASSERT_EQ(tool.arguments.oVal["path"].sVal, "/path/to/cartridge.crt");
-}
-
-TEST_CASE(mcp_cartridge_eject) {
-    MCPToolTest tool("eject_cartridge");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    ASSERT(tool.toolName == "eject_cartridge");
-}
-
-TEST_CASE(mcp_disk_mount) {
-    MCPToolTest tool("mount_disk");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["drive"] = Json(8);
-    tool.arguments.oVal["path"] = Json("/path/to/disk.d64");
-
-    ASSERT_EQ(tool.arguments.oVal["drive"].nVal, 8);
-    ASSERT_EQ(tool.arguments.oVal["path"].sVal, "/path/to/disk.d64");
-}
-
-TEST_CASE(mcp_disk_eject) {
-    MCPToolTest tool("eject_disk");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["drive"] = Json(8);
-
-    ASSERT_EQ(tool.arguments.oVal["drive"].nVal, 8);
-}
-
-TEST_CASE(mcp_keyboard_press) {
-    MCPToolTest tool("press_key");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["key"] = Json("RETURN");
-    tool.arguments.oVal["duration"] = Json(100);
-
-    ASSERT_EQ(tool.arguments.oVal["key"].sVal, "RETURN");
-    ASSERT_EQ(tool.arguments.oVal["duration"].nVal, 100);
-}
-
-TEST_CASE(mcp_type_string) {
-    MCPToolTest tool("type_string");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["text"] = Json("HELLO");
-
-    ASSERT_EQ(tool.arguments.oVal["text"].sVal, "HELLO");
-}
-
-TEST_CASE(mcp_screenshot) {
-    MCPToolTest tool("screenshot");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["format"] = Json("png");
-
-    ASSERT_EQ(tool.arguments.oVal["format"].sVal, "png");
-}
-
-TEST_CASE(mcp_record_audio) {
-    MCPToolTest tool("record_audio");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["duration"] = Json(5000);
-    tool.arguments.oVal["format"] = Json("wav");
-
-    ASSERT_EQ(tool.arguments.oVal["duration"].nVal, 5000);
-    ASSERT_EQ(tool.arguments.oVal["format"].sVal, "wav");
-}
-
-TEST_CASE(mcp_analyze_routine) {
-    MCPToolTest tool("analyze_routine");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["start"] = Json(0x0800);
-    tool.arguments.oVal["end"] = Json(0x0900);
-
-    ASSERT_EQ(tool.arguments.oVal["start"].nVal, 0x0800);
-    ASSERT_EQ(tool.arguments.oVal["end"].nVal, 0x0900);
-}
-
-TEST_CASE(mcp_generate_tests) {
-    MCPToolTest tool("generate_tests");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["addr"] = Json(0x0800);
-    tool.arguments.oVal["count"] = Json(10);
-
-    ASSERT_EQ(tool.arguments.oVal["addr"].nVal, 0x0800);
-    ASSERT_EQ(tool.arguments.oVal["count"].nVal, 10);
-}
-
-TEST_CASE(mcp_test_sequence) {
-    MCPToolTest tool("test_sequence");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-
-    Json steps(Json::ARR);
-    Json step1(Json::OBJ);
-    step1.oVal["op"] = Json("step");
-    step1.oVal["count"] = Json(10);
-    steps.aVal.push_back(step1);
-    tool.arguments.oVal["steps"] = steps;
-
-    ASSERT_EQ(tool.arguments.oVal["steps"].aVal.size(), 1);
-}
-
-TEST_CASE(mcp_test_assert) {
-    MCPToolTest tool("test_assert");
-    tool.arguments.oVal["machine_id"] = Json("test_machine");
-    tool.arguments.oVal["condition"] = Json("A == 0x42");
-
-    ASSERT_EQ(tool.arguments.oVal["condition"].sVal, "A == 0x42");
+TEST_CASE(mcp_machine_list_cleanup) {
+    // Create multiple machines
+    std::string m1 = MCPTest::createTestMachine("c64", "m1");
+    std::string m2 = MCPTest::createTestMachine("vic20", "m2");
+    ASSERT(m1.length() > 0);
+    ASSERT(m2.length() > 0);
+
+    // List should have 2 machines
+    auto machines = MCPTest::listTestMachines();
+    ASSERT_EQ(machines.size(), 2);
+
+    // Clean up all
+    MCPTest::cleanupAllTestMachines();
+    machines = MCPTest::listTestMachines();
+    ASSERT_EQ(machines.size(), 0);
 }

@@ -5058,6 +5058,113 @@ void mcpCleanup() {
     PluginLoader::instance().unloadAll();
 }
 
+// ---------------------------------------------------------------------------
+// MCP Test Interface Implementation
+// ---------------------------------------------------------------------------
+
+#ifdef TEST_BUILD
+namespace MCPTest {
+    Json invokeTool(const std::string& toolName, const Json& arguments) {
+        return dispatchToolInternal(toolName, arguments);
+    }
+
+    std::string createTestMachine(const std::string& machineType, const std::string& instanceId) {
+        std::string id = instanceId;
+        if (id.empty()) {
+            // Auto-generate instance ID
+            int& counter = g_typeCounters[machineType];
+            id = machineType + "_" + std::to_string(++counter);
+        }
+
+        // Check if already exists
+        if (g_machines.find(id) != g_machines.end()) {
+            return "";  // Already exists
+        }
+
+        // Create machine using registry
+        MachineDescriptor* desc = MachineRegistry::instance().createMachine(machineType.c_str());
+        if (!desc || desc->cpus.empty() || desc->buses.empty()) {
+            if (desc) delete desc;
+            return "";
+        }
+
+        MachineState ms;
+        ms.machine = desc;
+        ms.cpu = desc->cpus[0].cpu;           // Use first CPU
+        ms.bus = desc->buses[0].bus;          // Use first bus
+        ms.id = id;
+        ms.machineType = machineType;
+
+        // Create debug context
+        ms.dbg = new DebugContext(ms.cpu, ms.bus);
+
+        // Create disassembler
+        const char* isaName = ms.cpu->isaName();
+        ms.disasm = ToolchainRegistry::instance().createDisassembler(isaName);
+
+        // Store in map
+        g_machines[id] = std::move(ms);
+        return id;
+    }
+
+    bool destroyTestMachine(const std::string& instanceId) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return false;
+        g_machines.erase(it);
+        return true;
+    }
+
+    uint8_t readMemory(const std::string& instanceId, uint32_t addr) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return 0;
+        return it->second.bus->peek8(addr);
+    }
+
+    void writeMemory(const std::string& instanceId, uint32_t addr, uint8_t value) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return;
+        it->second.bus->write8(addr, value);
+    }
+
+    uint32_t readRegister(const std::string& instanceId, const std::string& regName) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return 0;
+        int idx = it->second.cpu->regIndexByName(regName.c_str());
+        if (idx < 0) return 0;
+        return it->second.cpu->regRead(idx);
+    }
+
+    void writeRegister(const std::string& instanceId, const std::string& regName, uint32_t value) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return;
+        int idx = it->second.cpu->regIndexByName(regName.c_str());
+        if (idx >= 0) {
+            it->second.cpu->regWrite(idx, value);
+        }
+    }
+
+    uint64_t getCycles(const std::string& instanceId) {
+        auto it = g_machines.find(instanceId);
+        if (it == g_machines.end()) return 0;
+        return it->second.cpu->cycles();
+    }
+
+    std::vector<std::string> listTestMachines() {
+        std::vector<std::string> result;
+        for (const auto& pair : g_machines) {
+            result.push_back(pair.first);
+        }
+        return result;
+    }
+
+    void cleanupAllTestMachines() {
+        g_machines.clear();
+        g_snapshots.clear();
+        g_typeCounters.clear();
+    }
+}
+#endif  // TEST_BUILD
+
 #ifndef TEST_BUILD
 int main(int argc, char* argv[]) {
     LogRegistry::instance().init();
