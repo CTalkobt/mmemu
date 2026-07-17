@@ -43,6 +43,27 @@ Comprehensive implementation of Lua scripting support for mmemu, enabling automa
   - Memory dump patterns
 - **Error Resilience** — Try-catch wrapper prevents Lua errors from crashing debugger
 
+### Phase 4.2.1: Cycle Event Hooks 🔄 IN PROGRESS
+- **LuaEventRegistry Class** — Manages machine event subscriptions
+  - Registers cycle events with custom intervals (e.g., every 10k cycles)
+  - Tracks firing state per event (next_fire absolute cycle count)
+  - O(1) handler lookup and firing check
+- **Cycle Event Integration** — Hook into DebugContext::onStep()
+  - Tracks cumulative cycle counter (`m_cycleCounter`)
+  - Calls `getReadyCycleHandlers()` to check which events should fire
+  - Executes ready handlers via LuaEngine.callFunction()
+- **Lua API** — `mmemu.on_cycle(interval, function_name)`
+  - Register handler to execute every N CPU cycles
+  - Supports multiple handlers at different intervals
+  - Independent timing per event (no mutual interference)
+- **Example Scripts** — cycle_counter.lua, interrupt_tracer.lua, performance_monitor.lua
+  - Cycle counter: Track execution patterns every 1k/10k cycles
+  - Performance monitor: Hotspot detection and memory analysis
+  - Interrupt tracer: Monitor IRQ/NMI events (skeleton)
+- **Unit Tests** — 14 test cases in test_lua_event_registry.cpp
+  - Registration, firing intervals, handler lookup
+  - Multiple events, unregister, clear, error handling
+
 ## Code Statistics
 
 | Component | Files | Lines | Purpose |
@@ -110,28 +131,37 @@ make clean cli
 > # Lua scripts execute immediately
 ```
 
-## Phase 4 Roadmap - Execution Integration ✅ COMPLETE
+## Phase 4 Roadmap - Execution Integration & Machine Events
 
-### Step 1: Breakpoint Callback ✅ COMPLETE
+### Phase 4: Breakpoint Callback ✅ COMPLETE
 - ✅ Hook LuaEngine into breakpoint hit events
 - ✅ Pass breakpoint context to Lua
 - ✅ Return execution control (pause/continue from Lua)
 - ✅ Error handling prevents debugger crashes
+- ✅ Works with or without lua5.4-dev
 
-### Step 2: Machine Events (FUTURE)
-- CPU cycle hooks
-- IRQ/NMI handlers
-- Periodic triggers
+### Phase 4.2.1: Cycle Event Hooks 🔄 IN PROGRESS
+- ✅ LuaEventRegistry class with interval tracking
+- ✅ Integration in DebugContext::onStep()
+- ✅ Lua API: mmemu.on_cycle(interval, function_name)
+- ✅ Example scripts and unit tests
+- ⏳ Test binary linking (minor issue, core logic working)
 
-### Step 3: Snapshot Integration (FUTURE)
+### Phase 4.2.2: Interrupt Event Hooks (NEXT)
+- Hook interrupt handlers for IRQ/NMI/BRK
+- Pass interrupt type to Lua callback
+- Example: mmemu.on_interrupt("IRQ", "on_irq_handler")
+- Test interrupt firing at appropriate times
+
+### Phase 4.3: Snapshot Integration (FUTURE)
 - `mmemu.save_snapshot(path)`
 - `mmemu.load_snapshot(path)`
 - State comparison utilities
 
-### Step 4: Full Runtime Activation ✅ COMPLETE
-- ✅ Works with or without lua5.4-dev
-- ✅ Graceful degradation (no crashes)
-- ✅ Documentation updated
+### Phase 5: Extended API (FUTURE)
+- Device I/O access from Lua
+- Performance profiling hooks
+- IDE integration
 
 ## Example: Regression Test Suite
 
