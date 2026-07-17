@@ -26,20 +26,24 @@ public:
     struct ComparisonResult {
         std::string testName;
         bool emulatorPass = false;
+        bool xemuPass = false;
         bool hardwarePass = false;
         bool resultsMatch = false;
 
         // Details
         std::string emulatorError;
+        std::string xemuError;
         std::string hardwareError;
         std::vector<uint8_t> emulatorMemory;
+        std::vector<uint8_t> xemuMemory;
         std::vector<uint8_t> hardwareMemory;
         std::string emulatorOutput;
+        std::string xemuOutput;
         std::string hardwareOutput;
 
         // Summary
         bool overallPass() const {
-            return emulatorPass && hardwarePass && resultsMatch;
+            return emulatorPass && resultsMatch;
         }
     };
 
@@ -73,6 +77,26 @@ public:
         uint32_t hwBaudRate = 2000000
     );
 
+    /**
+     * Create runner with emulator and xemu-xmega65 for cross-validation
+     */
+    static std::unique_ptr<CrossValidationRunner> withXemu(
+        const std::string& emuHost = "127.0.0.1",
+        uint16_t emuPort = 6502,
+        const std::string& xemuPath = "/usr/local/bin/xemu-xmega65"
+    );
+
+    /**
+     * Create runner with all three: emulator, xemu, and real hardware
+     */
+    static std::unique_ptr<CrossValidationRunner> withAll(
+        const std::string& emuHost = "127.0.0.1",
+        uint16_t emuPort = 6502,
+        const std::string& xemuPath = "/usr/local/bin/xemu-xmega65",
+        const std::string& hwPort = "",
+        uint32_t hwBaudRate = 2000000
+    );
+
     ~CrossValidationRunner();
 
     /**
@@ -102,6 +126,11 @@ public:
     bool hasEmulator() const { return m_emulator != nullptr; }
 
     /**
+     * Check if xemu is available
+     */
+    bool hasXemu() const { return m_xemu != nullptr; }
+
+    /**
      * Check if hardware is available
      */
     bool hasHardware() const { return m_hardware != nullptr; }
@@ -110,6 +139,7 @@ private:
     CrossValidationRunner();
 
     std::unique_ptr<HardwareTestBridge> m_emulator;
+    std::unique_ptr<HardwareTestBridge> m_xemu;
     std::unique_ptr<HardwareTestBridge> m_hardware;
 
     /**

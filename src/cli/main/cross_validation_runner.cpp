@@ -4,6 +4,9 @@
 #include <iomanip>
 #include <algorithm>
 
+// Forward declaration for XemuTestBridge
+class XemuTestBridge;
+
 CrossValidationRunner::CrossValidationRunner() {}
 
 CrossValidationRunner::~CrossValidationRunner() {}
@@ -61,6 +64,77 @@ std::unique_ptr<CrossValidationRunner> CrossValidationRunner::withBoth(
     return runner;
 }
 
+std::unique_ptr<CrossValidationRunner> CrossValidationRunner::withXemu(
+    const std::string& emuHost, uint16_t emuPort,
+    const std::string& xemuPath) {
+    auto runner = std::unique_ptr<CrossValidationRunner>(new CrossValidationRunner());
+
+    // Connect to mmsim emulator
+    runner->m_emulator = HardwareTestBridge::connectEmulator(emuHost, emuPort);
+    if (!runner->m_emulator) {
+        spdlog::warn("Failed to connect to emulator at {}:{}", emuHost, emuPort);
+    } else {
+        spdlog::info("Connected to mmsim emulator");
+    }
+
+    // Connect to xemu-xmega65
+    auto xemu = std::make_unique<XemuTestBridge>(xemuPath);
+    if (!xemu->connect()) {
+        spdlog::warn("Failed to connect to xemu-xmega65 at {}", xemuPath);
+    } else {
+        runner->m_xemu = std::move(xemu);
+        spdlog::info("Connected to xemu-xmega65");
+    }
+
+    if (!runner->m_emulator && !runner->m_xemu) {
+        spdlog::error("Failed to connect to any target");
+        return nullptr;
+    }
+
+    return runner;
+}
+
+std::unique_ptr<CrossValidationRunner> CrossValidationRunner::withAll(
+    const std::string& emuHost, uint16_t emuPort,
+    const std::string& xemuPath,
+    const std::string& hwPort, uint32_t hwBaudRate) {
+    auto runner = std::unique_ptr<CrossValidationRunner>(new CrossValidationRunner());
+
+    // Connect to mmsim emulator
+    runner->m_emulator = HardwareTestBridge::connectEmulator(emuHost, emuPort);
+    if (!runner->m_emulator) {
+        spdlog::warn("Failed to connect to emulator at {}:{}", emuHost, emuPort);
+    } else {
+        spdlog::info("Connected to mmsim emulator");
+    }
+
+    // Connect to xemu-xmega65
+    auto xemu = std::make_unique<XemuTestBridge>(xemuPath);
+    if (!xemu->connect()) {
+        spdlog::warn("Failed to connect to xemu-xmega65 at {}", xemuPath);
+    } else {
+        runner->m_xemu = std::move(xemu);
+        spdlog::info("Connected to xemu-xmega65");
+    }
+
+    // Connect to real hardware (if port specified)
+    if (!hwPort.empty()) {
+        runner->m_hardware = HardwareTestBridge::connectHardware(hwPort, hwBaudRate);
+        if (!runner->m_hardware) {
+            spdlog::warn("Failed to connect to hardware at {}", hwPort);
+        } else {
+            spdlog::info("Connected to hardware");
+        }
+    }
+
+    if (!runner->m_emulator && !runner->m_xemu && !runner->m_hardware) {
+        spdlog::error("Failed to connect to any target");
+        return nullptr;
+    }
+
+    return runner;
+}
+
 CrossValidationRunner::ComparisonResult CrossValidationRunner::runTest(
     const TestCase& test) {
 
@@ -69,7 +143,7 @@ CrossValidationRunner::ComparisonResult CrossValidationRunner::runTest(
 
     // Run on emulator if available
     if (m_emulator) {
-        spdlog::info("Running test '{}' on emulator...", test.name);
+        spdlog::info("Running test '{}' on mmsim...", test.name);
 
         if (!m_emulator->loadMemoryFile(test.programAddr, test.programPath)) {
             result.emulatorError = "Failed to load program";
@@ -88,10 +162,38 @@ CrossValidationRunner::ComparisonResult CrossValidationRunner::runTest(
             result.emulatorOutput = testResult.output;
 
             if (testResult.success) {
-                spdlog::info("Emulator test passed ({}ms, {} cycles)",
+                spdlog::info("mmsim test passed ({}ms, {} cycles)",
                              test.timeoutMs, testResult.executionCycles);
             } else {
-                spdlog::error("Emulator test failed: {}", testResult.error);
+                spdlog::error("mmsim test failed: {}", testResult.error);
+            }
+        }
+    }
+
+    // Run on xemu if available
+    if (m_xemu) {
+        spdlog::info("Running test '{}' on xemu...", test.name);
+
+        if (!m_xemu->loadMemoryFile(test.programAddr, test.programPath)) {
+            result.xemuError = "Failed to load program";
+            result.xemuPass = false;
+        } else {
+            auto testResult = m_xemu->runTest(
+                test.programAddr,
+                test.resultAddr,
+                test.resultSize,
+                test.timeoutMs
+            );
+
+            result.xemuPass = testResult.success;
+            result.xemuError = testResult.error;
+            result.xemuMemory = testResult.memorySnapshot;
+            result.xemuOutput = testResult.output;
+
+            if (testResult.success) {
+                spdlog::info("xemu test passed");
+            } else {
+                spdlog::error("xemu test failed: {}", testResult.error);
             }
         }
     }
@@ -124,19 +226,29 @@ CrossValidationRunner::ComparisonResult CrossValidationRunner::runTest(
         }
     }
 
-    // Compare results if both succeeded
-    if (result.emulatorPass && result.hardwarePass) {
+    // Compare results - use emulator as reference
+    if (result.emulatorPass) {
         std::string diffReport;
-        result.resultsMatch = compareMemory(
-            result.emulatorMemory,
-            result.hardwareMemory,
-            diffReport
-        );
+        result.resultsMatch = true;
+
+        // Compare with xemu if available
+        if (result.xemuPass) {
+            if (!compareMemory(result.emulatorMemory, result.xemuMemory, diffReport)) {
+                result.resultsMatch = false;
+                spdlog::warn("Results differ between mmsim and xemu:\n{}", diffReport);
+            }
+        }
+
+        // Compare with hardware if available
+        if (result.hardwarePass) {
+            if (!compareMemory(result.emulatorMemory, result.hardwareMemory, diffReport)) {
+                result.resultsMatch = false;
+                spdlog::warn("Results differ between mmsim and hardware:\n{}", diffReport);
+            }
+        }
 
         if (result.resultsMatch) {
-            spdlog::info("Results match! ✓");
-        } else {
-            spdlog::warn("Results differ:\n{}", diffReport);
+            spdlog::info("All results match! ✓");
         }
     }
 

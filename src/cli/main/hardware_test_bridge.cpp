@@ -6,6 +6,8 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <signal.h>
+#include <sys/wait.h>
 
 // Platform-specific includes
 #ifdef _WIN32
@@ -76,6 +78,9 @@ bool HardwareTestBridge::loadMemoryFile(uint32_t addr, const std::string& filePa
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)),
                                std::istreambuf_iterator<char>());
     file.close();
+
+    // Store program path for xemu execution
+    m_currentProgramPath = filePath;
 
     return loadMemory(addr, data);
 }
@@ -471,3 +476,133 @@ std::string HardwarePortBridge::sendCommand(const std::string& cmd) {
     }
     return receiveResponse();
 }
+
+// ============================================================================
+// XemuTestBridge - Subprocess-based xemu-xmega65 integration
+// ============================================================================
+
+XemuTestBridge::XemuTestBridge(const std::string& xemuPath)
+    : HardwareTestBridge(Mode::HARDWARE), m_xemuPath(xemuPath) {}
+
+XemuTestBridge::~XemuTestBridge() {}
+
+bool XemuTestBridge::connect() {
+    // Verify xemu binary exists
+    std::ifstream xemu_check(m_xemuPath);
+    if (!xemu_check.good()) {
+        spdlog::error("xemu-xmega65 not found at: {}", m_xemuPath);
+        spdlog::error("Install with: apt-get install xemu-xmega65");
+        return false;
+    }
+
+    m_connected = true;
+    spdlog::info("Connected to xemu-xmega65 at {}", m_xemuPath);
+    return true;
+}
+
+std::string XemuTestBridge::sendCommand(const std::string& cmd) {
+    // Xemu doesn't support live serial protocol
+    return "";
+}
+
+HardwareTestBridge::TestResult XemuTestBridge::runTest(
+    uint32_t programAddr, uint32_t resultAddr, uint32_t resultSize, uint32_t timeoutMs) {
+
+    TestResult result;
+    result.success = false;
+
+    if (!m_connected) {
+        result.error = "Xemu not connected";
+        return result;
+    }
+
+    if (m_currentProgramPath.empty()) {
+        result.error = "No program loaded (call loadMemoryFile first)";
+        return result;
+    }
+
+    // Run xemu and capture memory
+    result.memorySnapshot = runXemuAndCapture(
+        m_currentProgramPath, resultAddr, resultSize, timeoutMs);
+
+    if (result.memorySnapshot.empty()) {
+        result.error = "Failed to capture memory from xemu";
+        return result;
+    }
+
+    result.success = true;
+    result.executionCycles = 0;  // Xemu doesn't report cycle count
+    return result;
+}
+
+std::vector<uint8_t> XemuTestBridge::runXemuAndCapture(
+    const std::string& programPath, uint32_t resultAddr, uint32_t resultSize,
+    uint32_t timeoutMs) {
+
+    std::string dumpFile = "/tmp/xemu_dump.bin";
+    if (std::ifstream(dumpFile).good()) {
+        std::remove(dumpFile.c_str());
+    }
+
+    // Build xemu command line
+    std::vector<std::string> cmd = {
+        m_xemuPath,
+        "-headless", "-sleepless", "-testing",
+        "-gui", "none",
+        "-prg", programPath,
+        "-autoload",
+        "-prgexit",
+        "-dumpmem", dumpFile
+    };
+
+    // Convert to C-style argv
+    std::vector<const char*> argv;
+    for (const auto& arg : cmd) {
+        argv.push_back(arg.c_str());
+    }
+    argv.push_back(nullptr);
+
+    // Launch xemu
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process: run xemu
+        execvp(argv[0], const_cast<char* const*>(argv.data()));
+        exit(1);
+    } else if (pid < 0) {
+        spdlog::error("Failed to fork xemu process");
+        return {};
+    }
+
+    // Parent process: wait for completion with timeout
+    auto startTime = std::chrono::high_resolution_clock::now();
+    while (true) {
+        auto elapsed = std::chrono::high_resolution_clock::now() - startTime;
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
+            spdlog::warn("Xemu timeout after {}ms", timeoutMs);
+            kill(pid, SIGTERM);
+            break;
+        }
+
+        if (waitpid(pid, nullptr, WNOHANG) == pid) {
+            break;  // Process exited
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // Read memory dump
+    std::vector<uint8_t> result;
+    std::ifstream dump(dumpFile, std::ios::binary);
+    if (dump.is_open()) {
+        dump.seekg(resultAddr);
+        std::vector<uint8_t> buffer(resultSize);
+        dump.read(reinterpret_cast<char*>(buffer.data()), resultSize);
+        result = buffer;
+    }
+
+    // Cleanup
+    std::remove(dumpFile.c_str());
+
+    return result;
+}
+

@@ -124,14 +124,14 @@ public:
     bool run();
 
     /**
-     * Run a test program
+     * Run a test program (virtual to allow subclass overrides)
      * @param programAddr Address where test program is loaded
      * @param resultAddr Address where test results are written
      * @param resultSize Size of result region to capture
      * @param timeoutMs Maximum time to wait (0 = no timeout)
      * @return Test result with memory snapshot and output
      */
-    TestResult runTest(
+    virtual TestResult runTest(
         uint32_t programAddr,
         uint32_t resultAddr,
         uint32_t resultSize,
@@ -153,6 +153,11 @@ public:
      */
     uint64_t getCycles() const { return m_cycles; }
 
+    /**
+     * Get target type name for display/logging
+     */
+    virtual std::string getTargetName() const { return "Unknown"; }
+
 protected:
     HardwareTestBridge(Mode mode);
 
@@ -162,6 +167,9 @@ protected:
     // Serial output accumulator
     std::string m_serialOutput;
     uint64_t m_cycles = 0;
+
+    // Track loaded program path for xemu execution
+    std::string m_currentProgramPath;
 
     /**
      * Send command and get response (to be implemented by subclasses)
@@ -188,6 +196,7 @@ public:
     ~EmulatorTestBridge() override;
 
     bool connect();
+    std::string getTargetName() const override { return "mmsim (Emulator)"; }
 
 private:
     std::string m_host;
@@ -209,6 +218,7 @@ public:
     ~HardwarePortBridge() override;
 
     bool connect();
+    std::string getTargetName() const override { return "Hardware (Serial)"; }
 
 private:
     std::string m_portPath;
@@ -222,3 +232,36 @@ private:
     bool sendRaw(const std::string& data);
     std::string receiveResponse();
 };
+
+/**
+ * Xemu MEGA65 bridge - Subprocess-based integration with xemu-xmega65
+ * Launches xemu-xmega65 with test program, waits for completion, reads memory dump
+ */
+class XemuTestBridge : public HardwareTestBridge {
+public:
+    explicit XemuTestBridge(const std::string& xemuPath = "/usr/local/bin/xemu-xmega65");
+    ~XemuTestBridge() override;
+
+    bool connect();
+    std::string getTargetName() const override { return "Xemu MEGA65"; }
+
+    /**
+     * Load and run program, capturing memory results
+     * Overrides base implementation to use subprocess execution
+     */
+    TestResult runTest(uint32_t programAddr, uint32_t resultAddr,
+                      uint32_t resultSize, uint32_t timeoutMs = 5000) override;
+
+private:
+    std::string m_xemuPath;
+
+    std::string sendCommand(const std::string& cmd) override;
+
+    /**
+     * Run xemu-xmega65 with PRG file and capture memory dump
+     */
+    std::vector<uint8_t> runXemuAndCapture(const std::string& programPath,
+                                           uint32_t resultAddr, uint32_t resultSize,
+                                           uint32_t timeoutMs);
+};
+
