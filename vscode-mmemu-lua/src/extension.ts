@@ -2,11 +2,19 @@ import * as vscode from 'vscode';
 import { MmemuDebugger } from './debugger';
 import { ConsoleProvider } from './debug-console';
 import { WatchExpressionProvider } from './watch-provider';
+import { CallStackProvider } from './call-stack-provider';
+import { HoverProviderManager } from './hover-provider';
+import { TestExplorerProvider } from './test-explorer-provider';
+import { PerformanceVisualizer } from './perf-visualizer';
 
 let mmemuDebugger: MmemuDebugger | undefined;
 let statusBar: vscode.StatusBarItem;
 let consoleProvider: ConsoleProvider | undefined;
 let watchProvider: WatchExpressionProvider | undefined;
+let callStackProvider: CallStackProvider | undefined;
+let hoverProviderManager: HoverProviderManager | undefined;
+let testExplorerProvider: TestExplorerProvider | undefined;
+let perfVisualizer: PerformanceVisualizer | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('mmemu Lua extension activated');
@@ -28,6 +36,24 @@ export function activate(context: vscode.ExtensionContext) {
     watchProvider = new WatchExpressionProvider(mmemuDebugger);
     vscode.window.registerTreeDataProvider('mmemu.watchExpressions', watchProvider);
     context.subscriptions.push(watchProvider);
+
+    // Initialize call stack provider
+    callStackProvider = new CallStackProvider(mmemuDebugger);
+    vscode.window.registerTreeDataProvider('mmemu.callStack', callStackProvider);
+    context.subscriptions.push(callStackProvider);
+
+    // Initialize hover provider
+    hoverProviderManager = new HoverProviderManager(mmemuDebugger);
+    context.subscriptions.push(hoverProviderManager);
+
+    // Initialize test explorer provider
+    testExplorerProvider = new TestExplorerProvider(mmemuDebugger);
+    vscode.window.registerTreeDataProvider('mmemu.testExplorer', testExplorerProvider);
+    context.subscriptions.push(testExplorerProvider);
+
+    // Initialize performance visualizer
+    perfVisualizer = new PerformanceVisualizer(mmemuDebugger);
+    context.subscriptions.push(perfVisualizer);
 
     // Register commands
     registerCommand(context, 'mmemu.debug', cmdStartDebugger);

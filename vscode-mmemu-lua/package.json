@@ -127,6 +127,51 @@
         "command": "mmemu.editWatchExpression",
         "title": "mmemu: Edit Watch Expression",
         "description": "Edit an expression in the watch panel"
+      },
+      {
+        "command": "mmemu.goToStackFrame",
+        "title": "mmemu: Go to Stack Frame",
+        "description": "Navigate to stack frame location"
+      },
+      {
+        "command": "mmemu.clearCallStack",
+        "title": "mmemu: Clear Call Stack",
+        "description": "Clear the call stack"
+      },
+      {
+        "command": "mmemu.runTest",
+        "title": "mmemu: Run Test",
+        "description": "Run a Lua test"
+      },
+      {
+        "command": "mmemu.runAllTests",
+        "title": "mmemu: Run All Tests",
+        "description": "Run all discovered tests"
+      },
+      {
+        "command": "mmemu.runFailedTests",
+        "title": "mmemu: Re-run Failed Tests",
+        "description": "Re-run previously failed tests"
+      },
+      {
+        "command": "mmemu.skipTest",
+        "title": "mmemu: Skip Test",
+        "description": "Skip a test"
+      },
+      {
+        "command": "mmemu.showPerformanceProfile",
+        "title": "mmemu: Show Performance Profile",
+        "description": "Display performance visualization"
+      },
+      {
+        "command": "mmemu.clearPerformanceData",
+        "title": "mmemu: Clear Performance Data",
+        "description": "Clear all performance data"
+      },
+      {
+        "command": "mmemu.exportPerformanceData",
+        "title": "mmemu: Export Performance Data",
+        "description": "Export performance data as JSON"
       }
     ],
     "keybindings": [
@@ -179,9 +224,19 @@
     "views": {
       "mmemu-debug": [
         {
+          "id": "mmemu.callStack",
+          "name": "Call Stack",
+          "when": "debugType == mmemu-lua"
+        },
+        {
           "id": "mmemu.watchExpressions",
           "name": "Watch Expressions",
           "when": "debugType == mmemu-lua"
+        },
+        {
+          "id": "mmemu.testExplorer",
+          "name": "Test Explorer",
+          "when": "editorLangId == lua-mmemu"
         }
       ]
     },
