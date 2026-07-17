@@ -71,7 +71,8 @@ LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debu
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp \
-	src/libdebug/main/o45_object_loader.cpp src/libdebug/main/lua_event_registry.cpp
+	src/libdebug/main/o45_object_loader.cpp src/libdebug/main/lua_event_registry.cpp \
+	src/libdebug/main/test_persistence.cpp src/libdebug/main/test_runner_integration.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
 
 # Plugin Sources
@@ -274,6 +275,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdebug/test/test_debug.cpp \
 	src/libdebug/test/test_trace_buffer.cpp \
 	src/libdebug/test/test_expression_evaluator.cpp \
+	src/libdebug/test/test_persistence.cpp \
 	src/libtoolchain/test/test_toolchain.cpp \
 	src/libtoolchain/test/test_symbol_table_enhanced.cpp \
 	src/libtoolchain/test/test_debug_metadata.cpp \
@@ -478,6 +480,7 @@ PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
 GUI_OBJS = $(GUI_SRCS:.cpp=.o)
 
 CLI_OBJS = $(CLI_SRCS:.cpp=.o)
+CLI_OBJS_FOR_TEST = $(filter-out src/cli/main/main.o,$(CLI_OBJS))
 MCP_OBJS = $(MCP_SRCS:.cpp=.o)
 
 # Binaries
@@ -682,7 +685,7 @@ $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) $(BASE_LIBS)
 
 $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) -lasound
 
 # Generic rules
 %.o: %.cpp
