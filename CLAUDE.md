@@ -302,6 +302,55 @@ See `todo.md` for the full roadmap.
 
 ---
 
+## Hardware Validation & Cross-Validation Testing
+
+The emulator can be cross-validated against real MEGA65 hardware to verify emulation accuracy. The **Hardware Test Runner Bridge** provides a unified interface for running identical test programs on both targets.
+
+### Components
+
+- **HardwareTestBridge** — Unified interface for emulator (TCP to SerialMonitorServer) and hardware (serial port) communication
+- **CrossValidationRunner** — Orchestrates test execution on one or both targets with automatic result comparison
+- **Serial Monitor Protocol** — Text-based commands: M (read), S (write), R (registers), D (disasm), G (setPC), T (step)
+
+### Quick Start
+
+```cpp
+// Cross-validate: run same test on both emulator and hardware
+auto runner = CrossValidationRunner::withBoth(
+    "127.0.0.1", 6502,              // Emulator
+    "/dev/ttyUSB0", 2000000         // Hardware serial port
+);
+
+std::vector<CrossValidationRunner::TestCase> tests = {
+    {.name = "arithmetic", .programPath = "tests/arithmetic.bin", 
+     .programAddr = 0x0800, .resultAddr = 0x2000, .resultSize = 256}
+};
+
+auto results = runner->runTests(tests);
+for (const auto& [name, result] : results) {
+    if (result.overallPass()) {
+        printf("✓ %s: PASS (emulator and hardware match)\n", name.c_str());
+    } else if (!result.resultsMatch) {
+        printf("✗ %s: Results differ\n", name.c_str());
+    }
+}
+```
+
+### Hardware Setup
+
+- MEGA65 with serial monitor support
+- USB-to-UART adapter (FTDI/CP2102)
+- Connect to JTAG/serial connector pins 2-3 (RX/TX)
+
+### See Also
+
+- **HARDWARE_VALIDATION.md** — Complete API reference, examples, and debugging guide
+- **tests/src/test_cross_validation.cpp** — Integration tests (7 tests)
+- **src/cli/main/hardware_test_bridge.h** — Bridge class definition
+- **src/cli/main/cross_validation_runner.h** — Runner class definition
+
+---
+
 ## Quick Reference: File & Function Locations
 
 | Concept | Location |
@@ -321,3 +370,5 @@ See `todo.md` for the full roadmap.
 | MCP server | `src/mcp/main/main.cpp` (62 tools: assembler, snapshots, diff_file, analyze_routine, generate_tests, record_audio, load_sid, reverse_step) |
 | Disk image parsers | `src/plugins/cbm-loader/main/cbm_sector_disk.cpp` (D64/D71/D80/D81/D82 base) |
 | GDB server | `src/cli/main/gdb_server.cpp` (RSP protocol, `--gdb-port` CLI flag) |
+| Hardware test bridge | `src/cli/main/hardware_test_bridge.cpp` (Serial/TCP backends for MEGA65) |
+| Cross-validation runner | `src/cli/main/cross_validation_runner.cpp` (Emulator vs hardware comparison) |

@@ -21,6 +21,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #99 - Execution History and Reverse Debugging**: User-facing tools for execution history inspection built on existing TraceBuffer infrastructure. CLI `log` command with filtering options (`log show`, `log show -memory`, `log show -calls`), MCP tools for remote access (`get_execution_history`, `get_memory_access_history`). Enables debugging workflow: hit breakpoint → examine what led to it → step backwards → inspect state.
 - **Issue #100 - GDB Protocol IDE Integration** (#100): Enhanced GDB Remote Serial Protocol server with mmemu-specific metadata exchange. New query commands: `qMmemuSymbols` (symbol table), `qMmemuVariables` (variable info), `qMmemuFrame` (frame info). Responses are hex-encoded JSON for compatibility. Enables IDE integration with VS Code, CLion, and other GDB-compatible debuggers. Full documentation for VS Code setup and debugging workflow.
 
+### Hardware Cross-Validation Testing Framework
+- **Hardware Test Runner Bridge**: Unified interface for running test programs on emulator (TCP to SerialMonitorServer) and real MEGA65 hardware (USB-UART serial port). Implements MEGA65 serial monitor protocol (M, S, R, D, G, T commands). Two backends: EmulatorTestBridge (TCP), HardwarePortBridge (serial port with termios configuration).
+- **CrossValidationRunner**: High-level test orchestration with factory methods `withEmulator()`, `withHardware()`, `withBoth()`. Supports batch test execution, automatic memory comparison, detailed diff reporting. Gracefully degrades when hardware/emulator unavailable.
+- **Test Results Struct**: Captures execution cycles, memory snapshots, serial output, error messages for each test. Comparison identifies emulation bugs vs hardware behavior divergence.
+- **API**: `loadMemory()`, `readMemory()`, `readRegister()`, `writeMemory()`, `setPC()`, `step()`, `run()`, `runTest()`. Unified semantics across emulator and hardware.
+- **Serial Setup**: USB-to-UART adapter (FTDI/CP2102) connected to MEGA65 JTAG/serial pins 2-3 (RX/TX). Auto-detects `/dev/ttyUSB0` on Linux. Default baud rate 2,000,000 bps.
+- **Documentation**: Complete HARDWARE_VALIDATION.md with examples, hardware setup, API reference, debugging guide, integration patterns.
+- **Test Suite**: 7 new integration tests validating API structure and factory methods. All 709 tests passing.
+
 ### Serial Monitor Server - Issues #112-115
 - **Issue #112 - Phase 1: Core Implementation** ✅ Complete: TCP socket listener with register/memory/disassemble/PC commands, text-based protocol over localhost.
 - **Issue #113 - Phase 2: Advanced Commands** ✅ Complete: Breakpoint/watchpoint management, trace/history inspection, UART divisor configuration, debug metadata access.
