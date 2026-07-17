@@ -35,7 +35,8 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/audio_dma/main \
 	-Isrc/plugins/devices/map_mmu/main \
 	-Isrc/plugins/machines/mega65/main \
-	-Isrc/plugins/machines/pet/main -Itests/src
+	-Isrc/plugins/machines/pet/main -Itests/src \
+	-I/usr/include/lua5.4
 
 BINDIR   = bin
 LIBDIR   = lib
@@ -522,7 +523,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 LIBS = $(ILIBDIR)/libmem.a $(ILIBDIR)/libcore.a $(ILIBDIR)/libdevices.a \
 	$(ILIBDIR)/libtoolchain.a $(ILIBDIR)/libdebug.a $(ILIBDIR)/libplugins.a
 
-BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt
+BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt /lib/x86_64-linux-gnu/liblua5.4.so
 
 # ---------------------------------------------------------------------------
 # Build rules

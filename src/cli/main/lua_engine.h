@@ -5,7 +5,7 @@
 #include <memory>
 
 // Forward declare Lua state if Lua is available
-#ifdef HAVE_LUA
+#if __has_include(<lua5.4/lua.h>) || __has_include(<lua.h>)
 struct lua_State;
 #else
 // Stub type when Lua is not available

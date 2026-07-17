@@ -14,8 +14,8 @@
 local TestFramework = require("test_framework")
 local Backend = require("backend_interface")
 
--- Parse command-line arguments
-local backend_type = arg[1] or "emulator"
+-- Parse command-line arguments (handle both CLI and direct Lua execution)
+local backend_type = (arg and arg[1]) or "emulator"
 
 -- Create test framework
 local tests = TestFramework.create(backend_type)
@@ -26,18 +26,22 @@ local tests = TestFramework.create(backend_type)
 
 --- Test: Write and read back pattern
 function test_zero_page_pattern(backend)
-    -- Fill zero page with pattern
-    for i = 0, 15 do
-        backend:write_byte(i, (i * 2) & 0xFF)
+    -- Test zero page RAM (skip $00/$01 which are special processor state)
+    -- $00 = indirect addressing temp, $01 = 6510 I/O port
+    local test_range = {0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B}
+
+    -- Fill with pattern
+    for idx, addr in ipairs(test_range) do
+        backend:write_byte(addr, (addr * 2) & 0xFF)
     end
 
     -- Verify pattern
-    for i = 0, 15 do
-        local val = backend:read_byte(i)
-        if val ~= ((i * 2) & 0xFF) then
-            error("Byte at $" .. string.format("%02X", i) ..
+    for idx, addr in ipairs(test_range) do
+        local val = backend:read_byte(addr)
+        if val ~= ((addr * 2) & 0xFF) then
+            error("Byte at $" .. string.format("%02X", addr) ..
                   " = $" .. string.format("%02X", val) ..
-                  " (expected $" .. string.format("%02X", (i * 2) & 0xFF) .. ")")
+                  " (expected $" .. string.format("%02X", (addr * 2) & 0xFF) .. ")")
         end
     end
 

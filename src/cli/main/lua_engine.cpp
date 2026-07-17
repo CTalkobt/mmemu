@@ -8,11 +8,21 @@
 #include <iomanip>
 
 // Try to include Lua headers if available
-#if __has_include(<lua.h>)
+// Note: lauxlib.h must be included before lualib.h for proper initialization
+#if __has_include(<lua5.4/lua.h>)
 #define HAVE_LUA 1
+extern "C" {
+#include <lua5.4/lua.h>
+#include <lua5.4/lauxlib.h>
+#include <lua5.4/lualib.h>
+}
+#elif __has_include(<lua.h>)
+#define HAVE_LUA 1
+extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
 #include <lualib.h>
+}
 #endif
 
 #ifdef HAVE_LUA
