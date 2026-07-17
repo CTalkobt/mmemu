@@ -72,7 +72,8 @@ LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debu
 	src/libdebug/main/stack_trace.cpp \
 	src/libdebug/main/observer_registry.cpp src/libdebug/main/o45_symbol_parser.cpp \
 	src/libdebug/main/o45_object_loader.cpp src/libdebug/main/lua_event_registry.cpp \
-	src/libdebug/main/test_persistence.cpp src/libdebug/main/test_runner_integration.cpp
+	src/libdebug/main/test_persistence.cpp src/libdebug/main/test_runner_integration.cpp \
+	src/libdebug/main/test_performance_tracker.cpp
 LIBPLUGINS_SRCS   = src/plugin_loader/main/plugin_loader.cpp src/plugin_loader/main/logging.cpp
 
 # Plugin Sources
@@ -703,6 +704,10 @@ src/mcp/main/main_test.o: src/mcp/main/main.cpp
 
 test: $(TEST_BIN) plugins test-mega65 test-mcp test-gdb
 	./$(TEST_BIN)
+
+test-performance: $(TEST_BIN) plugins
+	@echo "Running full test suite with performance profiling..."
+	./$(TEST_BIN) -performance
 
 test-mcp: $(MCP_BIN) plugins
 	@echo "Running MCP integration tests..."
