@@ -1,8 +1,8 @@
 # mmemu — Multi Machine Emulator
 # Top-level Makefile
-.PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage sdk sdk-cpp sdk-python
+.PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage sdk sdk-cpp sdk-python test-runner
 
-all: cli gui mcp plugins
+all: cli gui mcp test-runner plugins
 
 VERSION_HDR = src/include/version.h
 VERSION    := $(shell cat VERSION 2>/dev/null || echo 0.0.0)
@@ -256,7 +256,8 @@ CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/lua_engine.cpp \
 	src/cli/main/plugin_command_registry.cpp \
 	src/cli/main/hardware_test_bridge.cpp \
-	src/cli/main/cross_validation_runner.cpp
+	src/cli/main/cross_validation_runner.cpp \
+	src/cli/main/unified_test_runner.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/mcp/main/plugin_tool_registry.cpp
@@ -492,6 +493,7 @@ MCP_OBJS = $(MCP_SRCS:.cpp=.o)
 CLI_BIN = $(BINDIR)/mmemu-cli
 GUI_BIN = $(BINDIR)/mmemu-gui
 MCP_BIN = $(BINDIR)/mmemu-mcp
+TEST_RUNNER_BIN = $(BINDIR)/mmemu-test-runner
 
 PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-45gs02.so \
@@ -688,6 +690,18 @@ $(GUI_BIN): $(GUI_OBJS) $(LIBS) | $(BINDIR)
 
 $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) $(BASE_LIBS)
+
+# Test runner binary (unified multi-backend test framework)
+TEST_RUNNER_OBJS = src/cli/main/test_runner_main.o \
+	src/cli/main/unified_test_runner.o \
+	src/cli/main/hardware_test_bridge.o \
+	src/cli/main/cross_validation_runner.o \
+	src/cli/main/lua_engine.o
+
+$(TEST_RUNNER_BIN): $(TEST_RUNNER_OBJS) $(LIBS) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(TEST_RUNNER_OBJS) $(BASE_LIBS)
+
+test-runner: $(TEST_RUNNER_BIN) plugins
 
 $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(BASE_LIBS) $(WXLIBS) -lasound
