@@ -1,0 +1,203 @@
+{
+  "name": "vscode-mmemu-lua",
+  "displayName": "mmemu Lua Debugger",
+  "description": "VS Code integration for mmemu Lua scripting with debugging support",
+  "version": "0.1.0",
+  "publisher": "mmemu",
+  "engines": {
+    "vscode": "^1.75.0",
+    "node": ">=14.0.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "lua",
+    "emulator",
+    "debugger",
+    "c64",
+    "mega65",
+    "mmemu"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/mmsim"
+  },
+  "license": "MIT",
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "lua-mmemu",
+        "aliases": [
+          "Lua (mmemu)",
+          "lua"
+        ],
+        "extensions": [
+          ".lua"
+        ],
+        "configuration": "./syntaxes/lua-mmemu.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "lua-mmemu",
+        "scopeName": "source.lua.mmemu",
+        "path": "./syntaxes/lua-mmemu.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "mmemu.debug",
+        "title": "mmemu: Start Debugger",
+        "description": "Start mmemu debugger and attach to this script"
+      },
+      {
+        "command": "mmemu.runScript",
+        "title": "mmemu: Run Script",
+        "description": "Execute the current Lua script in mmemu"
+      },
+      {
+        "command": "mmemu.stepInto",
+        "title": "mmemu: Step Into",
+        "description": "Step into next Lua function"
+      },
+      {
+        "command": "mmemu.continue",
+        "title": "mmemu: Continue",
+        "description": "Continue execution after breakpoint"
+      },
+      {
+        "command": "mmemu.inspect",
+        "title": "mmemu: Inspect Variable",
+        "description": "Inspect variable or register at cursor"
+      },
+      {
+        "command": "mmemu.setBreakpoint",
+        "title": "mmemu: Toggle Breakpoint",
+        "description": "Toggle breakpoint at current line"
+      },
+      {
+        "command": "mmemu.showRegisters",
+        "title": "mmemu: Show Registers",
+        "description": "Display CPU registers in side panel"
+      },
+      {
+        "command": "mmemu.showMemory",
+        "title": "mmemu: Show Memory",
+        "description": "Display memory viewer"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mmemu.runScript",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorLangId == lua-mmemu"
+      },
+      {
+        "command": "mmemu.setBreakpoint",
+        "key": "ctrl+shift+b",
+        "mac": "cmd+shift+b",
+        "when": "editorLangId == lua-mmemu"
+      },
+      {
+        "command": "mmemu.stepInto",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i",
+        "when": "editorLangId == lua-mmemu"
+      },
+      {
+        "command": "mmemu.continue",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "editorLangId == lua-mmemu"
+      }
+    ],
+    "configuration": {
+      "title": "mmemu Lua Debugger",
+      "properties": {
+        "mmemu.host": {
+          "type": "string",
+          "default": "localhost",
+          "description": "mmemu server host (for remote debugging)"
+        },
+        "mmemu.port": {
+          "type": "number",
+          "default": 9999,
+          "description": "mmemu debugger port"
+        },
+        "mmemu.machine": {
+          "type": "string",
+          "default": "c64",
+          "description": "Default machine type (c64, vic20, mega65, pet)"
+        },
+        "mmemu.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically connect to mmemu on startup"
+        },
+        "mmemu.showVariablesOnBreakpoint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show variables panel when breakpoint is hit"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "mmemu-lua",
+        "label": "mmemu Lua",
+        "program": "./out/debugger.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Path to Lua script to run",
+                "default": "${workspaceFolder}/script.lua"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after launch",
+                "default": false
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal"
+                ],
+                "default": "internalConsole"
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^16.0.0",
+    "@types/vscode": "^1.75.0",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^4.7.0"
+  },
+  "dependencies": {
+    "vscode-debugadapter": "^1.48.0",
+    "vscode-debugprotocol": "^1.48.0"
+  }
+}

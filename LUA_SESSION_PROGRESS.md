@@ -238,10 +238,13 @@ make clean cli
 - ✅ Full backend_interface implementation
 - 🔄 TODO: MEGA65 hypervisor serial monitor (hardware-side implementation)
 
-### Phase 6+: Advanced Features (FUTURE)
-- Lua JIT compilation for performance
-- Script library and utilities
-- Full IDE integration
+### Phase 6.4: Lua JIT Compilation (⏭️ DEFERRED - Not Needed Yet)
+- Marginal performance gain (1.2-1.5x vs claimed 5-10x)
+- Low complexity but low impact for typical usage
+- Only needed for heavy batch automation workflows
+- Decision: Skip for now, revisit if users report performance issues
+
+### Phase 6.5: VS Code Extension (🔄 IN PROGRESS)
 
 ## Example: Regression Test Suite
 

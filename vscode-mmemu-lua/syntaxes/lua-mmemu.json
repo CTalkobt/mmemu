@@ -1,0 +1,79 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Lua (mmemu)",
+  "scopeName": "source.lua.mmemu",
+  "fileTypes": ["lua"],
+  "patterns": [
+    {
+      "name": "comment.line.double-dash.lua",
+      "match": "--.*$"
+    },
+    {
+      "name": "comment.block.lua",
+      "begin": "--\\[\\[",
+      "end": "\\]\\]"
+    },
+    {
+      "name": "string.quoted.double.lua",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.lua",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "string.quoted.single.lua",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.lua",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "constant.numeric.lua",
+      "match": "\\b(0x[0-9A-Fa-f]+|\\d+\\.?\\d*)\\b"
+    },
+    {
+      "name": "keyword.control.lua",
+      "match": "\\b(if|then|else|elseif|end|while|do|for|in|repeat|until|break|return|function|local)\\b"
+    },
+    {
+      "name": "keyword.operator.lua",
+      "match": "\\b(and|or|not)\\b"
+    },
+    {
+      "name": "constant.language.lua",
+      "match": "\\b(true|false|nil)\\b"
+    },
+    {
+      "name": "support.function.mmemu.lua",
+      "match": "\\bmmemu\\.(read_byte|write_byte|get_register|set_register|get_pc|set_pc|log|hex|set_breakpoint|save_snapshot|load_snapshot|list_snapshots|on_cycle|on_interrupt|compile_script|load_bytecode)\\b"
+    },
+    {
+      "name": "support.function.stdlib.lua",
+      "match": "\\b(stdlib|test_utils|device_io|patterns|profiler)\\.(hex|binary|format_flags|table_merge|table_invert|assert_eq|assert_hex_eq|bitfield|rotate_left|popcount)\\b"
+    },
+    {
+      "name": "support.function.device.lua",
+      "match": "\\bdevice_io\\.(SID_set_frequency|VIC_set_sprite_pos|CIA_set_timer|DMA_copy|AUDIO_DMA)\\b"
+    },
+    {
+      "name": "variable.other.mmemu.lua",
+      "match": "\\b(backend|prof|results|stats)\\b"
+    },
+    {
+      "name": "entity.name.function.lua",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+    },
+    {
+      "name": "variable.other.lua",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b"
+    }
+  ]
+}
