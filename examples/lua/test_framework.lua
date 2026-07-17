@@ -14,21 +14,24 @@ local TestFramework = {}
 TestFramework.__index = TestFramework
 
 --- Create test framework with specified backend
--- @param backend_type: "emulator" or "hardware"
+-- @param backend_or_type: Backend instance OR "emulator" or "hardware" string
 -- @param backend_config: optional configuration (e.g., serial port for hardware)
-function TestFramework.create(backend_type, backend_config)
+function TestFramework.create(backend_or_type, backend_config)
     local self = setmetatable({}, TestFramework)
 
-    local Backend = require("backend_interface")
-    self.backend = Backend.create(backend_type)
-
-    if backend_type == "hardware" then
-        -- TODO: Configure hardware backend with port/baudrate
-        -- self.backend = self.backend.new(backend_config.port, backend_config.baudrate)
+    -- Check if backend_or_type is already a backend instance
+    if type(backend_or_type) == "table" and backend_or_type.is_available then
+        self.backend = backend_or_type
+        self.backend_type = "provided"
+    else
+        -- backend_or_type is a string
+        local Backend = require("backend_interface")
+        self.backend = Backend.create(backend_or_type)
+        self.backend_type = backend_or_type
     end
 
-    if not self.backend:is_available() then
-        error("Backend " .. backend_type .. " is not available")
+    if not self.backend or not self.backend:is_available() then
+        error("Backend is not available")
     end
 
     self.tests = {}
