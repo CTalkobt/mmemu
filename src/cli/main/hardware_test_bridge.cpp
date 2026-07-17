@@ -97,7 +97,7 @@ std::vector<uint8_t> HardwareTestBridge::readMemory(uint32_t addr, uint32_t size
     for (uint32_t offset = 0; offset < size; offset += CHUNK_SIZE) {
         uint32_t readSize = std::min(CHUNK_SIZE, size - offset);
         std::ostringstream oss;
-        oss << std::hex << "M " << (addr + offset) << " " << readSize;
+        oss << std::hex << "X " << (addr + offset) << " " << readSize;
 
         std::string response = sendCommand(oss.str());
         // Parse hex bytes from response (format: "XX XX XX ...")

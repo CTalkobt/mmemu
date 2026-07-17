@@ -169,6 +169,13 @@ std::string SerialMonitorServer::executeCommand(const std::string& cmdLine) {
                 }
                 return cmd_memory(); // Next 256 bytes
             }
+            case 'X': {
+                uint32_t addr, size;
+                if (ss >> std::hex >> addr >> size) {
+                    return cmd_memory_raw(addr, size);
+                }
+                return "ERROR: X <addr> <size>";
+            }
             case 'S': {
                 uint32_t addr;
                 uint32_t value;
@@ -325,6 +332,18 @@ std::string SerialMonitorServer::cmd_memory(uint32_t addr) {
         out << "\n";
     }
 
+    return out.str();
+}
+
+std::string SerialMonitorServer::cmd_memory_raw(uint32_t addr, uint32_t size) {
+    if (!m_bus) return "ERROR: No bus";
+
+    std::ostringstream out;
+    for (uint32_t i = 0; i < size; ++i) {
+        if (i > 0) out << " ";
+        uint8_t byte = m_bus->peek8(addr + i);
+        out << std::hex << std::uppercase << std::setfill('0') << std::setw(2) << (int)byte;
+    }
     return out.str();
 }
 

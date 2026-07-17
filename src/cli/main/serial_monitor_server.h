@@ -77,6 +77,7 @@ private:
     // Command handlers
     std::string cmd_registers();                                  // R
     std::string cmd_memory(uint32_t addr = 0xFFFFFFFF);          // M
+    std::string cmd_memory_raw(uint32_t addr, uint32_t size);    // X
     std::string cmd_setmemory(uint32_t addr, uint8_t value);    // S
     std::string cmd_disassemble(uint32_t addr, int count = 16);  // D
     std::string cmd_setpc(uint32_t addr);                        // G
