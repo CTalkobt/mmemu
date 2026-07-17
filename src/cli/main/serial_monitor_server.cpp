@@ -191,6 +191,13 @@ std::string SerialMonitorServer::executeCommand(const std::string& cmdLine) {
                 }
                 return "ERROR: G <addr>";
             }
+            case 'N': {
+                uint32_t count = 1;
+                if (ss >> std::hex >> count) {
+                    return cmd_step(count);
+                }
+                return cmd_step(1);
+            }
             case 'B': {
                 uint32_t addr;
                 if (ss >> std::hex >> addr) {
@@ -351,6 +358,18 @@ std::string SerialMonitorServer::cmd_setpc(uint32_t addr) {
 
     m_cpu->setPc(addr);
     return "OK";
+}
+
+std::string SerialMonitorServer::cmd_step(uint32_t count) {
+    if (!m_cpu) return "ERROR: No CPU";
+
+    for (uint32_t i = 0; i < count; ++i) {
+        m_cpu->step();
+    }
+
+    std::ostringstream out;
+    out << "OK PC=" << std::hex << std::setfill('0') << std::setw(4) << m_cpu->pc();
+    return out.str();
 }
 
 std::string SerialMonitorServer::cmd_breakpoint(uint32_t addr) {

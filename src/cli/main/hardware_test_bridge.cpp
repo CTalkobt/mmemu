@@ -149,7 +149,9 @@ bool HardwareTestBridge::step(int count) {
     }
 
     for (int i = 0; i < count; ++i) {
-        std::string response = sendCommand("T");
+        std::ostringstream cmd;
+        cmd << "N " << std::hex << 1;  // Step 1 instruction
+        std::string response = sendCommand(cmd.str());
         if (response.find("OK") == std::string::npos) {
             return false;
         }

@@ -80,6 +80,7 @@ private:
     std::string cmd_setmemory(uint32_t addr, uint8_t value);    // S
     std::string cmd_disassemble(uint32_t addr, int count = 16);  // D
     std::string cmd_setpc(uint32_t addr);                        // G
+    std::string cmd_step(uint32_t count = 1);                    // N
     std::string cmd_breakpoint(uint32_t addr = 0xFFFFFFFF);     // B
     std::string cmd_help();                                      // ?
     std::string cmd_trace(const std::string& mode);              // T
