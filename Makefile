@@ -254,7 +254,9 @@ CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/vice_monitor_server.cpp \
 	src/cli/main/vice_snapshot.cpp \
 	src/cli/main/lua_engine.cpp \
-	src/cli/main/plugin_command_registry.cpp
+	src/cli/main/plugin_command_registry.cpp \
+	src/cli/main/hardware_test_bridge.cpp \
+	src/cli/main/cross_validation_runner.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/mcp/main/plugin_tool_registry.cpp
@@ -333,7 +335,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/45gs02/test/test_neg_prefix_modes.cpp \
 	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
-	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp
+	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp \
+	tests/src/test_cross_validation.cpp
 
 LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp \
 	src/libdebug/test/test_o45_symbol_parser.cpp
@@ -687,7 +690,7 @@ $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) $(BASE_LIBS)
 
 $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(BASE_LIBS) $(WXLIBS) -lasound
 
 # Generic rules
 %.o: %.cpp
