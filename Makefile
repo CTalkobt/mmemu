@@ -203,6 +203,12 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/vic4/main/vic4.cpp \
 	src/plugins/devices/vic3/main/vic3.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \
+	src/plugins/devices/sid_pair/main/sid_pair.cpp \
+	src/plugins/devices/sid6581/main/sid6581.cpp \
+	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
+	src/plugins/devices/sid6581/main/filter_curve.cpp \
+	src/plugins/45gs02/main/cpu45gs02.cpp \
+	src/plugins/45gs02/main/ca45_assembler.cpp \
 	src/plugins/devices/map_mmu/main/map_mmu.cpp \
 	src/plugins/devices/map_mmu/main/key_register.cpp \
 	src/plugins/devices/map_mmu/main/c64_bank_controller.cpp \
@@ -214,6 +220,7 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/sdcard/main/sdcard.cpp \
 	src/plugins/devices/mega65_rtc/main/mega65_rtc.cpp \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.cpp \
+	src/plugins/devices/exit_trap/main/exit_trap.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
 
 PLUGIN_EXIT_TRAP_SRCS = src/plugins/devices/exit_trap/main/exit_trap.cpp \
