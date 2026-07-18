@@ -51,14 +51,14 @@ bool SerialMonitorServer::start(uint16_t port) {
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // Only localhost
 
     if (bind(m_listenSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        std::cerr << "[Serial Monitor] Failed to bind to port " << port << ": " << strerror(errno);
+        std::cerr << "[Serial Monitor] Failed to bind to port " << port << ": " << strerror(errno) << "\n";
         close(m_listenSocket);
         m_listenSocket = -1;
         return false;
     }
 
     if (listen(m_listenSocket, 1) < 0) {
-        std::cerr << "[Serial Monitor] ""Failed to listen: " << strerror(errno);
+        std::cerr << "[Serial Monitor] Failed to listen: " << strerror(errno) << "\n";
         close(m_listenSocket);
         m_listenSocket = -1;
         return false;
@@ -68,7 +68,7 @@ bool SerialMonitorServer::start(uint16_t port) {
     m_stopRequested = false;
     m_listenerThread = std::make_unique<std::thread>(&SerialMonitorServer::listenLoop, this);
 
-    std::cout << "[Serial Monitor] ""Server started on localhost:" << port;
+    std::cout << "[Serial Monitor] Server started on localhost:" << port << "\n";
     return true;
 }
 
@@ -76,42 +76,55 @@ void SerialMonitorServer::stop() {
     if (!m_running) return;
 
     m_stopRequested = true;
-    m_running = false;
 
+    // Close socket BEFORE signaling stop to avoid race condition
     if (m_listenSocket >= 0) {
         close(m_listenSocket);
-        m_listenSocket = -1;
+        m_listenSocket = -1;  // Signal listener thread that socket is closed
     }
 
+    m_running = false;
+
+    // Wait for listener thread to exit
     if (m_listenerThread && m_listenerThread->joinable()) {
         m_listenerThread->join();
     }
 
-    std::cout << "[Serial Monitor] ""Server stopped";
+    std::cout << "[Serial Monitor] Server stopped\n";
 }
 
 void SerialMonitorServer::listenLoop() {
     while (m_running && !m_stopRequested) {
+        // Check if socket is still valid before polling
+        if (m_listenSocket < 0) {
+            break;  // Socket was closed, exit cleanly
+        }
+
         struct sockaddr_in clientAddr = {};
         socklen_t clientAddrLen = sizeof(clientAddr);
 
         struct pollfd pfd = {m_listenSocket, POLLIN, 0};
         int pr = poll(&pfd, 1, 500); // 500ms timeout for stop checking
 
+        // Check again after poll returns
+        if (m_listenSocket < 0) break;
+
         if (pr <= 0) continue; // Timeout or error
 
         int clientSocket = accept(m_listenSocket, (struct sockaddr*)&clientAddr, &clientAddrLen);
         if (clientSocket < 0) {
-            if (errno != EINTR) {
-                std::cerr << "[Serial Monitor] ""Accept failed: " << strerror(errno);
+            if (errno != EINTR && errno != EBADF) {
+                std::cerr << "[Serial Monitor] Accept failed: " << strerror(errno) << "\n";
             }
+            // If socket was closed (EBADF), exit gracefully
+            if (errno == EBADF) break;
             continue;
         }
 
-        std::cerr << "[Serial Monitor] ""Client connected";
+        std::cerr << "[Serial Monitor] Client connected\n";
         handleClient(clientSocket);
         close(clientSocket);
-        std::cerr << "[Serial Monitor] ""Client disconnected";
+        std::cerr << "[Serial Monitor] Client disconnected\n";
     }
 }
 
