@@ -68,6 +68,12 @@ public:
     /// Generate validation report as formatted string
     static std::string formatReport(const ValidationReport& report);
 
+    /// Get tests for validation level (for testing/debugging)
+    std::vector<std::string> getTestsForLevel(ValidationLevel level);
+
+    /// Format a single test result (for testing/debugging)
+    static std::string formatTestResult(const TestResult& result);
+
 private:
     std::string m_xemuPath;
     std::unique_ptr<XemuBridge> m_xemuBridge;
@@ -92,10 +98,4 @@ private:
     /// Load program into both emulators
     bool loadProgram(const TestConfig& config, std::vector<uint8_t>& mmsimOutput,
                      std::vector<uint8_t>& xemuOutput);
-
-    /// Get all tests for validation level
-    std::vector<std::string> getTestsForLevel(ValidationLevel level);
-
-    /// Format result for display
-    static std::string formatTestResult(const TestResult& result);
 };
