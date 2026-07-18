@@ -686,10 +686,10 @@ $(CLI_BIN): $(CLI_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(CLI_OBJS) $(BASE_LIBS)
 
 $(GUI_BIN): $(GUI_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) -lasound
 
 $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) $(BASE_LIBS)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) src/cli/main/lua_engine.o $(BASE_LIBS)
 
 # Test runner binary (unified multi-backend test framework)
 TEST_RUNNER_OBJS = src/cli/main/test_runner_main.o \
