@@ -139,7 +139,6 @@ PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
 	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
-	src/plugins/devices/sid6581/main/sid_validation_suite.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
@@ -261,7 +260,12 @@ CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/plugin_command_registry.cpp \
 	src/cli/main/hardware_test_bridge.cpp \
 	src/cli/main/cross_validation_runner.cpp \
-	src/cli/main/unified_test_runner.cpp
+	src/cli/main/unified_test_runner.cpp \
+	src/cli/main/validate_cmd.cpp \
+	src/cli/main/xemu_bridge.cpp \
+	src/cli/main/sid_test_programs.cpp \
+	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
+	src/plugins/devices/sid6581/main/sid_validation_suite.cpp
 
 MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cpp src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/mcp/main/plugin_tool_registry.cpp
