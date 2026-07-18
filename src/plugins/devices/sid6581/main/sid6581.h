@@ -53,6 +53,7 @@ public:
     void setBaseAddr(uint32_t addr) override       { m_baseAddr = addr; }
     void setSampleRate(int hz)                     { m_sampleRate = hz; }
     void setClockHz(uint32_t hz) override          { m_clockHz = hz; }
+    void setFilterVariant(int variant)             { m_filterVariant = variant; } // 0=6581, 1=8580
 
     // -----------------------------------------------------------------------
     // IOHandler interface  ($D400–$D41C, 29 registers)
@@ -149,14 +150,22 @@ private:
     };
 
     // -----------------------------------------------------------------------
-    // Filter state (Chamberlin state-variable)
+    // Filter state (Chamberlin state-variable with nonlinearity modeling)
     // -----------------------------------------------------------------------
     struct Filter {
-        float lp = 0.0f;  // low-pass memory
-        float bp = 0.0f;  // band-pass memory
+        float lp = 0.0f;          // low-pass memory
+        float bp = 0.0f;          // band-pass memory
+        bool  isHardware6581 = true;  // 6581 vs 8580 variant (affects distortion)
 
-        // Process one sample; returns {lp, bp, hp} mixed per mode flags.
-        float process(float in, float f, float q, uint8_t mode);
+        // Process one sample with soft-clipping distortion.
+        // Parameters:
+        //   in:        input sample
+        //   f:         filter coefficient (2*sin(pi*fc/sr))
+        //   q:         resonance factor (1/Q, higher = more resonance)
+        //   mode:      output mode selection (MV_LP/BP/HP bits)
+        //   resMask:   4-bit resonance nibble (0-15) for saturation calculation
+        // Returns: filtered/mixed output sample
+        float process(float in, float f, float q, uint8_t mode, uint8_t resMask);
     };
 
     void    synthesize(uint64_t cycles);
@@ -177,6 +186,7 @@ private:
 
     uint32_t     m_clockHz   = 985248;  // PAL default
     int          m_sampleRate = 44100;
+    int          m_filterVariant = 0;   // Chip variant (0=6581, 1=8580)
 
     // Fractional sample accumulator (same approach as VIC-I)
     uint64_t     m_sampleFrac = 0;

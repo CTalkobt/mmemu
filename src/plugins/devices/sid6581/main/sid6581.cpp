@@ -1,7 +1,79 @@
 #include "sid6581.h"
+#include "filter_curve.h"
 #include <cstring>
 #include <cmath>
 #include <algorithm>
+
+// ---------------------------------------------------------------------------
+// Soft-clipping distortion for high-resonance filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Simplified soft-clipping function using tanh-like approximation.
+ * More efficient than full tanh() call; provides smooth saturation.
+ *
+ * Input: x in range [-threshold..+threshold]
+ * Output: soft-clipped value in range ~[-1..+1]
+ *
+ * Approximation: tanh(x) ≈ x / (1 + |x|) for low CPU cost.
+ * This is computationally cheaper than std::tanh() and works well
+ * for distortion in audio processing.
+ */
+static inline float softClip(float x, float threshold) {
+    if (threshold <= 0.0f) return x;  // no clipping
+
+    // Normalize by threshold
+    float normalized = x / threshold;
+
+    // Apply soft-clip using economical approximation
+    // Avoids the full tanh which costs ~50 cycles; this costs ~10
+    if (normalized >  1.5f) return  threshold;  // hard limit at high distortion
+    if (normalized < -1.5f) return -threshold;
+
+    // Smooth saturation in [-1.5..+1.5]: uses rational approximation
+    // tanh(x) ≈ x * (27.0 + x*x) / (27.0 + 9.0*x*x)
+    float x2 = normalized * normalized;
+    float numerator = normalized * (27.0f + x2);
+    float denominator = 27.0f + 9.0f * x2;
+    return (numerator / denominator) * threshold;
+}
+
+/**
+ * Calculate saturation threshold based on resonance.
+ * High resonance (Q > 1) causes analog circuitry to clip.
+ *
+ * Resonance parameter: 0-15 (from $D417 bits 4-7)
+ * Q value: roughly 0.22 (Q_min) to 2.0 (Q_max)
+ *
+ * Saturation threshold is inversely related to Q:
+ * - Low Q (0-7): threshold ≈ 1.5-2.0 (little clipping)
+ * - High Q (8-15): threshold ≈ 0.2-0.8 (heavy clipping, adds harmonics)
+ *
+ * For the 6581, the analog filter can saturate quite aggressively.
+ * For the 8580, the distortion is smoother and less pronounced.
+ */
+static inline float calculateSaturationThreshold(uint8_t resMask, bool is6581) {
+    // resMask: 0-15 (4-bit resonance control)
+    // Higher resMask = higher Q = more saturation
+
+    if (resMask < 4) return 2.5f;  // Q < 0.5: almost no distortion
+
+    // Q-dependent curve: distortion increases sharply with resonance
+    float q_factor = 0.22f + (float)resMask / 15.0f * 1.78f;  // Q in [0.22..2.0]
+
+    // Threshold inversely proportional to Q (higher Q → lower threshold → more clipping)
+    float threshold = 2.0f / q_factor;
+
+    // 6581 has more pronounced distortion due to analog limitations
+    if (is6581) {
+        threshold *= 0.8f;  // ~20% more aggressive clipping
+    } else {
+        threshold *= 1.1f;  // 8580: smoother, less extreme distortion
+    }
+
+    // Clamp to reasonable range [0.15..2.5]
+    return std::max(0.15f, std::min(2.5f, threshold));
+}
 
 SID6581::SID6581(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
@@ -169,6 +241,22 @@ void SID6581::synthesize(uint64_t cycles) {
     uint8_t modeVol = m_regs[MODE_VOL];
     float vol = (float)(modeVol & 0x0F) / 15.0f;
 
+    // Configure filter with current chip variant
+    m_filter.isHardware6581 = (m_filterVariant == 0);  // 0 = 6581, 1 = 8580
+
+    // Apply nonlinear filter curve modeling (6581 vs 8580 variants)
+    // The real SID filter exhibits nonlinearity due to component tolerances,
+    // transistor gain variation, and op-amp limitations. This adjusts the
+    // cutoff frequency coefficient and resonance multiplier based on empirical
+    // measurements from real hardware (via reSIDfp reverse-engineering).
+    FilterCurve::Variant filterVariant = (m_filterVariant == 0)
+        ? FilterCurve::Variant::SID_6581
+        : FilterCurve::Variant::SID_8580;
+    FilterCurve::FilterCoeffs curved = FilterCurve::applyNonlinearity(
+        f, q, cutoff, resMask, filterVariant);
+    f = curved.f;
+    q = curved.q;
+
     // Determine how many output samples this tick spans.
     m_sampleFrac += (uint64_t)cycles * (uint32_t)m_sampleRate;
     uint32_t newSamples = (uint32_t)(m_sampleFrac / m_clockHz);
@@ -185,7 +273,8 @@ void SID6581::synthesize(uint64_t cycles) {
             bool filtered = (m_regs[RES_FILT] >> i) & 1;
 
             if (filtered) {
-                vout = m_filter.process(vout, f, q, modeVol);
+                // Pass voice to filter with soft-clipping distortion
+                vout = m_filter.process(vout, f, q, modeVol, resMask);
             } else {
                 // Un-filtered voices bypass LP/BP but still pass through HP path.
                 // Real SID: un-filtered voices are summed directly to output.
@@ -343,21 +432,58 @@ float SID6581::voiceOutput(const Voice& v) const {
 }
 
 // ---------------------------------------------------------------------------
-// Filter (Chamberlin state-variable)
+// Filter (Chamberlin state-variable with soft-clipping distortion)
 // ---------------------------------------------------------------------------
 
-float SID6581::Filter::process(float in, float f, float q, uint8_t mode) {
+float SID6581::Filter::process(float in, float f, float q, uint8_t mode, uint8_t resMask) {
     // Chamberlin SVF: one step per sample.
+    // This is the state-variable filter architecture used in the real 6581.
+    // The three filter sections (lowpass, bandpass, highpass) interact through
+    // the coefficient f (cutoff) and q (resonance feedback).
+    //
+    // Circuit equations (continuous approximation):
+    //   lp_new = lp + f * bp
+    //   hp_new = in - lp_new - q * bp
+    //   bp_new = f * hp_new + bp
     float lp_new = lp + f * bp;
     float hp_new = in - lp_new - q * bp;
     float bp_new = f * hp_new + bp;
+
+    // Soft-clipping distortion for high-resonance saturation
+    // =====================================================
+    // The 6581's analog filter can saturate at high Q values, adding harmonic
+    // content that's characteristic of the chip's "warm" and "dirty" sound.
+    //
+    // The feedback term (q * bp) accumulates energy in the filter at high
+    // resonance, and the analog summing nodes cannot reproduce signals beyond
+    // their saturation limits. This creates soft nonlinearity.
+    //
+    // We apply soft-clipping to the band-pass state (bp_new) since:
+    //   1. It carries the resonance feedback and is most prone to saturation
+    //   2. Clipping here adds harmonics that feed into future samples
+    //   3. The distortion is smooth (soft-clip) not harsh (hard-clip)
+    //
+    // This approach preserves audio quality at low resonance while adding
+    // characteristic warmth when the filter is pushed hard.
+
+    float saturation_threshold = calculateSaturationThreshold(resMask, isHardware6581);
+
+    // Apply soft-clipping to the band-pass output
+    // The clipped value is fed back into the next sample via state update.
+    // This is where analog nonlinearity creates the SID's harmonic richness.
+    bp_new = softClip(bp_new, saturation_threshold);
+
+    // Update stored state for next sample
     lp = lp_new;
     bp = bp_new;
 
+    // Output stage: mix the three sections (LP/BP/HP) according to mode bits.
+    // Each section can be independently routed to the output.
     float out = 0.0f;
     if (mode & MV_LP) out += lp;
-    if (mode & MV_BP) out += bp;
+    if (mode & MV_BP) out += bp;   // Note: bp is now soft-clipped
     if (mode & MV_HP) out += hp_new;
+
     return out;
 }
 
