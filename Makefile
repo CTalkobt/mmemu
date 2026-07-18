@@ -139,6 +139,7 @@ PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
 	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
+	src/plugins/devices/sid6581/main/sid_validation_suite.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
