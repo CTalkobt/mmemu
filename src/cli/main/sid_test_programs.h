@@ -31,7 +31,8 @@ public:
     static std::string generateAssembly(TestType type);
 
     /// Generate binary from assembly (requires ca65 assembler)
-    static std::vector<uint8_t> generateBinary(TestType type);
+    /// Returns empty vector if ca65 not available or assembly fails
+    static std::vector<uint8_t> generateBinary(TestType type, const std::string& ca65Path = "ca65");
 
     /// Get expected result memory address where test writes data
     static uint32_t getResultAddress(TestType type);

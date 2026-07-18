@@ -1,6 +1,10 @@
 #include "sid_test_programs.h"
 #include <sstream>
 #include <iomanip>
+#include <fstream>
+#include <cstdlib>
+#include <cstdio>
+#include <unistd.h>
 
 std::string SIDTestProgramGenerator::generateAssembly(TestType type) {
     switch (type) {
@@ -21,9 +25,87 @@ std::string SIDTestProgramGenerator::generateAssembly(TestType type) {
     }
 }
 
-std::vector<uint8_t> SIDTestProgramGenerator::generateBinary(TestType type) {
-    // TODO: Implement binary generation via ca65 assembler
+std::vector<uint8_t> SIDTestProgramGenerator::generateBinary(TestType type, const std::string& ca65Path) {
     std::vector<uint8_t> binary;
+
+    // Generate assembly source
+    std::string asmSource = generateAssembly(type);
+    if (asmSource.empty()) {
+        return binary;  // Failed to generate assembly
+    }
+
+    // Use static counter for unique temp file names
+    static int counter = 0;
+    std::ostringstream baseName;
+    baseName << "/tmp/sid_test_" << getpid() << "_" << (counter++);
+
+    std::string asmFile = baseName.str() + ".s";
+    std::string objPath = baseName.str() + ".o";
+    std::string binPath = baseName.str() + ".bin";
+
+    // Write assembly to temp file
+    FILE* f = fopen(asmFile.c_str(), "w");
+    if (!f) {
+        return binary;
+    }
+
+    fprintf(f, "%s", asmSource.c_str());
+    fclose(f);
+
+    // Invoke ca65 assembler
+    std::ostringstream cmd;
+    cmd << ca65Path << " " << asmFile << " -o " << objPath << " 2>/dev/null";
+
+    int ret = system(cmd.str().c_str());
+    if (ret != 0) {
+        // Assembly failed
+        unlink(asmFile.c_str());
+        return binary;
+    }
+
+    // Link with ld65 to create binary
+    // ld65 config for C64 program at $0800
+    std::ostringstream ld_cmd;
+    ld_cmd << "ld65 " << objPath << " -t c64 -o " << binPath << " 2>/dev/null";
+
+    ret = system(ld_cmd.str().c_str());
+    if (ret != 0) {
+        // Try without linking (use object file directly)
+        // For simple programs, ca65 output object can be read directly
+        FILE* obj = fopen(objPath.c_str(), "rb");
+        if (obj) {
+            fseek(obj, 0, SEEK_END);
+            long size = ftell(obj);
+            fseek(obj, 0, SEEK_SET);
+
+            binary.resize(size);
+            fread(binary.data(), 1, size, obj);
+            fclose(obj);
+        }
+    } else {
+        // Read binary from linked output
+        FILE* bin = fopen(binPath.c_str(), "rb");
+        if (bin) {
+            fseek(bin, 0, SEEK_END);
+            long size = ftell(bin);
+            fseek(bin, 0, SEEK_SET);
+
+            // Skip C64 two-byte header (load address)
+            uint16_t loadAddr = 0;
+            if (fread(&loadAddr, 2, 1, bin) == 1) {
+                size -= 2;
+                binary.resize(size);
+                fread(binary.data(), 1, size, bin);
+            }
+            fclose(bin);
+        }
+    }
+
+    // Clean up temp files
+    unlink(asmFile.c_str());
+    unlink(objPath.c_str());
+    unlink(binPath.c_str());
+
     return binary;
 }
 

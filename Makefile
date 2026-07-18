@@ -344,7 +344,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp \
 	tests/src/test_cross_validation.cpp \
-	tests/src/test_sid_filter_xemu_validation.cpp
+	tests/src/test_sid_filter_xemu_validation.cpp \
+	src/cli/test/test_sid_program_generation.cpp
 
 LIBDEBUG_TEST_SRCS = src/libdebug/test/test_breakpoints.cpp \
 	src/libdebug/test/test_o45_symbol_parser.cpp
