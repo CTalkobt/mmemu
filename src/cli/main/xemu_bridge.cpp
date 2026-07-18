@@ -3,10 +3,13 @@
 #include <cstdio>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/select.h>
 #include <signal.h>
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <fcntl.h>
+#include <iomanip>
 
 XemuBridge::XemuBridge(const std::string& xemuPath)
     : m_xemuPath(xemuPath) {
@@ -21,28 +24,62 @@ bool XemuBridge::launch() {
         return true;  // Already running
     }
 
+    // Create pipes for communication
+    if (pipe(m_stdinPipe) == -1 || pipe(m_stdoutPipe) == -1) {
+        return false;
+    }
+
     // Fork subprocess for xemu-xmega65
     m_processId = fork();
 
     if (m_processId == -1) {
-        // Fork failed
+        // Fork failed, clean up pipes
+        close(m_stdinPipe[0]);
+        close(m_stdinPipe[1]);
+        close(m_stdoutPipe[0]);
+        close(m_stdoutPipe[1]);
         m_processId = -1;
         return false;
     }
 
     if (m_processId == 0) {
         // Child process: launch xemu
-        // In production, would set up pipes and environment
-        execlp(m_xemuPath.c_str(), m_xemuPath.c_str(), "-m", "mega65", nullptr);
+        close(m_stdinPipe[1]);   // Close write end of stdin pipe
+        close(m_stdoutPipe[0]);  // Close read end of stdout pipe
+
+        // Redirect stdin/stdout
+        dup2(m_stdinPipe[0], STDIN_FILENO);
+        dup2(m_stdoutPipe[1], STDOUT_FILENO);
+
+        // Close original descriptors
+        close(m_stdinPipe[0]);
+        close(m_stdoutPipe[1]);
+
+        // Launch xemu in headless mode
+        execlp(m_xemuPath.c_str(), m_xemuPath.c_str(),
+               "-m", "mega65", "-no-display", nullptr);
         exit(1);  // If execlp fails
     }
 
     // Parent process
-    // Give xemu time to start
-    usleep(500000);  // 500ms
+    close(m_stdinPipe[0]);   // Close read end of stdin pipe
+    close(m_stdoutPipe[1]);  // Close write end of stdout pipe
 
-    // TODO: Set up pipes for communication
-    // TODO: Implement serial protocol communication
+    // Open file descriptors for communication
+    m_toXemu = fdopen(m_stdinPipe[1], "w");
+    m_fromXemu = fdopen(m_stdoutPipe[0], "r");
+
+    if (!m_toXemu || !m_fromXemu) {
+        shutdown();
+        return false;
+    }
+
+    // Make stdout non-blocking for timeout support
+    int flags = fcntl(m_stdoutPipe[0], F_GETFL, 0);
+    fcntl(m_stdoutPipe[0], F_SETFL, flags | O_NONBLOCK);
+
+    // Give xemu time to start and report ready
+    usleep(1000000);  // 1s startup
 
     return true;
 }
@@ -52,13 +89,13 @@ bool XemuBridge::shutdown() {
         return true;
     }
 
-    if (m_stdin) {
-        fclose(m_stdin);
-        m_stdin = nullptr;
+    if (m_toXemu) {
+        fclose(m_toXemu);
+        m_toXemu = nullptr;
     }
-    if (m_stdout) {
-        fclose(m_stdout);
-        m_stdout = nullptr;
+    if (m_fromXemu) {
+        fclose(m_fromXemu);
+        m_fromXemu = nullptr;
     }
 
     if (m_processId > 0) {
@@ -83,13 +120,27 @@ XemuBridge::OperationResult XemuBridge::loadProgram(
         return result;
     }
 
-    // TODO: Load binary file and write to xemu memory
-    // 1. Read binary file
-    // 2. Send write command to xemu at address
-    // 3. Verify write succeeded
+    // Read binary file
+    FILE* f = fopen(binPath.c_str(), "rb");
+    if (!f) {
+        result.errorMsg = "Cannot open binary file";
+        return result;
+    }
 
-    result.success = true;
-    return result;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    std::vector<uint8_t> data(size);
+    if (fread(data.data(), 1, size, f) != (size_t)size) {
+        fclose(f);
+        result.errorMsg = "Failed to read binary file";
+        return result;
+    }
+    fclose(f);
+
+    // Write to xemu memory
+    return writeMemory(addr, data);
 }
 
 XemuBridge::OperationResult XemuBridge::readMemory(
@@ -101,10 +152,24 @@ XemuBridge::OperationResult XemuBridge::readMemory(
         return result;
     }
 
-    // TODO: Send read command to xemu
-    // Command format: "M<addr> <size>" (from serial monitor protocol)
+    // Send read command: "M<addr> <size>"
+    std::ostringstream cmd;
+    cmd << "M" << std::hex << addr << " " << std::hex << size;
 
-    result.success = true;
+    if (!sendCommand(cmd.str())) {
+        result.errorMsg = "Failed to send command";
+        return result;
+    }
+
+    std::string response = readResponse();
+    if (response.empty()) {
+        result.errorMsg = "No response from xemu";
+        return result;
+    }
+
+    result.data = parseMemoryResponse(response);
+    result.success = !result.data.empty() || size == 0;
+
     return result;
 }
 
@@ -117,10 +182,30 @@ XemuBridge::OperationResult XemuBridge::writeMemory(
         return result;
     }
 
-    // TODO: Send write command to xemu
-    // Command format: "S<addr> <hexdata>"
+    if (data.empty()) {
+        result.success = true;
+        return result;
+    }
 
-    result.success = true;
+    // Send write command: "S<addr> <hexdata>"
+    std::ostringstream cmd;
+    cmd << "S" << std::hex << addr;
+
+    for (uint8_t byte : data) {
+        cmd << " " << std::hex << std::setfill('0') << std::setw(2) << (int)byte;
+    }
+
+    if (!sendCommand(cmd.str())) {
+        result.errorMsg = "Failed to send command";
+        return result;
+    }
+
+    std::string response = readResponse();
+    result.success = (response.find("OK") != std::string::npos);
+    if (!result.success) {
+        result.errorMsg = "Write failed: " + response;
+    }
+
     return result;
 }
 
@@ -132,10 +217,18 @@ XemuBridge::OperationResult XemuBridge::setPC(uint32_t addr) {
         return result;
     }
 
-    // TODO: Send set PC command
-    // Command format: "G<addr>"
+    // Send set PC command: "G<addr>"
+    std::ostringstream cmd;
+    cmd << "G" << std::hex << addr;
 
-    result.success = true;
+    if (!sendCommand(cmd.str())) {
+        result.errorMsg = "Failed to send command";
+        return result;
+    }
+
+    std::string response = readResponse();
+    result.success = (response.find("OK") != std::string::npos);
+
     return result;
 }
 
@@ -147,10 +240,18 @@ XemuBridge::OperationResult XemuBridge::step(uint32_t cycles) {
         return result;
     }
 
-    // TODO: Send step command
-    // Command format: "T<count>"
+    // Send step command: "T<count>"
+    std::ostringstream cmd;
+    cmd << "T" << cycles;
 
-    result.success = true;
+    if (!sendCommand(cmd.str())) {
+        result.errorMsg = "Failed to send command";
+        return result;
+    }
+
+    std::string response = readResponse();
+    result.success = (response.find("OK") != std::string::npos);
+
     return result;
 }
 
@@ -162,44 +263,74 @@ XemuBridge::AudioCapture XemuBridge::captureAudio(uint32_t cycles) {
         return capture;
     }
 
-    // TODO: Capture audio during CPU execution
-    // 1. Read audio output buffer from xemu
-    // 2. Convert to float samples
-    // 3. Return audio data
+    // Step the CPU while audio accumulates
+    OperationResult stepResult = step(cycles);
+    if (!stepResult.success) {
+        capture.errorMsg = "Step failed: " + stepResult.errorMsg;
+        return capture;
+    }
+
+    // TODO: Read audio buffer from xemu
+    // This requires xemu to expose audio via memory-mapped region or serial protocol
 
     capture.success = true;
     return capture;
 }
 
 bool XemuBridge::sendCommand(const std::string& cmd) {
-    if (!m_stdin) {
+    if (!m_toXemu) {
         return false;
     }
 
-    fprintf(m_stdin, "%s\n", cmd.c_str());
-    fflush(m_stdin);
+    fprintf(m_toXemu, "%s\n", cmd.c_str());
+    fflush(m_toXemu);
     return true;
 }
 
 std::string XemuBridge::readResponse() {
-    if (!m_stdout) {
+    if (!m_fromXemu) {
         return "";
     }
 
-    char buffer[4096];
-    if (!fgets(buffer, sizeof(buffer), m_stdout)) {
-        return "";
+    char buffer[4096] = {0};
+    int attempts = 0;
+    const int maxAttempts = 100;  // ~1 second timeout with 10ms waits
+
+    // Read with timeout (non-blocking)
+    while (attempts < maxAttempts) {
+        int result = fscanf(m_fromXemu, "%4095[^\n]\n", buffer);
+
+        if (result == 1) {
+            return std::string(buffer);
+        }
+
+        // Wait and retry
+        usleep(10000);  // 10ms
+        attempts++;
     }
 
-    return std::string(buffer);
+    return "";
 }
 
 std::vector<uint8_t> XemuBridge::parseMemoryResponse(
     const std::string& response) {
     std::vector<uint8_t> data;
 
-    // TODO: Parse hex-encoded memory response
+    // Parse hex-encoded memory response
     // Format: "AB CD EF 01 23 45 67 89"
+    std::istringstream ss(response);
+    std::string hexByte;
+
+    while (ss >> hexByte) {
+        if (hexByte.length() == 2) {
+            try {
+                uint8_t byte = static_cast<uint8_t>(std::stoi(hexByte, nullptr, 16));
+                data.push_back(byte);
+            } catch (...) {
+                // Invalid hex, skip
+            }
+        }
+    }
 
     return data;
 }

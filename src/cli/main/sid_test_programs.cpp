@@ -1,5 +1,6 @@
 #include "sid_test_programs.h"
 #include <sstream>
+#include <iomanip>
 
 std::string SIDTestProgramGenerator::generateAssembly(TestType type) {
     switch (type) {
@@ -41,60 +42,63 @@ std::string SIDTestProgramGenerator::generateResonanceSweepAssembly(bool is8580)
 
     asm_code << "; SID6581 Resonance Sweep Test\n";
     asm_code << "; Tests resonance effect on filter peak amplitude\n";
-    asm_code << "; Results written to $2000\n\n";
+    asm_code << "; Results: 16 bytes at $2000 (one per resonance level 0-15)\n\n";
 
     asm_code << ".org $0800\n\n";
 
-    // Initialize SID voice 1: sawtooth wave, 1 kHz
-    asm_code << "; Setup voice 1: sawtooth at 1 kHz\n";
-    asm_code << genSIDWrite(0x00, 0xE8);  // Frequency low byte ($E8 for ~1 kHz)
-    asm_code << genSIDWrite(0x01, 0x03);  // Frequency high byte
-    asm_code << genSIDWrite(0x02, 0x00);  // Pulse width low
-    asm_code << genSIDWrite(0x03, 0x08);  // Pulse width high
+    // Initialize SID voice 1: sawtooth wave at 1 kHz
+    asm_code << "; Setup voice 1 (sawtooth at ~1 kHz)\n";
+    asm_code << genSIDWrite(0x00, 0xE8);  // Freq low ($D400)
+    asm_code << genSIDWrite(0x01, 0x03);  // Freq hi ($D401)
+    asm_code << genSIDWrite(0x02, 0x00);  // Pulse width low ($D402)
+    asm_code << genSIDWrite(0x03, 0x08);  // Pulse width hi ($D403)
 
-    // Attack/Decay (fast attack, medium decay)
-    asm_code << genSIDWrite(0x05, 0x09);
+    // ADSR: fast attack, medium decay, max sustain, fast release
+    asm_code << genSIDWrite(0x05, 0x09);  // AD ($D405)
+    asm_code << genSIDWrite(0x06, 0xF0);  // SR ($D406)
 
-    // Sustain/Release (sustain at max, fast release)
-    asm_code << genSIDWrite(0x06, 0xF0);
+    // Voice 1 gate on, sawtooth waveform
+    asm_code << genSIDWrite(0x04, 0x21);  // Ctrl ($D404): gate=1, saw=0x20
 
-    // Gate on + Sawtooth waveform
-    asm_code << genSIDWrite(0x04, 0x21);  // Gate=1, Wave=Sawtooth
+    // Filter setup: LP mode, cutoff=$0500, voice 1 routed
+    asm_code << genSIDWrite(0x15, 0x00);  // Filter Freq Lo ($D415)\n";
+    asm_code << genSIDWrite(0x16, 0x20);  // Filter Freq Hi ($D416)\n";
+    asm_code << genSIDWrite(0x18, 0x10);  // Filter Mode/Vol ($D418): LP=0x10\n";
 
-    // Setup filter: LP, FC=$500 (mid-range), voice 1 routed
-    asm_code << genSIDWrite(0x15, 0x00);  // FC_LO
-    asm_code << genSIDWrite(0x16, 0x20);  // FC_HI
-    asm_code << genSIDWrite(0x18, 0x10);  // Mode=LP, Volume=max
+    asm_code << "\n; Main resonance sweep loop\n";
+    asm_code << "LDX #0                  ; Resonance level counter (0-15)\n";
+    asm_code << "RLOOP:\n";
 
-    asm_code << "; Sweep resonance 0→15\n";
-    asm_code << "LDX #0              ; Resonance counter\n";
-    asm_code << "LOOP:\n";
-
-    // Set resonance (bits 4-7 of $D417)
-    asm_code << "  TXA\n";
+    // Set resonance and voice 1 filter enable
+    asm_code << "  TXA                 ; Load resonance value\n";
+    asm_code << "  ASL                 ; Shift left 4 times\n";
+    asm_code << "  ASL                 ; to bits 4-7\n";
     asm_code << "  ASL\n";
     asm_code << "  ASL\n";
-    asm_code << "  ASL\n";
-    asm_code << "  ASL\n";
-    asm_code << "  ORA #$01           ; Voice 1 filter on\n";
-    asm_code << "  STA $D417\n";
+    asm_code << "  ORA #$01            ; OR in voice 1 filter bit\n";
+    asm_code << "  STA $D417           ; Set filter control ($D417)\n";
 
-    // Wait a bit for stabilization
-    asm_code << "  LDY #$FF\n";
-    asm_code << "WAIT:\n";
-    asm_code << "  DEY\n";
-    asm_code << "  BNE WAIT\n";
+    // Wait for filter to settle (~256 cycles)
+    asm_code << "  LDY #0\n";
+    asm_code << "WAIT_OUTER:\n";
+    asm_code << "    LDA #$FF\n";
+    asm_code << "  WAIT:\n";
+    asm_code << "    DEA\n";
+    asm_code << "    BNE WAIT\n";
+    asm_code << "    DEY\n";
+    asm_code << "    BNE WAIT_OUTER\n";
 
-    // Read OSC3 and store at $2000 + X*16
-    asm_code << "  LDA $D41B          ; OSC3\n";
-    asm_code << "  STA $2000,X\n";
+    // Read OSC3 output and store at result address
+    asm_code << "  LDA $D41B           ; Read OSC3 output\n";
+    asm_code << "  STA $2000,X         ; Store at $2000+X\n";
 
+    // Next resonance level
     asm_code << "  INX\n";
-    asm_code << "  CPX #16\n";
-    asm_code << "  BNE LOOP\n";
+    asm_code << "  CPX #16             ; Loop while X < 16\n";
+    asm_code << "  BNE RLOOP\n";
 
-    // Halt
-    asm_code << "  JMP $\n";
+    // Done - halt
+    asm_code << "  JMP $               ; Infinite loop at end\n";
 
     return asm_code.str();
 }
@@ -103,12 +107,55 @@ std::string SIDTestProgramGenerator::generateCutoffSweepAssembly(bool is8580) {
     std::ostringstream asm_code;
 
     asm_code << "; SID6581 Cutoff Frequency Sweep Test\n";
-    asm_code << "; Tests frequency tracking of filter\n";
-    asm_code << "; Results written to $2000\n\n";
+    asm_code << "; Tests filter frequency tracking with fixed resonance\n";
+    asm_code << "; Results: 16 bytes at $2000 (one per cutoff step)\n\n";
 
     asm_code << ".org $0800\n\n";
 
-    // Similar setup to resonance sweep but sweeps cutoff instead
+    // Initialize SID voice 1: sawtooth wave at 1 kHz
+    asm_code << "; Setup voice 1 (sawtooth at ~1 kHz)\n";
+    asm_code << genSIDWrite(0x00, 0xE8);  // Freq low
+    asm_code << genSIDWrite(0x01, 0x03);  // Freq hi
+    asm_code << genSIDWrite(0x05, 0x09);  // AD
+    asm_code << genSIDWrite(0x06, 0xF0);  // SR
+    asm_code << genSIDWrite(0x04, 0x21);  // Gate + Sawtooth
+
+    // Filter with fixed resonance (8) and LP mode
+    asm_code << genSIDWrite(0x17, 0x80);  // Res=8, Voice 1 on ($D417)\n";
+    asm_code << genSIDWrite(0x18, 0x10);  // Mode/Vol ($D418)\n";
+
+    asm_code << "\n; Cutoff frequency sweep loop\n";
+    asm_code << "LDX #0                  ; Frequency step counter (0-15)\n";
+    asm_code << "FCLOOP:\n";
+
+    // Set cutoff frequency
+    // For sweep: FC = $100 + X*$200 gives range ~$100 to $1E00
+    asm_code << "  TXA\n";
+    asm_code << "  ASL                 ; X * 2\n";
+    asm_code << "  STA $D416           ; High byte of filter freq\n";
+    asm_code << "  LDA #$00\n";
+    asm_code << "  STA $D415           ; Low byte = 0\n";
+
+    // Wait for filter to settle
+    asm_code << "  LDY #0\n";
+    asm_code << "FC_WAIT:\n";
+    asm_code << "    LDA #$FF\n";
+    asm_code << "  FC_WAIT_IN:\n";
+    asm_code << "    DEA\n";
+    asm_code << "    BNE FC_WAIT_IN\n";
+    asm_code << "    DEY\n";
+    asm_code << "    BNE FC_WAIT\n";
+
+    // Read OSC3 and store
+    asm_code << "  LDA $D41B           ; Read OSC3\n";
+    asm_code << "  STA $2000,X         ; Store result\n";
+
+    // Next step
+    asm_code << "  INX\n";
+    asm_code << "  CPX #16\n";
+    asm_code << "  BNE FCLOOP\n";
+
+    asm_code << "  JMP $               ; Halt\n";
 
     return asm_code.str();
 }
@@ -117,9 +164,61 @@ std::string SIDTestProgramGenerator::generateCombinedWaveformsAssembly() {
     std::ostringstream asm_code;
 
     asm_code << "; SID6581 Combined Waveforms Test\n";
-    asm_code << "; Tests triangle+pulse, saw+pulse combinations\n\n";
+    asm_code << "; Tests hardwired waveform mixing (tri+pulse, saw+pulse)\n";
+    asm_code << "; Results: OSC3 at different waveform combinations\n\n";
 
     asm_code << ".org $0800\n\n";
+
+    asm_code << "; Setup voice 1 at 1 kHz\n";
+    asm_code << genSIDWrite(0x00, 0xE8);  // Freq low
+    asm_code << genSIDWrite(0x01, 0x03);  // Freq hi
+    asm_code << genSIDWrite(0x02, 0x80);  // Pulse width (middle)
+    asm_code << genSIDWrite(0x03, 0x08);  // Pulse width hi
+    asm_code << genSIDWrite(0x05, 0x09);  // AD
+    asm_code << genSIDWrite(0x06, 0xF0);  // SR
+
+    // Filter with resonance 12
+    asm_code << genSIDWrite(0x17, 0xC1);  // Res=12, Voice 1 on
+    asm_code << genSIDWrite(0x18, 0x10);  // LP mode
+
+    asm_code << "; Test waveform combinations\n";
+    asm_code << "LDX #0                  ; Waveform counter\n";
+    asm_code << "WVLOOP:\n";
+
+    // Waveform patterns: 0=saw, 1=tri+pulse, 2=saw+pulse, 3=tri+pulse+saw
+    asm_code << "  CPX #0\n";
+    asm_code << "  BNE WV1\n";
+    asm_code << "  LDA #$21            ; Sawtooth\n";
+    asm_code << "  JMP WV_SET\n";
+    asm_code << "WV1:\n";
+    asm_code << "  CPX #1\n";
+    asm_code << "  BNE WV2\n";
+    asm_code << "  LDA #$31            ; Triangle + Pulse\n";
+    asm_code << "  JMP WV_SET\n";
+    asm_code << "WV2:\n";
+    asm_code << "  CPX #2\n";
+    asm_code << "  BNE WV3\n";
+    asm_code << "  LDA #$61            ; Sawtooth + Pulse\n";
+    asm_code << "  JMP WV_SET\n";
+    asm_code << "WV3:\n";
+    asm_code << "  LDA #$71            ; All waveforms\n";
+    asm_code << "WV_SET:\n";
+    asm_code << "  STA $D404           ; Set control register\n";
+
+    // Wait and sample
+    asm_code << "  LDY #$FF\n";
+    asm_code << "WV_WAIT:\n";
+    asm_code << "    DEY\n";
+    asm_code << "    BNE WV_WAIT\n";
+
+    asm_code << "  LDA $D41B           ; Read OSC3\n";
+    asm_code << "  STA $2000,X         ; Store at $2000+X\n";
+
+    asm_code << "  INX\n";
+    asm_code << "  CPX #4\n";
+    asm_code << "  BNE WVLOOP\n";
+
+    asm_code << "  JMP $               ; Halt\n";
 
     return asm_code.str();
 }
@@ -128,17 +227,58 @@ std::string SIDTestProgramGenerator::generateHighResonanceSaturationAssembly() {
     std::ostringstream asm_code;
 
     asm_code << "; SID6581 High-Resonance Saturation Test\n";
-    asm_code << "; Tests soft-clipping behavior at max resonance\n\n";
+    asm_code << "; Tests soft-clipping behavior at max resonance\n";
+    asm_code << "; Measures OSC3 output with resonance=15 at different volumes\n\n";
 
     asm_code << ".org $0800\n\n";
+
+    // Voice 1: sawtooth at 1 kHz
+    asm_code << genSIDWrite(0x00, 0xE8);  // Freq low
+    asm_code << genSIDWrite(0x01, 0x03);  // Freq hi
+    asm_code << genSIDWrite(0x05, 0x09);  // AD
+    asm_code << genSIDWrite(0x06, 0xF0);  // SR
+    asm_code << genSIDWrite(0x04, 0x21);  // Sawtooth + gate
+
+    // Filter: LP mode, max resonance (15), voice 1 on
+    asm_code << genSIDWrite(0x15, 0x00);  // Filter freq low
+    asm_code << genSIDWrite(0x16, 0x10);  // Filter freq hi (low cutoff)
+    asm_code << genSIDWrite(0x17, 0xF1);  // Res=15, Voice 1 on
+
+    asm_code << "\n; Test with different filter modes\n";
+    asm_code << "LDX #0                  ; Mode counter\n";
+    asm_code << "SATLOOP:\n";
+
+    // Test different filter modes with max resonance
+    asm_code << "  TXA\n";
+    asm_code << "  ASL                 ; A = mode * 2 (bits 4-5)\n";
+    asm_code << "  ASL\n";
+    asm_code << "  ASL\n";
+    asm_code << "  ASL\n";
+    asm_code << "  ORA #$F1            ; OR in resonance=15, voice 1\n";
+    asm_code << "  STA $D417           ; Set filter control\n";
+
+    // Wait
+    asm_code << "  LDY #$FF\n";
+    asm_code << "SAT_WAIT:\n";
+    asm_code << "    DEY\n";
+    asm_code << "    BNE SAT_WAIT\n";
+
+    asm_code << "  LDA $D41B           ; Read OSC3\n";
+    asm_code << "  STA $2000,X         ; Store result\n";
+
+    asm_code << "  INX\n";
+    asm_code << "  CPX #4\n";
+    asm_code << "  BNE SATLOOP\n";
+
+    asm_code << "  JMP $               ; Halt\n";
 
     return asm_code.str();
 }
 
 std::string SIDTestProgramGenerator::genSIDWrite(uint8_t reg, uint8_t value) {
     std::ostringstream ss;
-    ss << "  LDA #$" << std::hex << (int)value << "\n";
-    ss << "  STA $D4" << std::hex << (int)reg << "\n";
+    ss << "  LDA #$" << std::hex << std::setfill('0') << std::setw(2) << (int)value << "\n";
+    ss << "  STA $D4" << std::hex << std::setfill('0') << std::setw(2) << (int)reg << "\n";
     return ss.str();
 }
 

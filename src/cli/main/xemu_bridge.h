@@ -80,15 +80,17 @@ public:
 private:
     std::string m_xemuPath;
     int m_processId = -1;
-    FILE* m_stdin = nullptr;
-    FILE* m_stdout = nullptr;
+    int m_stdinPipe[2] = {-1, -1};   // Pipe to xemu stdin
+    int m_stdoutPipe[2] = {-1, -1};  // Pipe from xemu stdout
+    FILE* m_toXemu = nullptr;         // Write file descriptor
+    FILE* m_fromXemu = nullptr;       // Read file descriptor
 
     /// Send command to xemu via serial protocol
     bool sendCommand(const std::string& cmd);
 
-    /// Read response from xemu
+    /// Read response from xemu (blocking until newline or timeout)
     std::string readResponse();
 
-    /// Parse memory response (hex format)
+    /// Parse memory response (hex format: "AB CD EF...")
     std::vector<uint8_t> parseMemoryResponse(const std::string& response);
 };
