@@ -306,34 +306,17 @@ uint16_t SID6581::Voice::noiseOutput() const {
 }
 
 uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb) const {
-    // Effective phase: hard sync resets, but waveform still computed.
+    // Effective phase: hard sync resets to 0 (affects waveform output).
     uint32_t p = syncReset ? 0 : phase;
 
-    // Triangle (12-bit)
-    uint16_t tri = (uint16_t)((p & 0x800000u) ? ((~p >> 11) & 0x0FFF) : (p >> 11));
-    // Ring modulation: XOR triangle MSB with source oscillator MSB
-    if (cr & CR_RING) tri ^= ringMsb ? 0x0800u : 0u;
-
-    // Sawtooth (12-bit): upper 12 bits of accumulator
-    uint16_t saw = (uint16_t)(p >> 12);
-
-    // Pulse (12-bit): full-on or full-off depending on pulse width comparison
-    uint16_t pulse = ((p >> 12) >= pw) ? 0x0FFFu : 0x0000u;
-
-    // Noise (12-bit)
-    uint16_t noise = noiseOutput();
-
-    // AND active waveforms (real SID behaviour for combined waveforms).
+    // Combined waveforms: use empirically-derived lookup tables instead of AND operation.
+    // Real 6581 hardware uses open-collector NMOS DAC with asymmetric driving strength,
+    // producing complex harmonic patterns (30-40% amplitude reduction vs AND operation).
+    // Table data derived from reSIDfp reverse-engineered measurements.
     uint8_t  wavSel = cr & 0xF0u;
-    uint16_t out    = 0x0FFFu; // start all-ones; AND in each active waveform
-    bool     any    = false;
+    uint16_t out    = CombinedWaveformTable::getCombinedOutput(p, wavSel, pw, lfsr, ringMsb);
 
-    if (wavSel & CR_TRI)   { out &= tri;   any = true; }
-    if (wavSel & CR_SAW)   { out &= saw;   any = true; }
-    if (wavSel & CR_PULSE) { out &= pulse; any = true; }
-    if (wavSel & CR_NOISE) { out &= noise; any = true; }
-
-    return any ? out : 0u;
+    return out;
 }
 
 float SID6581::voiceOutput(const Voice& v) const {

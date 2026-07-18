@@ -28,6 +28,14 @@ Each of the three voices contains:
 | Pulse | `CR_PULSE` (bit 6) | High when `phase > PW` (12-bit pulse width) |
 | Noise | `CR_NOISE` (bit 7) | 23-bit LFSR (taps 22,17); clocked on bit-19 rising edge |
 
+**Combined Waveforms:**
+When multiple waveforms are selected simultaneously, the real 6581 produces complex harmonic patterns through analog bit-mixing in the DAC stage. This is NOT a simple AND operation.
+- Physical mechanism: open-collector NMOS transistor architecture with asymmetric driving strength
+- Output amplitude: typically 30-40% lower than AND operation
+- Tonal characteristics: triangle+pulse produces bell-like tones; sawtooth+pulse produces hollow/nasal tones; triangle+sawtooth produces warm tones
+- Implementation: empirically-derived lookup tables based on real hardware measurements (reSIDfp model)
+- Chip variants: 6581 exhibits more bit-mixing effects than 8580 due to circuit layout differences
+
 **Control bits:**
 
 | Bit | Mask | Description |

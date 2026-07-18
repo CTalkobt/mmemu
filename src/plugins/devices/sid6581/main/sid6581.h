@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
+#include "combined_waveforms.h"
 #include <cstdint>
 #include <string>
 
@@ -15,7 +16,8 @@
  *       24-bit phase accumulator (advances by FREQ register each clock cycle)
  *       Four waveforms: Triangle, Sawtooth, Pulse (variable duty cycle), Noise
  *         (23-bit maximal-length LFSR, taps at 22 and 17; clocked on phase bit-19 rise)
- *       Combined waveforms: active waveform outputs are ANDed (real SID behaviour)
+ *       Combined waveforms: complex harmonic patterns via analog bit-mixing lookup tables
+ *         (empirically-derived reSIDfp model; replaces incorrect AND operation)
  *       ADSR envelope generator (8-bit level, linear A, linear D/R approximation)
  *       Gate (0→1 triggers attack; 1→0 triggers release)
  *       Hard sync: voice N oscillator reset by voice N-1's phase overflow

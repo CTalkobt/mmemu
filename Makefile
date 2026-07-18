@@ -136,6 +136,7 @@ PLUGIN_VIC4_SRCS = src/plugins/devices/vic4/main/vic4.cpp \
 	src/plugins/devices/vic4/main/plugin_init.cpp
 
 PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
+	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
@@ -318,6 +319,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	tests/src/test_ffd0_bug.cpp \
 	tests/src/test_mega65_chips.cpp \
 	src/plugins/devices/sid_pair/test/test_sid_pair.cpp \
+	src/plugins/devices/sid6581/test/test_combined_waveforms.cpp \
 	src/libdebug/test/test_stack_trace.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \
 	src/libdebug/test/test_frame_analyzer.cpp \
@@ -370,6 +372,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/cia6526/main/cia6526.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
+	src/plugins/devices/sid6581/main/combined_waveforms.o \
 	src/plugins/devices/sid_pair/main/sid_pair.o \
 	src/plugins/devices/datasette/main/datasette.o \
 	src/plugins/cbm-loader/main/tap_parser.o \
