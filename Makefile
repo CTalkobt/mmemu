@@ -138,6 +138,7 @@ PLUGIN_VIC4_SRCS = src/plugins/devices/vic4/main/vic4.cpp \
 PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
 	src/plugins/devices/sid6581/main/filter_curve.cpp \
+	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
@@ -323,6 +324,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid6581/test/test_combined_waveforms.cpp \
 	src/plugins/devices/sid6581/test/test_sid_filter.cpp \
 	src/plugins/devices/sid6581/test/test_soft_clip_distortion.cpp \
+	src/plugins/devices/sid6581/test/test_spectral_analyzer.cpp \
 	tests/src/test_sid_filter_integration.cpp \
 	src/libdebug/test/test_stack_trace.cpp \
 	src/libdebug/test/test_breakpoint_list.cpp \
