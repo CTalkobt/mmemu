@@ -1330,27 +1330,34 @@ int MOS45GS02::step() {
                 MapState state = m_mapMmu->getMapState();
 
                 // Lower 32KB
+                // MAP encoding (per MEGA65 documentation):
+                // - A upper 4 bits (A[7:4]): enables for lower blocks 0-3
+                // - A lower 4 bits (A[3:0]): offset bits 8-11
+                // - X bits (X[7:0]): offset bits 12-19
                 if (m_state.x == 0x0F) {
                     // Megabyte select: A chooses which 1MB region
                     state.megabyteLow = (uint32_t)m_state.a << 20;
                 } else {
-                    uint32_t loOff = ((m_state.x & 0x0F) << 8) | m_state.a;
+                    // Standard MAP: use A upper 4 bits for enables, A lower 4 bits + X for offset
+                    uint32_t loOff = (((uint32_t)m_state.x & 0xFF) << 8) | (m_state.a & 0x0F);
                     for (int i = 0; i < 4; i++)
                         state.offsets[i] = (i * 0x20) + loOff;
-                    state.enables = (state.enables & 0xF0) | ((m_state.x >> 4) & 0x0F);
+                    state.enables = (state.enables & 0xF0) | ((m_state.a >> 4) & 0x0F);
                 }
 
                 // Upper 32KB — blocked in hypervisor mode (matching real hardware).
                 // In hypervisor mode, $8000-$FFFF is locked to hypervisor RAM;
                 // only megabyte selection (Z==0x0F) is allowed.
+                // MAP encoding for upper half uses Z and Y instead of X and A.
                 if (m_state.z == 0x0F) {
                     // Megabyte select: Y chooses which 1MB region
                     state.megabyteHigh = (uint32_t)m_state.y << 20;
                 } else {
-                    uint32_t hiOff = ((m_state.z & 0x0F) << 8) | m_state.y;
+                    // Standard MAP: use Z upper 4 bits for enables, Z lower 4 bits + Y for offset
+                    uint32_t hiOff = (((uint32_t)m_state.y & 0xFF) << 8) | (m_state.z & 0x0F);
                     for (int i = 4; i < 8; i++)
                         state.offsets[i] = (i * 0x20) + hiOff;
-                    state.enables = (state.enables & 0x0F) | (((m_state.z >> 4) & 0x0F) << 4);
+                    state.enables = (state.enables & 0x0F) | (((m_state.y >> 4) & 0x0F) << 4);
                 }
 
                 m_mapMmu->setMapState(state);
@@ -1841,7 +1848,9 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
     }
 
     // Check for BRK with no valid IRQ handler (uninitialized vector)
-    if (bus) {
+    // NOTE: On MEGA65, BRK is often used in boot/IRQ handlers, not as program termination.
+    // Only treat BRK as program end if we're in the first 64KB (C64 RAM) with invalid vector.
+    if (bus && m_state.pc < 0x10000) {
         uint8_t op = bus->peek8(m_state.pc);
         if (op == 0x00) {
             uint16_t irqVec = bus->peek8(0xFFFE) | ((uint16_t)bus->peek8(0xFFFF) << 8);
