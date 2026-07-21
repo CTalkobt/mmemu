@@ -467,8 +467,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
     combined1B->addDevice(joy2);
     cia1->setPortBDevice(combined1B);
     
-    // CIA2 Port A is Joystick 1
-    cia2->setPortADevice(joy1);
+    // CIA2 Port A is IEC Bus (Commodore serial interface for drives/printers)
+    // Create virtual IEC bus device that responds to boot polling
+    auto* iec = new VirtualIECBus(8);  // Device 8 is the default disk drive
+    cia2->setPortADevice(iec);
+    desc->deleters.push_back([iec]() { delete iec; });
+
+    fprintf(stderr, "[MEGA65] Wired VirtualIECBus to CIA2 Port A for boot sequence\n");
     
     // Personality switch callback
     keyReg->setPersonalityChangeCallback([vic4](IopersonalityMode mode) {
