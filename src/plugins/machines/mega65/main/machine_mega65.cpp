@@ -265,6 +265,23 @@ MachineDescriptor* Mega65MachineFactory::create() {
         physBus->write8(0x0E0000 + i, romBuf[i]);
     }
     physBus->clearWriteLog();
+
+    // Initialize interrupt vectors to safe RTI stub at $0400
+    // This gives the boot code a safe default handler until it configures its own
+    // Initialize both the IRQ/BRK user vectors ($0314-$0317)
+    // AND the NMI-related jump vector at $0318 (used by NMI handler at $FE43)
+    physBus->write8(0x0314, 0x00);  // IRQ vector low
+    physBus->write8(0x0315, 0x04);  // IRQ vector high
+    physBus->write8(0x0316, 0x00);  // BRK vector low
+    physBus->write8(0x0317, 0x04);  // BRK vector high
+    physBus->write8(0x0318, 0x00);  // NMI/TRAP vector low (NMI handler at $FE43 jumps here)
+    physBus->write8(0x0319, 0x04);  // NMI/TRAP vector high
+    // Place RTI instruction at screen buffer start (will be overwritten by BASIC)
+    physBus->write8(0x0400, 0x60);  // RTI opcode
+    fprintf(stderr, "[MEGA65] Initialized interrupt vectors: $0314=$%04X, $0316=$%04X, $0318=$%04X, RTI at $0400\n",
+            (physBus->peek8(0x0315) << 8) | physBus->peek8(0x0314),
+            (physBus->peek8(0x0317) << 8) | physBus->peek8(0x0316),
+            (physBus->peek8(0x0319) << 8) | physBus->peek8(0x0318));
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------

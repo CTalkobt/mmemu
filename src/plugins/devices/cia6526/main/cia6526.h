@@ -133,11 +133,13 @@ private:
     uint16_t m_taLatch   = 0xFFFF;
     uint16_t m_taCounter = 0xFFFF;
     bool     m_taRunning = false;
+    uint32_t m_taGraceCycles = 0;  // delay before first underflow (boot setup grace period)
 
     // Timer B
     uint16_t m_tbLatch   = 0xFFFF;
     uint16_t m_tbCounter = 0xFFFF;
     bool     m_tbRunning = false;
+    uint32_t m_tbGraceCycles = 0;  // delay before first underflow (boot setup grace period)
 
     // ICR
     uint8_t m_icrMask   = 0x00; // enabled interrupt sources

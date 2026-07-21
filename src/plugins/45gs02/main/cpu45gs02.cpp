@@ -313,7 +313,9 @@ int MOS45GS02::step() {
         m_state.p |= FLAG_I;
         uint8_t lo = read8(0xFFFE);
         uint8_t hi = read8(0xFFFF);
-        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+        uint16_t irqHandler = (uint16_t)lo | ((uint16_t)hi << 8);
+        fprintf(stderr, "[45GS02] IRQ taken at PC=$%04X → handler=$%04X\n", m_state.pc, irqHandler);
+        m_state.pc = irqHandler;
         m_state.cycles += 7;
         return 7;
     }
