@@ -142,7 +142,4 @@ void Mega65StatusPane::RefreshValues() {
                 m_mapGrid->SetCellBackgroundColour(i, c, disabledBg);
         }
     }
-
-    m_mapGrid->AutoSizeColumns();
-    m_mapGrid->ForceRefresh();
 }

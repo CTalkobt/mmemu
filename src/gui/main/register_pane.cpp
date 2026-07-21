@@ -102,8 +102,6 @@ void RegisterPane::RefreshValues() {
         m_grid->SetCellTextColour(i, 1, fg);
         m_grid->SetCellBackgroundColour(i, 1, bg);
     }
-    m_grid->AutoSizeColumns();
-    m_grid->ForceRefresh();
 
     rebuildAnnotations();
 }

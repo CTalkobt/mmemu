@@ -164,6 +164,4 @@ void RegisterWatchPane::refreshValues() {
 
         m_prevValues[addr] = reg.value;
     }
-
-    m_grid->ForceRefresh();
 }
