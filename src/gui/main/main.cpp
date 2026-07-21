@@ -1601,12 +1601,13 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
         m_disasmPane->RefreshValues(m_cpu->pc());
         for (auto* p : m_memPanes) p->RefreshValues();
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
-        m_stackPane->RefreshValues();
         if (!isPaused) {
             PluginPaneManager::instance().tickAll(m_cpu->cycles());
         }
 
-        // Trace pane: always refresh if visible (it's just a history, not an active view)
+        // History panes: always refresh if visible (they show trace/stack history, not active updates)
+        if (m_stackPane && m_notebook->GetCurrentPage() == m_stackPane)
+            m_stackPane->RefreshValues();
         if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
             m_tracePane->RefreshValues();
 
