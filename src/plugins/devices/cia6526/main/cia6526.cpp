@@ -117,6 +117,10 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             // Read returns pending bits + bit 7 if any; clears all pending bits.
             uint8_t pending = m_icrPending;
             if (pending & m_icrMask) pending |= ICR_INT;
+            if (m_icrPending) {
+                fprintf(stderr, "[CIA] %s ICR read: pending=$%02X mask=$%02X returning=$%02X\n",
+                    m_name.c_str(), m_icrPending, m_icrMask, pending);
+            }
             m_icrPending = 0x00;
             updateIrq(); // de-assert IRQ if all cleared
             *val = pending;
@@ -230,11 +234,13 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             if (!(prev & CR_START) && m_taRunning) {
                 // Reload counter when starting from stopped state.
                 // (Matching real CIA: counter loaded at start)
+                // Ensure Timer A interrupt bit is enabled in the mask
+                // (Some ROMs may only set undefined bits; this ensures the interrupt can fire)
+                m_icrMask |= ICR_TA;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
-                // MEGA65: Use very long grace period to skip most of boot initialization phase
                 m_taGraceCycles = 65536;  // ~64ms at 1MHz - enough for boot setup
-                fprintf(stderr, "[CIA] %s Timer A started: latch=$%04X mode=%s (grace period=%u)\n",
-                    m_name.c_str(), m_taLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_taGraceCycles);
+                fprintf(stderr, "[CIA] %s Timer A started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
+                    m_name.c_str(), m_taLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_taGraceCycles, m_icrMask);
             }
             break;
         }
@@ -247,10 +253,12 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
                 m_crb &= ~CR_LOAD;
             }
             if (!(prev & CR_START) && m_tbRunning) {
+                // Ensure Timer B interrupt bit is enabled in the mask
+                m_icrMask |= ICR_TB;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
                 m_tbGraceCycles = 65536;  // ~64ms at 1MHz - enough for boot setup
-                fprintf(stderr, "[CIA] %s Timer B started: latch=$%04X mode=%s (grace period=%u)\n",
-                    m_name.c_str(), m_tbLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_tbGraceCycles);
+                fprintf(stderr, "[CIA] %s Timer B started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
+                    m_name.c_str(), m_tbLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_tbGraceCycles, m_icrMask);
             }
             break;
         }
