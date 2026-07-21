@@ -1848,15 +1848,10 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
     }
 
     // Check for BRK with no valid IRQ handler (uninitialized vector)
-    // NOTE: On MEGA65, BRK is often used in boot/IRQ handlers, not as program termination.
-    // Only treat BRK as program end if we're in the first 64KB (C64 RAM) with invalid vector.
-    if (bus && m_state.pc < 0x10000) {
-        uint8_t op = bus->peek8(m_state.pc);
-        if (op == 0x00) {
-            uint16_t irqVec = bus->peek8(0xFFFE) | ((uint16_t)bus->peek8(0xFFFF) << 8);
-            if (irqVec == 0x0000 || irqVec == 0xFFFF) return true;
-        }
-    }
+    // NOTE: On MEGA65, BRK is used extensively in boot/IRQ handlers for synchronization.
+    // The 45GS02 (MEGA65 CPU) should not treat BRK as program end since it's normal
+    // operation during hardware initialization. The check is only useful for simple
+    // test programs that don't have proper IRQ handlers set up.
 
     // Check for JMP * (infinite loop at current PC)
     if (bus) {
