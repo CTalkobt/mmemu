@@ -2854,6 +2854,56 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Usage: log show [options] | log clear\n");
         }
+    } else if (cmd == "maplog") {
+        // MAP/MMU debug logging control
+        std::string sub;
+        if (ss >> sub) {
+            if (sub == "on" || sub == "trans") {
+                // Enable MAP translation logging
+                if (m_ctx.cpu && m_ctx.cpu->getMapMmu()) {
+                    m_ctx.cpu->getMapMmu()->setLogMapTranslations(true);
+                    m_output("MAP translation logging enabled.\n");
+                } else {
+                    m_output("Error: MAP controller not found.\n");
+                }
+            } else if (sub == "mem") {
+                // Enable memory access logging
+                if (m_ctx.cpu && m_ctx.cpu->getMapMmu()) {
+                    m_ctx.cpu->getMapMmu()->setLogMemoryAccess(true);
+                    m_output("Memory access logging enabled.\n");
+                } else {
+                    m_output("Error: MAP controller not found.\n");
+                }
+            } else if (sub == "off") {
+                // Disable all logging
+                if (m_ctx.cpu && m_ctx.cpu->getMapMmu()) {
+                    m_ctx.cpu->getMapMmu()->setLogMapTranslations(false);
+                    m_ctx.cpu->getMapMmu()->setLogMemoryAccess(false);
+                    m_output("MAP debug logging disabled.\n");
+                } else {
+                    m_output("Error: MAP controller not found.\n");
+                }
+            } else if (sub == "status") {
+                // Show logging status
+                if (m_ctx.cpu && m_ctx.cpu->getMapMmu()) {
+                    auto* mapMmu = m_ctx.cpu->getMapMmu();
+                    m_output("MAP logging status:\n");
+                    m_output("  Translations: " + std::string(mapMmu->isLoggingTranslations() ? "ON" : "OFF") + "\n");
+                    m_output("  Memory access: " + std::string(mapMmu->isLoggingMemAccess() ? "ON" : "OFF") + "\n");
+                } else {
+                    m_output("Error: MAP controller not found.\n");
+                }
+            } else {
+                m_output("Usage: maplog <on|trans|mem|off|status>\n");
+                m_output("  maplog on      - Enable MAP translation logging\n");
+                m_output("  maplog trans   - Same as 'on'\n");
+                m_output("  maplog mem     - Enable detailed memory access logging\n");
+                m_output("  maplog off     - Disable all MAP logging\n");
+                m_output("  maplog status  - Show current logging status\n");
+            }
+        } else {
+            m_output("Usage: maplog <on|trans|mem|off|status>\n");
+        }
     } else if (cmd == "quit" || cmd == "q") {
         m_ctx.quit = true;
     } else {

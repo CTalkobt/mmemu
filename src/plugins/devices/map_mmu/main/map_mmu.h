@@ -95,6 +95,15 @@ public:
     void setHypervisorOverlay(std::function<bool()> isActive,
                               uint8_t* ram, uint16_t base, uint32_t size);
 
+    /**
+     * Enable/disable detailed MAP translation logging for debugging.
+     * When enabled, logs all address translations and memory access patterns.
+     */
+    void setLogMapTranslations(bool enabled) { m_logTranslations = enabled; }
+    void setLogMemoryAccess(bool enabled) { m_logMemAccess = enabled; }
+    bool isLoggingTranslations() const { return m_logTranslations; }
+    bool isLoggingMemAccess() const { return m_logMemAccess; }
+
 private:
     std::string m_name;
     BusConfig   m_config;
@@ -109,6 +118,10 @@ private:
     uint8_t*  m_hyperRam  = nullptr;
     uint16_t  m_hyperBase = 0;
     uint32_t  m_hyperSize = 0;
+
+    // Debug logging control
+    bool m_logTranslations = false;
+    bool m_logMemAccess = false;
 
     uint32_t translate(uint32_t vaddr) const;
 };

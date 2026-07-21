@@ -54,4 +54,10 @@ public:
         }
         return vaddr;
     }
+
+    // Debug logging control for MAP translations and memory access patterns
+    virtual void setLogMapTranslations(bool enabled) {}
+    virtual void setLogMemoryAccess(bool enabled) {}
+    virtual bool isLoggingTranslations() const { return false; }
+    virtual bool isLoggingMemAccess() const { return false; }
 };

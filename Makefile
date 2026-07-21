@@ -203,6 +203,7 @@ PLUGIN_SID_PAIR_SRCS = src/plugins/devices/sid_pair/main/sid_pair.cpp \
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
 	src/plugins/devices/cia6526/main/cia6526.cpp \
+	src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/vic4/main/vic4.cpp \
 	src/plugins/devices/vic3/main/vic3.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \

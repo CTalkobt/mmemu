@@ -62,6 +62,14 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x0F;
+    static uint64_t praReadCount = 0;
+    if (reg == 0) {
+        if (praReadCount < 10) {
+            fprintf(stderr, "[CIA6526 %s] PRA read #%llu addr=$%06X\n", m_name.c_str(), (unsigned long long)praReadCount, addr);
+            fflush(stderr);
+        }
+        praReadCount++;
+    }
     switch (reg) {
         case PRA: {
             // Output bits from latch; input bits from port device (pins).
