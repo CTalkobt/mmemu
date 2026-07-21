@@ -83,6 +83,15 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
         executeLuaBreakpointAction(*bp);
     }
 
+    // Check for BRK instruction (opcode 0x00) if pause-on-BRK is enabled
+    if (m_pauseOnBrk && entry.mnemonic == "BRK") {
+        m_lastHitMessage = "BRK instruction at $" + toHex(entry.addr);
+        m_cpu->log(SIM_LOG_INFO, m_lastHitMessage.c_str());
+        m_lastPausedAddr = entry.addr;
+        m_paused = true;
+        cont = false;
+    }
+
     // Issue #24 Phase 4.2: Execute Lua cycle events
     executeLuaCycleEvents(m_cycleCounter);
 

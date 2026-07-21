@@ -2,6 +2,9 @@
 # Top-level Makefile
 .PHONY: all cli gui mcp libs test test-mcp test-gdb plugins clean man serve cppcheck coverage sdk sdk-cpp sdk-python test-runner
 
+# Default parallel jobs for faster builds (can be overridden with make -j N)
+MAKEFLAGS ?= -j 12
+
 all: cli gui mcp test-runner plugins
 
 VERSION_HDR = src/include/version.h

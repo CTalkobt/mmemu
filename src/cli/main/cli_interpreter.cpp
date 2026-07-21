@@ -1132,6 +1132,29 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Error: Invalid address '" + expr + "'\n");
         }
+    } else if (cmd == "brktrap" || cmd == "pausebrk") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        std::string arg;
+        if (ss >> arg) {
+            if (arg == "on" || arg == "1" || arg == "true" || arg == "yes") {
+                m_ctx.dbg->setPauseOnBrk(true);
+                m_output("Pause on BRK: enabled\n");
+            } else if (arg == "off" || arg == "0" || arg == "false" || arg == "no") {
+                m_ctx.dbg->setPauseOnBrk(false);
+                m_output("Pause on BRK: disabled\n");
+            } else if (arg == "toggle" || arg == "t") {
+                bool enabled = !m_ctx.dbg->isPauseOnBrkEnabled();
+                m_ctx.dbg->setPauseOnBrk(enabled);
+                m_output("Pause on BRK: " + std::string(enabled ? "enabled" : "disabled") + "\n");
+            } else if (arg == "status" || arg == "?" || arg == "show") {
+                m_output("Pause on BRK: " + std::string(m_ctx.dbg->isPauseOnBrkEnabled() ? "enabled" : "disabled") + "\n");
+            } else {
+                m_output("Syntax: brktrap <on|off|toggle|status>\n");
+            }
+        } else {
+            m_output("Pause on BRK: " + std::string(m_ctx.dbg->isPauseOnBrkEnabled() ? "enabled" : "disabled") + "\n");
+            m_output("Syntax: brktrap <on|off|toggle|status>\n");
+        }
     } else if (cmd == "print") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         std::string varName;

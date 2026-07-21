@@ -77,6 +77,9 @@ public:
     void setIoRegistry(void* io) { m_ioRegistry = io; }
     void* ioRegistry() const { return m_ioRegistry; }
 
+    bool isPauseOnBrkEnabled() const { return m_pauseOnBrk; }
+    void setPauseOnBrk(bool enabled) { m_pauseOnBrk = enabled; }
+
 private:
     void* m_ioRegistry = nullptr;
     struct KernalCall {
@@ -107,6 +110,7 @@ private:
     std::vector<KernalCall> m_basicStack;
     std::vector<SystemSnapshot> m_snapshots;
     bool        m_paused          = false;
+    bool        m_pauseOnBrk      = true;  // Pause on BRK instruction (default enabled)
     uint32_t    m_lastPausedAddr  = ~0u;
     uint32_t    m_resumeSkipAddr  = ~0u;
     std::string m_lastHitMessage;
