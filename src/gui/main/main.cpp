@@ -135,7 +135,6 @@ private:
     wxTimer m_timer;
     bool m_running = false;
     bool m_kbdFocus = false;
-    bool m_pauseRefreshDone = false;  // Track if we've refreshed history panes after pause
     IKeyboardCapturePane* m_capturePane = nullptr;
 
     // Search state
@@ -1603,16 +1602,16 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
 
         if (!isPaused) {
-            // CPU is running: resume refresh and tick plugins
+            // CPU is running: tick plugins
             PluginPaneManager::instance().tickAll(m_cpu->cycles());
-            m_pauseRefreshDone = false;  // Reset flag for next pause
-        } else if (!m_pauseRefreshDone) {
-            // CPU just paused: refresh history panes once
+        }
+
+        // History panes: refresh only when paused AND visible (not on every tick while running)
+        if (isPaused) {
             if (m_stackPane && m_notebook->GetCurrentPage() == m_stackPane)
                 m_stackPane->RefreshValues();
             if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
                 m_tracePane->RefreshValues();
-            m_pauseRefreshDone = true;
         }
 
         // Other expensive panes: only refresh when running to avoid continuous flicker
