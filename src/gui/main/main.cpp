@@ -81,6 +81,9 @@ private:
     void OnShowTracePane(wxCommandEvent& event);
     void OnShowMachinePane(wxCommandEvent& event);
     void OnShowDevicePane(wxCommandEvent& event);
+    void OnShowIOWatchPane(wxCommandEvent& event);
+    void OnShowCartPane(wxCommandEvent& event);
+    void OnShowMega65Pane(wxCommandEvent& event);
     void OnNewMemView(wxCommandEvent& event);
     void OnRenameMemView(wxCommandEvent& event);
     void OnLoadMachineDirect(wxCommandEvent& event);
@@ -95,6 +98,9 @@ private:
     void ShowTracePane() const;
     void ShowMachineInspectorPane() const;
     void ShowDeviceInfoPane();
+    void ShowIOWatchPane() const;
+    void ShowCartridgePane() const;
+    void ShowMega65StatusPane() const;
 
     // Returns the currently-selected MemoryPane, or nullptr if none exist.
     [[nodiscard]] MemoryPane* activeMemPane() const {
@@ -521,6 +527,9 @@ MmemuFrame::MmemuFrame()
     menuDebug->Append(ID_SHOW_TRACE_PANE, "Trace\tCtrl-H");
     menuDebug->Append(ID_SHOW_MACHINE_PANE, "Machine Explorer\tCtrl-M");
     menuDebug->Append(ID_SHOW_DEVICE_PANE, "Device Info\tCtrl-D");
+    menuDebug->Append(ID_SHOW_IOWATCH_PANE, "I/O Watch\tCtrl-W");
+    menuDebug->Append(ID_SHOW_CART_PANE, "Cartridge\tCtrl-G");
+    menuDebug->Append(ID_SHOW_MEGA65_PANE, "MEGA65 Status");
     menuDebug->AppendSeparator();
     menuDebug->Append(ID_NEW_MEM_VIEW,    "New Memory View\tCtrl-Shift-M");
     menuDebug->Append(ID_RENAME_MEM_VIEW, "Rename Memory View...");
@@ -646,6 +655,9 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnShowTracePane, this, ID_SHOW_TRACE_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowMachinePane, this, ID_SHOW_MACHINE_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowDevicePane, this, ID_SHOW_DEVICE_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnShowIOWatchPane, this, ID_SHOW_IOWATCH_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnShowCartPane, this, ID_SHOW_CART_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnShowMega65Pane, this, ID_SHOW_MEGA65_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnNewMemView,    this, ID_NEW_MEM_VIEW);
     Bind(wxEVT_MENU, &MmemuFrame::OnRenameMemView, this, ID_RENAME_MEM_VIEW);
     Bind(wxEVT_MENU, [this](wxCommandEvent&){ CalculatorDialog(this, m_dbg).ShowModal(); }, ID_CALCULATOR);
@@ -1664,4 +1676,48 @@ void MmemuFrame::ShowDeviceInfoPane() {
 
 void MmemuFrame::OnShowDevicePane(wxCommandEvent&) {
     ShowDeviceInfoPane();
+}
+
+void MmemuFrame::ShowIOWatchPane() const {
+    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+        if (m_notebook->GetPage(i) == m_regWatchPane) {
+            m_notebook->SetSelection(i);
+            return;
+        }
+    }
+    m_notebook->AddPage(m_regWatchPane, "I/O Watch", true);
+}
+
+void MmemuFrame::OnShowIOWatchPane(wxCommandEvent&) {
+    ShowIOWatchPane();
+}
+
+void MmemuFrame::ShowCartridgePane() const {
+    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+        if (m_notebook->GetPage(i) == m_cartPane) {
+            m_notebook->SetSelection(i);
+            return;
+        }
+    }
+    m_notebook->AddPage(m_cartPane, "Cartridge", true);
+}
+
+void MmemuFrame::OnShowCartPane(wxCommandEvent&) {
+    ShowCartridgePane();
+}
+
+void MmemuFrame::ShowMega65StatusPane() const {
+    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+        if (m_notebook->GetPage(i) == m_mega65StatusPane) {
+            m_notebook->SetSelection(i);
+            return;
+        }
+    }
+    if (m_mega65StatusPane) {
+        m_notebook->AddPage(m_mega65StatusPane, "MEGA65", true);
+    }
+}
+
+void MmemuFrame::OnShowMega65Pane(wxCommandEvent&) {
+    ShowMega65StatusPane();
 }
