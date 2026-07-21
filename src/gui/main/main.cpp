@@ -135,6 +135,7 @@ private:
     wxTimer m_timer;
     bool m_running = false;
     bool m_kbdFocus = false;
+    bool m_pauseRefreshDone = false;  // Track if we've refreshed history panes after pause
     IKeyboardCapturePane* m_capturePane = nullptr;
 
     // Search state
@@ -1594,22 +1595,25 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
     }
 
     if (m_cpu) {
-        // Skip expensive refreshes when paused to avoid continuous screen flicker
         bool isPaused = m_dbg && m_dbg->isPaused();
 
         m_regPane->RefreshValues();
         m_disasmPane->RefreshValues(m_cpu->pc());
         for (auto* p : m_memPanes) p->RefreshValues();
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
-        if (!isPaused) {
-            PluginPaneManager::instance().tickAll(m_cpu->cycles());
-        }
 
-        // History panes: always refresh if visible (they show trace/stack history, not active updates)
-        if (m_stackPane && m_notebook->GetCurrentPage() == m_stackPane)
-            m_stackPane->RefreshValues();
-        if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
-            m_tracePane->RefreshValues();
+        if (!isPaused) {
+            // CPU is running: resume refresh and tick plugins
+            PluginPaneManager::instance().tickAll(m_cpu->cycles());
+            m_pauseRefreshDone = false;  // Reset flag for next pause
+        } else if (!m_pauseRefreshDone) {
+            // CPU just paused: refresh history panes once
+            if (m_stackPane && m_notebook->GetCurrentPage() == m_stackPane)
+                m_stackPane->RefreshValues();
+            if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
+                m_tracePane->RefreshValues();
+            m_pauseRefreshDone = true;
+        }
 
         // Other expensive panes: only refresh when running to avoid continuous flicker
         if (!isPaused) {
