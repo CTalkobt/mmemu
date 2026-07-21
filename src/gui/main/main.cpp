@@ -1584,6 +1584,12 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 if (m_bpPane) m_bpPane->RefreshValues();
                 break;
             }
+            // Check for program end (e.g., RTS on empty stack, JMP *, invalid BRK)
+            if (m_cpu && m_cpu->isProgramEnd(m_bus)) {
+                m_running = false;
+                SetStatusText("Program ended.");
+                break;
+            }
             // Yield every 50 iterations to allow GUI events (e.g., pause/stop)
             if ((iters % 50) == 0) {
                 if (std::chrono::steady_clock::now() >= deadline)
