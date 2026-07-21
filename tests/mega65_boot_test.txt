@@ -1,0 +1,21 @@
+# MEGA65 Boot Sequence Test Script
+# This script tests whether MEGA65 boots to a Ready prompt
+# Run with: ./bin/mmemu-cli < tests/mega65_boot_test.txt
+
+create mega65
+brktrap off
+hle off
+
+# Run boot sequence for up to 1 million cycles
+# Check memory to see if "Ready" prompt appears
+run 1000000
+
+# Print final state
+regs
+disasm $PC 5
+
+# Memory check - look for "Ready" in screen area ($0400)
+# MEGA65 screen: $0400-$0427 (first 40 chars of first line)
+m $0400 40
+
+# Tape pane will show if boot completed or got stuck
