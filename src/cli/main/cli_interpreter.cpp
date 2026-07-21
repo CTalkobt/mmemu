@@ -1739,22 +1739,44 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         std::string expr;
         uint32_t addr = m_ctx.cpu->pc();
         int n = 10;
+        bool isLogical = false;  // Track if address is 16-bit logical (needs MAP translation)
         if (ss >> expr) {
             if (parseAddr(expr, addr)) {
+                // Detect if this is a 16-bit logical address (no bank prefix like 0F000)
+                // Addresses with more than 4 hex digits include a bank prefix, so use as-is
+                // Addresses with 4 or fewer hex digits are logical addresses that need MAP translation
+                std::string addrStr = expr;
+                // Remove $ prefix if present
+                if (!addrStr.empty() && addrStr[0] == '$') addrStr = addrStr.substr(1);
+                // If address is 4 hex digits or less, it's a logical address
+                isLogical = (addrStr.length() <= 4);
                 if (ss >> n) {}
             } else {
                 m_output("Error: Invalid address '" + expr + "'\n");
                 return;
             }
         }
+
+        // Apply MAP translation if this is a logical address (MEGA65 only)
+        uint32_t displayAddr = addr;
+        uint32_t logicalAddr = addr;  // Keep original logical address for display
+        if (isLogical && m_ctx.cpu && m_ctx.cpu->getMapMmu()) {
+            // Translate logical address through MAP to get physical address
+            auto mapMmu = m_ctx.cpu->getMapMmu();
+            displayAddr = mapMmu->resolvePhysical((uint16_t)addr);
+        }
+
         for (int i = 0; i < n; ++i) {
             char buf[64];
             std::stringstream res;
-            res << std::hex << std::uppercase << std::setfill('0') << std::setw(addrWidth()) << addr << ": ";
-            int bytes = m_ctx.disasm->disasmOne(m_ctx.bus, addr, buf, sizeof(buf));
+            // Display logical address if that's what was requested
+            uint32_t showAddr = isLogical ? (logicalAddr & 0xFFFF) : displayAddr;
+            res << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << showAddr << ": ";
+            int bytes = m_ctx.disasm->disasmOne(m_ctx.bus, displayAddr, buf, sizeof(buf));
             res << buf << "\n";
             m_output(res.str());
-            addr += bytes;
+            displayAddr += bytes;
+            logicalAddr += bytes;
         }
     } else if (cmd == "asm") {
         if (!m_ctx.cpu || !m_ctx.assem) { m_output("No machine created.\n"); return; }
