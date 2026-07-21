@@ -1606,7 +1606,11 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             PluginPaneManager::instance().tickAll(m_cpu->cycles());
         }
 
-        // Only refresh expensive panes when running or on explicit pause (not every timer tick)
+        // Trace pane: always refresh if visible (it's just a history, not an active view)
+        if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
+            m_tracePane->RefreshValues();
+
+        // Other expensive panes: only refresh when running to avoid continuous flicker
         if (!isPaused) {
             if (m_machineInspectorPane && m_notebook->GetCurrentPage() == m_machineInspectorPane)
                 m_machineInspectorPane->refreshValues();
@@ -1614,8 +1618,6 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 m_deviceInfoPane->refreshValues();
             if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
                 m_regWatchPane->refreshValues();
-            if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
-                m_tracePane->RefreshValues();
             if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
                 m_mega65StatusPane->RefreshValues();
         }
