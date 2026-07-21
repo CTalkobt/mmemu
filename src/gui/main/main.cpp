@@ -1570,8 +1570,9 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
 void MmemuFrame::OnTimer(wxTimerEvent& event) {
     (void)event;
     if (m_running && m_machine && m_machine->schedulerStep) {
-        // Run as many cycles as possible within 25ms to keep the UI responsive.
-        // This adapts automatically to any CPU clock speed (1 MHz or 40 MHz).
+        // Run cycles with periodic yields to keep GUI responsive.
+        // Yield every 50 iterations to allow event processing.
+        // MEGA65 initialization may have long loops that need UI responsiveness.
         int iters = 0;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
         while (true) {
@@ -1583,9 +1584,12 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 if (m_bpPane) m_bpPane->RefreshValues();
                 break;
             }
-            // Check deadline every 256 iterations to avoid clock_now() overhead
-            if ((iters & 0xFF) == 0 && std::chrono::steady_clock::now() >= deadline)
-                break;
+            // Yield every 50 iterations to allow GUI events (e.g., pause/stop)
+            if ((iters % 50) == 0) {
+                if (std::chrono::steady_clock::now() >= deadline)
+                    break;
+                wxYield();
+            }
         }
     }
 
@@ -1596,7 +1600,7 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
         m_stackPane->RefreshValues();
         PluginPaneManager::instance().tickAll(m_cpu->cycles());
-        
+
         if (m_machineInspectorPane && m_notebook->GetCurrentPage() == m_machineInspectorPane)
             m_machineInspectorPane->refreshValues();
         if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
