@@ -1594,23 +1594,31 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
     }
 
     if (m_cpu) {
+        // Skip expensive refreshes when paused to avoid continuous screen flicker
+        bool isPaused = m_dbg && m_dbg->isPaused();
+
         m_regPane->RefreshValues();
         m_disasmPane->RefreshValues(m_cpu->pc());
         for (auto* p : m_memPanes) p->RefreshValues();
         for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
         m_stackPane->RefreshValues();
-        PluginPaneManager::instance().tickAll(m_cpu->cycles());
+        if (!isPaused) {
+            PluginPaneManager::instance().tickAll(m_cpu->cycles());
+        }
 
-        if (m_machineInspectorPane && m_notebook->GetCurrentPage() == m_machineInspectorPane)
-            m_machineInspectorPane->refreshValues();
-        if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
-            m_deviceInfoPane->refreshValues();
-        if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
-            m_regWatchPane->refreshValues();
-        if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
-            m_tracePane->RefreshValues();
-        if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
-            m_mega65StatusPane->RefreshValues();
+        // Only refresh expensive panes when running or on explicit pause (not every timer tick)
+        if (!isPaused) {
+            if (m_machineInspectorPane && m_notebook->GetCurrentPage() == m_machineInspectorPane)
+                m_machineInspectorPane->refreshValues();
+            if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
+                m_deviceInfoPane->refreshValues();
+            if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
+                m_regWatchPane->refreshValues();
+            if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
+                m_tracePane->RefreshValues();
+            if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
+                m_mega65StatusPane->RefreshValues();
+        }
     }
 }
 
