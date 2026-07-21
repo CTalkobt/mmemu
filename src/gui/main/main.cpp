@@ -78,6 +78,7 @@ private:
     void OnShowBpPane(wxCommandEvent& event);
     void OnShowSymPane(wxCommandEvent& event);
     void OnShowStackPane(wxCommandEvent& event);
+    void OnShowTracePane(wxCommandEvent& event);
     void OnShowMachinePane(wxCommandEvent& event);
     void OnShowDevicePane(wxCommandEvent& event);
     void OnNewMemView(wxCommandEvent& event);
@@ -91,6 +92,7 @@ private:
     void ShowBreakpointPane() const;
     void ShowSymbolPane();
     void ShowStackPane() const;
+    void ShowTracePane() const;
     void ShowMachineInspectorPane() const;
     void ShowDeviceInfoPane();
 
@@ -516,6 +518,7 @@ MmemuFrame::MmemuFrame()
     menuDebug->Append(ID_SHOW_BP_PANE,    "Breakpoints\tCtrl-B");
     menuDebug->Append(ID_SHOW_SYM_PANE,   "Symbols\tCtrl-Y");
     menuDebug->Append(ID_SHOW_STACK_PANE, "Stack Trace\tCtrl-T");
+    menuDebug->Append(ID_SHOW_TRACE_PANE, "Trace\tCtrl-H");
     menuDebug->Append(ID_SHOW_MACHINE_PANE, "Machine Explorer\tCtrl-M");
     menuDebug->Append(ID_SHOW_DEVICE_PANE, "Device Info\tCtrl-D");
     menuDebug->AppendSeparator();
@@ -640,6 +643,7 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnShowBpPane,    this, ID_SHOW_BP_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowSymPane,   this, ID_SHOW_SYM_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowStackPane, this, ID_SHOW_STACK_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnShowTracePane, this, ID_SHOW_TRACE_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowMachinePane, this, ID_SHOW_MACHINE_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnShowDevicePane, this, ID_SHOW_DEVICE_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnNewMemView,    this, ID_NEW_MEM_VIEW);
@@ -1525,6 +1529,20 @@ void MmemuFrame::ShowStackPane() const {
 
 void MmemuFrame::OnShowStackPane(wxCommandEvent&) {
     ShowStackPane();
+}
+
+void MmemuFrame::ShowTracePane() const {
+    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
+        if (m_notebook->GetPage(i) == m_tracePane) {
+            m_notebook->SetSelection(i);
+            return;
+        }
+    }
+    m_notebook->AddPage(m_tracePane, "Trace", true);
+}
+
+void MmemuFrame::OnShowTracePane(wxCommandEvent&) {
+    ShowTracePane();
 }
 
 void MmemuFrame::OnKbdFocus(const wxCommandEvent& event) {
