@@ -266,6 +266,20 @@ MachineDescriptor* Mega65MachineFactory::create() {
     }
     physBus->clearWriteLog();
 
+    // -----------------------------------------------------------------------
+    // Place fake cartridge signature at $8000 to trigger MEGA65 boot mode
+    // -----------------------------------------------------------------------
+    // The ROM's a0int routine ($FD02) checks for cartridge signature "CBM80"
+    // (with MSBs set on "CBM": $C3 $C2 $CD) at $8000-$8002.
+    // Without this, the boot falls back to C64 mode instead of MEGA65 mode.
+    // This is a workaround until we properly support MEGA65 cartridges.
+    physBus->write8(0x8000, 0xC3);  // 'C' with MSB set
+    physBus->write8(0x8001, 0xC2);  // 'B' with MSB set
+    physBus->write8(0x8002, 0xCD);  // 'M' with MSB set
+    physBus->write8(0x8003, 0x38);  // '8'
+    physBus->write8(0x8004, 0x30);  // '0'
+    fprintf(stderr, "[MEGA65] Placed cartridge signature at $8000 to trigger MEGA65 boot mode\n");
+
     // Initialize interrupt vectors to safe RTI stub at $0400
     // This gives the boot code a safe default handler until it configures its own
     // Initialize both the IRQ/BRK user vectors ($0314-$0317)
