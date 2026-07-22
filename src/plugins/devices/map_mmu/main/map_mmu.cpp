@@ -80,6 +80,7 @@ uint8_t MapMmu::read8(uint32_t addr) {
     static uint64_t readCount = 0;
     bool logThisRead = m_logMemAccess || (addr >= 0xFF80 && addr <= 0xFFFF) ||
                        (addr >= 0xE4B0 && addr <= 0xE4D8) ||
+                       (addr >= 0x0320 && addr <= 0x0321) ||
                        readCount < 20;
     if (logThisRead) {
         fprintf(stderr, "[MapMmu] READ #%llu: addr=$%04X\n", (unsigned long long)readCount, addr);

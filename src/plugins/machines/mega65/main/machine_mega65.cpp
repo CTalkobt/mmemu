@@ -280,30 +280,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
     physBus->write8(0x8004, 0x30);  // '0'
     fprintf(stderr, "[MEGA65] Placed cartridge signature at $8000 to trigger MEGA65 boot mode\n");
 
-    // Initialize interrupt vectors to safe RTI stub at $0400
-    // This gives the boot code a safe default handler until it configures its own
-    // Initialize both the IRQ/BRK user vectors ($0314-$0317)
-    // AND the NMI-related jump vector at $0318 (used by NMI handler at $FE43)
-    physBus->write8(0x0314, 0x00);  // IRQ vector low
-    physBus->write8(0x0315, 0x04);  // IRQ vector high
-    physBus->write8(0x0316, 0x00);  // BRK vector low
-    physBus->write8(0x0317, 0x04);  // BRK vector high
-    physBus->write8(0x0318, 0x00);  // NMI/TRAP vector low (NMI handler at $FE43 jumps here)
-    physBus->write8(0x0319, 0x04);  // NMI/TRAP vector high
-    // Place RTI instruction at screen buffer start (will be overwritten by BASIC)
-    physBus->write8(0x0400, 0x60);  // RTI opcode
-    fprintf(stderr, "[MEGA65] Initialized interrupt vectors: $0314=$%04X, $0316=$%04X, $0318=$%04X, RTI at $0400\n",
-            (physBus->peek8(0x0315) << 8) | physBus->peek8(0x0314),
-            (physBus->peek8(0x0317) << 8) | physBus->peek8(0x0316),
-            (physBus->peek8(0x0319) << 8) | physBus->peek8(0x0318));
+    // Initialize $0320-$0321 vector (BASIC ROM dispatch vector)
+    // C64 BASIC cartridge dispatch table uses JMP ($0320), JMP ($0322), etc.
+    // These are NOT interrupt vectors like $0314-$0319. The MEGA65 ROM doesn't initialize
+    // these BASIC vectors since it doesn't use BASIC dispatch. Point to next dispatch at $F49E.
+    physBus->write8(0x0320, 0x9E);  // Low byte of address
+    physBus->write8(0x0321, 0xF4);  // High byte of address = $F49E
+    fprintf(stderr, "[MEGA65] Initialized BASIC dispatch vector: $0320=$%02X $0321=$%02X -> $F49E\n",
+            physBus->peek8(0x0320), physBus->peek8(0x0321));
 
-    // Initialize uninitialized C64 vector at $0320-$0321
-    // The boot code jumps through this vector via JMP (indirect)
-    // Without initialization, it jumps to $0000 which contains ROM data causing crash
-    // Point to RTI stub for now until we understand what this vector should contain
-    physBus->write8(0x0320, 0x00);  // Low byte of address
-    physBus->write8(0x0321, 0x04);  // High byte of address = $0400
-    fprintf(stderr, "[MEGA65] Initialized vector at $0320-$0321 to $0400 (RTI stub)\n");
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------
