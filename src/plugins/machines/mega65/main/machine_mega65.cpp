@@ -296,6 +296,14 @@ MachineDescriptor* Mega65MachineFactory::create() {
             (physBus->peek8(0x0315) << 8) | physBus->peek8(0x0314),
             (physBus->peek8(0x0317) << 8) | physBus->peek8(0x0316),
             (physBus->peek8(0x0319) << 8) | physBus->peek8(0x0318));
+
+    // Initialize uninitialized C64 vector at $0320-$0321
+    // The boot code jumps through this vector via JMP (indirect)
+    // Without initialization, it jumps to $0000 which contains ROM data causing crash
+    // Point to RTI stub for now until we understand what this vector should contain
+    physBus->write8(0x0320, 0x00);  // Low byte of address
+    physBus->write8(0x0321, 0x04);  // High byte of address = $0400
+    fprintf(stderr, "[MEGA65] Initialized vector at $0320-$0321 to $0400 (RTI stub)\n");
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
     // -----------------------------------------------------------------------
