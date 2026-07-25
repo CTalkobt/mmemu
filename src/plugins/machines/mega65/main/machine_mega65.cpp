@@ -510,6 +510,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->ioRegistry = io;
 
     // Register named devices for device-specific CLI commands (e.g., cia1.advance)
+    // TODO: Automate this by iterating the machine JSON spec instead of hardcoding device names
     desc->namedDevices["cia1"] = cia1;
     desc->namedDevices["cia2"] = cia2;
 
