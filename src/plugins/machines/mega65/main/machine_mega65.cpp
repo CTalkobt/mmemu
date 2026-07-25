@@ -509,6 +509,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
     dma->setIoRegistry(io);  // DMA needs I/O dispatch for bank byte bit 7
     desc->ioRegistry = io;
 
+    // Register named devices for device-specific CLI commands (e.g., cia1.advance)
+    desc->namedDevices["cia1"] = cia1;
+    desc->namedDevices["cia2"] = cia2;
+
     // Wire I/O hooks to MapMmu so virtual space accesses to $D000 etc. are dispatched
     mmu->setIoHooks(
         [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead(b, a, v); },

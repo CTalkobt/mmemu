@@ -15,6 +15,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/io_registry.h"
+#include "libdevices/main/idevice_inspectable.h"
 #include "plugin_command_registry.h"
 #include "libdebug/main/expression_evaluator.h"
 #include "libdebug/main/debug_helpers.h"
@@ -2904,6 +2905,54 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Usage: maplog <on|trans|mem|off|status>\n");
         }
+    } else if (cmd == "devices") {
+        // List available named devices
+        if (!m_ctx.machine || m_ctx.machine->cpus.empty()) {
+            m_output("No machine loaded.\n");
+        } else {
+            m_output("Available devices:\n");
+            const auto& namedDevices = m_ctx.machine->namedDevices;
+            if (namedDevices.empty()) {
+                m_output("  (none)\n");
+            } else {
+                for (const auto& [name, device] : namedDevices) {
+                    m_output("  " + name + "\n");
+                }
+            }
+        }
+    } else if (cmd.find('.') != std::string::npos) {
+        // Device-specific command: <device_name>.<operation>
+        size_t dotPos = cmd.find('.');
+        std::string deviceName = cmd.substr(0, dotPos);
+        std::string operation = cmd.substr(dotPos + 1);
+
+        if (!m_ctx.machine || m_ctx.machine->cpus.empty()) {
+            m_output("No machine loaded.\n");
+        } else {
+            const auto& namedDevices = m_ctx.machine->namedDevices;
+            auto it = namedDevices.find(deviceName);
+            if (it == namedDevices.end()) {
+                m_output("Error: Device '" + deviceName + "' not found.\n");
+                m_output("Use 'devices' to list available devices.\n");
+            } else {
+                auto* inspectable = dynamic_cast<IDeviceInspectable*>(it->second);
+                if (!inspectable) {
+                    m_output("Error: Device '" + deviceName + "' does not support inspection.\n");
+                } else if (operation == "status") {
+                    m_output(inspectable->getStatusString());
+                } else if (operation == "advance") {
+                    uint32_t cycles = 0;
+                    if (ss >> cycles) {
+                        m_output(inspectable->advanceCycles(cycles));
+                    } else {
+                        m_output("Usage: " + deviceName + ".advance <cycles>\n");
+                    }
+                } else {
+                    m_output("Unknown operation '" + operation + "' for device '" + deviceName + "'.\n");
+                    m_output("Available operations: status, advance\n");
+                }
+            }
+        }
     } else if (cmd == "quit" || cmd == "q") {
         m_ctx.quit = true;
     } else {
@@ -2911,7 +2960,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         std::stringstream ss2(line);
         std::string t;
         while (ss2 >> t) tokens.push_back(t);
-        
+
         if (!PluginCommandRegistry::instance().dispatch(tokens)) {
             m_output("Unknown command: " + cmd + ". Type 'help' for info.\n");
         }

@@ -1,5 +1,20 @@
 #include "cia6526.h"
 #include <cstring>
+#include <sstream>
+#include <iomanip>
+
+// Helper function to convert values to hex strings
+static std::string toHex(uint16_t v, int width = 4) {
+    std::ostringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0') << std::setw(width) << v;
+    return ss.str();
+}
+
+static std::string toHex(uint8_t v, int width = 2) {
+    std::ostringstream ss;
+    ss << std::hex << std::uppercase << std::setfill('0') << std::setw(width) << (int)v;
+    return ss.str();
+}
 
 CIA6526::CIA6526(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
@@ -475,4 +490,71 @@ void CIA6526::getDeviceInfo(DeviceInfo& out) const {
     out.dependencies.push_back({"Port A Device", m_portADevice ? "connected" : "none"});
     out.dependencies.push_back({"Port B Device", m_portBDevice ? "connected" : "none"});
     out.dependencies.push_back({"IRQ Line", m_irqLine ? "connected" : "none"});
+}
+
+std::string CIA6526::advanceCycles(uint32_t cycles) {
+    uint8_t prevIcrPending = m_icrPending;
+
+    // Advance timers without triggering full tick() which has side effects
+    uint32_t taUnderflows = 0;
+    tickTimerA(cycles);
+    tickTimerB(cycles, taUnderflows);
+
+    // Check if interrupt bit changed
+    bool interruptWasSet = (prevIcrPending & ICR_INT) != 0;
+    bool interruptNowSet = (m_icrPending & ICR_INT) != 0;
+
+    std::string result = m_name + " advanced by " + std::to_string(cycles) + " cycles\n\n";
+
+    // Timer A status
+    result += "Timer A: count=$" + toHex(m_taCounter, 4);
+    result += " (latch=$" + toHex(m_taLatch, 4) + ")";
+    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]\n";
+
+    // Timer B status
+    result += "Timer B: count=$" + toHex(m_tbCounter, 4);
+    result += " (latch=$" + toHex(m_tbLatch, 4) + ")";
+    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]\n";
+
+    // ICR status
+    result += "ICR: enabled_mask=$" + toHex(m_icrMask, 2);
+    result += " pending=$" + toHex(m_icrPending, 2) + "\n";
+
+    // Interrupt bit status
+    result += "Interrupt bit: " + std::string(interruptNowSet ? "SET" : "NOT SET");
+    if (interruptWasSet != interruptNowSet) {
+        result += " (changed during advance)";
+    }
+    result += "\n";
+
+    return result;
+}
+
+std::string CIA6526::getStatusString() const {
+    std::string result = m_name + " Status:\n";
+
+    // Timer A
+    result += "  Timer A: count=$" + toHex(m_taCounter, 4);
+    result += " latch=$" + toHex(m_taLatch, 4);
+    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]";
+    result += " mode=" + std::string((m_cra & CR_ONESHOT) ? "oneshot" : "continuous") + "\n";
+
+    // Timer B
+    result += "  Timer B: count=$" + toHex(m_tbCounter, 4);
+    result += " latch=$" + toHex(m_tbLatch, 4);
+    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]";
+    result += " mode=" + std::string((m_crb & CR_ONESHOT) ? "oneshot" : "continuous") + "\n";
+
+    // ICR
+    result += "  ICR: enabled=$" + toHex(m_icrMask, 2);
+    result += " pending=$" + toHex(m_icrPending, 2) + "\n";
+
+    // Port status
+    result += "  Port A: $" + toHex(m_pra, 2) + " (IEC bus)\n";
+    result += "  Port B: $" + toHex(m_prb, 2) + "\n";
+
+    // Interrupt bit
+    result += "  Interrupt bit: " + std::string((m_icrPending & ICR_INT) ? "SET" : "NOT SET") + "\n";
+
+    return result;
 }

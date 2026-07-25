@@ -3,6 +3,7 @@
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iport_device.h"
 #include "libdevices/main/isignal_line.h"
+#include "libdevices/main/idevice_inspectable.h"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -32,7 +33,7 @@
  *   setClockHz(hz) configures the Phi2 frequency used for TOD and timer
  *   calibration.  Defaults to 1 022 727 Hz (NTSC C64).
  */
-class CIA6526 : public IOHandler {
+class CIA6526 : public IOHandler, public IDeviceInspectable {
 public:
     CIA6526() : m_name("CIA"), m_baseAddr(0) { CIA6526::reset(); }
     CIA6526(const std::string& name, uint32_t baseAddr);
@@ -70,6 +71,13 @@ public:
     void reset()  override;
     void tick(uint64_t cycles) override;
     void getDeviceInfo(DeviceInfo& out) const override;
+
+    // -----------------------------------------------------------------------
+    // IDeviceInspectable interface (cycle advancement for testing)
+    // -----------------------------------------------------------------------
+
+    std::string advanceCycles(uint32_t cycles) override;
+    std::string getStatusString() const override;
 
     // -----------------------------------------------------------------------
     // Register indices

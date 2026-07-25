@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <map>
 
 /**
  * Slot for a CPU in a machine.
@@ -65,6 +66,10 @@ struct MachineDescriptor {
     std::vector<BusSlot> buses;
 
     IORegistry* ioRegistry = nullptr;
+
+    // Named devices for device-specific CLI commands (e.g., cia1.advance)
+    // Maps device name to IOHandler pointer
+    std::map<std::string, class IOHandler*> namedDevices;
 
     // Original JSON spec used to build this machine
     nlohmann::json sourceSpec;
