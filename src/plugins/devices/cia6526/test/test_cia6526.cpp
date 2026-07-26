@@ -9,7 +9,7 @@ struct CiaFixture {
 
     CiaFixture() {
         cia.setClockHz(1022727);  // NTSC
-        cia.setTimerGracePeriod(1);  // Minimal grace period for tests (1 cycle)
+        cia.setTimerGracePeriod(0);  // No grace period for tests (immediate countdown)
     }
 };
 
