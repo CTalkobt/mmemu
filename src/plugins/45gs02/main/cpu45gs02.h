@@ -4,6 +4,8 @@
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <cstdint>
+#include <memory>
+#include <spdlog/spdlog.h>
 
 /**
  * 45GS02 Status Flags (same as 6502).
@@ -99,7 +101,7 @@ public:
     void triggerReset() override { reset(); }
     void setIrqLine(bool asserted) override { m_state.irqLine = asserted ? 1 : 0; }
     void setNmiLine(bool asserted) override { m_state.nmiLine = asserted ? 1 : 0; }
-    void setHaltLine(bool asserted) override { m_state.haltLine = asserted ? 1 : 0; }
+    void setHaltLine(bool asserted) override;  // Implemented in .cpp with logging
 
     // Disassembly (stubs for now)
     int disassembleOne  (IBus* bus, uint32_t addr, char* buf, int bufsz) override;
@@ -165,6 +167,12 @@ private:
     uint32_t        m_hyperRomSize = 0;
 
     bool            m_experimentalPrefixMode = false;  // false = buggy (always consume NEG/NEG), true = fixed (peek-ahead)
+
+    bool            m_loggerChecked = false;
+    spdlog::logger* m_logger = nullptr;
+
+    // Logger initialization helper
+    void _ensureLogger();
 
     // Helper for address translation (MAP)
     uint32_t translate(uint16_t addr);

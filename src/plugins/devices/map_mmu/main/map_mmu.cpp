@@ -77,11 +77,18 @@ uint32_t MapMmu::translate(uint32_t vaddr) const {
 uint8_t MapMmu::read8(uint32_t addr) {
     addr &= 0xFFFF;
 
+    if (addr == 0xD610) {
+        fprintf(stderr, "[MapMmu::read8] D610 READ called\n");
+        fflush(stderr);
+    }
+
     static uint64_t readCount = 0;
     bool logThisRead = m_logMemAccess || (addr >= 0xFF80 && addr <= 0xFFFF) ||
                        (addr >= 0xE4B0 && addr <= 0xE4D8) ||
                        (addr >= 0x0320 && addr <= 0x0321) ||
                        readCount < 20;
+    bool detailedTrace = (addr >= 0x0320 && addr <= 0x0321);
+
     if (logThisRead) {
         fprintf(stderr, "[MapMmu] READ #%llu: addr=$%04X\n", (unsigned long long)readCount, addr);
         fflush(stderr);
@@ -103,6 +110,10 @@ uint8_t MapMmu::read8(uint32_t addr) {
     // Check I/O hooks first (virtual address space)
     uint8_t ioVal = 0;
     if (m_ioRead && m_ioRead(this, addr, &ioVal)) {
+        if (addr == 0xD610) {
+            fprintf(stderr, "[MapMmu::read8] D610: I/O returned val=$%02X\n", ioVal);
+            fflush(stderr);
+        }
         if (logThisRead) {
             fprintf(stderr, "  -> I/O: val=$%02X\n", ioVal);
             fflush(stderr);
@@ -111,6 +122,23 @@ uint8_t MapMmu::read8(uint32_t addr) {
             m_observer->onMemoryRead(this, addr, ioVal);
         }
         return ioVal;
+    } else if (addr == 0xD610) {
+        fprintf(stderr, "[MapMmu::read8] D610: I/O hook returned FALSE (no handler)\n");
+        fflush(stderr);
+    }
+
+    // For $0320-$0321 vector reads, show detailed MAP state
+    if (detailedTrace) {
+        int block = (addr >> 13) & 7;
+        bool mapEnabled = (m_mapState.enables & (1 << block)) != 0;
+        fprintf(stderr, "  [VECTOR TRACE] block=%d MAP_ENABLE=%d ", block, mapEnabled ? 1 : 0);
+        if (mapEnabled) {
+            fprintf(stderr, "offset=$%05X mb=$%06X\n", m_mapState.offsets[block],
+                    block < 4 ? m_mapState.megabyteLow : m_mapState.megabyteHigh);
+        } else {
+            fprintf(stderr, "(passthrough)\n");
+        }
+        fflush(stderr);
     }
 
     uint32_t physAddr = translate(addr);

@@ -42,6 +42,11 @@ void Mega65IoStub::pushKey(uint8_t ascii, uint8_t petscii, uint8_t mods) {
 }
 
 bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
+    if (addr == 0xD610) {
+        fprintf(stderr, "[Mega65IoStub::ioRead] ENTRY for D610\n");
+        fflush(stderr);
+    }
+
     // F011 FDC registers $D080-$D09F (stub — no real floppy emulation)
     if (addr >= 0xD080 && addr <= 0xD09F) {
         uint8_t off = addr & 0x1F;
@@ -82,8 +87,20 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         }
 
         // $D610: ASCII key at top of queue (0 if empty)
+        // NOTE: Some keys (cursor keys, function keys) have ascii=0 but petscii!=0.
+        // Return petscii if ascii is 0 to avoid false "queue empty" indication.
         if (addr == 0xD610) {
-            *val = m_keyQueue.empty() ? 0x00 : m_keyQueue.front().ascii;
+            if (m_keyQueue.empty()) {
+                *val = 0x00;
+                fprintf(stderr, "[Mega65IoStub] D610 READ: queue EMPTY, returning $00\n");
+                fflush(stderr);
+            } else {
+                const auto& front = m_keyQueue.front();
+                *val = front.ascii ? front.ascii : front.petscii;
+                fprintf(stderr, "[Mega65IoStub] D610 READ: queue has key (ascii=$%02X petscii=$%02X), returning $%02X\n",
+                        front.ascii, front.petscii, *val);
+                fflush(stderr);
+            }
             return true;
         }
 

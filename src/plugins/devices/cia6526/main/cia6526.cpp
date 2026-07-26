@@ -261,7 +261,7 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
                 // (Some ROMs may only set undefined bits; this ensures the interrupt can fire)
                 m_icrMask |= ICR_TA;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
-                m_taGraceCycles = 65536;  // ~64ms at 1MHz - enough for boot setup
+                m_taGraceCycles = m_timerGracePeriod;
                 fprintf(stderr, "[CIA] %s Timer A started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
                     m_name.c_str(), m_taLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_taGraceCycles, m_icrMask);
             }
@@ -279,7 +279,7 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
                 // Ensure Timer B interrupt bit is enabled in the mask
                 m_icrMask |= ICR_TB;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
-                m_tbGraceCycles = 65536;  // ~64ms at 1MHz - enough for boot setup
+                m_tbGraceCycles = m_timerGracePeriod;
                 fprintf(stderr, "[CIA] %s Timer B started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
                     m_name.c_str(), m_tbLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_tbGraceCycles, m_icrMask);
             }
@@ -509,12 +509,20 @@ std::string CIA6526::advanceCycles(uint32_t cycles) {
     // Timer A status
     result += "Timer A: count=$" + toHex(m_taCounter, 4);
     result += " (latch=$" + toHex(m_taLatch, 4) + ")";
-    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]\n";
+    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]";
+    if (m_taGraceCycles > 0) {
+        result += " grace=" + std::to_string(m_taGraceCycles);
+    }
+    result += "\n";
 
     // Timer B status
     result += "Timer B: count=$" + toHex(m_tbCounter, 4);
     result += " (latch=$" + toHex(m_tbLatch, 4) + ")";
-    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]\n";
+    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]";
+    if (m_tbGraceCycles > 0) {
+        result += " grace=" + std::to_string(m_tbGraceCycles);
+    }
+    result += "\n";
 
     // ICR status
     result += "ICR: enabled_mask=$" + toHex(m_icrMask, 2);

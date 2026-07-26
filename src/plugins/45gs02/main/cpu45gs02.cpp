@@ -1,9 +1,12 @@
 #include "cpu45gs02.h"
 #include "libdebug/main/execution_observer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
+#include "util/logging.h"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <spdlog/spdlog.h>
+#include <spdlog/fmt/fmt.h>
 
 static const RegDescriptor s_regDescriptors[] = {
     { "A",  RegWidth::R8,  REGFLAG_ACCUMULATOR, nullptr, nullptr    },
@@ -17,10 +20,23 @@ static const RegDescriptor s_regDescriptors[] = {
     { "Q",  RegWidth::R32, REGFLAG_INTERNAL,    nullptr, nullptr    }
 };
 
-MOS45GS02::MOS45GS02() : m_bus(nullptr) {
+MOS45GS02::MOS45GS02() : m_bus(nullptr), m_loggerChecked(false), m_logger(nullptr) {
     memset(&m_state, 0, sizeof(m_state));
     memset(&m_hyperState, 0, sizeof(m_hyperState));
     MOS45GS02::reset();
+}
+
+void MOS45GS02::_ensureLogger() {
+    if (!m_loggerChecked) {
+        m_loggerChecked = true;
+        try {
+            auto loggerShared = LogRegistry::instance().getLogger("45gs02");
+            m_logger = loggerShared.get();
+        } catch (...) {
+            // LogRegistry may not be initialized yet; skip logging
+            m_logger = nullptr;
+        }
+    }
 }
 
 void MOS45GS02::reset() {
@@ -285,7 +301,15 @@ void MOS45GS02::push16(uint16_t v) { push8(v >> 8); push8(v & 0xFF); }
 uint16_t MOS45GS02::pull16() { uint8_t l = pull8(); uint8_t h = pull8(); return l | (h << 8); }
 
 int MOS45GS02::step() {
-    if (m_bus && m_bus->isHaltRequested()) { m_state.haltLine = 1; return 1; }
+    if (m_bus && m_bus->isHaltRequested()) {
+        m_state.haltLine = 1;
+        _ensureLogger();
+        if (m_logger) {
+            m_logger->debug("[45GS02] CPU halt: Bus halt requested at PC=${:04X} cycle={}",
+                m_state.pc, m_state.cycles);
+        }
+        return 1;
+    }
     m_state.haltLine = 0;
 
     // NMI handling (edge-sensitive: triggers on 0→1 transition)
@@ -1085,7 +1109,24 @@ int MOS45GS02::step() {
 
         // --- 7. Flow Control ---
         case 0x4C: m_state.pc = getAbs(); break;
-        case 0x6C: { uint16_t a=getAbs(); m_state.pc = read8(a)|(read8(a+1)<<8); m_state.cycles += 2; break; }
+        case 0x6C: {
+            uint16_t a=getAbs();
+            uint8_t lo = read8(a);
+            uint8_t hi = read8(a+1);
+            uint16_t target = (hi << 8) | lo;
+            if (a >= 0x0300 && a <= 0x0330) {  // Log vector reads
+                fprintf(stderr, "[45GS02] JMP ($%04X): lo=$%02X hi=$%02X -> PC=$%04X SP=$%04X\n",
+                    a, lo, hi, target, m_state.sp);
+                fflush(stderr);
+            }
+            m_state.pc = target;
+            m_state.cycles += 2;
+            if (a >= 0x0300 && a <= 0x0330) {
+                fprintf(stderr, "[45GS02]   After JMP: PC now=$%04X\n", m_state.pc);
+                fflush(stderr);
+            }
+            break;
+        }
         case 0x20: { uint16_t t=getAbs(); uint16_t r=m_state.pc-1; push16(r); m_state.pc=t; m_state.cycles++; break; } // JSR
         case 0x60: { m_state.pc = pull16() + 1; m_state.cycles += 3; break; } // RTS
         case 0x40: { uint8_t pulled = pull8(); m_state.p = (pulled & ~(FLAG_B|FLAG_E)) | (m_state.p & (FLAG_B|FLAG_E)); m_state.pc = pull16(); m_state.cycles += 3; break; } // RTI
@@ -1359,13 +1400,16 @@ int MOS45GS02::step() {
                     uint32_t hiOff = (((uint32_t)m_state.y & 0xFF) << 8) | (m_state.z & 0x0F);
                     for (int i = 4; i < 8; i++)
                         state.offsets[i] = (i * 0x20) + hiOff;
-                    state.enables = (state.enables & 0x0F) | (((m_state.y >> 4) & 0x0F) << 4);
+                    state.enables = (state.enables & 0x0F) | (((m_state.z >> 4) & 0x0F) << 4);
                 }
 
                 m_mapMmu->setMapState(state);
             }
             // Set interrupt inhibit flag: defer IRQ/NMI until EOM ($EA)
             m_state.mapInterruptInhibit = true;
+            fprintf(stderr, "[45GS02] MAP: Set mapInterruptInhibit=true at cycle %llu PC=$%04X\n",
+                    (unsigned long long)m_state.cycles, startPc);
+            fflush(stderr);
             m_state.cycles++;
             break;
         }
@@ -1385,7 +1429,14 @@ int MOS45GS02::step() {
         case 0xCB: { uint16_t a = getAbs(); uint16_t v = (uint16_t)read8(a) | ((uint16_t)read8(a+1) << 8); m_state.p = (m_state.p & ~FLAG_C) | (v >> 15); v <<= 1; write8(a, (uint8_t)(v&0xFF)); write8(a+1, (uint8_t)(v>>8)); updateNZ16(v); break; } // ASW
         case 0xEB: { uint16_t a = getAbs(); uint16_t v = (uint16_t)read8(a) | ((uint16_t)read8(a+1) << 8); uint16_t c = (m_state.p & FLAG_C) ? 1 : 0; m_state.p = (m_state.p & ~FLAG_C) | (v >> 15); v = (v << 1) | c; write8(a, (uint8_t)(v&0xFF)); write8(a+1, (uint8_t)(v>>8)); updateNZ16(v); break; } // ROW
 
-        default: m_state.haltLine = 1; break;
+        default:
+            m_state.haltLine = 1;
+            _ensureLogger();
+            if (m_logger) {
+                m_logger->warn("[45GS02] CPU halt: Invalid opcode ${:02X} at PC=${:04X} cycle={}",
+                    op, startPc, m_state.cycles);
+            }
+            break;
     }
 
 
@@ -1396,7 +1447,21 @@ void MOS45GS02::triggerIrq() {
     m_state.irqLine = 1;
 }
 void MOS45GS02::triggerNmi() {
+    fprintf(stderr, "[45GS02] triggerNmi called: PC=$%04X A=$%02X X=$%02X Y=$%02X P=$%02X SP=$%04X\n",
+        m_state.pc, m_state.a, m_state.x, m_state.y, m_state.p, m_state.sp);
+    fflush(stderr);
     m_state.nmiLine = 1;
+}
+
+void MOS45GS02::setHaltLine(bool asserted) {
+    m_state.haltLine = asserted ? 1 : 0;
+    if (asserted) {
+        _ensureLogger();
+        if (m_logger) {
+            m_logger->debug("[45GS02] CPU halt: setHaltLine(true) at PC=${:04X} cycle={}",
+                m_state.pc, m_state.cycles);
+        }
+    }
 }
 
 int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
@@ -1837,7 +1902,14 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
     if (m_state.hypervisor) return false;
 
     // haltLine is set by step() when the bus requests halt (e.g. ExitTrap).
-    if (m_state.haltLine) return true;
+    if (m_state.haltLine) {
+        _ensureLogger();
+        if (m_logger) {
+            m_logger->debug("[45GS02] isProgramEnd detected haltLine at PC=${:04X} cycle={}",
+                m_state.pc, m_state.cycles);
+        }
+        return true;
+    }
 
     // Check for RTS/RTI/RTN on empty stack (SP at initial value)
     // Skip this check if IRQ vector is set (full machine with ROM, not a test program).
@@ -1876,7 +1948,14 @@ bool MOS45GS02::isProgramEnd(IBus* bus) {
         uint8_t op = bus->peek8(addr);
         if (op == 0x4C) { // JMP abs
             uint16_t target = bus->peek8(addr + 1) | (bus->peek8(addr + 2) << 8);
-            if (target == m_state.pc) return true;
+            if (target == m_state.pc) {
+                _ensureLogger();
+                if (m_logger) {
+                    m_logger->debug("[45GS02] isProgramEnd: JMP infinite loop detected at PC=${:04X}",
+                        m_state.pc);
+                }
+                return true;
+            }
         }
     }
 

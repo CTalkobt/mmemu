@@ -262,32 +262,31 @@ MachineDescriptor* Mega65MachineFactory::create() {
     }
     for (uint32_t i = 0; i < 128 * 1024; i++) {
         physBus->write8(0x020000 + i, romBuf[i]);
-        physBus->write8(0x0E0000 + i, romBuf[i]);
+        physBus->write8(0x030000 + i, romBuf[i]);
     }
     physBus->clearWriteLog();
 
-    // -----------------------------------------------------------------------
-    // Place fake cartridge signature at $8000 to trigger MEGA65 boot mode
-    // -----------------------------------------------------------------------
-    // The ROM's a0int routine ($FD02) checks for cartridge signature "CBM80"
-    // (with MSBs set on "CBM": $C3 $C2 $CD) at $8000-$8002.
-    // Without this, the boot falls back to C64 mode instead of MEGA65 mode.
-    // This is a workaround until we properly support MEGA65 cartridges.
-    physBus->write8(0x8000, 0xC3);  // 'C' with MSB set
-    physBus->write8(0x8001, 0xC2);  // 'B' with MSB set
-    physBus->write8(0x8002, 0xCD);  // 'M' with MSB set
-    physBus->write8(0x8003, 0x38);  // '8'
-    physBus->write8(0x8004, 0x30);  // '0'
-    fprintf(stderr, "[MEGA65] Placed cartridge signature at $8000 to trigger MEGA65 boot mode\n");
+    // Verify ROM vectors were loaded correctly
+    uint8_t nmiLo = romBuf[0x1FFFA];
+    uint8_t nmiHi = romBuf[0x1FFFB];
+    uint8_t resetLo = romBuf[0x1FFFC];
+    uint8_t resetHi = romBuf[0x1FFFD];
+    uint8_t irqLo = romBuf[0x1FFFE];
+    uint8_t irqHi = romBuf[0x1FFFF];
+    fprintf(stderr, "[MEGA65] ROM file vectors: NMI=($%02X $%02X) RESET=($%02X $%02X) IRQ=($%02X $%02X)\n",
+            nmiLo, nmiHi, resetLo, resetHi, irqLo, irqHi);
 
-    // Initialize $0320-$0321 vector (BASIC ROM dispatch vector)
-    // C64 BASIC cartridge dispatch table uses JMP ($0320), JMP ($0322), etc.
-    // These are NOT interrupt vectors like $0314-$0319. The MEGA65 ROM doesn't initialize
-    // these BASIC vectors since it doesn't use BASIC dispatch. Point to next dispatch at $F49E.
-    physBus->write8(0x0320, 0x9E);  // Low byte of address
-    physBus->write8(0x0321, 0xF4);  // High byte of address = $F49E
-    fprintf(stderr, "[MEGA65] Initialized BASIC dispatch vector: $0320=$%02X $0321=$%02X -> $F49E\n",
-            physBus->peek8(0x0320), physBus->peek8(0x0321));
+    // Copy vectors to physical $FFFC-$FFFF so CPU can read them at reset
+    // (before MapMmu is configured, physical and logical addresses are the same)
+    physBus->write8(0xFFFC, resetLo);
+    physBus->write8(0xFFFD, resetHi);
+    physBus->write8(0xFFFE, irqLo);
+    physBus->write8(0xFFFF, irqHi);
+
+    // MEGA65 boots without cartridge by default. If a cartridge signature is detected
+    // at physical address $40.8000, the ROM attempts to copy cartridge bootstrap code
+    // via inline DMA. We don't emulate cartridges yet, so skip the fake signature.
+
 
     desc->deleters.push_back([romBuf]() { delete[] romBuf; });
 
@@ -398,7 +397,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     //   CPU $E000-$FFFF (KERNAL) = phys $02E000 = file offset $E000
     bankCtrl->setFullRom(romBuf, 128 * 1024);
     bankCtrl->setBasicRom (romBuf + 0xA000, 8192);
-    bankCtrl->setKernalRom(romBuf + 0xE000, 8192);
+    // KERNAL region $E000-$FFFF reads from fullRom; don't use separate kernalRom buffer
+    // (the full ROM contains all vectors including those at file offset 0x1FFFC-0x1FFFF)
     bankCtrl->setCharRom  (romBuf + 0xD000, 4096);
 
     // -----------------------------------------------------------------------
@@ -788,54 +788,54 @@ MachineDescriptor* Mega65MachineFactory::create() {
     };
 
     // Reset callback: reset all I/O devices, then CPU.
-    // Skip HYPPO boot — go directly to the C65 KERNAL reset vector.
-    // HYPPO remains loaded for runtime HDOS trap handling ($D640 writes).
-    desc->onReset = [physBus](MachineDescriptor& d) {
+    // Load reset vectors from ROM ($FFFA, $FFFC, $FFFE) per MEGA65 specification.
+    // If HYPPO is loaded, it enters hypervisor mode; otherwise start at C65 KERNAL.
+    desc->onReset = [physBus, romBuf](MachineDescriptor& d) {
         if (d.ioRegistry) d.ioRegistry->resetAll();
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();
 
-        // The 45GS02 reset() enters hypervisor mode when HYPPO is loaded.
-        // Override: leave hypervisor and start at the C65 KERNAL reset vector
-        // ($FFFC/$FFFD in the ROM at physical $02FFFC/$02FFFD).
-        // Don't use exitHypervisor() — it restores from zeroed hyperState,
-        // corrupting SP, P, and MAP. Instead, directly clear hypervisor flag
-        // and set the correct initial CPU state.
         auto* cpu = static_cast<MOS45GS02*>(d.cpus[0].cpu);
+
+        // Read vectors directly from ROM buffer ($FFFA-$FFFF)
+        uint8_t nmiLo = romBuf[0x1FFFA];
+        uint8_t nmiHi = romBuf[0x1FFFB];
+        uint8_t resetLo = romBuf[0x1FFFC];
+        uint8_t resetHi = romBuf[0x1FFFD];
+        uint8_t irqLo = romBuf[0x1FFFE];
+        uint8_t irqHi = romBuf[0x1FFFF];
+
+        uint16_t nmiVec = nmiLo | ((uint16_t)nmiHi << 8);
+        uint16_t resetVec = resetLo | ((uint16_t)resetHi << 8);
+        uint16_t irqVec = irqLo | ((uint16_t)irqHi << 8);
+
+        fprintf(stderr, "[MEGA65] ROM vectors from file: NMI=$%04X RESET=$%04X IRQ=$%04X\n",
+                nmiVec, resetVec, irqVec);
+
+        // If hypervisor mode, exit it and start at KERNAL
         if (cpu->isHypervisor()) {
-            uint8_t lo = physBus->read8(0x02FFFC);
-            uint8_t hi = physBus->read8(0x02FFFD);
-            uint16_t resetVec = lo | ((uint16_t)hi << 8);
-
-            // Clear hypervisor mode flag directly
             cpu->setHypervisorMode(false);
-
-            // Set initial CPU state matching Cold Start spec (Step 1-2):
-            cpu->regWrite(0, 0);            // A = 0
-            cpu->regWrite(1, 0);            // X = 0
-            cpu->regWrite(2, 0);            // Y = 0
-            cpu->regWrite(3, 0);            // Z = 0
-            cpu->regWrite(4, 0);            // B = 0 (direct page at $0000)
-            cpu->regWrite(5, 0x01FF);       // SP = $01FF
-            cpu->regWrite(6, resetVec);     // PC = reset vector
-            cpu->regWrite(7, 0x24);         // P = I flag set, E flag set
-
-            // Clear MAP state (no block mappings at reset)
-            auto* mc = cpu->getMapMmu();
-            if (mc) {
-                MapState ms;
-                memset(&ms, 0, sizeof(ms));
-                mc->setMapState(ms);
-            }
-
-            // Default I/O channels
-            IBus* mb = d.cpus[0].dataBus;
-            mb->write8(0x9A, 0x03);    // default output = screen
-            mb->write8(0x99, 0x00);    // default input = keyboard
-
-
-            fprintf(stderr, "[MEGA65] Skipping HYPPO, booting C65 KERNAL at $%04X\n", resetVec);
+            fprintf(stderr, "[MEGA65] Exiting hypervisor mode, starting at KERNAL\n");
         }
+
+        // cpu->reset() already initialized all registers from reset vector at $FFFC-$FFFD.
+        // Only override P register for boot flags.
+        cpu->regWrite(7, 0x24);         // P: I=1 (disable IRQ), E=0 (16-bit native mode)
+
+        // Clear MAP state (no block mappings at reset)
+        auto* mc = cpu->getMapMmu();
+        if (mc) {
+            MapState ms;
+            memset(&ms, 0, sizeof(ms));
+            mc->setMapState(ms);
+        }
+
+        // Default I/O channels
+        IBus* mb = d.cpus[0].dataBus;
+        mb->write8(0x9A, 0x03);    // default output = screen
+        mb->write8(0x99, 0x00);    // default input = keyboard
+
+        fprintf(stderr, "[MEGA65] Booting C65 KERNAL at $%04X\n", resetVec);
     };
 
     return desc;
