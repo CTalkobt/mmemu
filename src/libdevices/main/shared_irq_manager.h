@@ -4,6 +4,7 @@
 #include "libcore/main/icore.h"
 #include <vector>
 #include <cstdint>
+#include <cstdio>
 
 /**
  * Manages a shared (wired-OR) IRQ line where multiple devices can assert
@@ -32,10 +33,14 @@ public:
         bool get()  const override { return m_level; }
         void pulse() override { m_parent->m_cpu->triggerIrq(); }
         void set(bool level) override {
+            bool wasActive = m_parent->m_state != 0;
             m_level = level;
             if (level) m_parent->m_state |=  m_bit;
             else       m_parent->m_state &= ~m_bit;
-            m_parent->m_cpu->setIrqLine(m_parent->m_state != 0);
+            bool isActive = m_parent->m_state != 0;
+            if (wasActive != isActive) {
+                m_parent->m_cpu->setIrqLine(isActive);
+            }
         }
 
     private:
@@ -73,10 +78,14 @@ public:
         bool get()  const override { return m_level; }
         void pulse() override { m_parent->m_cpu->triggerNmi(); }
         void set(bool level) override {
+            bool wasActive = m_parent->m_state != 0;
             m_level = level;
             if (level) m_parent->m_state |=  m_bit;
             else       m_parent->m_state &= ~m_bit;
-            m_parent->m_cpu->setNmiLine(m_parent->m_state != 0);
+            bool isActive = m_parent->m_state != 0;
+            if (wasActive != isActive) {
+                m_parent->m_cpu->setNmiLine(isActive);
+            }
         }
     private:
         SharedNmiManager* m_parent;
