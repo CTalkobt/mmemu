@@ -399,6 +399,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
 	src/plugins/devices/sid6581/main/combined_waveforms.o \
 	src/plugins/devices/sid6581/main/filter_curve.o \
+	src/plugins/devices/sid6581/main/spectral_analyzer.o \
+	src/plugins/devices/sid6581/main/sid_validation_suite.o \
 	src/plugins/devices/sid_pair/main/sid_pair.o \
 	src/plugins/devices/datasette/main/datasette.o \
 	src/plugins/cbm-loader/main/tap_parser.o \
@@ -436,7 +438,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/hyper_serial/main/hyper_serial.o \
 	src/plugins/devices/exit_trap/main/exit_trap.o \
 	src/plugins/machines/mega65/main/machine_mega65.o \
-	src/plugins/cbm-hle/main/kernal_hle.o
+	src/plugins/cbm-hle/main/kernal_hle.o \
+	src/cli/main/xemu_bridge.o \
+	src/cli/main/sid_test_programs.o
 REGISTRY_OBJS = src/cli/main/cli_interpreter.o \
 	src/cli/main/plugin_command_registry.o \
 	src/mcp/main/plugin_tool_registry.o \
