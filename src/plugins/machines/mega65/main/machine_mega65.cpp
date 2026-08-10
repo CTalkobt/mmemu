@@ -822,11 +822,18 @@ MachineDescriptor* Mega65MachineFactory::create() {
         // Only override P register for boot flags.
         cpu->regWrite(7, 0x24);         // P: I=1 (disable IRQ), E=0 (16-bit native mode)
 
-        // Clear MAP state (no block mappings at reset)
+        // Initialize MAP state: enable block 7 to overlay ROM at $E000-$FFFF.
+        // The ROM is stored at physical $020000-$03FFFF, so we need to:
+        // - Set megabyteLow/High to MB 2 (0x020000 base)
+        // - Enable block 7 with offset 0xE000 to map $E000-$FFFF to ROM
         auto* mc = cpu->getMapMmu();
         if (mc) {
             MapState ms;
             memset(&ms, 0, sizeof(ms));
+            ms.megabyteLow = 0x020000;   // ROM physical base
+            ms.megabyteHigh = 0x020000;  // ROM physical base for upper 32KB too
+            ms.offsets[7] = 0xE000;      // Block 7 offset within the MB
+            ms.enables = 0x80;           // Enable only block 7 (bit 7 = 1)
             mc->setMapState(ms);
         }
 
