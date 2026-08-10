@@ -22,6 +22,7 @@ public:
     MachineDescriptor* createMachine(const std::string& id);
     void enumerate(std::vector<std::string>& ids);
     void enumerateDetailed(std::vector<std::pair<std::string, std::string>>& out);
+    void clear();
 
 private:
     MachineRegistry() = default;

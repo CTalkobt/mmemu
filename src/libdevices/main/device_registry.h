@@ -36,6 +36,11 @@ public:
      */
     void enumerate(std::vector<std::string>& out);
 
+    /**
+     * Clear all registered device factories (used when unloading plugins).
+     */
+    void clear();
+
 private:
     DeviceRegistry() = default;
     std::map<std::string, FactoryFn> m_factories;

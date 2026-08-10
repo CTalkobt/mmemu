@@ -15,6 +15,8 @@ public:
 
     const std::vector<ExecutionObserver*>& observers() const { return m_observers; }
 
+    void clear();
+
 private:
     ObserverRegistry() = default;
     std::vector<ExecutionObserver*> m_observers;

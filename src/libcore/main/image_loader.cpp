@@ -109,3 +109,10 @@ ICartridgeHandler* ImageLoaderRegistry::getActiveCartridge(IBus* bus) {
     }
     return nullptr;
 }
+
+void ImageLoaderRegistry::clear() {
+    m_loaders.clear();
+    // Re-register the default BIN loader after clearing
+    m_loaders.push_back(std::make_unique<BinLoader>());
+    m_cartFactories.clear();
+}

@@ -24,6 +24,7 @@ public:
     void registerCore(const std::string& name, const std::string& variant, const std::string& license, FactoryFn factory);
     ICore* createCore(const std::string& name);
     void enumerate(std::vector<CoreInfo>& out);
+    void clear();
 
 private:
     CoreRegistry() = default;

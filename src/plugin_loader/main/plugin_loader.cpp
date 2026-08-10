@@ -10,6 +10,7 @@
 #include "libtoolchain/main/toolchain_registry.h"
 #include "libdevices/main/device_registry.h"
 #include "libcore/main/image_loader.h"
+#include "libdebug/main/observer_registry.h"
 
 namespace fs = std::filesystem;
 
@@ -170,6 +171,16 @@ void PluginLoader::loadFromStandardLocations() {
 }
 
 void PluginLoader::unloadAll() {
+    // IMPORTANT: Clear all registries BEFORE unloading plugins.
+    // If we dlclose() first, the plugins' code is freed, and any subsequent
+    // attempt to use factory functions will result in SEGV.
+    CoreRegistry::instance().clear();
+    MachineRegistry::instance().clear();
+    DeviceRegistry::instance().clear();
+    ToolchainRegistry::instance().clear();
+    ImageLoaderRegistry::instance().clear();
+    ObserverRegistry::instance().clear();
+
     for (auto& p : m_plugins) {
         dlclose(p.handle);
     }

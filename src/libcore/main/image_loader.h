@@ -116,6 +116,11 @@ public:
      */
     ICartridgeHandler* getActiveCartridge(IBus* bus);
 
+    /**
+     * Clear all registered loaders and cartridge handlers (used when unloading plugins).
+     */
+    void clear();
+
 private:
     ImageLoaderRegistry() = default;
     std::vector<std::unique_ptr<IImageLoader>> m_loaders;

@@ -18,3 +18,7 @@ void ObserverRegistry::unregisterObserver(ExecutionObserver* obs) {
         m_observers.erase(it);
     }
 }
+
+void ObserverRegistry::clear() {
+    m_observers.clear();
+}

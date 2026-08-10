@@ -65,6 +65,11 @@ std::vector<std::string> ToolchainRegistry::getAssemblerNames() const {
     return names;
 }
 
+void ToolchainRegistry::clear() {
+    m_toolchains.clear();
+    m_assemblersByName.clear();
+}
+
 IAssembler* resolveAssembler(const std::string& isa,
                              const std::string& machinePreferred,
                              const std::string& runtimeOverride) {

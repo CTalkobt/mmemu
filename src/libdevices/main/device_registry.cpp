@@ -30,3 +30,7 @@ void DeviceRegistry::enumerate(std::vector<std::string>& out) {
         out.push_back(name);
     }
 }
+
+void DeviceRegistry::clear() {
+    m_factories.clear();
+}
