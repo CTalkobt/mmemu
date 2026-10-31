@@ -116,16 +116,9 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     // KERNAL / ROME: $E000-$FFFF (block 7)
     if (addr >= 0xE000 && addr <= 0xFFFF && !isBlockMapped(7)) {
         if ((d030val & 0x80) || hiram()) {
-            // m_fullRom is the complete 128KB ROM file.
-            // For MEGA65, CPU addresses $E000-$FFFF are at file offsets $E000-$FFFF (lower half)
-            // and also at $1E000-$1FFFF (upper half for vectors). Try upper half first for MEGA65.
-            if (m_fullRom && m_fullRomSize >= 0x20000) {
-                // Try upper half first (MEGA65 vectors at $1FFFC-$1FFFF)
-                uint32_t upperOff = addr + 0x10000;
-                if (upperOff < m_fullRomSize)
-                    { *val = m_fullRom[upperOff]; return true; }
-            }
-            // Fall back to lower half
+            // Both $01 HIRAM and $D030 ROME select the C64 KERNAL at ROM offset
+            // $E000 (phys $2E000), per gs4510.vhdl. The C65 KERNAL at $3E000 is
+            // only reachable via MAP.
             if (m_fullRom && addr < m_fullRomSize)
                 { *val = m_fullRom[addr]; return true; }
             uint32_t off = addr - 0xE000;

@@ -185,6 +185,21 @@ public:
         bool down = (t == wxEVT_CHAR_HOOK);
         int  code = key.GetKeyCode();
 
+        // --- Positional mode (MEGA65): Shift is a real modifier and keys keep
+        //     their position, so Shift+2 gives '"' as on the MEGA65 keyboard ---
+        if (m_positional) {
+            if (code == WXK_SHIFT) {
+                logKey("left_shift", down);
+                (void)m_handler("left_shift", down);
+                return Event_Processed;
+            }
+            std::string name = wxKeyToVic20Name(unshiftedUsKey(code));
+            if (name.empty()) return Event_Skip;
+            logKey(name, down);
+            (void)m_handler(name, down);
+            return Event_Processed;
+        }
+
         // --- Shift key: buffer rather than forward immediately ---
         if (code == WXK_SHIFT) {
             if (down) {
@@ -230,6 +245,7 @@ public:
 
     std::function<bool(const std::string&, bool)> m_handler;
     std::shared_ptr<spdlog::logger> m_logger;
+    bool m_positional = false;  // true: forward Shift + base key (no PET dedicated-key mapping)
 
 private:
     bool m_shiftPending = false;
@@ -249,6 +265,15 @@ private:
     // deliver the COMPOSED Unicode character for punctuation keys.  Both the
     // base key codes (e.g. '\'' = 39) and the composed codes (e.g. '"' = 34)
     // are listed so the mapping works regardless of GTK behaviour.
+    // GTK may deliver the shifted character; map it back to its US-layout base key.
+    static int unshiftedUsKey(int code) {
+        static const char shifted[] = "!@#$%^&*()_+\":?<>{}";
+        static const char base[]    = "1234567890-=';/,.[]";
+        if (const char* p = std::strchr(shifted, code); p && code)
+            return base[p - shifted];
+        return code;
+    }
+
     static std::string shiftedPetKey(int code) {
         switch (code) {
             // Base key codes (GTK delivers unshifted virtual key)
@@ -1523,6 +1548,7 @@ void MmemuFrame::setKeyCapture(bool active) {
     auto* app = static_cast<MmemuApp*>(wxTheApp);
     if (active && m_machine && m_machine->onKey) {
         app->m_keyFilter.m_handler = m_machine->onKey;
+        app->m_keyFilter.m_positional = (m_machine->machineId.find("mega65") != std::string::npos);
     } else {
         app->m_keyFilter.m_handler = nullptr;
         // Release any modifier keys that may have been left pressed (e.g., the

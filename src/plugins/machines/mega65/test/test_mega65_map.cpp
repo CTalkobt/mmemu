@@ -57,9 +57,9 @@ TEST_CASE(mega65_map_enable_bits) {
 TEST_CASE(mega65_map_per_block_offsets) {
     MapTestFixture f;
 
-    // Lower offset = ((X & 0x0F) << 8) | A = ((0x02) << 8) | 0x00 = 0x200
+    // Lower offset = ((X & 0x0F) << 16) | (A << 8) = $20000
     // Enable all lower blocks: X[7:4] = 0xF → X = 0xF2
-    // Upper offset = ((Z & 0x0F) << 8) | Y = ((0x03) << 8) | 0x00 = 0x300
+    // Upper offset = ((Z & 0x0F) << 16) | (Y << 8) = $30000
     // Enable all upper blocks: Z[7:4] = 0xF → Z = 0xF3
     uint8_t code[] = {
         0xA9, 0x00,   // LDA #$00
@@ -75,42 +75,25 @@ TEST_CASE(mega65_map_per_block_offsets) {
     const MapState& ms = f.mmu.getMapState();
     ASSERT_EQ(ms.enables, 0xFF);
 
-    // Each block's stored offset = block_base/256 + mb_offset
-    // Block 0: base=$0000 → stored = 0x00 + 0x200 = 0x200
-    // Block 1: base=$2000 → stored = 0x20 + 0x200 = 0x220
-    // Block 2: base=$4000 → stored = 0x40 + 0x200 = 0x240
-    // Block 3: base=$6000 → stored = 0x60 + 0x200 = 0x260
-    ASSERT_EQ(ms.offsets[0], 0x200);
-    ASSERT_EQ(ms.offsets[1], 0x220);
-    ASSERT_EQ(ms.offsets[2], 0x240);
-    ASSERT_EQ(ms.offsets[3], 0x260);
-
-    // Block 4: base=$8000 → stored = 0x80 + 0x300 = 0x380
-    // Block 5: base=$A000 → stored = 0xA0 + 0x300 = 0x3A0
-    // Block 6: base=$C000 → stored = 0xC0 + 0x300 = 0x3C0
-    // Block 7: base=$E000 → stored = 0xE0 + 0x300 = 0x3E0
-    ASSERT_EQ(ms.offsets[4], 0x380);
-    ASSERT_EQ(ms.offsets[5], 0x3A0);
-    ASSERT_EQ(ms.offsets[6], 0x3C0);
-    ASSERT_EQ(ms.offsets[7], 0x3E0);
+    // Per gs4510.vhdl / xemu, each half has one byte offset added to the CPU address:
+    //   lower = ((X & $0F) << 16) | (A << 8) = $20000, upper = ((Z & $0F) << 16) | (Y << 8) = $30000
+    for (int i = 0; i < 4; i++) ASSERT_EQ(ms.offsets[i], 0x20000u);
+    for (int i = 4; i < 8; i++) ASSERT_EQ(ms.offsets[i], 0x30000u);
+    ASSERT_EQ(f.mmu.resolvePhysical(0x0000), 0x20000u);
+    ASSERT_EQ(f.mmu.resolvePhysical(0x6123), 0x26123u);
+    ASSERT_EQ(f.mmu.resolvePhysical(0xE000), 0x3E000u);
 }
 
 // Test 3: MAP + data access end-to-end
 TEST_CASE(mega65_map_end_to_end_data_access) {
     MapTestFixture f;
 
-    // Place test data at physical $008300
-    // With hardware-accurate 12-bit addition (issue #103):
-    // MAP sets offset = ((Z & 0x0F) << 8) | Y = 0x280
-    // CPU adds block offset: stored_offset[4] = (4 * 0x20) + 0x280 = 0x300
-    // Translation: offsetHigh12 = (0x300 >> 8) & 0xFFF = 0x03
-    //              vaddrHigh (from vaddr 0x8000) = 0x80
-    //              sum12bit = (0x03 + 0x80) & 0xFFF = 0x83
-    //              physAddr = (0x83 << 8) | 0x00 = 0x8300
-    f.physBus.write8(0x008300, 0x42);
+    // MAP sets upper offset = ((Z & 0x0F) << 16) | (Y << 8) = $28000 (gs4510.vhdl / xemu),
+    // so CPU $8000 -> phys $28000 + $8000 = $30000.
+    f.physBus.write8(0x030000, 0x42);
 
     // Z[7:4] = 0x01 enables block 4 (upper half)
-    // Z[3:0] = 0x02, Y = 0x80 sets offset = 0x280
+    // Z[3:0] = 0x02, Y = 0x80 sets offset = $28000
     // Code runs from $0200 (block 1, unmapped) — safe.
     uint8_t code[] = {
         0xA9, 0x00,   // LDA #$00
@@ -118,7 +101,7 @@ TEST_CASE(mega65_map_end_to_end_data_access) {
         0xA0, 0x80,   // LDY #$80  (upper offset low byte)
         0xA3, 0x12,   // LDZ #$12  (enable block 4, offset high nybble = 2)
         0x5C,         // MAP
-        0xAD, 0x00, 0x80,  // LDA $8000 (should read from phys $008200)
+        0xAD, 0x00, 0x80,  // LDA $8000 (should read from phys $030000)
     };
     f.loadCode(0x0200, code, sizeof(code));
 
@@ -139,7 +122,7 @@ TEST_CASE(mega65_eom_preserves_map_state) {
         0xA0, 0x00,   // LDY #$00
         0xA3, 0x00,   // LDZ #$00
         0x5C,         // MAP
-        0x7C,         // EOM
+        0xEA,         // EOM
     };
     f.loadCode(0x0200, code, sizeof(code));
 

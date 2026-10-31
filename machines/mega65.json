@@ -13,6 +13,8 @@
           "description": "C65/MEGA65 ROM (128KB) — loaded at physical $020000-$03FFFF",
           "size": 131072,
           "paths": [
+            "roms/mega65/MEGA65.ROM",
+            "~/.local/share/xemu-lgb/mega65/MEGA65.ROM",
             "roms/mega65/mega65.rom",
             "~/.local/share/xemu-lgb/mega65/mega65.rom",
             "~/.local/share/mmsim/mega65.rom"
