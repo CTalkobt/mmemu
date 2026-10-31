@@ -145,6 +145,19 @@ void PluginLoader::loadFromDir(const std::string& dir) {
     std::vector<std::string> pending;
     for (const auto& entry : fs::directory_iterator(dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".so") {
+            // Search paths are in precedence order: skip a plugin already loaded
+            // from an earlier directory, otherwise a stale installed copy would
+            // re-register its factories over the newer one.
+            const std::string name = entry.path().filename().string();
+            bool alreadyLoaded = false;
+            for (const auto& p : m_plugins) {
+                if (fs::path(p.path).filename() == name) { alreadyLoaded = true; break; }
+            }
+            if (alreadyLoaded) {
+                LogRegistry::instance().getLogger("system")->debug(
+                    "Skipping plugin {} (already loaded from an earlier search path)", entry.path().string());
+                continue;
+            }
             pending.push_back(entry.path().string());
         }
     }
