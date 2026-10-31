@@ -3,6 +3,9 @@
 #include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 #include "plugins/45gs02/main/cpu45gs02.h"
 #include "libmem/main/memory_bus.h"
+#include "libmem/main/sparse_memory_bus.h"
+#include "plugins/devices/map_mmu/main/map_mmu.h"
+#include <cstring>
 
 struct HyperFixture {
     FlatMemoryBus bus{"test", 16};
@@ -295,4 +298,57 @@ TEST_CASE(hypervisor_dma_state_all_registers) {
     ASSERT_EQ((int)val, 0x20);
     ASSERT(f.regs.ioRead(nullptr, 0xD658, &val));
     ASSERT_EQ((int)val, 0x04);
+}
+
+// ---------------------------------------------------------------------------
+// $D64A-$D64F: MAP save registers (MAP A/X/Y/Z encoding, per gs4510.vhdl)
+// ---------------------------------------------------------------------------
+
+struct HyperMapFixture : HyperFixture {
+    SparseMemoryBus physBus{"phys", 28};
+    MapMmu mmu{"mmu", &physBus};
+    HyperMapFixture() { cpu.setMapMmu(&mmu); }
+};
+
+TEST_CASE(hypervisor_map_save_register_layout) {
+    HyperMapFixture f;
+    MapState ms;
+    memset(&ms, 0, sizeof(ms));
+    for (int i = 0; i < 4; i++) ms.offsets[i] = 0x52300;  // MAP A=$23 X=$35
+    for (int i = 4; i < 8; i++) ms.offsets[i] = 0x9AB00;  // MAP Y=$AB Z=$C9
+    ms.enables      = 0xC3;
+    ms.megabyteLow  = 0x01u << 20;
+    ms.megabyteHigh = 0xFFu << 20;
+    f.mmu.setMapState(ms);
+
+    f.cpu.enterHypervisor(0x8000);
+
+    uint8_t val;
+    f.regs.ioRead(nullptr, 0xD64A, &val); ASSERT_EQ((int)val, 0x35);
+    f.regs.ioRead(nullptr, 0xD64B, &val); ASSERT_EQ((int)val, 0x23);
+    f.regs.ioRead(nullptr, 0xD64C, &val); ASSERT_EQ((int)val, 0xC9);
+    f.regs.ioRead(nullptr, 0xD64D, &val); ASSERT_EQ((int)val, 0xAB);
+    f.regs.ioRead(nullptr, 0xD64E, &val); ASSERT_EQ((int)val, 0x01);
+    f.regs.ioRead(nullptr, 0xD64F, &val); ASSERT_EQ((int)val, 0xFF);
+}
+
+TEST_CASE(hypervisor_map_save_registers_restored_on_exit) {
+    HyperMapFixture f;
+    f.cpu.enterHypervisor(0x8000);
+
+    f.regs.ioWrite(nullptr, 0xD64A, 0xF2);  // enables 0-3, offset bits 19:16 = 2
+    f.regs.ioWrite(nullptr, 0xD64B, 0x40);
+    f.regs.ioWrite(nullptr, 0xD64C, 0x81);  // enable block 7, offset bits 19:16 = 1
+    f.regs.ioWrite(nullptr, 0xD64D, 0x20);
+    f.regs.ioWrite(nullptr, 0xD64E, 0x80);
+    f.regs.ioWrite(nullptr, 0xD64F, 0x02);
+    f.regs.ioWrite(nullptr, 0xD67F, 0x00);  // leave hypervisor
+
+    ASSERT(!f.cpu.isHypervisor());
+    const MapState& ms = f.mmu.getMapState();
+    ASSERT_EQ((int)ms.enables, 0x8F);
+    for (int i = 0; i < 4; i++) ASSERT_EQ((int)ms.offsets[i], 0x24000);
+    for (int i = 4; i < 8; i++) ASSERT_EQ((int)ms.offsets[i], 0x12000);
+    ASSERT_EQ((int)(ms.megabyteLow >> 20), 0x80);
+    ASSERT_EQ((int)(ms.megabyteHigh >> 20), 0x02);
 }
