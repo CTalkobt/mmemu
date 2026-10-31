@@ -892,4 +892,4 @@ clean:
 
 # Auto-generated header dependency files (produced by -MMD -MP).
 # The leading dash suppresses errors when .d files don't exist yet.
--include $(shell find src -name '*.d' 2>/dev/null)
+-include $(shell find src tests -name '*.d' 2>/dev/null)
