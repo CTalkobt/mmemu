@@ -55,13 +55,28 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
     te.addr = entry.addr;
     te.cycles = cpu->cycles();
     int n = entry.bytes < TraceEntry::MAX_INSTR_BYTES ? entry.bytes : TraceEntry::MAX_INSTR_BYTES;
-    for (int i = 0; i < n; ++i) te.instr[i] = bus->peek8(entry.addr + i);
+    if (entry.rawLen >= n) std::memcpy(te.instr, entry.raw, n > 0 ? n : 0);   // already read by the decoder
+    else for (int i = 0; i < n; ++i) te.instr[i] = bus->peek8(entry.addr + i);
     te.instrLen = (uint8_t)(n > 0 ? n : 0);
-    int k = 0;
-    for (int i = 0; i < cpu->regCount() && k < TraceEntry::MAX_RAW_REGS; ++i) {
-        if (!(cpu->regDescriptor(i)->flags & REGFLAG_INTERNAL)) te.rawRegs[k++] = cpu->regRead(i);
+    // Registers: one saveState() snapshot when it fits (decoded on read),
+    // otherwise the non-internal register values. Both depend only on the CPU,
+    // so work out which to use once.
+    if (m_traceRegCpu != cpu) {
+        m_traceRegIdx.clear();
+        for (int i = 0; i < cpu->regCount() && (int)m_traceRegIdx.size() < TraceEntry::MAX_RAW_REGS; ++i)
+            if (!(cpu->regDescriptor(i)->flags & REGFLAG_INTERNAL)) m_traceRegIdx.push_back(i);
+        size_t sz = cpu->stateSize();
+        m_traceStateSize = (sz > 0 && sz <= (size_t)TraceEntry::MAX_CPU_STATE) ? (int)sz : 0;
+        m_traceRegCpu = cpu;
     }
-    te.rawRegCount = (uint8_t)k;
+    if (m_traceStateSize > 0) {
+        cpu->saveState(te.cpuState);
+        te.cpuStateLen = (uint8_t)m_traceStateSize;
+    } else {
+        int k = 0;
+        for (int idx : m_traceRegIdx) te.rawRegs[k++] = cpu->regRead(idx);
+        te.rawRegCount = (uint8_t)k;
+    }
 
     // Track cycle count for Lua event system
     m_cycleCounter += cpu->cycles();
@@ -94,7 +109,7 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
     }
 
     // Issue #24 Phase 4.2: Execute Lua cycle events
-    executeLuaCycleEvents(m_cycleCounter);
+    if (m_luaEventRegistry->cycleEventCount() > 0) executeLuaCycleEvents(m_cycleCounter);
 
     if (!cont) return false;
 

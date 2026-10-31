@@ -188,6 +188,14 @@ private:
     int          m_sampleRate = 44100;
     int          m_filterVariant = 0;   // Chip variant (0=6581, 1=8580)
 
+    // Cached filter coefficients (see synthesize()) and the inputs they came from
+    bool         m_coeffValid = false;
+    float        m_coeffF = 0.0f, m_coeffQ = 0.0f;
+    uint16_t     m_coeffCutoff = 0;
+    uint8_t      m_coeffRes = 0;
+    int          m_coeffVariant = 0;
+    int          m_coeffSampleRate = 0;
+
     // Fractional sample accumulator (same approach as VIC-I)
     uint64_t     m_sampleFrac = 0;
 

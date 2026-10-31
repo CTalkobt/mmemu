@@ -14,6 +14,7 @@ struct MemoryWrite {
 struct TraceEntry {
     static constexpr int MAX_INSTR_BYTES = 8;
     static constexpr int MAX_RAW_REGS    = 24;
+    static constexpr int MAX_CPU_STATE   = 64;
 
     uint32_t addr;
     /** Disassembly text; formatted from instr[] on first read when empty. */
@@ -28,6 +29,9 @@ struct TraceEntry {
     uint8_t  instrLen    = 0;
     uint32_t rawRegs[MAX_RAW_REGS];   // values of the CPU's non-internal registers, in order
     uint8_t  rawRegCount = 0;
+    // Or, cheaper: the CPU's saveState() snapshot (used when it fits)
+    uint8_t  cpuState[MAX_CPU_STATE];
+    uint8_t  cpuStateLen = 0;
 };
 
 class ICore;

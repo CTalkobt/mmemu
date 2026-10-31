@@ -1835,11 +1835,15 @@ static void classify45(DisasmEntry* e, uint8_t op) {
 }
 
 int MOS45GS02::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
-    // Prefixed instructions are rare: take the full path for them
-    if (prefixBytes45(bus, addr) > 0) return disassembleEntry(bus, addr, entryOut);
-
     DisasmEntry* e = (DisasmEntry*)entryOut;
     uint8_t op = bus->peek8(addr);
+    // Prefixed instructions ($42 $42 quad, $EA 32-bit indirect) are rare: take
+    // the full path for them
+    if ((op == 0x42 || op == 0xEA) && prefixBytes45(bus, addr) > 0) {
+        e->rawLen = 0;
+        return disassembleEntry(bus, addr, entryOut);
+    }
+
     e->addr = addr;
     e->bytes = opcodeLengths45()[op];
     e->mnemonic.clear();
@@ -1847,16 +1851,22 @@ int MOS45GS02::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
     e->complete.clear();
     classify45(e, op);
 
+    // Read the instruction bytes once; the debugger's trace reuses them
+    const uint8_t* b = e->raw;
+    e->raw[0] = op;
+    for (int i = 1; i < e->bytes && i < DisasmEntry::MAX_RAW; i++) e->raw[i] = bus->peek8(addr + i);
+    e->rawLen = (uint8_t)(e->bytes < DisasmEntry::MAX_RAW ? e->bytes : DisasmEntry::MAX_RAW);
+
     // Branch/call/jump target, as disassembleOne() prints it
-    auto word = [&](uint32_t a) { return (uint16_t)(bus->peek8(a) | (bus->peek8(a + 1) << 8)); };
+    auto word = [&](int i) { return (uint16_t)(b[i] | (b[i + 1] << 8)); };
     if ((op & 0x0F) == 0x0F) {                                     // BBR/BBS zp,rel8
-        e->targetAddr = (uint16_t)(addr + 3 + (int8_t)bus->peek8(addr + 2));
+        e->targetAddr = (uint16_t)(addr + 3 + (int8_t)b[2]);
     } else if ((op & 0x1F) == 0x10 || op == 0x80) {                // 8-bit branches
-        e->targetAddr = (uint16_t)(addr + 2 + (int8_t)bus->peek8(addr + 1));
+        e->targetAddr = (uint16_t)(addr + 2 + (int8_t)b[1]);
     } else if ((op & 0x1F) == 0x13 || op == 0x83 || op == 0x63) {  // 16-bit branches, BSR
-        e->targetAddr = (uint16_t)(addr + 3 + (int16_t)word(addr + 1));
+        e->targetAddr = (uint16_t)(addr + 3 + (int16_t)word(1));
     } else if (op == 0x20 || op == 0x22 || op == 0x23 || op == 0x4C || op == 0x6C) {
-        e->targetAddr = word(addr + 1);                            // JSR/JMP abs and indirect pointers
+        e->targetAddr = word(1);                                   // JSR/JMP abs and indirect pointers
     } else {
         e->targetAddr = 0;
     }

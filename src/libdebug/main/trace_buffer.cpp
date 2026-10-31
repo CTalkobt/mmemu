@@ -19,6 +19,7 @@ TraceEntry& TraceBuffer::pushNew() {
     te.regs.clear();
     te.instrLen = 0;
     te.rawRegCount = 0;
+    te.cpuStateLen = 0;
     return te;
 }
 
@@ -34,6 +35,18 @@ void TraceBuffer::materialize(const TraceEntry& e) const {
         buf[0] = '\0';
         m_cpu->disassembleOne(&win, e.addr, buf, sizeof(buf));
         e.mnemonic = buf;
+    }
+    if (e.regs.empty() && e.cpuStateLen > 0 && m_cpu->stateSize() == e.cpuStateLen) {
+        // Read the registers from the recorded snapshot, then put the live
+        // state back: the CPU ends up unchanged.
+        uint8_t live[TraceEntry::MAX_CPU_STATE];
+        m_cpu->saveState(live);
+        m_cpu->loadState(e.cpuState);
+        for (int i = 0; i < m_cpu->regCount(); ++i) {
+            const auto* desc = m_cpu->regDescriptor(i);
+            if (!(desc->flags & REGFLAG_INTERNAL)) e.regs[desc->name] = m_cpu->regRead(i);
+        }
+        m_cpu->loadState(live);
     }
     if (e.regs.empty() && e.rawRegCount > 0) {
         int k = 0;
