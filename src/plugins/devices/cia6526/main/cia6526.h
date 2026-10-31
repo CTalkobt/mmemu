@@ -58,10 +58,6 @@ public:
         m_portAWriteCallback = std::move(cb);
     }
 
-    /** Set grace period (delay in cycles before first timer underflow).
-     *  Default is 65536 cycles (~64ms at 1MHz) for boot sequence compatibility.
-     *  Tests can set to smaller values (e.g., 1) for immediate timer operation. */
-    void setTimerGracePeriod(uint32_t cycles) { m_timerGracePeriod = cycles; }
 
     // -----------------------------------------------------------------------
     // IOHandler interface
@@ -135,7 +131,6 @@ private:
     std::string  m_name;
     uint32_t     m_baseAddr;
     uint32_t     m_clockHz = 1022727; // NTSC default
-    uint32_t     m_timerGracePeriod = 65536; // delay before first underflow (~64ms @ 1MHz)
 
     // Port registers
     uint8_t m_pra  = 0xFF; // output latch A
@@ -147,13 +142,11 @@ private:
     uint16_t m_taLatch   = 0xFFFF;
     uint16_t m_taCounter = 0xFFFF;
     bool     m_taRunning = false;
-    uint32_t m_taGraceCycles = 0;  // delay before first underflow (boot setup grace period)
 
     // Timer B
     uint16_t m_tbLatch   = 0xFFFF;
     uint16_t m_tbCounter = 0xFFFF;
     bool     m_tbRunning = false;
-    uint32_t m_tbGraceCycles = 0;  // delay before first underflow (boot setup grace period)
 
     // ICR
     uint8_t m_icrMask   = 0x00; // enabled interrupt sources
