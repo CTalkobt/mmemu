@@ -85,8 +85,14 @@ TEST_CASE(spectral_analyzer_harmonic_detection) {
     // First peak should be fundamental
     ASSERT(std::abs(result.peaks[0].frequency - fundamental) < 20.0f);
 
+    // Harmonics are identified despite the 4410-sample input exceeding fftSize
+    ASSERT(result.peaks[1].harmonicNumber == 2);
+    ASSERT(std::abs(result.peaks[1].frequency - 2.0f * fundamental) < 5.0f);
+    ASSERT(result.peaks[2].harmonicNumber == 3);
+
     // Check harmonic ratios
     ASSERT(result.harmonicRatio > 0.2f && result.harmonicRatio < 0.4f);  // ~0.3
+    ASSERT(result.thirdHarmonicRatio > 0.05f && result.thirdHarmonicRatio < 0.15f);  // ~0.1
 }
 
 TEST_CASE(spectral_analyzer_compare_identical_signals) {
