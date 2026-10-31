@@ -4,6 +4,7 @@
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/iport_device.h"
 #include "libdevices/main/isignal_line.h"
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -44,6 +45,13 @@ public:
     void setRestoreLine(ISignalLine* line) { m_sigRestore = line; }
     void setCapsLockLedLine(ISignalLine* line) { m_sigCapsLockLed = line; }
 
+    /**
+     * Route typed-text key events (from enqueueText) through the machine's key
+     * handler, so they also reach the $D610 key queue that BASIC 65 reads.
+     * Without a sink, events only drive the CIA matrix.
+     */
+    void setKeySink(std::function<bool(const std::string&, bool)> sink) { m_keySink = std::move(sink); }
+
 private:
     class ColumnPort : public IPortDevice {
     public:
@@ -71,6 +79,7 @@ private:
 
     void updateRowVal();
     bool pressCombo(const std::vector<std::string>& keys, bool down);
+    void queueKey(const std::string& keyName, bool shifted);
 
     struct TypeEvent {
         std::string keyName;
@@ -78,6 +87,7 @@ private:
     };
     std::vector<TypeEvent> m_typeQueue;
     uint64_t               m_typeTimer = 0;
+    std::function<bool(const std::string&, bool)> m_keySink;
 
     uint8_t    m_matrix[8]; // Each byte is a column (bits are rows)
     uint8_t    m_rowVal = 0xFF;

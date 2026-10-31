@@ -76,7 +76,8 @@ void KbdMega65::tick(uint64_t cycles) {
             m_typeTimer--;
         } else {
             auto& ev = m_typeQueue.front();
-            pressKeyByName(ev.keyName, ev.down);
+            if (m_keySink) m_keySink(ev.keyName, ev.down);
+            else           pressKeyByName(ev.keyName, ev.down);
             m_typeQueue.erase(m_typeQueue.begin());
             m_typeTimer = 20000; // Delay between key events
         }
@@ -158,24 +159,45 @@ bool KbdMega65::pressCombo(const std::vector<std::string>& keys, bool down) {
     return ok;
 }
 
+void KbdMega65::queueKey(const std::string& keyName, bool shifted) {
+    if (shifted) m_typeQueue.push_back({"LSHIFT", true});
+    m_typeQueue.push_back({keyName, true});
+    m_typeQueue.push_back({keyName, false});
+    if (shifted) m_typeQueue.push_back({"LSHIFT", false});
+}
+
 void KbdMega65::enqueueText(const std::string& text) {
-    for (char c : text) {
-        std::string s(1, c);
-        if (c >= 'a' && c <= 'z') {
-            s[0] = std::toupper(s[0]);
-            m_typeQueue.push_back({s, true});
-            m_typeQueue.push_back({s, false});
-        } else if (c >= 'A' && c <= 'Z') {
-            m_typeQueue.push_back({"LSHIFT", true});
-            m_typeQueue.push_back({s, true});
-            m_typeQueue.push_back({s, false});
-            m_typeQueue.push_back({"LSHIFT", false});
+    // Shifted symbols are typed as LSHIFT + their base key, so the key handler
+    // sees the same modifier state as a real key press.
+    static const std::map<char, const char*> kShifted = {
+        {'!', "1"}, {'"', "2"}, {'#', "3"}, {'$', "4"}, {'%', "5"}, {'&', "6"},
+        {'\'', "7"}, {'(', "8"}, {')', "9"}, {'?', "/"}, {'<', ","}, {'>', "."},
+        {'[', ":"}, {']', ";"},
+    };
+    for (size_t i = 0; i < text.size(); ++i) {
+        char c = text[i];
+        if (c == '\\' && i + 1 < text.size()) {
+            // Escapes, as for the C64: \n / \r = RETURN, \t = SPACE
+            char e = text[++i];
+            if      (e == 'n' || e == 'r') { queueKey("RETURN", false); continue; }
+            else if (e == 't')             { queueKey("SPACE", false);  continue; }
+            c = e;
+        }
+        // Default charset is uppercase/graphics, as on the C64: ASCII uppercase
+        // is the unshifted letter key, ASCII lowercase the shifted one.
+        if (c >= 'A' && c <= 'Z') {
+            queueKey(std::string(1, c), false);
+        } else if (c >= 'a' && c <= 'z') {
+            queueKey(std::string(1, (char)std::toupper(c)), true);
+        } else if (auto it = kShifted.find(c); it != kShifted.end()) {
+            queueKey(it->second, true);
+        } else if (c == ' ' || c == '\t') {
+            queueKey("SPACE", false);
+        } else if (c == '\n' || c == '\r') {
+            queueKey("RETURN", false);
         } else {
-            // Handle symbols, space, etc.
-            if (c == ' ') s = "SPACE";
-            if (c == '\n') s = "RETURN";
-            m_typeQueue.push_back({s, true});
-            m_typeQueue.push_back({s, false});
+            std::string s(1, c);
+            if (m_keyMap.count(s)) queueKey(s, false);
         }
     }
 }
