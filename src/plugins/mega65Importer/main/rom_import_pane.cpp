@@ -73,6 +73,10 @@ private:
         for (const auto& spec : specs) {
             text += "  " + spec.srcRelPath + " -> roms/mega65/" + spec.destName + " (" + std::to_string(spec.expectedSize) + " bytes)\n";
         }
+        std::string xemu = findXemuBinary();
+        text += "  HICKUP.M65 -> roms/mega65/HICKUP.M65 (" + std::to_string(HICKUP_SIZE) + " bytes, ";
+        text += xemu.empty() ? std::string("from source directory if present)\n")
+                             : "from source directory, or extracted from " + xemu + ")\n";
         m_fileDisplay->SetValue(text);
         m_importBtn->Enable();
     }
@@ -110,10 +114,14 @@ private:
         m_importBtn->Disable();
         
         ImportResult res = importRoms("mega65", m_sources[sel].basePath, "roms/mega65", true);
-        
+        if (res.success) {
+            ImportResult hyppo = importHickup(m_sources[sel].basePath, "", "roms/mega65", true);
+            if (!hyppo.success) res = hyppo;
+        }
+
         if (res.success) {
             m_statusText->SetLabel("Success! Please reset the machine.");
-            wxMessageBox("MEGA65 ROM imported successfully. Please reset the machine to apply changes.", "Import Success", wxOK | wxICON_INFORMATION);
+            wxMessageBox("MEGA65 ROM and HYPPO imported successfully. Please reset the machine to apply changes.", "Import Success", wxOK | wxICON_INFORMATION);
         } else {
             m_statusText->SetLabel("Error: " + res.message);
             wxMessageBox("Import failed: " + res.message, "Import Error", wxOK | wxICON_ERROR);
