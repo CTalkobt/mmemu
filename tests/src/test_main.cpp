@@ -7,14 +7,13 @@
 int main(int argc, char* argv[]) {
     LogRegistry::instance().init();
 
-    // Check for -performance flag
+    // -performance enables tracking; other arguments are test name globs ("*vic20*")
     bool enablePerformance = false;
+    std::vector<std::string> patterns;
     for (int i = 1; i < argc; i++) {
-        if (std::strcmp(argv[i], "-performance") == 0) {
-            enablePerformance = true;
-            break;
-        }
+        if (std::strcmp(argv[i], "-performance") == 0) enablePerformance = true;
+        else patterns.push_back(argv[i]);
     }
 
-    return runAllTests(enablePerformance);
+    return runAllTests(enablePerformance, patterns);
 }

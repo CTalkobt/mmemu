@@ -79,17 +79,15 @@ TEST_CASE(mega65_integration_rom_visibility) {
     }
     ASSERT(physBus != nullptr);
     
-    // The factory copies ROM into physical Banks 2-3 ($020000-$03FFFF)
-    // and also mirrors it to Banks 14-15 ($0E0000-$0FFFFF).
-    // On real MEGA65, this is writable chip RAM with ROM content loaded.
-
+    // The factory copies ROM into chip RAM at $020000-$03FFFF only (no mirror
+    // elsewhere, as in xemu and on hardware). Both KERNAL reset vectors must
+    // point into $E000-$FFFF: C64 KERNAL at $2E000, C65 KERNAL at $3E000.
     uint32_t romAddr = 0x020000;
-    uint32_t mirrorAddr = 0x0E0000;
-
-    // Verify ROM content is present and mirrored
+    for (uint32_t vec : {0x02FFFCu, 0x03FFFCu}) {
+        uint16_t reset = physBus->peek8(vec) | (physBus->peek8(vec + 1) << 8);
+        ASSERT(reset >= 0xE000);
+    }
     uint8_t romByte = physBus->peek8(romAddr);
-    uint8_t mirrorByte = physBus->peek8(mirrorAddr);
-    ASSERT_EQ(romByte, mirrorByte);
 
     // Verify the region is writable (chip RAM, not ROM overlay)
     physBus->write8(romAddr, romByte ^ 0xFF);
