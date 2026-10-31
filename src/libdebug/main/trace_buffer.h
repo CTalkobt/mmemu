@@ -27,6 +27,12 @@ public:
     TraceBuffer(size_t capacity = 1000);
 
     void push(const TraceEntry& entry);
+
+    /**
+     * Start a new entry in place: returns the recycled slot with memWrites
+     * cleared. The caller sets every other field (avoids per-step allocation).
+     */
+    TraceEntry& pushNew();
     void clear();
 
     size_t size() const { return m_buffer.size(); }

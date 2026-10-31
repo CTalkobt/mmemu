@@ -1,7 +1,14 @@
 #include "cia6526.h"
+#include "include/util/logging.h"
 #include <cstring>
 #include <sstream>
 #include <iomanip>
+
+/** "cia" logger: timer starts at debug; ICR access and underflows at trace. */
+static spdlog::logger* ciaLog() {
+    static auto logger = LogRegistry::instance().getLogger("cia");
+    return logger.get();
+}
 
 // Helper function to convert values to hex strings
 static std::string toHex(uint16_t v, int width = 4) {
@@ -77,14 +84,6 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x0F;
-    static uint64_t praReadCount = 0;
-    if (reg == 0) {
-        if (praReadCount < 10) {
-            fprintf(stderr, "[CIA6526 %s] PRA read #%llu addr=$%06X\n", m_name.c_str(), (unsigned long long)praReadCount, addr);
-            fflush(stderr);
-        }
-        praReadCount++;
-    }
     switch (reg) {
         case PRA: {
             // Output bits from latch; input bits from port device (pins).
@@ -141,8 +140,8 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             uint8_t pending = m_icrPending;
             if (pending & m_icrMask) pending |= ICR_INT;
             if (m_icrPending) {
-                fprintf(stderr, "[CIA] %s ICR read: pending=$%02X mask=$%02X returning=$%02X\n",
-                    m_name.c_str(), m_icrPending, m_icrMask, pending);
+                ciaLog()->trace("{} ICR read: pending=${:02X} mask=${:02X} -> ${:02X}",
+                                m_name, m_icrPending, m_icrMask, pending);
             }
             m_icrPending = 0x00;
             updateIrq(); // de-assert IRQ if all cleared
@@ -240,8 +239,8 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // Bit 7 = 1: set bits in mask; bit 7 = 0: clear bits from mask.
             if (val & 0x80) m_icrMask |=  (val & 0x7F);
             else            m_icrMask &= ~(val & 0x7F);
-            fprintf(stderr, "[CIA] %s ICR write: val=$%02X new_mask=$%02X pending=$%02X\n",
-                m_name.c_str(), val, m_icrMask, m_icrPending);
+            ciaLog()->trace("{} ICR write: val=${:02X} mask=${:02X} pending=${:02X}",
+                            m_name, val, m_icrMask, m_icrPending);
             updateIrq();
             break;
 
@@ -262,8 +261,8 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
                 m_icrMask |= ICR_TA;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
                 m_taGraceCycles = m_timerGracePeriod;
-                fprintf(stderr, "[CIA] %s Timer A started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
-                    m_name.c_str(), m_taLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_taGraceCycles, m_icrMask);
+                ciaLog()->debug("{} Timer A started: latch=${:04X} {} (grace period={}, mask=${:02X})",
+                                m_name, m_taLatch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_taGraceCycles, m_icrMask);
             }
             break;
         }
@@ -280,8 +279,8 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
                 m_icrMask |= ICR_TB;
                 // Set grace period: delay before first underflow to allow boot to configure interrupts
                 m_tbGraceCycles = m_timerGracePeriod;
-                fprintf(stderr, "[CIA] %s Timer B started: latch=$%04X mode=%s (grace period=%u, mask now=$%02X)\n",
-                    m_name.c_str(), m_tbLatch, (val & CR_ONESHOT) ? "oneshot" : "continuous", m_tbGraceCycles, m_icrMask);
+                ciaLog()->debug("{} Timer B started: latch=${:04X} {} (grace period={}, mask=${:02X})",
+                                m_name, m_tbLatch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_tbGraceCycles, m_icrMask);
             }
             break;
         }
@@ -328,8 +327,8 @@ void CIA6526::tickTimerA(uint64_t cycles) {
             // Underflow.
             m_icrPending |= ICR_TA;
             updateIrq();
-            fprintf(stderr, "[CIA] %s Timer A underflow: ICR mask=$%02X pending=$%02X will_assert=%d\n",
-                m_name.c_str(), m_icrMask, m_icrPending, (m_icrPending & m_icrMask) != 0);
+            ciaLog()->trace("{} Timer A underflow: mask=${:02X} pending=${:02X} irq={}",
+                            m_name, m_icrMask, m_icrPending, (m_icrPending & m_icrMask) != 0);
 
             if (m_cra & CR_ONESHOT) {
                 m_taRunning = false;

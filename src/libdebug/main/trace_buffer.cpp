@@ -11,6 +11,12 @@ void TraceBuffer::push(const TraceEntry& entry) {
     m_buffer.push(entry);
 }
 
+TraceEntry& TraceBuffer::pushNew() {
+    TraceEntry& te = m_buffer.pushSlot();
+    te.memWrites.clear();
+    return te;
+}
+
 void TraceBuffer::clear() {
     m_buffer.clear();
 }

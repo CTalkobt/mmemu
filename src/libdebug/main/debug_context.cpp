@@ -36,10 +36,11 @@ bool DebugContext::needsDisasm() const {
 }
 
 void DebugContext::onStepLite(ICore* cpu, uint32_t pc) {
-    TraceEntry te;
+    TraceEntry& te = m_trace.pushNew();
     te.addr = pc;
     te.cycles = cpu->cycles();
-    m_trace.push(te);
+    te.mnemonic.clear();
+    te.regs.clear();
 }
 
 bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
@@ -48,19 +49,29 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
         if (!obs->onStep(cpu, bus, entry)) cont = false;
     }
 
-    TraceEntry te;
+    // Fill the recycled slot in place: once the ring is warm, the register map
+    // already holds these keys and the strings have capacity, so nothing allocates.
+    TraceEntry& te = m_trace.pushNew();
     te.addr = entry.addr;
     te.mnemonic = entry.complete;
     te.cycles = cpu->cycles();
 
+    size_t nRegs = 0;
     for (int i = 0; i < cpu->regCount(); ++i) {
         const auto* desc = cpu->regDescriptor(i);
         if (!(desc->flags & REGFLAG_INTERNAL)) {
             te.regs[desc->name] = cpu->regRead(i);
+            ++nRegs;
         }
     }
-
-    m_trace.push(te);
+    if (te.regs.size() != nRegs) {
+        // Slot was last used by another CPU (or onStepLite): drop stale keys
+        te.regs.clear();
+        for (int i = 0; i < cpu->regCount(); ++i) {
+            const auto* desc = cpu->regDescriptor(i);
+            if (!(desc->flags & REGFLAG_INTERNAL)) te.regs[desc->name] = cpu->regRead(i);
+        }
+    }
 
     // Track cycle count for Lua event system
     m_cycleCounter += cpu->cycles();
@@ -113,8 +124,9 @@ static uint32_t regByName(ICore* cpu, const char* name) {
 
 void DebugContext::monitorKernal(ICore* cpu, const DisasmEntry& entry) {
     if (!cpu) return;
-    auto logger = LogRegistry::instance().getLogger("kernal");
-    if (!logger || logger->level() > spdlog::level::debug) return;
+    if (!m_kernalLog) m_kernalLog = LogRegistry::instance().getLogger("kernal");
+    auto& logger = m_kernalLog;
+    if (logger->level() > spdlog::level::debug) return;
 
     // 1. Check for Exit (RTS)
     // 6502 RTS is opcode $60. It pulls from stack when SP is at the value it was at entry.
@@ -141,8 +153,9 @@ void DebugContext::monitorKernal(ICore* cpu, const DisasmEntry& entry) {
 
 void DebugContext::monitorBasic(ICore* cpu, const DisasmEntry& entry) {
     if (!cpu) return;
-    auto logger = LogRegistry::instance().getLogger("basic");
-    if (!logger || logger->level() > spdlog::level::debug) return;
+    if (!m_basicLog) m_basicLog = LogRegistry::instance().getLogger("basic");
+    auto& logger = m_basicLog;
+    if (logger->level() > spdlog::level::debug) return;
 
     // 1. Check for Exit (RTS)
     if (entry.isReturn && !m_basicStack.empty()) {

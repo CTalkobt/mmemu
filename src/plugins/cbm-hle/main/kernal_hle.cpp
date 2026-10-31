@@ -67,8 +67,7 @@ bool KernalHLE::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
     // Check if we are at a known vector
     if (entry.addr == 0xFFD5 || entry.addr == 0xFFD8) {
         uint8_t device = getDevice(cpu, bus);
-        fprintf(stderr, "[HLE] Hit vector %04X, device=%d\n", entry.addr, device);
-        fflush(stderr);
+        LogRegistry::instance().getLogger("hle")->debug("vector ${:04X}, device {}", entry.addr, device);
 
         // If we have machine context, check if a physical device is handling this unit
         if (m_currentMachine && m_currentMachine->ioRegistry) {
@@ -79,8 +78,8 @@ bool KernalHLE::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
                 bool led;
                 if (h->getDiskStatus(device, t, s, led)) {
                     // A physical device (e.g. VirtualIEC) is handling this unit.
-                    fprintf(stderr, "[HLE] Device %d handled by %s, passing to KERNAL\n", device, h->name());
-                    fflush(stderr);
+                    LogRegistry::instance().getLogger("hle")->debug("device {} handled by {}, passing to KERNAL",
+                                                                    device, h->name());
                     return true;
                 }
             }

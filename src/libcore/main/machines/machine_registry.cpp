@@ -1,5 +1,5 @@
 #include "machine_registry.h"
-#include <iostream>
+#include "util/logging.h"
 
 static MachineRegistry* s_instance = nullptr;
 
@@ -22,19 +22,18 @@ void MachineRegistry::registerMachine(const std::string& id, FactoryFn factory, 
 }
 
 MachineDescriptor* MachineRegistry::createMachine(const std::string& id) {
-    std::cerr << "[MachineRegistry::createMachine] Looking for machine: '" << id << "'\n" << std::flush;
-    std::cerr << "[MachineRegistry::createMachine] Total machines registered: " << m_factories.size() << "\n" << std::flush;
-    if (m_factories.count(id)) {
-        std::cerr << "[MachineRegistry::createMachine] Found factory for '" << id << "', calling it...\n" << std::flush;
-        auto* result = m_factories[id]();
-        std::cerr << "[MachineRegistry::createMachine] Factory returned: " << result << "\n" << std::flush;
-        if (result) {
-            std::cerr << "[MachineRegistry::createMachine] Result has " << result->cpus.size() << " CPUs and " << result->buses.size() << " buses\n" << std::flush;
-        }
-        return result;
+    auto log = LogRegistry::instance().getLogger("system");
+    auto it = m_factories.find(id);
+    if (it == m_factories.end()) {
+        log->debug("createMachine: no factory for '{}' ({} registered)", id, m_factories.size());
+        return nullptr;
     }
-    std::cerr << "[MachineRegistry::createMachine] Factory NOT FOUND for '" << id << "'\n" << std::flush;
-    return nullptr;
+    auto* result = it->second();
+    if (result)
+        log->debug("createMachine: '{}' has {} CPUs and {} buses", id, result->cpus.size(), result->buses.size());
+    else
+        log->debug("createMachine: factory for '{}' returned null", id);
+    return result;
 }
 
 void MachineRegistry::enumerate(std::vector<std::string>& ids) {

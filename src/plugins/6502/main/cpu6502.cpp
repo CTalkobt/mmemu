@@ -185,12 +185,12 @@ int MOS6502::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
     entry->bytes = disassembleOne(bus, addr, buf, sizeof(buf));
     
     // Split buf into mnemonic and operands for entry
-    char mnem[16];
-    char ops[48];
-    if (std::sscanf(buf, "%s %[^\n]", mnem, ops) == 2) {
-        entry->operands = ops;
+    const char* sp = strchr(buf, ' ');
+    if (sp) {
+        while (*sp == ' ') ++sp;
+        entry->operands = sp;
     } else {
-        entry->operands = "";
+        entry->operands.clear();
     }
     entry->complete = buf;
 

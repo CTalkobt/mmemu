@@ -362,7 +362,8 @@ int MOS45GS02::step() {
         uint8_t lo = read8(0xFFFE);
         uint8_t hi = read8(0xFFFF);
         uint16_t irqHandler = (uint16_t)lo | ((uint16_t)hi << 8);
-        fprintf(stderr, "[45GS02] IRQ taken at PC=$%04X → handler=$%04X\n", m_state.pc, irqHandler);
+        _ensureLogger();
+        if (m_logger) m_logger->trace("IRQ taken at PC=${:04X} -> handler=${:04X}", m_state.pc, irqHandler);
         m_state.pc = irqHandler;
         m_state.cycles += 7;
         return 7;
@@ -1098,17 +1099,12 @@ int MOS45GS02::step() {
             uint8_t lo = read8(a);
             uint8_t hi = read8(a+1);
             uint16_t target = (hi << 8) | lo;
-            if (a >= 0x0300 && a <= 0x0330) {  // Log vector reads
-                fprintf(stderr, "[45GS02] JMP ($%04X): lo=$%02X hi=$%02X -> PC=$%04X SP=$%04X\n",
-                    a, lo, hi, target, m_state.sp);
-                fflush(stderr);
+            if (a >= 0x0300 && a <= 0x0330) {  // KERNAL/BASIC RAM vector dispatch
+                _ensureLogger();
+                if (m_logger) m_logger->trace("JMP (${:04X}) -> ${:04X} SP=${:04X}", a, target, m_state.sp);
             }
             m_state.pc = target;
             m_state.cycles += 2;
-            if (a >= 0x0300 && a <= 0x0330) {
-                fprintf(stderr, "[45GS02]   After JMP: PC now=$%04X\n", m_state.pc);
-                fflush(stderr);
-            }
             break;
         }
         case 0x20: { uint16_t t=getAbs(); uint16_t r=m_state.pc-1; push16(r); m_state.pc=t; m_state.cycles++; break; } // JSR
@@ -1373,9 +1369,9 @@ int MOS45GS02::step() {
             }
             // Set interrupt inhibit flag: defer IRQ/NMI until EOM ($EA)
             m_state.mapInterruptInhibit = true;
-            fprintf(stderr, "[45GS02] MAP: Set mapInterruptInhibit=true at cycle %llu PC=$%04X\n",
-                    (unsigned long long)m_state.cycles, startPc);
-            fflush(stderr);
+            _ensureLogger();
+            if (m_logger) m_logger->trace("MAP at PC=${:04X} cycle={}: interrupts inhibited until EOM",
+                                          startPc, m_state.cycles);
             m_state.cycles++;
             break;
         }
@@ -1413,9 +1409,9 @@ void MOS45GS02::triggerIrq() {
     m_state.irqLine = 1;
 }
 void MOS45GS02::triggerNmi() {
-    fprintf(stderr, "[45GS02] triggerNmi called: PC=$%04X A=$%02X X=$%02X Y=$%02X P=$%02X SP=$%04X\n",
-        m_state.pc, m_state.a, m_state.x, m_state.y, m_state.p, m_state.sp);
-    fflush(stderr);
+    _ensureLogger();
+    if (m_logger) m_logger->debug("NMI triggered: PC=${:04X} A=${:02X} X=${:02X} Y=${:02X} P=${:02X} SP=${:04X}",
+                                  m_state.pc, m_state.a, m_state.x, m_state.y, m_state.p, m_state.sp);
     m_state.nmiLine = 1;
 }
 
@@ -1789,18 +1785,15 @@ int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
     e->bytes = disassembleOne(bus, addr, s_buf, sizeof(s_buf));
     e->complete = s_buf;
 
-    char mnem[32];
-    char ops[128];
-    int scanned = std::sscanf(s_buf, "%31s %127[^\n]", mnem, ops);
-    if (scanned >= 1) {
-        e->mnemonic = mnem;
+    // Split "MNEM operands" (runs on every step while a debugger is attached, so no sscanf)
+    const char* sp = strchr(s_buf, ' ');
+    if (sp) {
+        e->mnemonic.assign(s_buf, sp - s_buf);
+        while (*sp == ' ') ++sp;
+        e->operands = sp;
     } else {
-        e->mnemonic = "";
-    }
-    if (scanned >= 2) {
-        e->operands = ops;
-    } else {
-        e->operands = "";
+        e->mnemonic = s_buf;
+        e->operands.clear();
     }
 
     uint32_t currentAddr = addr;
@@ -1836,12 +1829,7 @@ int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
     if (e->isCall || e->isBranch || isJump) {
         const char* lastDol = strrchr(s_buf, '$');
         if (lastDol) {
-            uint32_t val = 0;
-            if (std::sscanf(lastDol + 1, "%x", &val) == 1) {
-                e->targetAddr = val;
-            } else {
-                e->targetAddr = 0;
-            }
+            e->targetAddr = (uint32_t)strtoul(lastDol + 1, nullptr, 16);
         } else {
             e->targetAddr = 0;
         }
