@@ -1,6 +1,7 @@
 #include "vic4.h"
 #include "libmem/main/ibus.h"
 #include <cstring>
+#include <vector>
 
 VIC4::VIC4()
     : VIC3("VIC-IV", 0xD000)
@@ -559,7 +560,14 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
 
 void VIC4::renderFrame(uint32_t* buffer) {
     if (isLocked()) {
-        VIC2::renderFrame(buffer);
+        // VIC-II personality renders a FRAME_W-wide frame; the output buffer is
+        // V4_FRAME_W wide, so double each pixel horizontally (as 40-column modes do).
+        static_assert(V4_FRAME_W == FRAME_W * 2, "VIC-IV frame must be 2x VIC-II width");
+        std::vector<uint32_t> v2(FRAME_W * FRAME_H);
+        VIC2::renderFrame(v2.data());
+        for (int y = 0; y < FRAME_H; ++y)
+            for (int x = 0; x < FRAME_W; ++x)
+                buffer[y * V4_FRAME_W + 2 * x] = buffer[y * V4_FRAME_W + 2 * x + 1] = v2[y * FRAME_W + x];
         return;
     }
 

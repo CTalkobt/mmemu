@@ -8,6 +8,7 @@ enum {
     ID_RUN,
     ID_PAUSE,
     ID_RESET,
+    ID_RESET_TO_MONITOR,
     ID_FILL_MEM,
     ID_COPY_MEM,
     ID_SWAP_MEM,

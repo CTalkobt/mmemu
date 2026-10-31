@@ -140,6 +140,11 @@ bool KbdMega65::pressKeyByName(const std::string& keyName, bool down) {
     if (name == "'") return pressCombo({"LSHIFT", "7"}, down);
     if (name == "(") return pressCombo({"LSHIFT", "8"}, down);
     if (name == ")") return pressCombo({"LSHIFT", "9"}, down);
+    if (name == "?") return pressCombo({"LSHIFT", "/"}, down);
+    if (name == "<") return pressCombo({"LSHIFT", ","}, down);
+    if (name == ">") return pressCombo({"LSHIFT", "."}, down);
+    if (name == "[") return pressCombo({"LSHIFT", ":"}, down);
+    if (name == "]") return pressCombo({"LSHIFT", ";"}, down);
     if (name == "CLR") return pressCombo({"LSHIFT", "HOME"}, down);
     if (name == "DOWN") return pressCombo({"LSHIFT", "UP"}, down);
     if (name == "RIGHT") return pressCombo({"LSHIFT", "LEFT"}, down);

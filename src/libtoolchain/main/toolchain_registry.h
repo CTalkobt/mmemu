@@ -33,6 +33,9 @@ public:
     // Enumerate all registered assembler names (both ISA-default and named)
     std::vector<std::string> getAssemblerNames() const;
 
+    // Clear all registered toolchains and assemblers (used when unloading plugins)
+    void clear();
+
 private:
     ToolchainRegistry() = default;
     std::map<std::string, ToolchainInfo> m_toolchains;

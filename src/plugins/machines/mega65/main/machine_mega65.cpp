@@ -29,6 +29,7 @@
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
 #include <algorithm>
+#include <map>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -70,7 +71,7 @@ static Mega65KeyCode mega65KeyCode(const std::string& name, uint8_t mods) {
 
     // Digits
     if (name.size() == 1 && name[0] >= '0' && name[0] <= '9') {
-        static const char shiftDigit[] = ")!\"#$%&'("; // shifted 0-9 → )!"#$%&'(
+        static const char shiftDigit[] = ")!\"#$%&'()"; // shifted 0-9 → )!"#$%&'()
         uint8_t ch = (uint8_t)name[0];
         if (shifted) {
             uint8_t sc = (uint8_t)shiftDigit[ch - '0'];
@@ -138,6 +139,16 @@ static Mega65KeyCode mega65KeyCode(const std::string& name, uint8_t mods) {
     if (name == "RIGHT")
         return {0, 0x1D};
 
+    // Shifted punctuation on the MEGA65/C64 layout
+    if (shifted) {
+        if (name == ",")   return {'<', '<'};
+        if (name == ".")   return {'>', '>'};
+        if (name == "/")   return {'?', '?'};
+        if (name == ":")   return {'[', '['};
+        if (name == ";")   return {']', ']'};
+        if (name == "'")   return {'"', '"'};   // PC Shift+' convenience
+    }
+
     // Punctuation
     if (name == "+")       return {'+', '+'};
     if (name == "-")       return {'-', '-'};
@@ -162,6 +173,11 @@ static Mega65KeyCode mega65KeyCode(const std::string& name, uint8_t mods) {
     if (name == "'")       return {'\'', '\''};
     if (name == "(")       return {'(', '('};
     if (name == ")")       return {')', ')'};
+    if (name == "?")       return {'?', '?'};
+    if (name == "<")       return {'<', '<'};
+    if (name == ">")       return {'>', '>'};
+    if (name == "[")       return {'[', '['};
+    if (name == "]")       return {']', ']'};
 
     // Pure modifier keys — update state but don't generate a buffer event
     if (name == "SHIFT_L" || name == "LSHIFT" ||
@@ -260,10 +276,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (!romPath.empty())
             romLoad(romPath.c_str(), romBuf, 128 * 1024);
     }
-    for (uint32_t i = 0; i < 128 * 1024; i++) {
+    for (uint32_t i = 0; i < 128 * 1024; i++)
         physBus->write8(0x020000 + i, romBuf[i]);
-        physBus->write8(0x030000 + i, romBuf[i]);
-    }
     physBus->clearWriteLog();
 
     // Verify ROM vectors were loaded correctly
@@ -562,6 +576,19 @@ MachineDescriptor* Mega65MachineFactory::create() {
         // GUI sends "RUN_STOP" for ESC key
         if (name == "RUN_STOP") name = "RUNSTOP";
 
+        // GUI/CLI key names -> MEGA65 key legends used by the matrix and key queue
+        static const std::map<std::string, std::string> kAliases = {
+            {"LEFT_SHIFT", "LSHIFT"}, {"RIGHT_SHIFT", "RSHIFT"},
+            {"SEMICOLON", ";"}, {"COLON", ":"}, {"MINUS", "-"}, {"COMMA", ","},
+            {"PERIOD", "."}, {"SLASH", "/"}, {"AT", "@"}, {"KPEQ", "="}, {"EQUALS", "="},
+            {"PLUS", "+"}, {"ASTERISK", "*"}, {"UPARROW", "^"}, {"SQUOTE", "'"},
+            {"BRACKET_LEFT", "["}, {"BRACKET_RIGHT", "]"},
+            {"EXCLAIM", "!"}, {"DQUOTE", "\""}, {"HASH", "#"}, {"DOLLAR", "$"},
+            {"PERCENT", "%"}, {"AMPERSAND", "&"}, {"LPAREN", "("}, {"RPAREN", ")"},
+            {"QUESTION", "?"}, {"LESS", "<"}, {"GREATER", ">"},
+        };
+        if (auto it = kAliases.find(name); it != kAliases.end()) name = it->second;
+
         // Update the CIA matrix (for C64-compatible keyboard scanning)
         bool ok = kbd->pressKeyByName(name, down);
 
@@ -791,6 +818,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Load reset vectors from ROM ($FFFA, $FFFC, $FFFE) per MEGA65 specification.
     // If HYPPO is loaded, it enters hypervisor mode; otherwise start at C65 KERNAL.
     desc->onReset = [physBus, romBuf](MachineDescriptor& d) {
+        // Hard reset: restore the ROM image at $20000-$3FFFF (the previous run
+        // may have changed it), as xemu does before re-entering HYPPO.
+        for (uint32_t i = 0; i < 128 * 1024; i++)
+            physBus->write8(0x020000 + i, romBuf[i]);
         if (d.ioRegistry) d.ioRegistry->resetAll();
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();
@@ -812,21 +843,30 @@ MachineDescriptor* Mega65MachineFactory::create() {
         fprintf(stderr, "[MEGA65] ROM vectors from file: NMI=$%04X RESET=$%04X IRQ=$%04X\n",
                 nmiVec, resetVec, irqVec);
 
-        // If hypervisor mode, exit it and start at KERNAL
+        // With HYPPO loaded, cpu->reset() has entered hypervisor mode at $8100
+        // (gs4510.vhdl reset: trap $40). Let HYPPO initialise the machine, load
+        // the ROM and exit to its reset vector, as on hardware and in xemu.
         if (cpu->isHypervisor()) {
-            cpu->setHypervisorMode(false);
-            fprintf(stderr, "[MEGA65] Exiting hypervisor mode, starting at KERNAL\n");
+            fprintf(stderr, "[MEGA65] Booting via HYPPO at $%04X\n", (unsigned)cpu->pc());
+            return;
         }
 
         // cpu->reset() already initialized all registers from reset vector at $FFFC-$FFFD.
         // Only override P register for boot flags.
         cpu->regWrite(7, 0x24);         // P: I=1 (disable IRQ), E=0 (16-bit native mode)
 
-        // Clear MAP state (no block mappings at reset)
+        // Initialize MAP state: enable block 7 to overlay ROM at $E000-$FFFF.
+        // The ROM is stored at physical $020000-$03FFFF, so we need to:
+        // - Set megabyteLow/High to MB 2 (0x020000 base)
+        // - Enable block 7 with offset 0xE000 to map $E000-$FFFF to ROM
         auto* mc = cpu->getMapMmu();
         if (mc) {
             MapState ms;
             memset(&ms, 0, sizeof(ms));
+            ms.megabyteLow = 0x020000;   // ROM physical base
+            ms.megabyteHigh = 0x020000;  // ROM physical base for upper 32KB too
+            ms.offsets[7] = 0xE000;      // Block 7 offset within the MB
+            ms.enables = 0x80;           // Enable only block 7 (bit 7 = 1)
             mc->setMapState(ms);
         }
 

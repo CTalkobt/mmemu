@@ -524,6 +524,9 @@ TEST_CASE(mega65_integration_personality_switch) {
     ASSERT(desc != nullptr);
 
     if (desc->onReset) desc->onReset(*desc);
+    // Reset enters HYPPO, where KEY ($D02F) writes are ignored; model the state
+    // after HYPPO has handed over to the ROM.
+    static_cast<MOS45GS02*>(desc->cpus[0].cpu)->setHypervisorMode(false);
 
     // Start in C64 mode (Key register write 0)
     desc->ioRegistry->dispatchWrite(nullptr, 0xD02F, 0x00);

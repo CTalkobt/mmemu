@@ -63,6 +63,7 @@ private:
     void OnRun(wxCommandEvent& event);
     void OnPause(wxCommandEvent& event);
     void OnReset(wxCommandEvent& event);
+    void OnResetToMonitor(wxCommandEvent& event);
     void OnFillMem(wxCommandEvent& event);
     void OnCopyMem(wxCommandEvent& event);
     void OnSwapMem(wxCommandEvent& event);
@@ -140,6 +141,8 @@ private:
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     wxAuiNotebook*  m_notebook  = nullptr;
 
+    wxMenuItem* m_resetToMonitorItem = nullptr;
+
     wxTimer m_timer;
     bool m_running = false;
     bool m_kbdFocus = false;
@@ -181,6 +184,21 @@ public:
 
         bool down = (t == wxEVT_CHAR_HOOK);
         int  code = key.GetKeyCode();
+
+        // --- Positional mode (MEGA65): Shift is a real modifier and keys keep
+        //     their position, so Shift+2 gives '"' as on the MEGA65 keyboard ---
+        if (m_positional) {
+            if (code == WXK_SHIFT) {
+                logKey("left_shift", down);
+                (void)m_handler("left_shift", down);
+                return Event_Processed;
+            }
+            std::string name = wxKeyToVic20Name(unshiftedUsKey(code));
+            if (name.empty()) return Event_Skip;
+            logKey(name, down);
+            (void)m_handler(name, down);
+            return Event_Processed;
+        }
 
         // --- Shift key: buffer rather than forward immediately ---
         if (code == WXK_SHIFT) {
@@ -227,6 +245,7 @@ public:
 
     std::function<bool(const std::string&, bool)> m_handler;
     std::shared_ptr<spdlog::logger> m_logger;
+    bool m_positional = false;  // true: forward Shift + base key (no PET dedicated-key mapping)
 
 private:
     bool m_shiftPending = false;
@@ -246,6 +265,15 @@ private:
     // deliver the COMPOSED Unicode character for punctuation keys.  Both the
     // base key codes (e.g. '\'' = 39) and the composed codes (e.g. '"' = 34)
     // are listed so the mapping works regardless of GTK behaviour.
+    // GTK may deliver the shifted character; map it back to its US-layout base key.
+    static int unshiftedUsKey(int code) {
+        static const char shifted[] = "!@#$%^&*()_+\":?<>{}";
+        static const char base[]    = "1234567890-=';/,.[]";
+        if (const char* p = std::strchr(shifted, code); p && code)
+            return base[p - shifted];
+        return code;
+    }
+
     static std::string shiftedPetKey(int code) {
         switch (code) {
             // Base key codes (GTK delivers unshifted virtual key)
@@ -504,6 +532,8 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_PAUSE, "Pause\tF6");
     menuControl->AppendSeparator();
     menuControl->Append(ID_RESET, "Reset\tCtrl-R");
+    m_resetToMonitorItem = menuControl->Append(ID_RESET_TO_MONITOR, "Reset to Monitor");
+    m_resetToMonitorItem->Enable(false);  // Hidden until MEGA65 is loaded
     menuControl->AppendSeparator();
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
@@ -636,6 +666,7 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnPause, this, ID_PAUSE);
     Bind(wxEVT_TOOL, &MmemuFrame::OnPause, this, ID_PAUSE);
     Bind(wxEVT_MENU, &MmemuFrame::OnReset, this, ID_RESET);
+    Bind(wxEVT_MENU, &MmemuFrame::OnResetToMonitor, this, ID_RESET_TO_MONITOR);
     Bind(wxEVT_MENU, &MmemuFrame::OnFillMem, this, ID_FILL_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnCopyMem, this, ID_COPY_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnSwapMem, this, ID_SWAP_MEM);
@@ -1035,7 +1066,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
 
-    // Show/hide MEGA65 status pane based on machine type
+    // Show/hide MEGA65 status pane and Reset to Monitor menu based on machine type
     {
         bool isMega65 = (id.find("mega65") != std::string::npos);
         for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
@@ -1047,6 +1078,10 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         if (isMega65) {
             m_mega65StatusPane->SetMachine(m_machine, m_cpu);
             m_notebook->AddPage(m_mega65StatusPane, "MEGA65");
+        }
+        // Enable Reset to Monitor menu only for MEGA65
+        if (m_resetToMonitorItem) {
+            m_resetToMonitorItem->Enable(isMega65);
         }
     }
 
@@ -1137,6 +1172,34 @@ void MmemuFrame::OnReset(wxCommandEvent& event) {
         m_disasmPane->RefreshValues(m_cpu->pc());
         SetStatusText("Reset.");
     }
+}
+
+void MmemuFrame::OnResetToMonitor(wxCommandEvent& event) {
+    (void)event;
+    if (!m_machine || !m_machine->onKey || !m_machine->onReset) return;
+
+    // Press Run/Stop
+    m_machine->onKey("RUNSTOP", true);
+
+    // Reset the machine
+    m_running = false;
+    m_machine->onReset(*m_machine);
+    if (m_dbg) m_dbg->resume();
+
+    // Step through a few boot cycles while Run/Stop is held
+    for (int i = 0; i < 100 && m_cpu; ++i) {
+        if (m_machine->schedulerStep)
+            m_machine->schedulerStep(*m_machine);
+        else
+            m_cpu->step();
+    }
+
+    // Release Run/Stop
+    m_machine->onKey("RUNSTOP", false);
+
+    m_regPane->RefreshValues();
+    m_disasmPane->RefreshValues(m_cpu->pc());
+    SetStatusText("Reset to Monitor - Run/Stop held during boot.");
 }
 
 void MmemuFrame::OnFillMem(wxCommandEvent& event) {
@@ -1485,6 +1548,7 @@ void MmemuFrame::setKeyCapture(bool active) {
     auto* app = static_cast<MmemuApp*>(wxTheApp);
     if (active && m_machine && m_machine->onKey) {
         app->m_keyFilter.m_handler = m_machine->onKey;
+        app->m_keyFilter.m_positional = (m_machine->machineId.find("mega65") != std::string::npos);
     } else {
         app->m_keyFilter.m_handler = nullptr;
         // Release any modifier keys that may have been left pressed (e.g., the

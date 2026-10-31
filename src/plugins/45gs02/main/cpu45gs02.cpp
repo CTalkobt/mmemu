@@ -47,7 +47,15 @@ void MOS45GS02::reset() {
     memset(&m_hyperState, 0, sizeof(m_hyperState));
 
     if (m_hyperRom) {
-        // MEGA65: enter hypervisor mode at RESET entry point $8100
+        // MEGA65 reset, as in xemu: leave hypervisor mode and clear MAP, take the
+        // normal reset vector, reload HYPPO into hypervisor RAM (a previous run
+        // leaves its variables there), then enter the reset trap at $8100.
+        // Without this, a second reset saves the hypervisor's own context
+        // (PC=$8100) as the program state and HYPPO "returns" into itself.
+        m_state.hypervisor = false;
+        if (m_mapMmu) m_mapMmu->clearMapState();
+        if (m_bus) m_state.pc = read8(0xFFFC) | ((uint16_t)read8(0xFFFD) << 8);
+        if (m_hyperRam) memcpy(m_hyperRam, m_hyperRom, m_hyperRomSize);
         enterHypervisor(0x8100);
     } else if (m_bus) {
         // Fallback: standard 6502 reset vector
@@ -227,22 +235,31 @@ void MOS45GS02::write8_phys(uint32_t physAddr, uint8_t val) {
 }
 void MOS45GS02::updateNZ(uint8_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x80) m_state.p |= FLAG_N; }
 void MOS45GS02::updateNZ16(uint16_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x8000) m_state.p |= FLAG_N; }
+// Immediate opcodes that some assemblers pair with NEG NEG; the hardware has no quad immediates.
+static bool isQuadImmediateOpcode(uint8_t op) {
+    return op == 0x09 || op == 0x29 || op == 0x49 || op == 0x69 || op == 0xA9 || op == 0xC9 || op == 0xE9;
+}
+
 void MOS45GS02::updateNZ32(uint32_t val) { m_state.p &= ~(FLAG_N | FLAG_Z); if (!val) m_state.p |= FLAG_Z; if (val & 0x80000000) m_state.p |= FLAG_N; }
 
 void MOS45GS02::doAdc8(uint8_t v) {
     uint8_t a = m_state.a;
     if (m_state.p & FLAG_D) {
-        // BCD mode (65CE02-style: N/Z set from binary result)
-        int lo = (a & 0x0F) + (v & 0x0F) + (m_state.p & FLAG_C);
+        // BCD mode, ported from gs4510.vhdl alu_op_add (6502 semantics):
+        // Z from the binary sum, N/V from the intermediate before the high-nibble fixup.
+        int c = m_state.p & FLAG_C;
+        unsigned lo = (a & 0x0F) + (v & 0x0F) + c;
         if (lo > 9) lo += 6;
-        int hi = (a >> 4) + (v >> 4) + (lo > 0x0F ? 1 : 0);
-        if (hi > 9) hi += 6;
-        uint16_t bin = (uint16_t)a + v + (m_state.p & FLAG_C);
-        m_state.p &= ~(FLAG_V | FLAG_C);
-        if (~(a ^ v) & (a ^ (uint8_t)bin) & 0x80) m_state.p |= FLAG_V;
-        if (hi > 0x0F) m_state.p |= FLAG_C;
-        m_state.a = (uint8_t)(((hi & 0x0F) << 4) | (lo & 0x0F));
-        updateNZ(m_state.a);
+        unsigned t = (lo & 0x0F) + (a & 0xF0) + (v & 0xF0) + (lo < 0x10 ? 0 : 0x10);
+        m_state.p &= ~(FLAG_N | FLAG_V | FLAG_Z | FLAG_C);
+        if (((a + v + c) & 0xFF) == 0) m_state.p |= FLAG_Z;
+        if (t & 0x80) m_state.p |= FLAG_N;
+        if (((a ^ t) & 0x80) && !((a ^ v) & 0x80)) m_state.p |= FLAG_V;
+        if (((t >> 4) & 0x1F) > 9) {
+            t = (t + 0x60) & 0xFF;
+            m_state.p |= FLAG_C;
+        }
+        m_state.a = (uint8_t)t;
     } else {
         uint16_t s = (uint16_t)a + v + (m_state.p & FLAG_C);
         m_state.p &= ~(FLAG_V | FLAG_C);
@@ -256,17 +273,23 @@ void MOS45GS02::doAdc8(uint8_t v) {
 void MOS45GS02::doSbc8(uint8_t v) {
     uint8_t a = m_state.a;
     if (m_state.p & FLAG_D) {
+        // BCD mode, ported from gs4510.vhdl alu_op_sub: all flags come from the
+        // binary subtraction; only the result is BCD-corrected.
         int borrow = (m_state.p & FLAG_C) ? 0 : 1;
-        int lo = (a & 0x0F) - (v & 0x0F) - borrow;
-        if (lo < 0) lo -= 6;
-        int hi = (a >> 4) - (v >> 4) - (lo < 0 ? 1 : 0);
-        if (hi < 0) hi -= 6;
         uint16_t bin = (uint16_t)a - v - borrow;
-        m_state.p &= ~(FLAG_V | FLAG_C);
-        if ((a ^ v) & (a ^ (uint8_t)bin) & 0x80) m_state.p |= FLAG_V;
+        m_state.p &= ~(FLAG_N | FLAG_V | FLAG_Z | FLAG_C);
         if (bin <= 0xFF) m_state.p |= FLAG_C;
-        m_state.a = (uint8_t)(((hi & 0x0F) << 4) | (lo & 0x0F));
-        updateNZ(m_state.a);
+        if ((a ^ v) & (a ^ bin) & 0x80) m_state.p |= FLAG_V;
+        if (bin & 0x80) m_state.p |= FLAG_N;
+        if ((bin & 0xFF) == 0) m_state.p |= FLAG_Z;
+        unsigned d = ((a & 0x0F) - (v & 0x0F) - borrow) & 0x1FF;
+        if (d & 0x10) {
+            d = (((d & 0x0F) - 6) & 0x0F) | ((((a >> 4) - (v >> 4) - 1) & 0x1F) << 4);
+        } else {
+            d = (d & 0x0F) | ((((a >> 4) - (v >> 4)) & 0x1F) << 4);
+        }
+        if (d & 0x100) d = (d - 0x60) & 0x1FF;
+        m_state.a = (uint8_t)d;
     } else {
         uint16_t d = (uint16_t)a - v - ((m_state.p & FLAG_C) ? 0 : 1);
         m_state.p &= ~(FLAG_V | FLAG_C);
@@ -395,10 +418,16 @@ int MOS45GS02::step() {
                     shouldConsume = true;
                 }
 
+                // gs4510.vhdl has no 32-bit immediate forms: before an immediate
+                // opcode the two NEGs execute as ordinary instructions.
+                if (isQuadImmediateOpcode(read8(m_state.pc + 1))) shouldConsume = false;
+
                 if (shouldConsume) {
-                    // Consume the NEG/NEG prefix and set QUAD mode
+                    // Consume the NEG/NEG prefix and set QUAD mode. The hardware
+                    // executes both NEG A ops: A is restored, but N/Z are set from A.
                     m_state.pc++;
                     m_state.cycles++;
+                    updateNZ(m_state.a);
                     isQuad = true;
                     prefixCount++;
                     continue;
@@ -529,12 +558,8 @@ int MOS45GS02::step() {
         }
         
         // --- 1. Load / Store ---
-        case 0xA9: { // LDA #imm / LDQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                regWrite(8, v); updateNZ32(v); m_state.cycles += 4;
-            } else { m_state.a = read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++; }
+        case 0xA9: { // LDA #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            m_state.a = read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++;
             break;
         }
         case 0xAD: { // LDA abs / LDQ abs
@@ -574,6 +599,8 @@ int MOS45GS02::step() {
         case 0xA1: m_state.a = read8(getIndX()); updateNZ(m_state.a); break; // LDA (zp,X)
         case 0xB1: m_state.a = read8(getIndY()); updateNZ(m_state.a); break; // LDA (zp),Y
         case 0xB2: { // LDA (zp),z / LDQ (zp),z
+            // Per gs4510.vhdl (InnZReadVectorHigh/Byte2), LDQ is the only quad op
+            // that adds Z to the pointer; all other XXXQ ($nn)/[$nn] ops ignore Z.
             uint32_t base = getIndPhys();
             uint32_t addr = base + m_state.z;
             if (isQuad) {
@@ -632,7 +659,7 @@ int MOS45GS02::step() {
         case 0x91: write8(getIndY(), m_state.a); break; // STA (zp),Y
         case 0x92: { // STA (zp),z / STQ (zp),z
             uint32_t base = getIndPhys();
-            uint32_t addr = base + m_state.z;
+            uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) {
                 uint32_t q = regRead(8);
                 if (is32BitInd) write32_phys(addr, q);
@@ -661,12 +688,8 @@ int MOS45GS02::step() {
         case 0x9E: write8(getAbsX(), m_state.z); m_state.cycles++; break;
 
         // --- 2. Arithmetic / Logic ---
-        case 0x69: { // ADC #imm / ADCQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doAdc32(v);
-            } else { uint8_t v=read8(m_state.pc++); doAdc8(v); m_state.cycles++; }
+        case 0x69: { // ADC #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            uint8_t v=read8(m_state.pc++); doAdc8(v); m_state.cycles++;
             break;
         }
         case 0x6D: { // ADC abs / ADCQ abs
@@ -702,18 +725,14 @@ int MOS45GS02::step() {
         case 0x61: m_state.a = (uint8_t)(regRead(0)); { uint8_t v=read8(getIndX()); doAdc8(v); break; }
         case 0x71: m_state.a = (uint8_t)(regRead(0)); { uint8_t v=read8(getIndY()); doAdc8(v); break; }
         case 0x72: { // ADC (zp),z / ADCQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doAdc32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { uint8_t v = is32BitInd ? read8_phys(addr) : read8((uint16_t)addr); doAdc8(v); m_state.cycles++; }
             break;
         }
 
-        case 0xE9: { // SBC #imm / SBCQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doSbc32(v);
-            } else { uint8_t v=read8(m_state.pc++); doSbc8(v); m_state.cycles++; }
+        case 0xE9: { // SBC #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            uint8_t v=read8(m_state.pc++); doSbc8(v); m_state.cycles++;
             break;
         }
         case 0xED: { // SBC abs / SBCQ abs
@@ -749,18 +768,14 @@ int MOS45GS02::step() {
         case 0xE1: m_state.a = (uint8_t)(regRead(0)); { uint8_t v=read8(getIndX()); doSbc8(v); break; }
         case 0xF1: m_state.a = (uint8_t)(regRead(0)); { uint8_t v=read8(getIndY()); doSbc8(v); break; }
         case 0xF2: { // SBC (zp),z / SBCQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doSbc32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { uint8_t v = is32BitInd ? read8_phys(addr) : read8((uint16_t)addr); doSbc8(v); m_state.cycles++; }
             break;
         }
         
-        case 0xC9: { // CMP #imm / CMPQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doCmp32(v);
-            } else { uint8_t v=read8(m_state.pc++); uint16_t d=(uint16_t)m_state.a-v; m_state.p &= ~FLAG_C; if(m_state.a>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)d); m_state.cycles++; }
+        case 0xC9: { // CMP #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            uint8_t v=read8(m_state.pc++); uint16_t d=(uint16_t)m_state.a-v; m_state.p &= ~FLAG_C; if(m_state.a>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)d); m_state.cycles++;
             break;
         }
         case 0xCD: { // CMP abs / CMPQ abs
@@ -796,18 +811,14 @@ int MOS45GS02::step() {
         case 0xC1: { uint8_t v=read8(getIndX()); uint16_t d=(uint16_t)m_state.a-v; m_state.p &= ~FLAG_C; if(m_state.a>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)d); break; }
         case 0xD1: { uint8_t v=read8(getIndY()); uint16_t d=(uint16_t)m_state.a-v; m_state.p &= ~FLAG_C; if(m_state.a>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)d); break; }
         case 0xD2: { // CMP (zp),z / CMPQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doCmp32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { uint8_t v = is32BitInd ? read8_phys(addr) : read8((uint16_t)addr); uint16_t d=(uint16_t)m_state.a-v; m_state.p &= ~FLAG_C; if(m_state.a>=v) m_state.p|=FLAG_C; updateNZ((uint8_t)d); m_state.cycles++; }
             break;
         }
 
-        case 0x29: { // AND #imm / ANDQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doAnd32(v);
-            } else { m_state.a &= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++; }
+        case 0x29: { // AND #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            m_state.a &= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++;
             break;
         }
         case 0x2D: { // AND abs / ANDQ abs
@@ -843,18 +854,14 @@ int MOS45GS02::step() {
         case 0x21: m_state.a &= read8(getIndX()); updateNZ(m_state.a); break;
         case 0x31: m_state.a &= read8(getIndY()); updateNZ(m_state.a); break;
         case 0x32: { // AND (zp),z / ANDQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doAnd32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { m_state.a &= (is32BitInd ? read8_phys(addr) : read8((uint16_t)addr)); updateNZ(m_state.a); m_state.cycles++; }
             break;
         }
 
-        case 0x09: { // ORA #imm / ORAQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doOra32(v);
-            } else { m_state.a |= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++; }
+        case 0x09: { // ORA #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            m_state.a |= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++;
             break;
         }
         case 0x0D: { // ORA abs / ORAQ abs
@@ -890,18 +897,14 @@ int MOS45GS02::step() {
         case 0x01: m_state.a |= read8(getIndX()); updateNZ(m_state.a); break;
         case 0x11: m_state.a |= read8(getIndY()); updateNZ(m_state.a); break;
         case 0x12: { // ORA (zp),z / ORAQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doOra32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { m_state.a |= (is32BitInd ? read8_phys(addr) : read8((uint16_t)addr)); updateNZ(m_state.a); m_state.cycles++; }
             break;
         }
 
-        case 0x49: { // EOR #imm / EORQ #imm32
-            if (isQuad) {
-                uint32_t v = (uint32_t)read8(m_state.pc++) | ((uint32_t)read8(m_state.pc++) << 8) |
-                             ((uint32_t)read8(m_state.pc++) << 16) | ((uint32_t)read8(m_state.pc++) << 24);
-                doEor32(v);
-            } else { m_state.a ^= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++; }
+        case 0x49: { // EOR #imm (no quad form: NEG NEG + immediate runs as 8-bit, per gs4510.vhdl)
+            m_state.a ^= read8(m_state.pc++); updateNZ(m_state.a); m_state.cycles++;
             break;
         }
         case 0x4D: { // EOR abs / EORQ abs
@@ -937,7 +940,7 @@ int MOS45GS02::step() {
         case 0x41: m_state.a ^= read8(getIndX()); updateNZ(m_state.a); break;
         case 0x51: m_state.a ^= read8(getIndY()); updateNZ(m_state.a); break;
         case 0x52: { // EOR (zp),z / EORQ (zp),z
-            uint32_t base = getIndPhys(); uint32_t addr = base + m_state.z;
+            uint32_t base = getIndPhys(); uint32_t addr = base + (isQuad ? 0 : m_state.z);
             if (isQuad) doEor32(is32BitInd ? read32_phys(addr) : read32((uint16_t)addr));
             else { m_state.a ^= (is32BitInd ? read8_phys(addr) : read8((uint16_t)addr)); updateNZ(m_state.a); m_state.cycles++; }
             break;
@@ -1057,8 +1060,7 @@ int MOS45GS02::step() {
         case 0x6B: m_state.a = m_state.z; updateNZ(m_state.a); break;
         case 0x5B: { // TAB
             uint8_t oldB = m_state.b;
-            m_state.b = m_state.a;
-            updateNZ(m_state.b);
+            m_state.b = m_state.a;  // TAB affects no flags
             // Detect implicit hypervisor exit: TAB changing B from $BF (hypervisor page)
             // while in hypervisor mode. Some HYPPO code paths (e.g. $825B→$AD92)
             // skip the STA $D67F exit and use TAB to transition directly.
@@ -1092,7 +1094,7 @@ int MOS45GS02::step() {
         // --- 6. Stack ---
         case 0x48: push8(m_state.a); break;
         case 0x68: m_state.a = pull8(); updateNZ(m_state.a); break;
-        case 0x08: push8(m_state.p); break;
+        case 0x08: push8(m_state.p | FLAG_B | FLAG_E); break; // gs4510.vhdl: B and E always set when pushed
         case 0x28: { uint8_t pulled = pull8(); m_state.p = (pulled & ~(FLAG_B|FLAG_E)) | (m_state.p & (FLAG_B|FLAG_E)); break; } // PLP
         case 0xDA: push8(m_state.x); break;
         case 0xFA: m_state.x = pull8(); updateNZ(m_state.x); break;
@@ -1187,7 +1189,7 @@ int MOS45GS02::step() {
         }
         case 0x34: { uint8_t v=read8(getZpX()); m_state.p &= ~(FLAG_Z|FLAG_N|FLAG_V); if(!(m_state.a&v)) m_state.p|=FLAG_Z; if(v&0x80) m_state.p|=FLAG_N; if(v&0x40) m_state.p|=FLAG_V; break; }
         case 0x3C: { uint8_t v=read8(getAbsX()); m_state.p &= ~(FLAG_Z|FLAG_N|FLAG_V); if(!(m_state.a&v)) m_state.p|=FLAG_Z; if(v&0x80) m_state.p|=FLAG_N; if(v&0x40) m_state.p|=FLAG_V; break; }
-        case 0x89: { uint8_t v=read8(m_state.pc++); m_state.cycles++; updateNZ(m_state.a&v); break; }
+        case 0x89: { uint8_t v=read8(m_state.pc++); m_state.cycles++; m_state.p &= ~(FLAG_Z|FLAG_N|FLAG_V); if(!(m_state.a&v)) m_state.p|=FLAG_Z; if(v&0x80) m_state.p|=FLAG_N; if(v&0x40) m_state.p|=FLAG_V; break; } // gs4510.vhdl: N/V from operand in all modes
         
         // RMBx / SMBx (Rockwell/W65C02/45GS02)
         case 0x07: case 0x17: case 0x27: case 0x37: case 0x47: case 0x57: case 0x67: case 0x77: {
@@ -1358,49 +1360,31 @@ int MOS45GS02::step() {
             m_state.cycles++; break;
         }
         case 0x5C: { // MAP - Set memory mapping
-            // MEGA65 MAP register encoding (two modes per half):
-            //
-            // Normal mode (X != 0x0F):
-            //   Lower 32KB: offset = ((X & 0x0F) << 8) | A
-            //                enables = (X >> 4) & 0x0F  (blocks 0-3)
-            //
-            // Megabyte select mode (X == 0x0F):
-            //   megabyte_low = A << 20  (selects 1MB-aligned base for lower 32KB)
-            //   (offset and enables unchanged)
-            //
-            // Same logic for upper half with Z/Y instead of X/A.
+            // Encoding per gs4510.vhdl / xemu (cpu65_do_aug_callback):
+            //   Lower 32KB: X == $0F selects megabyte_low = A << 20; otherwise
+            //               offset = ((X & $0F) << 16) | (A << 8), enables blocks 0-3 = X[7:4].
+            //   Upper 32KB: Z == $0F selects megabyte_high = Y << 20; otherwise
+            //               offset = ((Z & $0F) << 16) | (Y << 8), enables blocks 4-7 = Z[7:4].
+            // In hypervisor mode the upper offset/enables are not changed (MB select still is).
             if (m_mapMmu) {
                 MapState state = m_mapMmu->getMapState();
 
-                // Lower 32KB
-                // MAP encoding (per MEGA65 documentation):
-                // - A upper 4 bits (A[7:4]): enables for lower blocks 0-3
-                // - A lower 4 bits (A[3:0]): offset bits 8-11
-                // - X bits (X[7:0]): offset bits 12-19
                 if (m_state.x == 0x0F) {
-                    // Megabyte select: A chooses which 1MB region
                     state.megabyteLow = (uint32_t)m_state.a << 20;
                 } else {
-                    // Standard MAP: use A upper 4 bits for enables, A lower 4 bits + X for offset
-                    uint32_t loOff = (((uint32_t)m_state.x & 0xFF) << 8) | (m_state.a & 0x0F);
+                    uint32_t loOff = ((uint32_t)(m_state.x & 0x0F) << 16) | ((uint32_t)m_state.a << 8);
                     for (int i = 0; i < 4; i++)
-                        state.offsets[i] = (i * 0x20) + loOff;
-                    state.enables = (state.enables & 0xF0) | ((m_state.a >> 4) & 0x0F);
+                        state.offsets[i] = loOff;
+                    state.enables = (state.enables & 0xF0) | ((m_state.x >> 4) & 0x0F);
                 }
 
-                // Upper 32KB — blocked in hypervisor mode (matching real hardware).
-                // In hypervisor mode, $8000-$FFFF is locked to hypervisor RAM;
-                // only megabyte selection (Z==0x0F) is allowed.
-                // MAP encoding for upper half uses Z and Y instead of X and A.
                 if (m_state.z == 0x0F) {
-                    // Megabyte select: Y chooses which 1MB region
                     state.megabyteHigh = (uint32_t)m_state.y << 20;
-                } else {
-                    // Standard MAP: use Z upper 4 bits for enables, Z lower 4 bits + Y for offset
-                    uint32_t hiOff = (((uint32_t)m_state.y & 0xFF) << 8) | (m_state.z & 0x0F);
+                } else if (!m_state.hypervisor) {
+                    uint32_t hiOff = ((uint32_t)(m_state.z & 0x0F) << 16) | ((uint32_t)m_state.y << 8);
                     for (int i = 4; i < 8; i++)
-                        state.offsets[i] = (i * 0x20) + hiOff;
-                    state.enables = (state.enables & 0x0F) | (((m_state.z >> 4) & 0x0F) << 4);
+                        state.offsets[i] = hiOff;
+                    state.enables = (state.enables & 0x0F) | (m_state.z & 0xF0);
                 }
 
                 m_mapMmu->setMapState(state);
@@ -1473,7 +1457,8 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
     int prefixCount = 0;
     while (prefixCount < MAX_PREFIXES) {
         uint8_t op = bus->peek8(currentAddr);
-        if (op == 0x42 && bus->peek8(currentAddr + 1) == 0x42) {
+        if (op == 0x42 && bus->peek8(currentAddr + 1) == 0x42 &&
+            !isQuadImmediateOpcode(bus->peek8(currentAddr + 2))) {
             isQuad = true;
             currentAddr += 2;
             prefixCount++;
@@ -1561,7 +1546,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             snprintf(buf, bufsz, "BBS%d $%02X,$%04X", ((op - 0x8F) >> 4), bus->peek8(currentAddr), (uint16_t)(currentAddr + 2 + (int8_t)bus->peek8(currentAddr+1))); return (int)(currentAddr + 2 - addr);
         
         case 0xA9:
-            if (isQuad) { snprintf(buf, bufsz, "LDQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "LDA #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0xAD: snprintf(buf, bufsz, "%s $%04X", prefix, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0xBD: snprintf(buf, bufsz, "LDA $%04X,X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1590,7 +1574,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0x69:
-            if (isQuad) { snprintf(buf, bufsz, "ADCQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "ADC #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x6D: snprintf(buf, bufsz, "%s $%04X", adc_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x7D: snprintf(buf, bufsz, "%s $%04X,X", adc_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1605,7 +1588,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0xE9:
-            if (isQuad) { snprintf(buf, bufsz, "SBCQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "SBC #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0xED: snprintf(buf, bufsz, "%s $%04X", sbc_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0xFD: snprintf(buf, bufsz, "%s $%04X,X", sbc_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1620,7 +1602,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0xC9:
-            if (isQuad) { snprintf(buf, bufsz, "CMPQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "CMP #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0xCD: snprintf(buf, bufsz, "%s $%04X", cmp_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0xDD: snprintf(buf, bufsz, "%s $%04X,X", cmp_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1635,7 +1616,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0x29:
-            if (isQuad) { snprintf(buf, bufsz, "ANDQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "AND #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x2D: snprintf(buf, bufsz, "%s $%04X", and_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x3D: snprintf(buf, bufsz, "%s $%04X,X", and_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1650,7 +1630,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0x09:
-            if (isQuad) { snprintf(buf, bufsz, "ORAQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "ORA #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x0D: snprintf(buf, bufsz, "%s $%04X", ora_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x1D: snprintf(buf, bufsz, "%s $%04X,X", ora_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
@@ -1665,7 +1644,6 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             return (int)(currentAddr + 1 - addr);
 
         case 0x49:
-            if (isQuad) { snprintf(buf, bufsz, "EORQ #$%08X", bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)|(bus->peek8(currentAddr+2)<<16)|(bus->peek8(currentAddr+3)<<24)); return (int)(currentAddr + 4 - addr); }
             snprintf(buf, bufsz, "EOR #$%02X", bus->peek8(currentAddr)); return (int)(currentAddr + 1 - addr);
         case 0x4D: snprintf(buf, bufsz, "%s $%04X", eor_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);
         case 0x5D: snprintf(buf, bufsz, "%s $%04X,X", eor_pfx, bus->peek8(currentAddr)|(bus->peek8(currentAddr+1)<<8)); return (int)(currentAddr + 2 - addr);

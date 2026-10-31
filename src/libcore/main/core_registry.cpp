@@ -27,3 +27,7 @@ void CoreRegistry::enumerate(std::vector<CoreInfo>& out) {
         out.push_back(pair.second);
     }
 }
+
+void CoreRegistry::clear() {
+    m_cores.clear();
+}

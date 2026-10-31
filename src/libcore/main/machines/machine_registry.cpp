@@ -50,3 +50,8 @@ void MachineRegistry::enumerateDetailed(std::vector<std::pair<std::string, std::
         out.push_back({pair.first, desc});
     }
 }
+
+void MachineRegistry::clear() {
+    m_factories.clear();
+    m_descriptions.clear();
+}
