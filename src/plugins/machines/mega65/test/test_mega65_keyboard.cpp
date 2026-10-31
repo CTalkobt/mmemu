@@ -34,10 +34,13 @@ TEST_CASE(mega65_keyboard_name_mapping) {
     IPortDevice* colPort = kbd.getPort(0);
     IPortDevice* rowPort = kbd.getPort(1);
 
-    // 'A' is Row 1, Col 2
+    // 'A' is port A line 1, port B bit 2 (standard C64/C65 matrix, #138)
     kbd.pressKeyByName("A", true);
-    colPort->writePort(0xFB); // Select column 2
-    ASSERT_EQ(rowPort->readPort(), 0xFD); // Bit 1 low
+    colPort->writePort(0xFD); // Drive port A line 1 low
+    ASSERT_EQ(rowPort->readPort(), 0xFB); // Bit 2 low
+    colPort->writePort(0xFB); // Line 2 would be R: not pressed
+    ASSERT_EQ(rowPort->readPort(), 0xFF);
+    colPort->writePort(0xFD);
 
     kbd.pressKeyByName("A", false);
     ASSERT_EQ(rowPort->readPort(), 0xFF);
@@ -63,17 +66,16 @@ TEST_CASE(mega65_keyboard_cia_integration) {
     cia.ioWrite(nullptr, 0xDC02, 0xFF); // DDR A = Output
     cia.ioWrite(nullptr, 0xDC03, 0x00); // DDR B = Input
 
-    // Press 'RETURN' (Row 1, Col 0 - wait, my mapping says RETURN is row 0 col 1)
-    // RETURN: Row 0, Col 1
+    // RETURN: port A line 0, port B bit 1
     kbd.pressKeyByName("RETURN", true);
 
-    // Select Column 1 via CIA1 Port A
-    cia.ioWrite(nullptr, 0xDC00, 0xFD);
+    // Drive port A line 0 low via CIA1 $DC00
+    cia.ioWrite(nullptr, 0xDC00, 0xFE);
 
-    // Read Row sense via CIA1 Port B
+    // Read the key bits via CIA1 $DC01
     uint8_t rowVal = 0;
     ASSERT(cia.ioRead(nullptr, 0xDC01, &rowVal));
-    ASSERT_EQ(rowVal, 0xFE); // Row 0 bit low
+    ASSERT_EQ(rowVal, 0xFD); // Bit 1 low
 }
 
 TEST_CASE(mega65_keyboard_type_text_uses_key_sink) {
@@ -95,4 +97,34 @@ TEST_CASE(mega65_keyboard_type_text_uses_key_sink) {
         "RETURN+", "RETURN-",
     };
     ASSERT(events == expected);
+}
+
+// Every named key reads back at its standard C64 matrix position through the
+// ports (the MEGA65 matrix was transposed before #138).
+TEST_CASE(mega65_keyboard_matches_c64_matrix) {
+    // C64 matrix: [port A line][port B bit]
+    static const char* kMatrix[8][8] = {
+        {"DEL", "RETURN", "LEFT", "F7", "F1", "F3", "F5", "UP"},
+        {"3", "W", "A", "4", "Z", "S", "E", "LSHIFT"},
+        {"5", "R", "D", "6", "C", "F", "T", "X"},
+        {"7", "Y", "G", "8", "B", "H", "U", "V"},
+        {"9", "I", "J", "0", "M", "K", "O", "N"},
+        {"+", "P", "L", "-", ".", ":", "@", ","},
+        {"POUND", "*", ";", "HOME", "RSHIFT", "=", "^", "/"},
+        {"1", "ESC", "CTRL", "2", "SPACE", "COMMODORE", "Q", "RUNSTOP"},
+    };
+    KbdMega65 kbd;
+    IPortDevice* colPort = kbd.getPort(0);
+    IPortDevice* rowPort = kbd.getPort(1);
+    for (int line = 0; line < 8; line++) {
+        for (int bit = 0; bit < 8; bit++) {
+            ASSERT(kbd.pressKeyByName(kMatrix[line][bit], true));
+            for (int sel = 0; sel < 8; sel++) {
+                colPort->writePort((uint8_t)~(1 << sel));
+                uint8_t expect = (sel == line) ? (uint8_t)~(1 << bit) : 0xFF;
+                ASSERT_EQ((int)rowPort->readPort(), (int)expect);
+            }
+            kbd.pressKeyByName(kMatrix[line][bit], false);
+        }
+    }
 }
