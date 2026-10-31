@@ -974,6 +974,22 @@ def run_tests():
 
     client.call_tool("destroy_machine", {"machine_id": prof_mid})
 
+    # set_warp: MEGA65 CPU speed model; machines without one report an error
+    print("\nTesting set_warp...")
+    res = client.call_tool("create_machine", {"machine_type": "mega65"})
+    m65 = res["result"]["content"][0]["text"].split('"')[1]
+    text = client.call_tool("set_warp", {"machine_id": m65})["result"]["content"][0]["text"]
+    assert "Warp: on" in text and "40.5 MHz" in text, f"Unexpected default: {text}"
+    text = client.call_tool("set_warp", {"machine_id": m65, "enabled": False})["result"]["content"][0]["text"]
+    assert "Warp: off" in text, f"Warp did not turn off: {text}"
+    client.call_tool("destroy_machine", {"machine_id": m65})
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    c64 = res["result"]["content"][0]["text"].split('"')[1]
+    res = client.call_tool("set_warp", {"machine_id": c64})
+    assert res["result"].get("isError") or "no CPU speed model" in res["result"]["content"][0]["text"]
+    client.call_tool("destroy_machine", {"machine_id": c64})
+    print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64 has no speed model)")
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

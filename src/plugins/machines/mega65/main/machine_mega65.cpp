@@ -846,21 +846,66 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     // Scheduler: tick I/O devices after each CPU step (needed for cycle-by-cycle DMA).
     // Three stall sources: DMA halt, badline backlog, and I/O wait states.
-    desc->schedulerStep = [dma, phiBacklog](MachineDescriptor& d) -> int {
+    // CPU speed (gs4510.vhdl): the CPU runs at 1, 2, 3.5 or 40.5 MHz while the
+    // VIC-IV, SIDs, CIAs and keyboard keep the ~1 MHz phi clock. Warp (the
+    // default) keeps the old behaviour of one device cycle per CPU cycle.
+    // Ratios are CPU cycles per phi cycle, in half units: 1, 2, 3.5, 40.5 MHz.
+    struct SpeedState { bool warp = true; uint64_t phiAcc = 0; };
+    auto speed = std::make_shared<SpeedState>();
+    static const int kHalfRatioBySelect[8] = {
+        4,   // 000: 2 MHz
+        81,  // 001: 40.5 MHz
+        7,   // 010: 3.5 MHz
+        81,  // 011: 40.5 MHz
+        2,   // 100: 1 MHz
+        2,   // 101: 1 MHz (VFAST without FAST)
+        7,   // 110: 3.5 MHz
+        81,  // 111: 40.5 MHz
+    };
+    auto halfRatio = [vic4, bankCtrl, cpu45]() -> int {
+        // The hypervisor and force_fast ("POKE 0,65") always run at full speed
+        if (cpu45->isHypervisor() || bankCtrl->forceFast()) return 81;
+        return kHalfRatioBySelect[vic4->cpuSpeedSelect() & 7];
+    };
+    for (IOHandler* h : std::initializer_list<IOHandler*>{ vic4, sidPair, cia1, cia2, kbd })
+        io->setDeviceClocked(h);
+
+    desc->getWarp = [speed]() { return speed->warp; };
+    desc->setWarp = [speed](bool on) { speed->warp = on; speed->phiAcc = 0; };
+    desc->cpuSpeedMHz = [halfRatio]() { return halfRatio() / 2.0; };
+
+    desc->schedulerStep = [dma, phiBacklog, speed, halfRatio](MachineDescriptor& d) -> int {
+        // Advance devices by `cycles` CPU cycles: CPU-clocked devices by the
+        // cycles, phi-clocked ones by the phi cycles that elapsed at this speed.
+        auto advance = [&](uint64_t cycles, int ratio) {
+            if (!d.ioRegistry) return;
+            if (speed->warp || ratio == 2) { d.ioRegistry->tickAll(cycles); return; }
+            speed->phiAcc += cycles * 2;
+            uint64_t phi = speed->phiAcc / ratio;
+            speed->phiAcc %= ratio;
+            d.ioRegistry->tickAll(cycles, phi);
+        };
+        int ratio = speed->warp ? 2 : halfRatio();
+
         if (dma->isHaltRequested()) {
             // DMA active: tick devices (processes one DMA byte), CPU stays halted
-            if (d.ioRegistry) d.ioRegistry->tickAll(1);
+            advance(1, ratio);
             return 1;
         }
         if (*phiBacklog > 0) {
-            // Badline or I/O stall: CPU paused, tick devices to count down
-            (*phiBacklog)--;
-            if (d.ioRegistry) d.ioRegistry->tickAll(1);
-            return 1;
+            if (!speed->warp && ratio == 81) {
+                // gs4510.vhdl applies badline/phi backlog only below full speed
+                *phiBacklog = 0;
+            } else {
+                // Badline or I/O stall: CPU paused, tick devices to count down
+                (*phiBacklog)--;
+                advance(1, ratio);
+                return 1;
+            }
         }
         auto* cpu = d.cpus[0].cpu;
         int cycles = cpu->step();
-        if (d.ioRegistry) d.ioRegistry->tickAll(cycles);
+        advance((uint64_t)cycles, ratio);
         return cycles;
     };
 

@@ -14,6 +14,11 @@ void VIC4::reset() {
     VIC3::reset();
     std::memset(m_extRegs, 0, sizeof(m_extRegs));
 
+    // viciv.vhdl reset: "Set CPU to 40.5MHz" (FAST, VFAST set, C128 2 MHz clear)
+    m_regs[0x31] |= D031_FAST;
+    m_extRegs[0x14] |= D054_VFAST;
+    m_c128Fast = false;
+
     // Default VIC-IV extended registers (indexed as $D0xx - $D040)
     // $D060-$D063: SCRNPTR — screen RAM base (28-bit)
     // VHDL default: x"0000400" (C64 standard screen at $0400)
@@ -97,6 +102,9 @@ bool VIC4::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
         }
         return true;
     }
+
+    // In VIC-II I/O mode $D030 is the C128 2 MHz register (viciv.vhdl register 255)
+    if (offset == 0x30 && isLocked()) m_c128Fast = (val & 0x01) != 0;
 
     // Everything else handled by VIC3
     bool handled = VIC3::ioWrite(bus, addr, val);
@@ -208,6 +216,10 @@ uint8_t VIC4::getBackPalBank() const { return (m_extRegs[0x30] >> 6) & 0x03; } /
 // --- System flags ---
 
 bool VIC4::isVfast() const   { return (d054() & D054_VFAST) != 0; }
+
+int VIC4::cpuSpeedSelect() const {
+    return (m_c128Fast ? 0 : 4) | ((m_regs[0x31] & D031_FAST) ? 2 : 0) | (isVfast() ? 1 : 0);
+}
 bool VIC4::isPalNtsc() const { return (m_extRegs[0x2F] & 0x80) != 0; } // $D06F bit 7
 
 // ---------------------------------------------------------------------------

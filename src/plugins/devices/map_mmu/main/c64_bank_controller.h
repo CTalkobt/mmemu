@@ -68,6 +68,8 @@ public:
     void tick(uint64_t) override {}
 
     uint8_t portValue() const { return m_portOut; }
+    /** force_fast: set by writing $41 to $00 ("POKE 0,65"), cleared by $40. */
+    bool forceFast() const { return m_forceFast; }
     uint8_t portDdr()   const { return m_portDDR; }
     /** Set the CPU port ($00 DDR, $01 data) directly, e.g. on hypervisor entry/exit. */
     void setPort(uint8_t ddr, uint8_t value) { m_portDDR = ddr; m_portOut = value; updateOverlays(); }
@@ -77,6 +79,7 @@ private:
     MapMmu*          m_mapMmu = nullptr;
 
     uint8_t m_portDDR = 0x2F;   // Data direction register ($00)
+    bool    m_forceFast = false;
     uint8_t m_portOut = 0x37;   // Port output latch ($01)
 
     const uint8_t* m_basicRom  = nullptr;  uint32_t m_basicSize  = 0;

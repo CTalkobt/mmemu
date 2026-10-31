@@ -835,9 +835,16 @@ TEST_CASE(vic4_vfast_flag) {
     Vic4Fixture f;
     f.unlock();
 
-    ASSERT(!f.vic.isVfast());
-    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_VFAST);
+    // viciv.vhdl reset sets VFAST ($D054.6) and FAST ($D031.6): 40.5 MHz
     ASSERT(f.vic.isVfast());
+    ASSERT_EQ(f.vic.cpuSpeedSelect(), 7);
+    f.vic.ioWrite(nullptr, 0xD054, 0x00);
+    ASSERT(!f.vic.isVfast());
+    ASSERT_EQ(f.vic.cpuSpeedSelect(), 6);          // FAST only: 3.5 MHz
+    f.vic.ioWrite(nullptr, 0xD054, 0x40);
+    ASSERT(f.vic.isVfast());
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_PALEMU);  // bit 5 is PALEMU, not VFAST
+    ASSERT(!f.vic.isVfast());
 }
 
 TEST_CASE(vic4_pal_ntsc) {

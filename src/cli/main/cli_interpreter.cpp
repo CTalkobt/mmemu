@@ -2320,6 +2320,21 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
            << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
         m_output(os.str());
+    } else if (cmd == "warp") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& m = *m_ctx.machine;
+        if (!m.getWarp || !m.setWarp) { m_output("This machine has no CPU speed model.\n"); return; }
+        std::string arg;
+        if (ss >> arg) {
+            if (arg == "on" || arg == "1") m.setWarp(true);
+            else if (arg == "off" || arg == "0") m.setWarp(false);
+            else { m_output("Syntax: warp [on|off]\n"); return; }
+        }
+        std::ostringstream os;
+        os << "Warp: " << (m.getWarp() ? "on (devices advance one cycle per CPU cycle)"
+                                        : "off (devices run at real time relative to the CPU)");
+        if (m.cpuSpeedMHz) os << "\nCPU speed: " << m.cpuSpeedMHz() << " MHz";
+        m_output(os.str() + "\n");
     } else if (cmd == "personality") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         if (!m_ctx.machine->ioRegistry) { m_output("No I/O registry.\n"); return; }
@@ -3125,6 +3140,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"
                  "\nAll address values can be expressions with symbols and math.\n"

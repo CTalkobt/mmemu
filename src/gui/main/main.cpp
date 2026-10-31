@@ -68,6 +68,7 @@ private:
     void OnPause(wxCommandEvent& event);
     void OnReset(wxCommandEvent& event);
     void OnResetToMonitor(wxCommandEvent& event);
+    void OnWarp(wxCommandEvent& event);
     void OnFillMem(wxCommandEvent& event);
     void OnCopyMem(wxCommandEvent& event);
     void OnSwapMem(wxCommandEvent& event);
@@ -146,6 +147,7 @@ private:
     wxAuiNotebook*  m_notebook  = nullptr;
 
     wxMenuItem* m_resetToMonitorItem = nullptr;
+    wxMenuItem* m_warpItem = nullptr;
 
     wxTimer m_timer;
     bool m_running = false;
@@ -538,6 +540,9 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_RESET, "Reset\tCtrl-R");
     m_resetToMonitorItem = menuControl->Append(ID_RESET_TO_MONITOR, "Reset to Monitor");
     m_resetToMonitorItem->Enable(false);  // Hidden until MEGA65 is loaded
+    m_warpItem = menuControl->AppendCheckItem(ID_WARP, "Warp (ignore CPU speed)",
+        "On: devices advance one cycle per CPU cycle (fast). Off: real-time device clock.");
+    m_warpItem->Enable(false);  // Only for machines with a CPU speed model
     menuControl->AppendSeparator();
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
@@ -671,6 +676,7 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_TOOL, &MmemuFrame::OnPause, this, ID_PAUSE);
     Bind(wxEVT_MENU, &MmemuFrame::OnReset, this, ID_RESET);
     Bind(wxEVT_MENU, &MmemuFrame::OnResetToMonitor, this, ID_RESET_TO_MONITOR);
+    Bind(wxEVT_MENU, &MmemuFrame::OnWarp, this, ID_WARP);
     Bind(wxEVT_MENU, &MmemuFrame::OnFillMem, this, ID_FILL_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnCopyMem, this, ID_COPY_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnSwapMem, this, ID_SWAP_MEM);
@@ -1089,6 +1095,13 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         }
     }
 
+    // Warp toggle: only machines with a CPU speed model
+    if (m_warpItem) {
+        bool hasSpeedModel = m_machine->getWarp && m_machine->setWarp;
+        m_warpItem->Enable(hasSpeedModel);
+        m_warpItem->Check(hasSpeedModel && m_machine->getWarp());
+    }
+
     if (m_machine->onReset) m_machine->onReset(*m_machine);
 
     // Discover and start audio output
@@ -1176,6 +1189,14 @@ void MmemuFrame::OnReset(wxCommandEvent& event) {
         m_disasmPane->RefreshValues(m_cpu->pc());
         SetStatusText("Reset.");
     }
+}
+
+void MmemuFrame::OnWarp(wxCommandEvent& event) {
+    if (!m_machine || !m_machine->setWarp) return;
+    m_machine->setWarp(event.IsChecked());
+    wxString msg = event.IsChecked() ? "Warp on" : "Warp off: real-time device clock";
+    if (m_machine->cpuSpeedMHz) msg += wxString::Format(" (CPU %.1f MHz)", m_machine->cpuSpeedMHz());
+    SetStatusText(msg);
 }
 
 void MmemuFrame::OnResetToMonitor(wxCommandEvent& event) {
