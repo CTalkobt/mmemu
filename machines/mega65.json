@@ -27,8 +27,9 @@
           "paths": [
             "roms/mega65/HICKUP.M65",
             "HICKUP.M65",
-            "~/.local/share/xemu-lgb/mega65/HICKUP.M65"
-          ]
+            "~/.local/share/mmsim/HICKUP.M65"
+          ],
+          "_note": "xemu ships HYPPO inside its executable; run 'importmega65' to extract it into roms/mega65/"
         }
       ],
 

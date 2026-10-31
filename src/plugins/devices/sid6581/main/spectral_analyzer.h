@@ -58,7 +58,8 @@ public:
     /// Create analyzer with sample rate
     explicit SpectralAnalyzer(float sampleRate = 44100.0f);
 
-    /// Analyze audio samples (mono or mono-converted)
+    /// Analyze audio samples (mono or mono-converted). The transform grows
+    /// beyond fftSize when needed so that every sample is included.
     AnalysisResult analyze(const std::vector<float>& samples, int fftSize = 2048);
 
     /// Compare two analysis results
@@ -67,7 +68,9 @@ public:
                             float frequencyTolerance = 5.0f,  // Hz
                             float magnitudeTolerance = 0.1f);  // dB
 
-    /// Simple peak magnitude comparison (for exact byte comparison)
+    /// Time-domain error between two 8-bit sample streams: RMS of the
+    /// per-sample difference divided by xemu's peak level (0 = identical).
+    /// Returns 1.0 if the lengths differ or the inputs are empty.
     static float calculateSpectralError(const std::vector<uint8_t>& mmsim,
                                        const std::vector<uint8_t>& xemu);
 
@@ -77,7 +80,7 @@ private:
     /// Apply Hamming window to samples
     std::vector<float> applyWindow(const std::vector<float>& samples);
 
-    /// Simple FFT using DFT for bin analysis
+    /// Radix-2 FFT magnitude spectrum (bins 0..fftSize/2)
     std::vector<float> computeFFT(const std::vector<float>& samples, int fftSize);
 
     /// Find spectral peaks above threshold

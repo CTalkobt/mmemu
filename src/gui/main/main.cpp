@@ -48,6 +48,10 @@
 
 // mmemu - Multi Machine Emulator
 
+// GUI run loop timing: the timer period and how much of it the emulation runs
+static constexpr int kTimerMs    = 33;
+static constexpr int kRunSliceMs = 28;
+
 class MmemuFrame : public wxFrame {
 public:
     MmemuFrame();
@@ -975,7 +979,7 @@ MmemuFrame::MmemuFrame()
     // Ctrl+Shift+K toggles capture; FilterEvent routes all other keys.
     Bind(wxEVT_CHAR_HOOK, &MmemuFrame::OnCtrlShiftK, this);
 
-    m_timer.Start(33); // ~30 FPS
+    m_timer.Start(kTimerMs); // ~30 FPS pane refresh; emulation runs kRunSliceMs of each tick
 }
 
 void MmemuFrame::OnLoadMachineDirect(wxCommandEvent& event) {
@@ -1664,11 +1668,13 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
 void MmemuFrame::OnTimer(wxTimerEvent& event) {
     (void)event;
     if (m_running && m_machine && m_machine->schedulerStep) {
-        // Run cycles with periodic yields to keep GUI responsive.
-        // Yield every 50 iterations to allow event processing.
-        // MEGA65 initialization may have long loops that need UI responsiveness.
+        // Run flat out for most of the timer period, then return so wx can
+        // process input and the panes refresh (~30 Hz). No wxYield() inside the
+        // slice: input waits at most one slice, and yielding every few steps
+        // costs far more than the emulation. The clock is checked every 1024
+        // steps (about 1 ms of emulation).
         int iters = 0;
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRunSliceMs);
         while (true) {
             m_machine->schedulerStep(*m_machine);
             ++iters;
@@ -1684,12 +1690,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 SetStatusText("Program ended.");
                 break;
             }
-            // Yield every 50 iterations to allow GUI events (e.g., pause/stop)
-            if ((iters % 50) == 0) {
-                if (std::chrono::steady_clock::now() >= deadline)
-                    break;
-                wxYield();
-            }
+            if ((iters & 1023) == 0 && std::chrono::steady_clock::now() >= deadline)
+                break;
         }
     }
 

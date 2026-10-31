@@ -140,7 +140,12 @@ void KbdVic20::enqueueText(const std::string& text) {
             else if (c == '\t')         name = "space";
             else if (c == '\\')         name = "arrow_left";
             else {
-                if (c >= 'A' && c <= 'Z') name = std::string(1, c);
+                // As on the C64: the default charset is uppercase/graphics, so
+                // unshifted letter keys produce uppercase PETSCII and shifted
+                // ones lowercase (or graphics). ASCII uppercase -> unshifted key
+                // (lowercase name), ASCII lowercase -> shifted key (uppercase name).
+                if (c >= 'A' && c <= 'Z') name = std::string(1, (char)std::tolower(c));
+                else if (c >= 'a' && c <= 'z') name = std::string(1, (char)std::toupper(c));
                 else {
                     switch (c) {
                         case ' ': name = "space"; break;

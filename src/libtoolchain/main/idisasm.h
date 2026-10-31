@@ -7,6 +7,11 @@
 /**
  * Metadata for a single disassembled instruction.
  */
+/** Stack effect of an instruction, used by the debugger's stack tracking. */
+enum class StackOp : uint8_t {
+    NONE, PUSH_A, PUSH_X, PUSH_Y, PUSH_Z, PUSH_P, PULL, BRK
+};
+
 struct DisasmEntry {
     uint32_t addr;
     int      bytes;
@@ -19,6 +24,7 @@ struct DisasmEntry {
     bool     isBranch;
     bool     isIllegal;  // opcode is unofficial/undocumented
     uint32_t targetAddr;
+    StackOp  stackOp = StackOp::NONE;
 };
 
 class SymbolTable;

@@ -1,5 +1,6 @@
 #include "spectral_analyzer.h"
 #include <cmath>
+#include <complex>
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
@@ -18,9 +19,11 @@ SpectralAnalyzer::AnalysisResult SpectralAnalyzer::analyze(
         return result;
     }
 
-    // Ensure FFT size is power of 2
+    // Ensure FFT size is a power of 2 that covers every sample; a shorter
+    // transform would wrap the excess samples around in time
+    int minSize = std::max(fftSize, (int)samples.size());
     int actualFFTSize = 1;
-    while (actualFFTSize < fftSize) {
+    while (actualFFTSize < minSize) {
         actualFFTSize *= 2;
     }
 
@@ -32,7 +35,7 @@ SpectralAnalyzer::AnalysisResult SpectralAnalyzer::analyze(
         windowed.resize(actualFFTSize, 0.0f);
     }
 
-    // Compute FFT (simplified using DFT)
+    // Compute magnitude spectrum
     std::vector<float> spectrum = computeFFT(windowed, actualFFTSize);
 
     // Detect peaks
@@ -47,11 +50,11 @@ SpectralAnalyzer::AnalysisResult SpectralAnalyzer::analyze(
         identifyHarmonics(result.peaks, result.fundamentalFreq);
 
         // Calculate harmonic ratios for soft-clipping detection
-        if (result.peaks.size() > 1) {
-            result.harmonicRatio = result.peaks[1].magnitude / result.peaks[0].magnitude;
-        }
-        if (result.peaks.size() > 2) {
-            result.thirdHarmonicRatio = result.peaks[2].magnitude / result.peaks[0].magnitude;
+        for (const auto& peak : result.peaks) {
+            if (peak.harmonicNumber == 2 && result.harmonicRatio == 0.0f)
+                result.harmonicRatio = peak.magnitude / result.peaks[0].magnitude;
+            else if (peak.harmonicNumber == 3 && result.thirdHarmonicRatio == 0.0f)
+                result.thirdHarmonicRatio = peak.magnitude / result.peaks[0].magnitude;
         }
     }
 
@@ -158,23 +161,36 @@ std::vector<float> SpectralAnalyzer::applyWindow(const std::vector<float>& sampl
 }
 
 std::vector<float> SpectralAnalyzer::computeFFT(const std::vector<float>& samples, int fftSize) {
-    std::vector<float> spectrum(fftSize / 2 + 1, 0.0f);
+    // Iterative radix-2 Cooley-Tukey; fftSize is a power of 2 >= samples.size()
+    std::vector<std::complex<double>> data(fftSize);
+    for (int n = 0; n < (int)samples.size() && n < fftSize; ++n) {
+        data[n] = samples[n];
+    }
 
-    // Simplified FFT using Goertzel-like algorithm for magnitude only
-    // Full FFT would use Cooley-Tukey, but this is sufficient for peak detection
+    for (int i = 1, j = 0; i < fftSize; ++i) {
+        int bit = fftSize >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(data[i], data[j]);
+    }
 
-    for (int k = 0; k <= fftSize / 2; ++k) {
-        float realSum = 0.0f;
-        float imagSum = 0.0f;
-
-        for (int n = 0; n < (int)samples.size(); ++n) {
-            float angle = 2.0f * M_PI * k * n / fftSize;
-            realSum += samples[n] * std::cos(angle);
-            imagSum += samples[n] * std::sin(angle);
+    for (int len = 2; len <= fftSize; len <<= 1) {
+        std::complex<double> step = std::polar(1.0, -2.0 * M_PI / len);
+        for (int start = 0; start < fftSize; start += len) {
+            std::complex<double> w(1.0, 0.0);
+            for (int k = 0; k < len / 2; ++k) {
+                std::complex<double> even = data[start + k];
+                std::complex<double> odd = data[start + k + len / 2] * w;
+                data[start + k] = even + odd;
+                data[start + k + len / 2] = even - odd;
+                w *= step;
+            }
         }
+    }
 
-        // Magnitude
-        spectrum[k] = std::sqrt(realSum * realSum + imagSum * imagSum) / fftSize;
+    std::vector<float> spectrum(fftSize / 2 + 1);
+    for (int k = 0; k <= fftSize / 2; ++k) {
+        spectrum[k] = (float)(std::abs(data[k]) / fftSize);
     }
 
     return spectrum;
@@ -185,20 +201,35 @@ std::vector<SpectralAnalyzer::SpectralPeak> SpectralAnalyzer::detectPeaks(
     std::vector<SpectralPeak> peaks;
 
     int n = spectrum.size();
+    int fftSize = (n - 1) * 2;
     float maxMag = *std::max_element(spectrum.begin(), spectrum.end());
     float actualThreshold = std::max(threshold * maxMag, 0.01f);
 
     // Simple peak detection: local maxima above threshold
+    float maxPeak = 0.0f;
     for (int i = 1; i < n - 1; ++i) {
         if (spectrum[i] > actualThreshold &&
             spectrum[i] > spectrum[i - 1] &&
             spectrum[i] > spectrum[i + 1]) {
+            // Fit a parabola through the log magnitudes of the peak bin and its
+            // neighbours to recover the true frequency and magnitude between bins
+            float a = std::log(spectrum[i - 1] + 1e-12f);
+            float b = std::log(spectrum[i]);
+            float c = std::log(spectrum[i + 1] + 1e-12f);
+            float denom = a - 2.0f * b + c;
+            float offset = (denom != 0.0f) ? 0.5f * (a - c) / denom : 0.0f;
+
             SpectralPeak peak;
-            peak.frequency = binToFrequency(i, spectrum.size() * 2);
-            peak.magnitude = spectrum[i] / (maxMag + 1e-6f);  // Normalize
+            peak.frequency = ((float)i + offset) * m_sampleRate / fftSize;
+            peak.magnitude = std::exp(b - 0.25f * (a - c) * offset);
             peak.harmonicNumber = 0;  // Will be set by identifyHarmonics
+            maxPeak = std::max(maxPeak, peak.magnitude);
             peaks.push_back(peak);
         }
+    }
+
+    for (auto& peak : peaks) {
+        peak.magnitude /= (maxPeak + 1e-6f);  // Normalize
     }
 
     // Sort by magnitude (descending)
@@ -253,8 +284,8 @@ void SpectralAnalyzer::analyzeFilterCharacteristics(const std::vector<float>& sp
     float peakMag = result.resonancePeak;
     float halfPowerMag = peakMag / std::sqrt(2.0f);
 
-    int lowBin = frequencyToBin(result.fundamentalFreq / 2.0f, spectrum.size() * 2);
-    int highBin = frequencyToBin(result.fundamentalFreq * 2.0f, spectrum.size() * 2);
+    int lowBin = frequencyToBin(result.fundamentalFreq / 2.0f, (spectrum.size() - 1) * 2);
+    int highBin = frequencyToBin(result.fundamentalFreq * 2.0f, (spectrum.size() - 1) * 2);
 
     lowBin = std::max(0, lowBin);
     highBin = std::min((int)spectrum.size() - 1, highBin);
@@ -262,14 +293,14 @@ void SpectralAnalyzer::analyzeFilterCharacteristics(const std::vector<float>& sp
     float lowEdge = 0.0f, highEdge = 0.0f;
     for (int i = lowBin; i < (int)spectrum.size(); ++i) {
         if (spectrum[i] >= halfPowerMag) {
-            lowEdge = binToFrequency(i, spectrum.size() * 2);
+            lowEdge = binToFrequency(i, (spectrum.size() - 1) * 2);
             break;
         }
     }
 
     for (int i = highBin; i >= 0; --i) {
         if (spectrum[i] >= halfPowerMag) {
-            highEdge = binToFrequency(i, spectrum.size() * 2);
+            highEdge = binToFrequency(i, (spectrum.size() - 1) * 2);
             break;
         }
     }

@@ -22,13 +22,6 @@ VirtualIECBus::VirtualIECBus(uint8_t deviceNumber)
 }
 
 uint8_t VirtualIECBus::readPort() {
-    static uint64_t readCount = 0;
-    readCount++;
-    if (readCount == 1) {
-        fprintf(stderr, "[VirtualIEC] readPort FIRST CALL!\n");
-        fflush(stderr);
-    }
-
     // IEC bus is active-low with inverting buffers on CIA2 input lines:
     //   Bus asserted (low) -> CIA reads 0; Bus released (high) -> CIA reads 1
     // Wired-OR: if either side asserts (pulls low), bus is low.
@@ -38,16 +31,6 @@ uint8_t VirtualIECBus::readPort() {
     if (!clkBus) val |= (1 << 6);  // CLK released -> bit 6 high
     if (!dataBus) val |= (1 << 7); // DATA released -> bit 7 high
     if (m_atnIn) val |= (1 << 3);  // ATN echo (directly driven, not inverted)
-
-    static uint8_t lastVal = 0xFF;
-    if (readCount < 100 || (readCount % 10000 == 0)) {
-        bool changed = (val != lastVal);
-        fprintf(stderr, "[VirtualIEC] readPort #%llu: returned=$%02X clkBus=%d dataBus=%d atnIn=%d state=%d %s\n",
-            (unsigned long long)readCount, val, clkBus, dataBus, m_atnIn, m_state,
-            changed ? "CHANGED" : "stable");
-        fflush(stderr);
-        lastVal = val;
-    }
     return val;
 }
 
@@ -58,7 +41,7 @@ void VirtualIECBus::writePort(uint8_t val) {
     m_dataIn = (val >> 5) & 1;
     if (val != m_lastWriteVal) {
         m_lastWriteVal = val;
-        fprintf(stderr, "[VirtualIEC] writePort: val=$%02X atn=%d clk=%d data=%d state=%d ph=%d timer=%lu\n",
+        logDebug("writePort: val=$%02X atn=%d clk=%d data=%d state=%d ph=%d timer=%lu",
             val, m_atnIn?1:0, m_clkIn?1:0, m_dataIn?1:0,
             m_state, m_talkSubPhase, (unsigned long)m_stateTimer);
     }
@@ -83,8 +66,6 @@ void VirtualIECBus::reset() {
 void VirtualIECBus::log(const char* fmt, ...) {
     char buf[256]; va_list args; va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args); va_end(args);
-    fprintf(stderr, "[VirtualIEC] %s\n", buf);
-    fflush(stderr);
     if (m_logger && m_logNamed) {
         m_logNamed(m_logger, SIM_LOG_INFO, buf);
     }
@@ -93,8 +74,6 @@ void VirtualIECBus::log(const char* fmt, ...) {
 void VirtualIECBus::logDebug(const char* fmt, ...) {
     char buf[256]; va_list args; va_start(args, fmt);
     vsnprintf(buf, sizeof(buf), fmt, args); va_end(args);
-    fprintf(stderr, "[VirtualIEC] %s\n", buf);
-    fflush(stderr);
     if (m_logger && m_logNamed) {
         m_logNamed(m_logger, SIM_LOG_DEBUG, buf);
     }

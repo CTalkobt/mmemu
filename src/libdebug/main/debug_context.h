@@ -11,6 +11,8 @@
 #include "libtoolchain/main/source_map.h"
 #include <vector>
 #include <memory>
+#include <spdlog/spdlog.h>
+#include <memory>
 
 // Forward declaration for Lua integration (Issue #24)
 class LuaEngine;
@@ -108,6 +110,8 @@ private:
     std::unique_ptr<LuaEventRegistry> m_luaEventRegistry;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;
+    std::shared_ptr<spdlog::logger> m_kernalLog;   // cached: looked up on every step
+    std::shared_ptr<spdlog::logger> m_basicLog;
     std::vector<SystemSnapshot> m_snapshots;
     bool        m_paused          = false;
     bool        m_pauseOnBrk      = true;  // Pause on BRK instruction (default enabled)

@@ -9,7 +9,6 @@ struct CiaFixture {
 
     CiaFixture() {
         cia.setClockHz(1022727);  // NTSC
-        cia.setTimerGracePeriod(0);  // No grace period for tests (immediate countdown)
     }
 };
 
@@ -418,4 +417,22 @@ TEST_CASE(cia_control_register_bits) {
     ASSERT((val & 0x08) != 0);  // CR_ONESHOT persists
     // CR_LOAD (0x10) is write-only and always reads as 0 on real CIA
     ASSERT((val & 0x10) == 0);  // LOAD bit always reads as 0
+}
+
+// Starting a timer must not enable its interrupt, and the timer must count from
+// the start (the old "grace period" and forced ICR mask were boot workarounds,
+// not 6526 behaviour).
+TEST_CASE(cia_timer_start_leaves_icr_mask_alone) {
+    CiaFixture f;
+    uint8_t icr;
+
+    f.cia.ioWrite(&f.bus, 0xDC0D, 0x7F);   // disable all interrupts
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x10);   // Timer A latch = $0010
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x11);   // force load + start, continuous
+
+    f.cia.tick(0x20);                      // well past one underflow
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC0D, &icr));
+    ASSERT_EQ((int)(icr & 0x01), 0x01);    // underflow flagged without delay...
+    ASSERT_EQ((int)(icr & 0x80), 0x00);    // ...but no IRQ: the mask is still clear
 }

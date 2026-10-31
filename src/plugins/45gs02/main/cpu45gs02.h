@@ -108,6 +108,7 @@ public:
     // Disassembly (stubs for now)
     int disassembleOne  (IBus* bus, uint32_t addr, char* buf, int bufsz) override;
     int disassembleEntry(IBus* bus, uint32_t addr, void* entryOut)      override;
+    int decodeEntry     (IBus* bus, uint32_t addr, void* entryOut)      override;
 
     // Snapshot support
     size_t stateSize()             const override { return sizeof(CPU45GS02State); }

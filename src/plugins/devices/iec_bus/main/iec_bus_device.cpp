@@ -1,5 +1,12 @@
 #include "iec_bus_device.h"
+#include "include/util/logging.h"
 #include <cstdio>
+
+/** "iec" logger: ATN changes at debug; port traffic at trace. */
+static spdlog::logger* iecLog() {
+    static auto logger = LogRegistry::instance().getLogger("iec");
+    return logger.get();
+}
 
 IECBusDevice::IECBusDevice() : m_busState(0xFF) {
     // All lines pulled high initially (no device pulling them low)
@@ -12,7 +19,7 @@ uint8_t IECBusDevice::readPort() {
 
     // Detect ATN transitions (computer setting/clearing ATN bit)
     if ((computerValue & ATN) != (m_lastComputerValue & ATN)) {
-        fprintf(stderr, "[IEC] ATN %s\n",
+        iecLog()->debug("ATN {}",
             (computerValue & ATN) ? "released" : "asserted");
 
         if (!(computerValue & ATN)) {
@@ -49,7 +56,7 @@ uint8_t IECBusDevice::readPort() {
         }
     }
 
-    fprintf(stderr, "[IEC] readPort: computer=$%02X device response=$%02X (handshake=%d stable=%u)\n",
+    iecLog()->trace("readPort: computer=${:02X} device response=${:02X} (handshake={} stable={})",
         computerValue, response, m_handshakeState, m_stableCount);
 
     return response;
@@ -57,5 +64,5 @@ uint8_t IECBusDevice::readPort() {
 
 void IECBusDevice::writePort(uint8_t data) {
     // Computer can write to DATA_OUT, CLOCK_OUT, ATN
-    fprintf(stderr, "[IEC] writePort: $%02X\n", data);
+    iecLog()->trace("writePort: ${:02X}", data);
 }

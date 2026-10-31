@@ -112,6 +112,9 @@ std::string SIDValidationSuite::formatReport(const ValidationReport& report) {
     ss << "Average Spectral Error: " << std::fixed << std::setprecision(3)
        << report.averageSpectralError << "\n";
     ss << "Total Time: " << report.totalTimeMs << " ms\n";
+    if (!report.summary.empty()) {
+        ss << "Summary: " << report.summary << "\n";
+    }
 
     if (!report.results.empty()) {
         ss << "\n--- Test Results ---\n";

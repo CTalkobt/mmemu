@@ -219,3 +219,24 @@ TEST_CASE(vic20_importroms_command) {
 
     PluginLoader::instance().setCommandRegisterFn(nullptr); // restore default stub
 }
+
+// Typed ASCII uppercase is the unshifted key and lowercase the shifted key, as
+// on the C64 (the default charset is uppercase/graphics). Issue #139.
+TEST_CASE(vic20_type_text_casing) {
+    KbdVic20 kbd;
+    auto pressed = [&](int col, int rowBit) {
+        kbd.getColumnPort()->writePort((uint8_t)~(1 << col));   // select one column
+        return (kbd.getRowPort()->readPort() & (1 << rowBit)) == 0;
+    };
+    const int P_COL = 1, P_ROW = 5, SHIFT_COL = 3, SHIFT_ROW = 1;
+
+    kbd.enqueueText("Pp");
+    kbd.tick(1);                           // 'P' down
+    ASSERT(pressed(P_COL, P_ROW));
+    ASSERT(!pressed(SHIFT_COL, SHIFT_ROW));
+    kbd.tick(200000);                      // 'P' up
+    kbd.tick(200000);                      // idle
+    kbd.tick(200000);                      // 'p' down: shifted
+    ASSERT(pressed(P_COL, P_ROW));
+    ASSERT(pressed(SHIFT_COL, SHIFT_ROW));
+}

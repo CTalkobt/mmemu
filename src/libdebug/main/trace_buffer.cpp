@@ -1,6 +1,7 @@
 #include "trace_buffer.h"
 #include "libcore/main/icore.h"
 #include "libmem/main/ibus.h"
+#include "libmem/main/byte_window_bus.h"
 #include <stdexcept>
 
 TraceBuffer::TraceBuffer(size_t capacity)
@@ -11,16 +12,49 @@ void TraceBuffer::push(const TraceEntry& entry) {
     m_buffer.push(entry);
 }
 
+TraceEntry& TraceBuffer::pushNew() {
+    TraceEntry& te = m_buffer.pushSlot();
+    te.memWrites.clear();
+    te.mnemonic.clear();
+    te.regs.clear();
+    te.instrLen = 0;
+    te.rawRegCount = 0;
+    return te;
+}
+
 void TraceBuffer::clear() {
     m_buffer.clear();
 }
 
+void TraceBuffer::materialize(const TraceEntry& e) const {
+    if (!m_cpu) return;
+    if (e.mnemonic.empty() && e.instrLen > 0) {
+        ByteWindowBus win(e.addr, e.instr, e.instrLen);
+        char buf[128];
+        buf[0] = '\0';
+        m_cpu->disassembleOne(&win, e.addr, buf, sizeof(buf));
+        e.mnemonic = buf;
+    }
+    if (e.regs.empty() && e.rawRegCount > 0) {
+        int k = 0;
+        for (int i = 0; i < m_cpu->regCount() && k < e.rawRegCount; ++i) {
+            const auto* desc = m_cpu->regDescriptor(i);
+            if (desc->flags & REGFLAG_INTERNAL) continue;
+            e.regs[desc->name] = e.rawRegs[k++];
+        }
+    }
+}
+
 const TraceEntry& TraceBuffer::at(size_t index) const {
-    return m_buffer[index];
+    const TraceEntry& e = m_buffer[index];
+    materialize(e);
+    return e;
 }
 
 bool TraceBuffer::popBack(TraceEntry& out) {
-    return m_buffer.popBack(out);
+    if (!m_buffer.popBack(out)) return false;
+    materialize(out);
+    return true;
 }
 
 TraceEntry* TraceBuffer::current() {

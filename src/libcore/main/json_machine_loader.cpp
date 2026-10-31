@@ -158,8 +158,7 @@ int JsonMachineLoader::registerAll(const nlohmann::json& doc) {
 // ---------------------------------------------------------------------------
 
 MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) {
-    std::cerr << "\n========== [JsonMachineLoader::buildFromSpec] CALLED ==========\n" << std::flush;
-    std::cerr << "Spec contents: " << spec.dump() << "\n" << std::flush;
+    auto log = LogRegistry::instance().getLogger("system");
     auto* desc = new MachineDescriptor();
 
     desc->machineId        = spec.value("id",          "");
@@ -167,7 +166,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     desc->licenseClass     = spec.value("licenseClass", "");
     desc->preferredAssembler = spec.value("assembler",  "");
     desc->sourceSpec       = spec;
-    std::cerr << "[JsonMachineLoader::buildFromSpec] Machine ID: " << desc->machineId << "\n" << std::flush;
+    log->debug("JsonMachineLoader: building '{}'", desc->machineId);
 
     // -----------------------------------------------------------------------
     // Step 3 — Bus
@@ -194,10 +193,9 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             desc->buses.push_back({busName, bus});
             busPtrs[busName] = bus;
         }
-        std::cerr << "[JsonMachineLoader] Created bus: " << busName
-                  << " (type=" << busType << ", " << addrBits << "-bit)\n" << std::flush;
+        log->debug("JsonMachineLoader: bus {} ({}, {}-bit)", busName, busType, addrBits);
     } else {
-        std::cerr << "[JsonMachineLoader] ERROR: No 'bus' field in spec for " << desc->machineId << "\n" << std::flush;
+        log->error("JsonMachineLoader: no 'bus' field in spec for {}", desc->machineId);
     }
 
     // -----------------------------------------------------------------------
@@ -206,14 +204,11 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     ICore* cpu = nullptr;
 
     if (spec.contains("cpu")) {
-        std::cerr << "[JsonMachineLoader] spec contains 'cpu' field\n" << std::flush;
         const auto& cpuSpec = spec["cpu"];
         std::string cpuType = cpuSpec.value("type", "");
-        std::cerr << "[JsonMachineLoader] Looking for CPU type: '" << cpuType << "'\n" << std::flush;
         cpu = CoreRegistry::instance().createCore(cpuType);
 
         if (cpu) {
-            std::cerr << "[JsonMachineLoader] CPU created successfully\n" << std::flush;
             std::string dataBusName = cpuSpec.value("dataBus", "system");
             std::string codeBusName = cpuSpec.value("codeBus", "system");
             IBus* dataBus = busPtrs.count(dataBusName) ? busPtrs[dataBusName] : cpuBus;
@@ -221,12 +216,12 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             cpu->setDataBus(dataBus);
             cpu->setCodeBus(codeBus);
             desc->cpus.push_back({"main", cpu, dataBus, codeBus, nullptr, true, 1});
-            std::cerr << "[JsonMachineLoader] CPU added to cpus list (" << desc->cpus.size() << " CPUs total)\n" << std::flush;
+            log->debug("JsonMachineLoader: CPU {}", cpuType);
         } else {
-            std::cerr << "[JsonMachineLoader] ERROR: Failed to create CPU of type '" << cpuType << "'\n" << std::flush;
+            log->error("JsonMachineLoader: failed to create CPU of type '{}'", cpuType);
         }
     } else {
-        std::cerr << "[JsonMachineLoader] ERROR: No 'cpu' field in spec\n" << std::flush;
+        log->error("JsonMachineLoader: no 'cpu' field in spec for {}", desc->machineId);
     }
 
     // -----------------------------------------------------------------------
@@ -689,10 +684,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     std::string portDev  = bp.value("device", "");
                     std::string portName = bp.value("port",   "A");
                     if (devPtrs.count(portDev)) {
-                        fprintf(stderr, "[IEC Wiring] Connecting %s to %s port %s (dev=%p, iec=%p)\n",
-                                iecDevName.c_str(), portDev.c_str(), portName.c_str(),
-                                (void*)devPtrs[portDev], (void*)iec);
-                        fflush(stderr);
+                        log->debug("JsonMachineLoader: IEC {} -> {} port {}", iecDevName, portDev, portName);
                         if (portName == "A")
                             devPtrs[portDev]->setPortADevice(iec);
                         else

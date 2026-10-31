@@ -28,12 +28,19 @@
 #include "libdevices/main/joystick.h"
 #include "libdevices/main/combined_port_device.h"
 #include "util/path_util.h"
+#include "util/logging.h"
 #include <algorithm>
 #include <map>
 #include <cstring>
 #include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
+
+/** "mega65" logger: machine setup and boot path details (debug), problems (warn). */
+static spdlog::logger* m65Log() {
+    static auto logger = LogRegistry::instance().getLogger("mega65");
+    return logger.get();
+}
 
 using json = nlohmann::json;
 
@@ -287,8 +294,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     uint8_t resetHi = romBuf[0x1FFFD];
     uint8_t irqLo = romBuf[0x1FFFE];
     uint8_t irqHi = romBuf[0x1FFFF];
-    fprintf(stderr, "[MEGA65] ROM file vectors: NMI=($%02X $%02X) RESET=($%02X $%02X) IRQ=($%02X $%02X)\n",
-            nmiLo, nmiHi, resetLo, resetHi, irqLo, irqHi);
+    m65Log()->debug("ROM file vectors: NMI=${:02X}{:02X} RESET=${:02X}{:02X} IRQ=${:02X}{:02X}",
+                    nmiHi, nmiLo, resetHi, resetLo, irqHi, irqLo);
 
     // Copy vectors to physical $FFFC-$FFFF so CPU can read them at reset
     // (before MapMmu is configured, physical and logical addresses are the same)
@@ -352,7 +359,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
                     }
                 }
                 if (bramLoaded)
-                    fprintf(stderr, "[MEGA65] Loaded persistent BRAM from: %s\n", bramPath.c_str());
+                    m65Log()->debug("Loaded persistent BRAM from: {}", bramPath);
             }
         }
 
@@ -387,8 +394,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
                 for (size_t i = 0; i < dataSize; i++)
                     physBus->write8(entry.addr + i, tmp[i]);
 
-                fprintf(stderr, "[MEGA65] Loaded BRAM %s (%zuB) at $%06X from: %s\n",
-                        entry.name.c_str(), dataSize, entry.addr, path.c_str());
+                m65Log()->debug("Loaded BRAM {} ({}B) at ${:06X} from: {}",
+                                entry.name, dataSize, entry.addr, path);
                 if (entry.addr == 0x050000) flashUtilLoaded = true;
             }
         }
@@ -514,7 +521,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     cia2->setPortADevice(iec);
     desc->deleters.push_back([iec]() { delete iec; });
 
-    fprintf(stderr, "[MEGA65] Wired VirtualIECBus to CIA2 Port A for boot sequence\n");
+    m65Log()->debug("Wired VirtualIECBus to CIA2 Port A");
     
     // Personality switch callback
     keyReg->setPersonalityChangeCallback([vic4](IopersonalityMode mode) {
@@ -747,12 +754,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
                 f.read((char*)hyperRom, 16384);
                 if (f.gcount() == 16384) {
                     hyperLoaded = true;
-                    fprintf(stderr, "[MEGA65] Loaded HYPPO from: %s\n", hyperPath.c_str());
+                    m65Log()->debug("Loaded HYPPO from: {}", hyperPath);
                 }
             }
         }
         if (!hyperLoaded) {
-            fprintf(stderr, "[MEGA65] HYPPO not found, falling back to C64 reset vector\n");
+            m65Log()->warn("HYPPO (HICKUP.M65) not found, falling back to the ROM reset vector; run 'importmega65' to install it");
         }
 
         if (hyperLoaded) {
@@ -824,10 +831,9 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
         std::string sdPath = findFile(sdPaths);
         if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
-            fprintf(stderr, "[MEGA65] Mounted SD card image: %s\n", sdPath.c_str());
+            m65Log()->debug("Mounted SD card image: {}", sdPath);
         } else {
-            fprintf(stderr, "[MEGA65] WARNING: No SD card image found. HDOS file operations may fail.\n");
-            fprintf(stderr, "[MEGA65]   Configure paths in machines/mega65.json\n");
+            m65Log()->warn("No SD card image found (configure sdcard.paths in machines/mega65.json); HDOS file operations may fail");
         }
     }
 
@@ -884,14 +890,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
         uint16_t resetVec = resetLo | ((uint16_t)resetHi << 8);
         uint16_t irqVec = irqLo | ((uint16_t)irqHi << 8);
 
-        fprintf(stderr, "[MEGA65] ROM vectors from file: NMI=$%04X RESET=$%04X IRQ=$%04X\n",
-                nmiVec, resetVec, irqVec);
+        m65Log()->debug("ROM vectors: NMI=${:04X} RESET=${:04X} IRQ=${:04X}", nmiVec, resetVec, irqVec);
 
         // With HYPPO loaded, cpu->reset() has entered hypervisor mode at $8100
         // (gs4510.vhdl reset: trap $40). Let HYPPO initialise the machine, load
         // the ROM and exit to its reset vector, as on hardware and in xemu.
         if (cpu->isHypervisor()) {
-            fprintf(stderr, "[MEGA65] Booting via HYPPO at $%04X\n", (unsigned)cpu->pc());
+            m65Log()->debug("Booting via HYPPO at ${:04X}", cpu->pc());
             return;
         }
 
@@ -919,7 +924,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         mb->write8(0x9A, 0x03);    // default output = screen
         mb->write8(0x99, 0x00);    // default input = keyboard
 
-        fprintf(stderr, "[MEGA65] Booting C65 KERNAL at $%04X\n", resetVec);
+        m65Log()->debug("Booting C65 KERNAL at ${:04X}", resetVec);
     };
 
     return desc;

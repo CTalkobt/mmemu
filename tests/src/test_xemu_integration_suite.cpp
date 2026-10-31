@@ -83,9 +83,15 @@ TEST_CASE(xemu_integration_spectral_error_high_resonance) {
         255, 200, 60, 190, 255, 200, 60, 190
     };
 
+    float lowError = SpectralAnalyzer::calculateSpectralError(
+        {120, 125, 130, 128, 122, 118, 115, 120}, {121, 126, 131, 127, 121, 117, 114, 121});
     float error = SpectralAnalyzer::calculateSpectralError(mmsim_high_res, xemu_high_res);
-    ASSERT(error > 0.05f);  // Should have noticeable difference
-    ASSERT(error < 0.20f);  // But not huge
+
+    // Half the samples differ by 10/255 against a full-scale peak:
+    // RMS error = sqrt(0.5) * 10/255 ~= 0.028
+    ASSERT(std::abs(error - std::sqrt(0.5f) * 10.0f / 255.0f) < 0.001f);
+    ASSERT(error > lowError);  // Noticeably worse than the low-resonance pair
+    ASSERT(error < 0.15f);     // But within SIDValidationSuite's pass tolerance
 }
 
 TEST_CASE(xemu_integration_program_size_validation) {

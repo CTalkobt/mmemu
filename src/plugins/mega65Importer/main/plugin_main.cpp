@@ -24,6 +24,7 @@ static int cmdImportMega65(int argc, const char* const* argv, void* ctx) {
     bool listOnly = false;
     int sourceIdx = -1;
     std::string destDir = "roms/mega65";
+    std::string xemuBinary;
     bool overwrite = false;
 
     for (int i = 1; i < argc; ++i) {
@@ -31,51 +32,66 @@ static int cmdImportMega65(int argc, const char* const* argv, void* ctx) {
         if (arg == "--list") listOnly = true;
         else if (arg == "--source" && i + 1 < argc) sourceIdx = std::stoi(argv[++i]);
         else if (arg == "--dest" && i + 1 < argc) destDir = argv[++i];
+        else if (arg == "--xemu" && i + 1 < argc) xemuBinary = argv[++i];
         else if (arg == "--overwrite") overwrite = true;
     }
 
     auto sources = discoverSources("mega65");
-    if (sources.empty()) {
-        std::cout << "No MEGA65 ROMs found in standard locations.\n";
-        return 1;
-    }
+    std::string xemu = xemuBinary.empty() ? findXemuBinary() : xemuBinary;
 
     if (listOnly) {
         std::cout << "Found " << sources.size() << " MEGA65 ROM source(s):\n";
         for (size_t i = 0; i < sources.size(); ++i) {
             std::cout << "  [" << i << "] " << sources[i].label << " (" << sources[i].basePath << ")\n";
         }
+        std::cout << "HYPPO (HICKUP.M65) source: " << (xemu.empty() ? "none (xemu-xmega65 not found)" : xemu) << "\n";
         return 0;
     }
 
-    if (sourceIdx < 0) {
-        if (sources.size() == 1) {
-            sourceIdx = 0;
-        } else {
-            std::cout << "Multiple sources found. Please specify one with --source <n>:\n";
-            for (size_t i = 0; i < sources.size(); ++i) {
-                std::cout << "  [" << i << "] " << sources[i].label << "\n";
+    int rc = 0;
+    std::string sourcePath;
+    if (sources.empty()) {
+        std::cout << "No MEGA65 ROMs found in standard locations.\n";
+        rc = 1;
+    } else {
+        if (sourceIdx < 0) {
+            if (sources.size() == 1) {
+                sourceIdx = 0;
+            } else {
+                std::cout << "Multiple sources found. Please specify one with --source <n>:\n";
+                for (size_t i = 0; i < sources.size(); ++i) {
+                    std::cout << "  [" << i << "] " << sources[i].label << "\n";
+                }
+                return 1;
             }
+        }
+
+        if (sourceIdx >= (int)sources.size()) {
+            std::cout << "Invalid source index: " << sourceIdx << "\n";
             return 1;
+        }
+
+        sourcePath = sources[sourceIdx].basePath;
+        std::cout << "Importing MEGA65 ROM from: " << sources[sourceIdx].label << " to " << destDir << "...\n";
+        auto result = importRoms("mega65", sourcePath, destDir, overwrite);
+        if (result.success) {
+            std::cout << "Successfully imported MEGA65 ROM.\n";
+        } else {
+            std::cerr << "Import failed: " << result.message << "\n";
+            rc = 1;
         }
     }
 
-    if (sourceIdx >= (int)sources.size()) {
-        std::cout << "Invalid source index: " << sourceIdx << "\n";
-        return 1;
-    }
-
-    std::cout << "Importing MEGA65 ROM from: " << sources[sourceIdx].label << " to " << destDir << "...\n";
-    auto result = importRoms("mega65", sources[sourceIdx].basePath, destDir, overwrite);
-
-    if (result.success) {
-        std::cout << "Successfully imported MEGA65 ROM.\n";
-        std::cout << "Please reset the machine to load the new ROM.\n";
-        return 0;
+    auto hyppo = importHickup(sourcePath, xemu, destDir, overwrite);
+    if (hyppo.success) {
+        std::cout << hyppo.message << "\n";
     } else {
-        std::cerr << "Import failed: " << result.message << "\n";
-        return 1;
+        std::cerr << "HYPPO import failed: " << hyppo.message << "\n";
+        rc = 1;
     }
+
+    if (rc == 0) std::cout << "Please reset the machine to load the new ROMs.\n";
+    return rc;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,27 +121,36 @@ static void mcpImportMega65Roms(const char* paramsJson, char** resultJson, void*
         }
     }
 
+    auto escape = [](std::string msg) {
+        for (size_t i = 0; i < msg.size(); ++i) {
+            if (msg[i] == '"' || msg[i] == '\\') { msg.insert(i, "\\"); ++i; }
+        }
+        return msg;
+    };
+
     auto sources = discoverSources("mega65");
-    if (sources.empty()) {
-        *resultJson = strdup("{\"success\":false,\"error\":\"No MEGA65 ROMs found\"}");
-        return;
-    }
-    if (sourceIndex < 0 || sourceIndex >= (int)sources.size()) {
+    if (sourceIndex < 0 || (!sources.empty() && sourceIndex >= (int)sources.size())) {
         *resultJson = strdup("{\"success\":false,\"error\":\"Invalid sourceIndex\"}");
         return;
     }
 
-    auto res = importRoms("mega65", sources[sourceIndex].basePath, "roms/mega65", overwrite);
-
-    if (res.success) {
-        *resultJson = strdup("{\"success\":true}");
+    std::string sourcePath;
+    std::string romError;
+    if (sources.empty()) {
+        romError = "No MEGA65 ROMs found";
     } else {
-        std::string escaped = res.message;
-        for (size_t i = 0; i < escaped.size(); ++i) {
-            if (escaped[i] == '"') { escaped.insert(i, "\\"); ++i; }
-        }
-        *resultJson = strdup(("{\"success\":false,\"error\":\"" + escaped + "\"}").c_str());
+        sourcePath = sources[sourceIndex].basePath;
+        auto res = importRoms("mega65", sourcePath, "roms/mega65", overwrite);
+        if (!res.success) romError = res.message;
     }
+
+    auto hyppo = importHickup(sourcePath, "", "roms/mega65", overwrite);
+
+    std::string json = "{\"success\":";
+    json += (romError.empty() && hyppo.success) ? "true" : "false";
+    json += ",\"rom\":\"" + (romError.empty() ? std::string("ok") : escape(romError)) + "\"";
+    json += ",\"hyppo\":\"" + escape(hyppo.message) + "\"}";
+    *resultJson = strdup(json.c_str());
 }
 
 static void mcpFreeString(char* s) {
@@ -148,7 +173,7 @@ SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* host) {
     // CLI command
     static struct PluginCommandInfo cmdInfo;
     cmdInfo.name    = "importmega65";
-    cmdInfo.usage   = "[--list] [--source <n>] [--dest <path>] [--overwrite]";
+    cmdInfo.usage   = "[--list] [--source <n>] [--dest <path>] [--xemu <binary>] [--overwrite]";
     cmdInfo.execute = cmdImportMega65;
     cmdInfo.ctx     = nullptr;
     host->registerCommand(&cmdInfo);

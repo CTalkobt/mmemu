@@ -77,6 +77,16 @@ public:
 
     virtual int disassembleOne  (IBus* bus, uint32_t addr, char* buf, int bufsz) = 0;
     virtual int disassembleEntry(IBus* bus, uint32_t addr, void* entryOut)      = 0;
+
+    /**
+     * Like disassembleEntry() but without the text: fills addr, bytes, the
+     * call/return/branch/illegal flags, targetAddr and stackOp; mnemonic,
+     * operands and complete may be left empty. Called on every step while a
+     * debugger is attached, so cores should override it with a cheap decode.
+     */
+    virtual int decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
+        return disassembleEntry(bus, addr, entryOut);
+    }
 };
 
 /**

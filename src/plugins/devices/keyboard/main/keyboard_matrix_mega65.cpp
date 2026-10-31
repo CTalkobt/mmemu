@@ -17,7 +17,9 @@ KbdMega65::KbdMega65()
     // row 6: POUND, *, ;, HOME, SHIFT_R, =, ^, /
     // row 7: 1, ESC, CTRL, 2, SPACE, COMMODORE, Q, RUNSTOP
 
-    // Format: {row, col}
+    // Format: {port A line, port B bit}, as for the C64: the KERNAL drives one
+    // CIA1 port A line ($DC00) low and reads the pressed keys on port B ($DC01).
+    // e.g. 'A' = {1, 2}: $DC00 = $FD reads $DC01 bit 2 low.
     m_keyMap["DEL"]       = {0, 0}; m_keyMap["BACKSPACE"] = {0, 0};
     m_keyMap["RETURN"]    = {0, 1}; m_keyMap["ENTER"]     = {0, 1};
     m_keyMap["LEFT"]      = {0, 2}; m_keyMap["RIGHT"]     = {0, 2}; // C64 uses same for both with shift
@@ -126,8 +128,10 @@ bool KbdMega65::pressKeyByName(const std::string& keyName, bool down) {
 
     auto it = m_keyMap.find(name);
     if (it != m_keyMap.end()) {
-        if (down) keyDown(it->second.first, it->second.second);
-        else      keyUp  (it->second.first, it->second.second);
+        // keyDown(row, col) takes the port B bit as row and the port A line as col
+        int paLine = it->second.first, pbBit = it->second.second;
+        if (down) keyDown(pbBit, paLine);
+        else      keyUp  (pbBit, paLine);
         return true;
     }
 

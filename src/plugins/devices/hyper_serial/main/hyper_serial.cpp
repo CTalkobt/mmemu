@@ -1,9 +1,15 @@
 #include "hyper_serial.h"
+#include "include/util/logging.h"
 #include <cstdio>
 #include <cstdlib>
 
+/** "hyperserial" logger: $D6CF exit trigger. */
+static spdlog::logger* hsLog() {
+    static auto logger = LogRegistry::instance().getLogger("hyperserial");
+    return logger.get();
+}
+
 HyperSerialLogger::HyperSerialLogger() : m_baseAddr(0xD6C0), m_logFile(nullptr) {
-    fprintf(stderr, "HyperSerialLogger created at %p\n", (void*)this);
     setLogFile("hyper_serial.log");
 }
 
@@ -43,9 +49,9 @@ bool HyperSerialLogger::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     }
     
     if (offset == 0x0F) { // $D6CF exit trigger
-        fprintf(stderr, "HyperSerial: Exit trigger write at $%04X val=$%02X\n", addr, val);
+        hsLog()->debug("exit trigger write at ${:04X} val=${:02X}", addr, val);
         if (val == 0x42) {
-            fprintf(stderr, "HyperSerial: Halt requested via $D6CF\n");
+            hsLog()->info("halt requested via $D6CF");
             m_haltRequested = true;
         }
         return true;

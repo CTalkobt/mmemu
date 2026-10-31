@@ -1,5 +1,12 @@
 #include "mega65_io_stub.h"
+#include "include/util/logging.h"
 #include <cstring>
+
+/** "mega65io" logger: hardware keyboard queue ($D610) reads at debug. */
+static spdlog::logger* ioLog() {
+    static auto logger = LogRegistry::instance().getLogger("mega65io");
+    return logger.get();
+}
 
 Mega65IoStub::Mega65IoStub() {
     reset();
@@ -42,10 +49,6 @@ void Mega65IoStub::pushKey(uint8_t ascii, uint8_t petscii, uint8_t mods) {
 }
 
 bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
-    if (addr == 0xD610) {
-        fprintf(stderr, "[Mega65IoStub::ioRead] ENTRY for D610\n");
-        fflush(stderr);
-    }
 
     // F011 FDC registers $D080-$D09F (stub — no real floppy emulation)
     if (addr >= 0xD080 && addr <= 0xD09F) {
@@ -92,14 +95,11 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         if (addr == 0xD610) {
             if (m_keyQueue.empty()) {
                 *val = 0x00;
-                fprintf(stderr, "[Mega65IoStub] D610 READ: queue EMPTY, returning $00\n");
-                fflush(stderr);
             } else {
                 const auto& front = m_keyQueue.front();
                 *val = front.ascii ? front.ascii : front.petscii;
-                fprintf(stderr, "[Mega65IoStub] D610 READ: queue has key (ascii=$%02X petscii=$%02X), returning $%02X\n",
-                        front.ascii, front.petscii, *val);
-                fflush(stderr);
+                ioLog()->debug("$D610 read: key ascii=${:02X} petscii=${:02X} -> ${:02X}",
+                               front.ascii, front.petscii, *val);
             }
             return true;
         }

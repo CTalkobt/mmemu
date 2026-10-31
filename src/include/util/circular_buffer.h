@@ -23,6 +23,18 @@ public:
         }
     }
 
+    /**
+     * Advance and return the next slot for the caller to fill in place. The slot
+     * still holds the overwritten item, so its allocations can be reused.
+     */
+    T& pushSlot() {
+        if (m_capacity == 0) throw std::out_of_range("CircularBuffer has no capacity");
+        T& slot = m_buffer[m_head];
+        m_head = (m_head + 1) % m_capacity;
+        if (m_size < m_capacity) m_size++;
+        return slot;
+    }
+
     void clear() {
         m_head = 0;
         m_size = 0;

@@ -29,6 +29,7 @@ static std::string toHex(uint32_t v) {
 
 DebugContext::DebugContext(ICore* cpu, IBus* bus)
     : m_cpu(cpu), m_bus(bus), m_luaEventRegistry(std::make_unique<LuaEventRegistry>()) {
+    m_trace.setCpu(cpu);
 }
 
 bool DebugContext::needsDisasm() const {
@@ -36,10 +37,9 @@ bool DebugContext::needsDisasm() const {
 }
 
 void DebugContext::onStepLite(ICore* cpu, uint32_t pc) {
-    TraceEntry te;
+    TraceEntry& te = m_trace.pushNew();
     te.addr = pc;
     te.cycles = cpu->cycles();
-    m_trace.push(te);
 }
 
 bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
@@ -48,19 +48,20 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
         if (!obs->onStep(cpu, bus, entry)) cont = false;
     }
 
-    TraceEntry te;
+    // Capture raw instruction bytes and register values; the trace formats
+    // them only when an entry is read (TraceBuffer::at), so stepping does no
+    // string formatting or allocation.
+    TraceEntry& te = m_trace.pushNew();
     te.addr = entry.addr;
-    te.mnemonic = entry.complete;
     te.cycles = cpu->cycles();
-
-    for (int i = 0; i < cpu->regCount(); ++i) {
-        const auto* desc = cpu->regDescriptor(i);
-        if (!(desc->flags & REGFLAG_INTERNAL)) {
-            te.regs[desc->name] = cpu->regRead(i);
-        }
+    int n = entry.bytes < TraceEntry::MAX_INSTR_BYTES ? entry.bytes : TraceEntry::MAX_INSTR_BYTES;
+    for (int i = 0; i < n; ++i) te.instr[i] = bus->peek8(entry.addr + i);
+    te.instrLen = (uint8_t)(n > 0 ? n : 0);
+    int k = 0;
+    for (int i = 0; i < cpu->regCount() && k < TraceEntry::MAX_RAW_REGS; ++i) {
+        if (!(cpu->regDescriptor(i)->flags & REGFLAG_INTERNAL)) te.rawRegs[k++] = cpu->regRead(i);
     }
-
-    m_trace.push(te);
+    te.rawRegCount = (uint8_t)k;
 
     // Track cycle count for Lua event system
     m_cycleCounter += cpu->cycles();
@@ -84,7 +85,7 @@ bool DebugContext::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
     }
 
     // Check for BRK instruction (opcode 0x00) if pause-on-BRK is enabled
-    if (m_pauseOnBrk && entry.mnemonic == "BRK") {
+    if (m_pauseOnBrk && entry.stackOp == StackOp::BRK) {
         m_lastHitMessage = "BRK instruction at $" + toHex(entry.addr);
         m_cpu->log(SIM_LOG_INFO, m_lastHitMessage.c_str());
         m_lastPausedAddr = entry.addr;
@@ -113,8 +114,9 @@ static uint32_t regByName(ICore* cpu, const char* name) {
 
 void DebugContext::monitorKernal(ICore* cpu, const DisasmEntry& entry) {
     if (!cpu) return;
-    auto logger = LogRegistry::instance().getLogger("kernal");
-    if (!logger || logger->level() > spdlog::level::debug) return;
+    if (!m_kernalLog) m_kernalLog = LogRegistry::instance().getLogger("kernal");
+    auto& logger = m_kernalLog;
+    if (logger->level() > spdlog::level::debug) return;
 
     // 1. Check for Exit (RTS)
     // 6502 RTS is opcode $60. It pulls from stack when SP is at the value it was at entry.
@@ -141,8 +143,9 @@ void DebugContext::monitorKernal(ICore* cpu, const DisasmEntry& entry) {
 
 void DebugContext::monitorBasic(ICore* cpu, const DisasmEntry& entry) {
     if (!cpu) return;
-    auto logger = LogRegistry::instance().getLogger("basic");
-    if (!logger || logger->level() > spdlog::level::debug) return;
+    if (!m_basicLog) m_basicLog = LogRegistry::instance().getLogger("basic");
+    auto& logger = m_basicLog;
+    if (logger->level() > spdlog::level::debug) return;
 
     // 1. Check for Exit (RTS)
     if (entry.isReturn && !m_basicStack.empty()) {
@@ -187,15 +190,16 @@ void DebugContext::trackStack(ICore* cpu, const DisasmEntry& entry) {
         m_stackTrace.pop();
         return;
     }
-    const std::string& mn = entry.mnemonic;
-    if      (mn == "PHA") m_stackTrace.push(StackPushType::PHA, entry.addr, regByName(cpu, "A"));
-    else if (mn == "PHX") m_stackTrace.push(StackPushType::PHX, entry.addr, regByName(cpu, "X"));
-    else if (mn == "PHY") m_stackTrace.push(StackPushType::PHY, entry.addr, regByName(cpu, "Y"));
-    else if (mn == "PHP") m_stackTrace.push(StackPushType::PHP, entry.addr, regByName(cpu, "P"));
-    else if (mn == "PHZ") m_stackTrace.push(StackPushType::PHZ, entry.addr, regByName(cpu, "Z"));
-    else if (mn == "BRK") m_stackTrace.push(StackPushType::BRK, entry.addr, 0);
-    else if (mn == "PLA" || mn == "PLX" || mn == "PLY" || mn == "PLP" || mn == "PLZ")
-        m_stackTrace.pop();
+    switch (entry.stackOp) {
+        case StackOp::PUSH_A: m_stackTrace.push(StackPushType::PHA, entry.addr, regByName(cpu, "A")); break;
+        case StackOp::PUSH_X: m_stackTrace.push(StackPushType::PHX, entry.addr, regByName(cpu, "X")); break;
+        case StackOp::PUSH_Y: m_stackTrace.push(StackPushType::PHY, entry.addr, regByName(cpu, "Y")); break;
+        case StackOp::PUSH_P: m_stackTrace.push(StackPushType::PHP, entry.addr, regByName(cpu, "P")); break;
+        case StackOp::PUSH_Z: m_stackTrace.push(StackPushType::PHZ, entry.addr, regByName(cpu, "Z")); break;
+        case StackOp::BRK:    m_stackTrace.push(StackPushType::BRK, entry.addr, 0); break;
+        case StackOp::PULL:   m_stackTrace.pop(); break;
+        case StackOp::NONE:   break;
+    }
 }
 
 void DebugContext::onMemoryWrite(IBus* bus, uint32_t addr, uint8_t before, uint8_t after) {
