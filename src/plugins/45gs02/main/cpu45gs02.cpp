@@ -96,23 +96,28 @@ void MOS45GS02::enterHypervisor(uint16_t trapAddr) {
         m_hyperState.megabyteHigh = ms.megabyteHigh;
     }
 
-    // Enter hypervisor mode
+    // Enter hypervisor mode (gs4510.vhdl TrapToHypervisor)
     m_state.hypervisor = true;
-    m_state.p |= FLAG_I;  // Interrupts disabled
-    m_state.p &= ~FLAG_E; // 16-bit stack mode (HYPPO sets SEE itself when needed)
-    m_state.p &= ~FLAG_D; // Clear decimal mode
+    m_state.p |= FLAG_I | FLAG_E;  // Interrupts disabled, 8-bit stack
+    m_state.p &= ~FLAG_D;          // Never leave decimal mode set in the hypervisor
     m_state.pc = trapAddr;
 
-    // In hypervisor mode: stack at $BE00, zero page at $BF00
+    // Stack at $BEFF, base page at $BF00
     m_state.sp = 0xBEFF;
-    m_state.b  = 0xBF;  // Base page = $BF00
+    m_state.b  = 0xBF;
 
-    // Clear MAP state (hypervisor has flat memory with ROM at $8000)
+    // Keep the lower 32KB mapping (unless it points at megabyte $FF, where the
+    // hypervisor itself lives); map blocks 4-5 to hypervisor memory at $FFF8000.
     if (m_mapMmu) {
-        MapState clear;
-        memset(&clear, 0, sizeof(clear));
-        m_mapMmu->setMapState(clear);
+        MapState ms = m_mapMmu->getMapState();
+        if (ms.megabyteLow == (0xFFu << 20)) ms.megabyteLow = 0;
+        for (int i = 4; i < 8; i++) ms.offsets[i] = 0xF0000;
+        ms.enables      = (ms.enables & 0x0F) | 0x30;
+        ms.megabyteHigh = 0xFFu << 20;
+        m_mapMmu->setMapState(ms);
     }
+
+    if (m_onHyperEnter) m_onHyperEnter(m_hyperState);
 }
 
 void MOS45GS02::exitHypervisor() {
@@ -136,6 +141,8 @@ void MOS45GS02::exitHypervisor() {
         ms.megabyteHigh = m_hyperState.megabyteHigh;
         m_mapMmu->setMapState(ms);
     }
+
+    if (m_onHyperExit) m_onHyperExit(m_hyperState);
 
     // Exit hypervisor mode
     m_state.hypervisor = false;
@@ -1052,26 +1059,7 @@ int MOS45GS02::step() {
         case 0x98: m_state.a = m_state.y; updateNZ(m_state.a); break;
         case 0x4B: m_state.z = m_state.a; updateNZ(m_state.z); break;
         case 0x6B: m_state.a = m_state.z; updateNZ(m_state.a); break;
-        case 0x5B: { // TAB
-            uint8_t oldB = m_state.b;
-            m_state.b = m_state.a;  // TAB affects no flags
-            // Detect implicit hypervisor exit: TAB changing B from $BF (hypervisor page)
-            // while in hypervisor mode. Some HYPPO code paths (e.g. $825B→$AD92)
-            // skip the STA $D67F exit and use TAB to transition directly.
-            // If hyperState.pc was not set by task_set_pc_to_reset_vector,
-            // read the reset vector from the ROM and use that as the entry point.
-            if (m_state.hypervisor && oldB == 0xBF && m_state.b != 0xBF) {
-                if (m_hyperState.pc == 0 && m_bus) {
-                    // Read reset vector from ROM at physical $02FFFC
-                    IBus* phys = m_mapMmu ? m_mapMmu->getPhysBus() : m_bus;
-                    uint8_t lo = phys->peek8(0x02FFFC);
-                    uint8_t hi = phys->peek8(0x02FFFD);
-                    m_hyperState.pc = lo | ((uint16_t)hi << 8);
-                }
-                exitHypervisor();
-            }
-            break;
-        }
+        case 0x5B: m_state.b = m_state.a; break;  // TAB (affects no flags)
         case 0x7B: m_state.a = m_state.b; updateNZ(m_state.a); break;
         case 0xBA: m_state.x = (uint8_t)(m_state.sp & 0xFF); updateNZ(m_state.x); break;
         case 0x9A: m_state.sp = (m_state.sp & 0xFF00) | m_state.x; break;

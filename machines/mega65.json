@@ -109,16 +109,6 @@
           "fillByte": "0xFF",
           "description": "Empty flash — no bitstream/ROM data"
         }
-      },
-
-      "workarounds": {
-        "stackReturnAddr": {
-          "physAddr_low": "0x0200",
-          "physAddr_high": "0x0201",
-          "value_low": "0xD8",
-          "value_high": "0xA4",
-          "description": "return_from_flashmenu-1 ($A4D8) for mflash RTS — compensates for mflash.prg not using JMP ($CF80) callback"
-        }
       }
     }
   ]

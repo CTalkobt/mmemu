@@ -307,8 +307,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // -----------------------------------------------------------------------
     // Load BRAM contents (flash menu, freezer, onboarding) into physical RAM.
     // On real hardware these live in FPGA Block RAM, pre-loaded at synthesis.
-    // Not required for boot (HYPPO is skipped), but loaded for completeness
-    // and potential future freezer/flash menu support.
+    // HYPPO copies the flash utility from $050000 to $0801 and runs it during
+    // reset, so something must be there (see the built-in fallback below).
     // Persistent BRAM: saved to roms/mega65/bram.bin on exit if modified.
     // -----------------------------------------------------------------------
     {
@@ -357,6 +357,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
 
         // If no persistent BRAM, load from individual files
+        bool flashUtilLoaded = bramLoaded;
         if (!bramLoaded) {
             for (auto& entry : bramFiles) {
                 // Build search paths: JSON paths first, then fallback dirs
@@ -388,7 +389,26 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
                 fprintf(stderr, "[MEGA65] Loaded BRAM %s (%zuB) at $%06X from: %s\n",
                         entry.name.c_str(), dataSize, entry.addr, path.c_str());
+                if (entry.addr == 0x050000) flashUtilLoaded = true;
             }
+        }
+
+        // Without a flash utility file, use a minimal stand-in, as xemu does
+        // (mega65.c preinit_memory_for_start). HYPPO runs it at $080D: it
+        // clears $00, selects MEGA65 I/O and jumps through $CF7F, where it
+        // stores a JMP opcode in front of HYPPO's return address at $CF80.
+        if (!flashUtilLoaded) {
+            static const uint8_t kFlashUtilStub[] = {
+                0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78,  // SEI (landing pad for $080D)
+                0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78, 0x78,
+                0xA9, 0x00, 0x8D, 0x00, 0x00,                    // LDA #$00 : STA $0000
+                0xA9, 0x47, 0x8D, 0x2F, 0xD0,                    // LDA #$47 : STA $D02F
+                0xA9, 0x53, 0x8D, 0x2F, 0xD0,                    // LDA #$53 : STA $D02F
+                0xA9, 0x4C, 0x8D, 0x7F, 0xCF,                    // LDA #$4C : STA $CF7F
+                0x4C, 0x7F, 0xCF                                 // JMP $CF7F
+            };
+            for (size_t i = 0; i < sizeof(kFlashUtilStub); i++)
+                physBus->write8(0x050000 + (uint32_t)i, kFlashUtilStub[i]);
         }
     }
 
@@ -677,6 +697,29 @@ MachineDescriptor* Mega65MachineFactory::create() {
 
     // KEY register: block personality changes while in hypervisor mode
     keyReg->setHypervisorCheck([cpu45]() { return cpu45->isHypervisor(); });
+
+    // Hypervisor trap entry/exit (gs4510.vhdl TrapToHypervisor / ReturnFromHypervisor):
+    // save the CPU port, VIC I/O mode and DMA list address into $D650-$D658, give
+    // the hypervisor port $3F/$35 and MEGA65 I/O, and restore them all on exit.
+    // I/O mode bits: 00 = C64, 01 = C65, 10 = Ethernet, 11 = MEGA65.
+    cpu45->setHypervisorHooks(
+        [bankCtrl, keyReg, dma](HypervisorState& h) {
+            static const uint8_t kModeBits[] = { 0, 1, 3, 2 };  // indexed by IopersonalityMode
+            h.port00      = bankCtrl->portDdr();
+            h.port01      = bankCtrl->portValue();
+            h.vicMode     = kModeBits[(int)keyReg->getCurrentPersonality()];
+            h.dmaListAddr = dma->listAddr();
+            bankCtrl->setPort(0x3F, 0x35);
+            keyReg->setPersonality(IopersonalityMode::MEGA65);
+        },
+        [bankCtrl, keyReg, dma](const HypervisorState& h) {
+            static const IopersonalityMode kModes[] = {
+                IopersonalityMode::C64, IopersonalityMode::C65,
+                IopersonalityMode::ETHERNET, IopersonalityMode::MEGA65 };
+            bankCtrl->setPort(h.port00, h.port01);
+            keyReg->setPersonality(kModes[h.vicMode & 3]);
+            dma->setListAddr(h.dmaListAddr);
+        });
 
     // Wire hypervisor mode query (ROM banking disabled in hypervisor mode)
     bankCtrl->setHypervisorQuery([cpu45]() -> bool {

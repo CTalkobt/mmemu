@@ -915,3 +915,55 @@ TEST_CASE(vic4_bitplane16_transparent) {
     int py = VIC2::DISPLAY_Y;
     ASSERT_EQ(buf[py * VIC4::V4_FRAME_W + px], f.vic.getPaletteRGBA(0));
 }
+
+// ---------------------------------------------------------------------------
+// Hot registers (viciv.vhdl viciv_interpret_legacy_mode_registers)
+// ---------------------------------------------------------------------------
+
+TEST_CASE(vic4_hotreg_d031_sets_line_step) {
+    VIC4 vic;
+    vic.setLocked(false);
+    vic.ioWrite(nullptr, 0xD058, 0x28);       // stale 40-column line step
+    vic.ioWrite(nullptr, 0xD018, 0x24);       // screen $0800, charset $1000
+    vic.ioWrite(nullptr, 0xD031, 0x80);       // H640: 80 columns
+
+    ASSERT_EQ((int)vic.getLineStep(), 80);
+    ASSERT_EQ(vic.getChrCount(), 80);
+    ASSERT_EQ((int)vic.screenBase(), 0x0800);
+
+    vic.ioWrite(nullptr, 0xD031, 0x00);       // back to 40 columns
+    ASSERT_EQ((int)vic.getLineStep(), 40);
+    ASSERT_EQ((int)vic.screenBase(), 0x0800); // $D018 bits 7-4 = 2 -> 2 * 1KB
+}
+
+TEST_CASE(vic4_d018_sets_charptr) {
+    VIC4 vic;
+    vic.setLocked(false);
+    vic.ioWrite(nullptr, 0xD068, 0x55);
+    vic.ioWrite(nullptr, 0xD069, 0xD0);
+    vic.ioWrite(nullptr, 0xD06A, 0x00);
+    vic.ioWrite(nullptr, 0xD018, 0x24);       // CB = 2 -> $1000
+    ASSERT_EQ((int)vic.charBitmapBase(), 0x1000);
+
+    vic.ioWrite(nullptr, 0xD06A, 0x02);       // bits 23-16 are not touched by $D018
+    vic.ioWrite(nullptr, 0xD018, 0x14);       // CB = 2 again
+    ASSERT_EQ((int)vic.charBitmapBase(), 0x021000);
+}
+
+TEST_CASE(vic4_hotreg_disabled_defers_until_enabled) {
+    VIC4 vic;
+    vic.setLocked(false);
+    vic.ioWrite(nullptr, 0xD05D, 0x00);       // HOTREG off
+    vic.ioWrite(nullptr, 0xD058, 0x28);
+    vic.ioWrite(nullptr, 0xD031, 0x80);
+    ASSERT_EQ((int)vic.getLineStep(), 0x28);  // not applied yet
+
+    vic.ioWrite(nullptr, 0xD05D, 0x80);       // enabling applies the pending write
+    ASSERT_EQ((int)vic.getLineStep(), 80);
+
+    vic.ioWrite(nullptr, 0xD05D, 0x00);
+    vic.ioWrite(nullptr, 0xD031, 0x00);
+    vic.ioWrite(nullptr, 0xD05D, 0x00);       // writing 0 cancels the pending write
+    vic.ioWrite(nullptr, 0xD05D, 0x80);
+    ASSERT_EQ((int)vic.getLineStep(), 80);
+}

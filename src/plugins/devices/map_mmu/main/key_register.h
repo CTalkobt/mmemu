@@ -42,6 +42,9 @@ public:
 
     IopersonalityMode getCurrentPersonality() const { return m_currentPersonality; }
 
+    /** Set the personality directly (hypervisor entry/exit), without a knock sequence. */
+    void setPersonality(IopersonalityMode mode);
+
 private:
     enum class KeyState { WAITING_FIRST, WAITING_SECOND };
 
