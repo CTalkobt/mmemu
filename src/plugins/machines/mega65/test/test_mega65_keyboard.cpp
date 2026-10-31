@@ -1,4 +1,6 @@
 #include "test_harness.h"
+#include <vector>
+#include <string>
 #include "plugins/devices/keyboard/main/keyboard_matrix_mega65.h"
 #include "plugins/devices/cia6526/main/cia6526.h"
 #include "libdevices/main/shared_signal_line.h"
@@ -72,4 +74,25 @@ TEST_CASE(mega65_keyboard_cia_integration) {
     uint8_t rowVal = 0;
     ASSERT(cia.ioRead(nullptr, 0xDC01, &rowVal));
     ASSERT_EQ(rowVal, 0xFE); // Row 0 bit low
+}
+
+TEST_CASE(mega65_keyboard_type_text_uses_key_sink) {
+    KbdMega65 kbd;
+    std::vector<std::string> events;
+    kbd.setKeySink([&](const std::string& name, bool down) {
+        events.push_back(name + (down ? "+" : "-"));
+        return true;
+    });
+
+    kbd.enqueueText("Pa\"\\n");
+    for (int i = 0; i < 1000000; i++) kbd.tick(1);
+
+    // Uppercase = unshifted key, lowercase = shifted key, '"' = LSHIFT+2, \n = RETURN
+    std::vector<std::string> expected = {
+        "P+", "P-",
+        "LSHIFT+", "A+", "A-", "LSHIFT-",
+        "LSHIFT+", "2+", "2-", "LSHIFT-",
+        "RETURN+", "RETURN-",
+    };
+    ASSERT(events == expected);
 }

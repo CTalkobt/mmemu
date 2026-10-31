@@ -7,6 +7,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### MEGA65 Fixes
+- **Issue #129 - Typed text reaches BASIC 65**: CLI `type`, MCP `type_string` and GUI text entry now feed the MEGA65 hardware key queue (`$D610`/`$D611`) as well as the CIA matrix, by routing typed keys through the machine's key handler. Shifted symbols are typed as LSHIFT + base key, `\n` is RETURN, and letter casing follows the C64 (ASCII uppercase = unshifted key).
+
 ### IDE Integration & Debugger Bridges - Issues #31, #88, #92-100
 - **Issue #31 - VICE Snapshot (.vsf) Import/Export Foundation**: Infrastructure and comprehensive documentation for loading and saving VICE emulator snapshots enabling cross-emulator compatibility. VICE_SNAPSHOTS.md provides 300+ lines of format specification, architecture design, usage examples, and roadmap. ViceSnapshotLoader/Saver class interfaces designed for CPU/RAM state serialization and extensible module-based device support. Enables importing VICE save states for debugging, exporting mmemu states for validation, and leveraging VICE tool ecosystem. Status: Documentation complete, implementation architecture ready.
 - **Issue #88 - VICE Monitor Protocol Support**: Complete VICE remote monitor protocol implementation enabling compatibility with VICE-based debugging tools and IDEs (C64IDE, etc.) as emulation backend. ViceMonitorProtocol class implements command dispatch for register/memory/breakpoint/disassembly operations. ViceMonitorServer provides TCP server on configurable port (default 6510, VICE standard). Supports address parsing (hex/$XXXX, 0xXXXX, decimal, binary), register access through ICore interface, memory operations via IBus, breakpoint management through DebugContext. New `--vice-monitor-port` CLI flag. Comprehensive VICE_PROTOCOL.md documentation. Enables C64IDE, mflash, and other VICE-compatible tools to use mmemu without modification.

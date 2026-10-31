@@ -610,6 +610,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         }
         return ok;
     };
+    kbd->setKeySink(desc->onKey);
 
     desc->deleters.push_back([bankCtrl]() { delete bankCtrl; });
     desc->deleters.push_back([keyReg]() { delete keyReg; });
