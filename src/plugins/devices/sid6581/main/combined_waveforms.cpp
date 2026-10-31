@@ -1041,9 +1041,10 @@ const uint16_t CombinedWaveformTable::TRI_SAW_PULSE[4096] = {
 
 
 uint16_t CombinedWaveformTable::triangle(uint32_t phase, bool ringMsb) {
-    uint16_t tri = (uint16_t)((phase & 0x800000u) ? ((~phase >> 11) & 0x0FFF) : (phase >> 11));
-    if (ringMsb) tri ^= 0x0800u;
-    return tri;
+    // The ramp folds when the MSB is set; with ring modulation the fold uses
+    // MSB XOR the source voice's MSB (reSID), inverting the whole ramp.
+    bool fold = ((phase & 0x800000u) != 0) != ringMsb;
+    return (uint16_t)((fold ? ~phase : phase) >> 11) & 0x0FFF;
 }
 
 uint16_t CombinedWaveformTable::sawtooth(uint32_t phase) {
