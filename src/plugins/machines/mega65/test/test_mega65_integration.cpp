@@ -9,6 +9,8 @@
 #include "libcore/main/core_registry.h"
 #include "cpu45gs02.h"
 #include "plugins/devices/f018b_dma/main/f018b_dma.h"
+#include "plugins/devices/map_mmu/main/c64_bank_controller.h"
+#include "plugins/devices/map_mmu/main/key_register.h"
 #include <cstring>
 #include <vector>
 
@@ -624,3 +626,45 @@ TEST_CASE(mega65_integration_mapped_dma) {
     delete desc;
 }
 
+
+// Hypervisor traps save the CPU port, VIC I/O mode and DMA list address into
+// $D650-$D658, give the hypervisor port $3F/$35 and MEGA65 I/O, and restore them
+// on exit (gs4510.vhdl TrapToHypervisor / ReturnFromHypervisor, issue #127).
+TEST_CASE(mega65_hypervisor_trap_saves_and_restores_machine_state) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* cpu  = static_cast<MOS45GS02*>(desc->cpus[0].cpu);
+    auto* bank = dynamic_cast<C64BankController*>(desc->ioRegistry->findHandler("C64BankCtrl"));
+    auto* key  = dynamic_cast<KeyRegister*>(desc->ioRegistry->findHandler("KEY"));
+    auto* dma  = dynamic_cast<F018bDmaDevice*>(desc->ioRegistry->findHandler("F018B DMA"));
+    ASSERT(bank && key && dma);
+    if (cpu->isHypervisor()) cpu->exitHypervisor();
+
+    bank->setPort(0x2F, 0x36);
+    key->setPersonality(IopersonalityMode::C65);
+    dma->setListAddr(0x1234567);
+
+    cpu->enterHypervisor(0x8000);
+    auto& h = cpu->hyperState();
+    ASSERT_EQ((int)h.port00, 0x2F);
+    ASSERT_EQ((int)h.port01, 0x36);
+    ASSERT_EQ((int)h.vicMode, 0x01);               // C65 = %01
+    ASSERT_EQ((int)h.dmaListAddr, 0x1234567);
+    ASSERT_EQ((int)bank->portDdr(), 0x3F);
+    ASSERT_EQ((int)bank->portValue(), 0x35);
+    ASSERT(key->getCurrentPersonality() == IopersonalityMode::MEGA65);
+
+    // The hypervisor changes the saved values and uses DMA itself
+    h.port01  = 0x37;
+    h.vicMode = 0x00;                              // C64
+    dma->setListAddr(0xFFF8000);
+
+    cpu->exitHypervisor();
+    ASSERT_EQ((int)bank->portDdr(), 0x2F);
+    ASSERT_EQ((int)bank->portValue(), 0x37);
+    ASSERT(key->getCurrentPersonality() == IopersonalityMode::C64);
+    ASSERT_EQ((int)dma->listAddr(), 0x1234567);
+
+    delete desc;
+}

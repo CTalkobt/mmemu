@@ -68,6 +68,9 @@ public:
     void tick(uint64_t) override {}
 
     uint8_t portValue() const { return m_portOut; }
+    uint8_t portDdr()   const { return m_portDDR; }
+    /** Set the CPU port ($00 DDR, $01 data) directly, e.g. on hypervisor entry/exit. */
+    void setPort(uint8_t ddr, uint8_t value) { m_portDDR = ddr; m_portOut = value; updateOverlays(); }
 
 private:
     SparseMemoryBus* m_physBus;

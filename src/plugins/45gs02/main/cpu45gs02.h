@@ -4,6 +4,7 @@
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <spdlog/spdlog.h>
 
@@ -143,6 +144,19 @@ public:
     void enterHypervisor(uint16_t trapAddr);
     void exitHypervisor();
 
+    /**
+     * Machine hooks for state the CPU can't see (CPU port, VIC I/O mode, DMA
+     * list address). onEnter runs after the registers are saved on a trap: it
+     * saves that state into the HypervisorState and applies the hypervisor
+     * defaults. onExit runs on return and restores it (gs4510.vhdl
+     * TrapToHypervisor / ReturnFromHypervisor).
+     */
+    void setHypervisorHooks(std::function<void(HypervisorState&)> onEnter,
+                            std::function<void(const HypervisorState&)> onExit) {
+        m_onHyperEnter = std::move(onEnter);
+        m_onHyperExit  = std::move(onExit);
+    }
+
     // Virtualisation control registers ($D640-$D67F)
     HypervisorState& hyperState() { return m_hyperState; }
     const HypervisorState& hyperState() const { return m_hyperState; }
@@ -162,6 +176,8 @@ private:
     HypervisorState m_hyperState;
     IBus*           m_bus;
     IMapController* m_mapMmu = nullptr;
+    std::function<void(HypervisorState&)>       m_onHyperEnter;
+    std::function<void(const HypervisorState&)> m_onHyperExit;
 
     const uint8_t*  m_hyperRom     = nullptr;
     uint8_t*        m_hyperRam     = nullptr;  // writable copy for hypervisor mode

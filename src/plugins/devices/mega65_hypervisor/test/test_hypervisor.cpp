@@ -352,3 +352,50 @@ TEST_CASE(hypervisor_map_save_registers_restored_on_exit) {
     ASSERT_EQ((int)(ms.megabyteLow >> 20), 0x80);
     ASSERT_EQ((int)(ms.megabyteHigh >> 20), 0x02);
 }
+
+TEST_CASE(hypervisor_entry_map_and_flags_per_vhdl) {
+    HyperMapFixture f;
+    MapState ms;
+    memset(&ms, 0, sizeof(ms));
+    for (int i = 0; i < 8; i++) ms.offsets[i] = 0x12300;
+    ms.enables     = 0xFF;
+    ms.megabyteLow = 0x04u << 20;
+    f.mmu.setMapState(ms);
+
+    f.cpu.enterHypervisor(0x8000);
+
+    const MapState& h = f.mmu.getMapState();
+    // Lower 32KB mapping kept; blocks 4-5 map to hypervisor memory at $FFF8000
+    ASSERT_EQ((int)h.enables, 0x3F);
+    ASSERT_EQ((int)h.offsets[0], 0x12300);
+    ASSERT_EQ((int)h.megabyteLow, 0x04 << 20);
+    ASSERT_EQ((int)f.mmu.resolvePhysical(0x8000), 0x0FFF8000);
+    ASSERT_EQ((int)f.mmu.resolvePhysical(0xBFFF), 0x0FFFBFFF);
+    // 8-bit stack at $BEFF, base page $BF, I set, D clear
+    ASSERT((f.cpu.regRead(7) & 0x20) != 0);
+    ASSERT((f.cpu.regRead(7) & 0x04) != 0);
+    ASSERT((f.cpu.regRead(7) & 0x08) == 0);
+    ASSERT_EQ((int)f.cpu.regRead(5), 0xBEFF);
+    ASSERT_EQ((int)f.cpu.regRead(4), 0xBF);
+}
+
+TEST_CASE(hypervisor_entry_clears_megabyte_ff_low_mapping) {
+    HyperMapFixture f;
+    MapState ms;
+    memset(&ms, 0, sizeof(ms));
+    ms.megabyteLow = 0xFFu << 20;
+    f.mmu.setMapState(ms);
+    f.cpu.enterHypervisor(0x8000);
+    ASSERT_EQ((int)f.mmu.getMapState().megabyteLow, 0);
+}
+
+TEST_CASE(hypervisor_tab_does_not_exit) {
+    HyperFixture f;
+    f.cpu.enterHypervisor(0x8000);
+    f.bus.write8(0x9000, 0xA9); f.bus.write8(0x9001, 0x00);  // LDA #$00
+    f.bus.write8(0x9002, 0x5B);                              // TAB
+    f.cpu.setPc(0x9000);
+    f.cpu.step(); f.cpu.step();
+    ASSERT(f.cpu.isHypervisor());
+    ASSERT_EQ((int)f.cpu.regRead(4), 0x00);
+}

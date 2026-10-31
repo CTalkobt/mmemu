@@ -59,6 +59,10 @@ public:
     void setMapController(class IMapController* map) { m_mapController = map; }
     bool isHaltRequested() const override { return m_dmaActive; }
 
+    /** DMA list address (28-bit), saved/restored across hypervisor traps ($D655-$D658). */
+    uint32_t listAddr() const { return m_dmaListAddr; }
+    void setListAddr(uint32_t addr) { m_dmaListAddr = addr & 0x0FFFFFFF; syncListAddrToRegs(); }
+
     void reset() override;
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;

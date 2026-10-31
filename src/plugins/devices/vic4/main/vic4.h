@@ -90,12 +90,17 @@ public:
     std::vector<std::string> deviceAliases() const override { return {"VIC4", "VICIV", "VIC-IV"}; }
 
 private:
+    void interpretLegacyRegisters();
     void renderFCM(uint32_t* buf);
     void renderBitplanes16(uint32_t* buf);
     void renderBackground80col(uint32_t* buf);
 
     // Extended registers $D048-$D07F (indexed as $D0xx - $D040)
     uint8_t m_extRegs[64];
+
+    // A legacy register ($D011/$D016/$D018/$D031) was written; applied while
+    // HOTREG ($D05D.7) is set (viciv.vhdl viciv_legacy_mode_registers_touched)
+    bool m_legacyTouched = false;
 
     // Internal color RAM (32 KB)
     std::vector<uint8_t> m_colorRamExt;

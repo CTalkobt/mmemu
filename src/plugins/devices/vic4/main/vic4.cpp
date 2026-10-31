@@ -30,6 +30,35 @@ void VIC4::reset() {
     m_extRegs[0x28] = 0x00; // CHARPTRLSB
     m_extRegs[0x29] = 0xD0; // CHARPTRMSB
     m_extRegs[0x2A] = 0x02; // CHARPTRBNK
+
+    // $D05D.7 HOTREG: VIC-II hot registers enabled by default
+    m_extRegs[0x1D] = 0x80;
+    m_legacyTouched = false;
+}
+
+// viciv.vhdl viciv_interpret_legacy_mode_registers: re-derive the VIC-IV row
+// geometry and screen/colour pointers from the legacy VIC-II/III registers.
+// The character set pointer is deliberately left alone, as in the VHDL.
+void VIC4::interpretLegacyRegisters() {
+    bool h640 = (d031() & D031_H640) != 0;
+    uint8_t width = h640 ? 80 : 40;
+    m_extRegs[0x18] = width;  // $D058/$D059 LINESTEP
+    m_extRegs[0x19] = 0;
+    m_extRegs[0x1E] = width;  // $D05E CHRCOUNT
+
+    // Screen RAM: $D018 screen bits (2KB steps in H640) within the $DD00 bank
+    uint8_t scr = (m_regs[0x18] >> 4) & 0x0F;
+    uint32_t base = m_bankBase | (h640 ? (uint32_t)(scr >> 1) << 11 : (uint32_t)scr << 10);
+    m_extRegs[0x20] = base & 0xFF;          // $D060-$D062 SCRNPTR
+    m_extRegs[0x21] = (base >> 8) & 0xFF;
+    m_extRegs[0x22] = 0;
+    m_extRegs[0x23] &= 0xC0;                // $D063: SCRNPTR bits 27-24, CHRCOUNT MSBs
+
+    m_extRegs[0x24] = 0;                    // $D064/$D065 COLPTR
+    m_extRegs[0x25] = 0;
+
+    // Character set: only the VIC-II bank bits 15-14 follow $DD00
+    m_extRegs[0x29] = (m_extRegs[0x29] & 0x3F) | ((m_bankBase >> 8) & 0xC0);
 }
 
 void VIC4::tick(uint64_t cycles) {
@@ -61,11 +90,29 @@ bool VIC4::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     if (offset >= 0x0048 && offset <= 0x007F) {
         if (isLocked()) return true;
         m_extRegs[offset - 0x0040] = val;
+        if (offset == 0x005D) {
+            // HOTREG: enabling applies a pending legacy write, disabling cancels it
+            if (!(val & 0x80)) m_legacyTouched = false;
+            else if (m_legacyTouched) { interpretLegacyRegisters(); m_legacyTouched = false; }
+        }
         return true;
     }
 
     // Everything else handled by VIC3
-    return VIC3::ioWrite(bus, addr, val);
+    bool handled = VIC3::ioWrite(bus, addr, val);
+
+    // $D018 CB bits 3-1 set CHARPTR bits 13-11 and clear bits 10-0 (viciv.vhdl)
+    if (offset == 0x18) {
+        m_extRegs[0x28] = 0;
+        m_extRegs[0x29] = (m_extRegs[0x29] & 0xC0) | ((val & 0x0E) << 2);
+    }
+
+    // Hot registers: $D011/$D016/$D018 always, $D031 when VIC-III registers are visible
+    if (offset == 0x11 || offset == 0x16 || offset == 0x18 || (offset == 0x31 && !isLocked())) {
+        m_legacyTouched = true;
+        if (m_extRegs[0x1D] & 0x80) { interpretLegacyRegisters(); m_legacyTouched = false; }
+    }
+    return handled;
 }
 
 uint32_t VIC4::screenBase() const {

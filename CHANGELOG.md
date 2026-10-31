@@ -8,6 +8,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### MEGA65 Fixes
+- **Issue #127 - Hypervisor entry/exit per gs4510.vhdl**: Traps save the CPU port, VIC I/O mode and DMA list address into `$D650-$D658`, give the hypervisor port `$3F/$35`, MEGA65 I/O, an 8-bit stack and the upper 32KB mapped to `$FFF8000` (the lower mapping is kept), and restore it all on exit. The non-hardware "TAB leaves the hypervisor" shortcut is removed; HYPPO now leaves only through `$D67F`. As in xemu, a minimal flash-utility stand-in is preloaded at `$50000` when no flash utility file is configured, so HYPPO's boot path completes normally.
+- **VIC-IV hot registers**: With `$D05D.7` set, writes to `$D011/$D016/$D018/$D031` re-derive the line step, character count, screen and colour RAM pointers (viciv.vhdl); `$D018` also sets the character set pointer.
 - **Issue #129 - Typed text reaches BASIC 65**: CLI `type`, MCP `type_string` and GUI text entry now feed the MEGA65 hardware key queue (`$D610`/`$D611`) as well as the CIA matrix, by routing typed keys through the machine's key handler. Shifted symbols are typed as LSHIFT + base key, `\n` is RETURN, and letter casing follows the C64 (ASCII uppercase = unshifted key).
 
 ### IDE Integration & Debugger Bridges - Issues #31, #88, #92-100

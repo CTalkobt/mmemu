@@ -82,6 +82,13 @@ bool KeyRegister::ioWrite(IBus* bus, uint32_t addr, uint8_t val)
     return true;
 }
 
+void KeyRegister::setPersonality(IopersonalityMode mode)
+{
+    if (mode == m_currentPersonality) return;
+    m_currentPersonality = mode;
+    if (m_personalityCallback) m_personalityCallback(mode);
+}
+
 void KeyRegister::reset()
 {
     m_state = KeyState::WAITING_FIRST;
