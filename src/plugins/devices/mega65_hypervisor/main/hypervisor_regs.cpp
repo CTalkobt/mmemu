@@ -45,12 +45,13 @@ bool HypervisorRegs::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case 0x07: *val = h.pflags; break; // $D647
         case 0x08: *val = h.pc & 0xFF; break; // $D648 PCL
         case 0x09: *val = (h.pc >> 8) & 0xFF; break; // $D649 PCH
-        case 0x0A: *val = h.mapOffsets[0][0];  break; // $D64A (block 0 offset byte 0)
-        case 0x0B: *val = h.mapOffsets[0][1];  break; // $D64B (block 0 offset byte 1)
-        case 0x0C: *val = h.mapOffsets[4][0];  break; // $D64C (block 4 offset byte 0)
-        case 0x0D: *val = h.mapOffsets[4][1];  break; // $D64D (block 4 offset byte 1)
-        case 0x0E: *val = (h.mapEnables & 0x0F); break; // $D64E (lower block enables)
-        case 0x0F: *val = ((h.mapEnables >> 4) & 0x0F); break; // $D64F (upper block enables)
+        // $D64A-$D64F use the MAP instruction's A/X/Y/Z encoding (gs4510.vhdl)
+        case 0x0A: *val = ((h.mapOffsetLow >> 16) & 0x0F) | ((h.mapEnables & 0x0F) << 4); break; // $D64A MAPLO0
+        case 0x0B: *val = (h.mapOffsetLow >> 8) & 0xFF;  break; // $D64B MAPLO1
+        case 0x0C: *val = ((h.mapOffsetHigh >> 16) & 0x0F) | (h.mapEnables & 0xF0); break; // $D64C MAPHI0
+        case 0x0D: *val = (h.mapOffsetHigh >> 8) & 0xFF; break; // $D64D MAPHI1
+        case 0x0E: *val = (h.megabyteLow >> 20) & 0xFF;  break; // $D64E MAPLOMB
+        case 0x0F: *val = (h.megabyteHigh >> 20) & 0xFF; break; // $D64F MAPHIMB
         case 0x10: *val = h.port00;  break; // $D650
         case 0x11: *val = h.port01;  break; // $D651
         case 0x12: *val = h.vicMode; break; // $D652
@@ -108,12 +109,18 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case 0x07: h.pflags = val; break;
         case 0x08: h.pc = (h.pc & 0xFF00) | val; break;
         case 0x09: h.pc = (h.pc & 0x00FF) | ((uint16_t)val << 8); break;
-        case 0x0A: h.mapOffsets[0][0] = val; break;  // $D64A (block 0 offset byte 0)
-        case 0x0B: h.mapOffsets[0][1] = val; break;  // $D64B (block 0 offset byte 1)
-        case 0x0C: h.mapOffsets[4][0] = val; break;  // $D64C (block 4 offset byte 0)
-        case 0x0D: h.mapOffsets[4][1] = val; break;  // $D64D (block 4 offset byte 1)
-        case 0x0E: h.mapEnables = (h.mapEnables & 0xF0) | (val & 0x0F); break;  // $D64E (lower enables)
-        case 0x0F: h.mapEnables = (h.mapEnables & 0x0F) | ((val & 0x0F) << 4); break;  // $D64F (upper enables)
+        case 0x0A: // $D64A MAPLO0: enables 0-3 (bits 7:4), offset bits 19:16 (bits 3:0)
+            h.mapEnables   = (h.mapEnables & 0xF0) | (val >> 4);
+            h.mapOffsetLow = (h.mapOffsetLow & 0x0FF00) | ((uint32_t)(val & 0x0F) << 16);
+            break;
+        case 0x0B: h.mapOffsetLow = (h.mapOffsetLow & 0xF0000) | ((uint32_t)val << 8); break; // $D64B MAPLO1
+        case 0x0C: // $D64C MAPHI0: enables 4-7 (bits 7:4), offset bits 19:16 (bits 3:0)
+            h.mapEnables    = (h.mapEnables & 0x0F) | (val & 0xF0);
+            h.mapOffsetHigh = (h.mapOffsetHigh & 0x0FF00) | ((uint32_t)(val & 0x0F) << 16);
+            break;
+        case 0x0D: h.mapOffsetHigh = (h.mapOffsetHigh & 0xF0000) | ((uint32_t)val << 8); break; // $D64D MAPHI1
+        case 0x0E: h.megabyteLow  = (uint32_t)val << 20; break; // $D64E MAPLOMB
+        case 0x0F: h.megabyteHigh = (uint32_t)val << 20; break; // $D64F MAPHIMB
         case 0x10: h.port00  = val; break;
         case 0x11: h.port01  = val; break;
         case 0x12: h.vicMode = val; break;

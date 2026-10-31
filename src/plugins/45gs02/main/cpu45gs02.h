@@ -55,8 +55,9 @@ struct HypervisorState {
     uint8_t  spl, sph;
     uint8_t  pflags;
     uint16_t pc;
-    // MAP block offsets: all 8 blocks (3 bytes each = 24 bits for 20-bit offsets)
-    uint8_t  mapOffsets[8][3];
+    // MAP state ($D64A-$D64F). As with the MAP instruction, there is one offset
+    // per 32KB half (address bits 19:8), not one per block.
+    uint32_t mapOffsetLow, mapOffsetHigh;  // offsets for blocks 0-3 and 4-7
     uint8_t  mapEnables;  // bitmask: bit i = block i enabled
     uint32_t megabyteLow, megabyteHigh;  // MAP megabyte base addresses
     uint8_t  port00, port01;
