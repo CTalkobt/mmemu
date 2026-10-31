@@ -173,30 +173,44 @@ int MOS6502::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
     return bytes;
 }
 
-int MOS6502::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
+static StackOp stackOpFor(const char* mn) {
+    if (mn[0] == 'B' && strcmp(mn, "BRK") == 0) return StackOp::BRK;
+    if (mn[0] != 'P' || mn[3] != '\0') return StackOp::NONE;
+    if (mn[1] == 'H') {
+        switch (mn[2]) {
+            case 'A': return StackOp::PUSH_A;
+            case 'X': return StackOp::PUSH_X;
+            case 'Y': return StackOp::PUSH_Y;
+            case 'Z': return StackOp::PUSH_Z;
+            case 'P': return StackOp::PUSH_P;
+        }
+    } else if (mn[1] == 'L') {
+        switch (mn[2]) {
+            case 'A': case 'X': case 'Y': case 'Z': case 'P': return StackOp::PULL;
+        }
+    }
+    return StackOp::NONE;
+}
+
+int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
     DisasmEntry* entry = (DisasmEntry*)entryOut;
     uint8_t op = bus->peek8(addr);
     const Opcode& info = s_opcodes[op];
 
     entry->addr = addr;
-    entry->mnemonic = info.mnemonic;
-    
-    char buf[64];
-    entry->bytes = disassembleOne(bus, addr, buf, sizeof(buf));
-    
-    // Split buf into mnemonic and operands for entry
-    const char* sp = strchr(buf, ' ');
-    if (sp) {
-        while (*sp == ' ') ++sp;
-        entry->operands = sp;
-    } else {
-        entry->operands.clear();
+    entry->mnemonic = info.mnemonic;   // short: fits the string's inline buffer
+    entry->operands.clear();
+    entry->complete.clear();
+    switch (info.mode) {
+        case Mode::IMP: case Mode::ACC: entry->bytes = 1; break;
+        case Mode::ABS: case Mode::ABSX: case Mode::ABSY: case Mode::IND: entry->bytes = 3; break;
+        default: entry->bytes = 2; break;  // IMM, BP, BPX, BPY, REL, BPXIND, INDBPY
     }
-    entry->complete = buf;
 
     entry->isCall   = (op == 0x20); // JSR
     entry->isReturn = (op == 0x60 || op == 0x40); // RTS or RTI
     entry->isBranch = (info.mode == Mode::REL);
+    entry->stackOp  = stackOpFor(info.mnemonic);
 
     // Mark unofficial/illegal opcodes.  All handlers that exist exclusively
     // for undocumented opcodes are listed here.  opNOP and opSBC each serve
@@ -212,7 +226,7 @@ int MOS6502::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
         fn == &MOS6502::opAXS ||
         (fn == &MOS6502::opNOP && op != 0xEA) ||   // $EA is the only official NOP
         (fn == &MOS6502::opSBC && op == 0xEB);      // $EB is the unofficial SBC
-    
+
     if (entry->isCall || entry->isBranch || op == 0x4C || op == 0x6C) {
         // Calculate targetAddr
         if (info.mode == Mode::REL) {
@@ -227,6 +241,25 @@ int MOS6502::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
         entry->targetAddr = 0;
     }
 
+    return entry->bytes;
+}
+
+int MOS6502::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
+    DisasmEntry* entry = (DisasmEntry*)entryOut;
+    decodeEntry(bus, addr, entry);
+
+    char buf[64];
+    entry->bytes = disassembleOne(bus, addr, buf, sizeof(buf));
+
+    // Split buf into mnemonic and operands for entry
+    const char* sp = strchr(buf, ' ');
+    if (sp) {
+        while (*sp == ' ') ++sp;
+        entry->operands = sp;
+    } else {
+        entry->operands.clear();
+    }
+    entry->complete = buf;
     return entry->bytes;
 }
 
@@ -807,7 +840,7 @@ int MOS6502::step() {
         if (m_observer->needsDisasm()) {
             uint16_t pcAfterDecode = m_state.pc;
             DisasmEntry entry;
-            disassembleEntry(m_bus, pc, &entry);
+            decodeEntry(m_bus, pc, &entry);   // no text: the trace formats lazily
             m_state.pc = pc;  // expose pre-fetch PC to observer (cpu->pc() == breakpoint addr)
             bool cont = m_observer->onStep(this, m_bus, entry);
             if (!cont) {

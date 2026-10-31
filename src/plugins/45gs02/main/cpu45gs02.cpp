@@ -2,6 +2,7 @@
 #include "libdebug/main/execution_observer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include "util/logging.h"
+#include "libmem/main/byte_window_bus.h"
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -376,7 +377,7 @@ int MOS45GS02::step() {
     // Reset PC to startPc if observer fails
     if (m_observer) {
         if (m_observer->needsDisasm()) {
-            DisasmEntry entry; disassembleEntry(m_bus, startPc, &entry);
+            DisasmEntry entry; decodeEntry(m_bus, startPc, &entry);  // no text: the trace formats lazily
             if (!m_observer->onStep(this, m_bus, entry)) {
                 return 1;
             }
@@ -1778,14 +1779,98 @@ int MOS45GS02::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
     }
 }
 
+static StackOp stackOp45(uint8_t op) {
+    switch (op) {
+        case 0x48: return StackOp::PUSH_A;   // PHA
+        case 0xDA: return StackOp::PUSH_X;   // PHX
+        case 0x5A: return StackOp::PUSH_Y;   // PHY
+        case 0xDB: return StackOp::PUSH_Z;   // PHZ
+        case 0x08: return StackOp::PUSH_P;   // PHP
+        case 0x68: case 0xFA: case 0x7A: case 0xFB: case 0x28:
+            return StackOp::PULL;            // PLA PLX PLY PLZ PLP
+        case 0x00: return StackOp::BRK;
+        default:   return StackOp::NONE;
+    }
+}
+
+/** Instruction length of each unprefixed opcode, taken once from disassembleOne(). */
+static const uint8_t* opcodeLengths45() {
+    static uint8_t lengths[256];
+    static bool built = false;
+    if (!built) {
+        MOS45GS02 cpu;
+        char buf[64];
+        for (int op = 0; op < 256; op++) {
+            const uint8_t bytes[4] = { (uint8_t)op, 0, 0, 0 };
+            ByteWindowBus win(0x1000, bytes, 4);
+            lengths[op] = (uint8_t)cpu.disassembleOne(&win, 0x1000, buf, sizeof(buf));
+        }
+        built = true;
+    }
+    return lengths;
+}
+
+/** Number of prefix bytes ($42 $42 quad, $EA 32-bit indirect) before the opcode. */
+static int prefixBytes45(IBus* bus, uint32_t addr) {
+    uint32_t cur = addr;
+    for (int n = 0; n < 16; n++) {
+        uint8_t op = bus->peek8(cur);
+        if (op == 0x42 && bus->peek8(cur + 1) == 0x42) { cur += 2; continue; }
+        if (op == 0xEA) {
+            uint8_t next = bus->peek8(cur + 1);
+            if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
+                next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) { cur++; continue; }
+        }
+        break;
+    }
+    return (int)(cur - addr);
+}
+
+static void classify45(DisasmEntry* e, uint8_t op) {
+    e->isCall    = (op == 0x20 || op == 0x63 || op == 0x22 || op == 0x23);
+    e->isReturn  = (op == 0x60 || op == 0x40 || op == 0x62);
+    e->isBranch  = ((op & 0x1F) == 0x10 || op == 0x80 || op == 0x83 || (op & 0x1F) == 0x13 || (op & 0x0F) == 0x0F);
+    e->isIllegal = false;
+    e->stackOp   = stackOp45(op);
+}
+
+int MOS45GS02::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
+    // Prefixed instructions are rare: take the full path for them
+    if (prefixBytes45(bus, addr) > 0) return disassembleEntry(bus, addr, entryOut);
+
+    DisasmEntry* e = (DisasmEntry*)entryOut;
+    uint8_t op = bus->peek8(addr);
+    e->addr = addr;
+    e->bytes = opcodeLengths45()[op];
+    e->mnemonic.clear();
+    e->operands.clear();
+    e->complete.clear();
+    classify45(e, op);
+
+    // Branch/call/jump target, as disassembleOne() prints it
+    auto word = [&](uint32_t a) { return (uint16_t)(bus->peek8(a) | (bus->peek8(a + 1) << 8)); };
+    if ((op & 0x0F) == 0x0F) {                                     // BBR/BBS zp,rel8
+        e->targetAddr = (uint16_t)(addr + 3 + (int8_t)bus->peek8(addr + 2));
+    } else if ((op & 0x1F) == 0x10 || op == 0x80) {                // 8-bit branches
+        e->targetAddr = (uint16_t)(addr + 2 + (int8_t)bus->peek8(addr + 1));
+    } else if ((op & 0x1F) == 0x13 || op == 0x83 || op == 0x63) {  // 16-bit branches, BSR
+        e->targetAddr = (uint16_t)(addr + 3 + (int16_t)word(addr + 1));
+    } else if (op == 0x20 || op == 0x22 || op == 0x23 || op == 0x4C || op == 0x6C) {
+        e->targetAddr = word(addr + 1);                            // JSR/JMP abs and indirect pointers
+    } else {
+        e->targetAddr = 0;
+    }
+    return e->bytes;
+}
+
 int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
     DisasmEntry* e = (DisasmEntry*)entryOut;
     e->addr = addr;
-    static char s_buf[128]; // Static buffer to avoid dangling pointer, okay for single-threaded simulator
+    char s_buf[128];
     e->bytes = disassembleOne(bus, addr, s_buf, sizeof(s_buf));
     e->complete = s_buf;
 
-    // Split "MNEM operands" (runs on every step while a debugger is attached, so no sscanf)
+    // Split "MNEM operands"
     const char* sp = strchr(s_buf, ' ');
     if (sp) {
         e->mnemonic.assign(s_buf, sp - s_buf);
@@ -1796,43 +1881,13 @@ int MOS45GS02::disassembleEntry(IBus* bus, uint32_t addr, void* entryOut) {
         e->operands.clear();
     }
 
-    uint32_t currentAddr = addr;
-    // Skip prefixes to find the actual instruction opcode (with iteration limit to prevent infinite loops)
-    const int MAX_PREFIXES = 16;
-    int prefixCount = 0;
-    while (prefixCount < MAX_PREFIXES) {
-        uint8_t prefixOp = bus->peek8(currentAddr);
-        if (prefixOp == 0x42 && bus->peek8(currentAddr + 1) == 0x42) {
-            currentAddr += 2;
-            prefixCount++;
-            continue;
-        }
-        if (prefixOp == 0xEA) {
-            uint8_t next = bus->peek8(currentAddr + 1);
-            if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
-                next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
-                currentAddr++;
-                prefixCount++;
-                continue;
-            }
-        }
-        break;
-    }
-    uint8_t op = bus->peek8(currentAddr);
-
-    e->isCall = (op == 0x20 || op == 0x63 || op == 0x22 || op == 0x23);
-    e->isReturn = (op == 0x60 || op == 0x40 || op == 0x62);
-    e->isBranch = ((op & 0x1F) == 0x10 || op == 0x80 || op == 0x83 || (op & 0x1F) == 0x13 || (op & 0x0F) == 0x0F);
-    e->isIllegal = false;
+    uint8_t op = bus->peek8(addr + prefixBytes45(bus, addr));
+    classify45(e, op);
 
     bool isJump = (op == 0x4C || op == 0x6C);
     if (e->isCall || e->isBranch || isJump) {
         const char* lastDol = strrchr(s_buf, '$');
-        if (lastDol) {
-            e->targetAddr = (uint32_t)strtoul(lastDol + 1, nullptr, 16);
-        } else {
-            e->targetAddr = 0;
-        }
+        e->targetAddr = lastDol ? (uint32_t)strtoul(lastDol + 1, nullptr, 16) : 0;
     } else {
         e->targetAddr = 0;
     }

@@ -12,11 +12,22 @@ struct MemoryWrite {
 };
 
 struct TraceEntry {
+    static constexpr int MAX_INSTR_BYTES = 8;
+    static constexpr int MAX_RAW_REGS    = 24;
+
     uint32_t addr;
-    std::string mnemonic;
-    std::map<std::string, uint32_t> regs;
+    /** Disassembly text; formatted from instr[] on first read when empty. */
+    mutable std::string mnemonic;
+    /** Registers by name; built from rawRegs[] on first read when empty. */
+    mutable std::map<std::string, uint32_t> regs;
     uint64_t cycles;
     std::vector<MemoryWrite> memWrites;
+
+    // Captured at step time for lazy formatting (TraceBuffer::at/popBack)
+    uint8_t  instr[MAX_INSTR_BYTES];
+    uint8_t  instrLen    = 0;
+    uint32_t rawRegs[MAX_RAW_REGS];   // values of the CPU's non-internal registers, in order
+    uint8_t  rawRegCount = 0;
 };
 
 class ICore;
@@ -26,11 +37,15 @@ class TraceBuffer {
 public:
     TraceBuffer(size_t capacity = 1000);
 
+    /** CPU used to format captured instruction bytes and registers on read. */
+    void setCpu(ICore* cpu) { m_cpu = cpu; }
+
     void push(const TraceEntry& entry);
 
     /**
-     * Start a new entry in place: returns the recycled slot with memWrites
-     * cleared. The caller sets every other field (avoids per-step allocation).
+     * Start a new entry in place: returns the recycled slot with memWrites,
+     * text, registers and raw captures cleared (keeping their allocations).
+     * The caller sets addr/cycles and either the text fields or the raw ones.
      */
     TraceEntry& pushNew();
     void clear();
@@ -49,5 +64,9 @@ public:
     bool reverseStep(ICore* cpu, IBus* bus);
 
 private:
+    /** Fill mnemonic/regs from the captured raw data if not yet done. */
+    void materialize(const TraceEntry& e) const;
+
     CircularBuffer<TraceEntry> m_buffer;
+    ICore* m_cpu = nullptr;
 };

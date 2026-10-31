@@ -389,3 +389,50 @@ TEST_CASE(gs02_disasm_entry) {
     ASSERT_EQ(entry3.targetAddr, (uint32_t)0x0240);
 }
 
+
+// decodeEntry() (used per step while a debugger is attached) must agree with
+// disassembleEntry() on length, flags, branch/call target and stack effect,
+// and the stack effect must match the disassembled mnemonic.
+TEST_CASE(gs02_decode_entry_matches_disassembly) {
+    MOS45GS02 cpu;
+    auto expectedStackOp = [](const std::string& mn) {
+        if (mn == "PHA") return StackOp::PUSH_A;
+        if (mn == "PHX") return StackOp::PUSH_X;
+        if (mn == "PHY") return StackOp::PUSH_Y;
+        if (mn == "PHZ") return StackOp::PUSH_Z;
+        if (mn == "PHP") return StackOp::PUSH_P;
+        if (mn == "PLA" || mn == "PLX" || mn == "PLY" || mn == "PLZ" || mn == "PLP") return StackOp::PULL;
+        if (mn == "BRK") return StackOp::BRK;
+        return StackOp::NONE;
+    };
+    const uint8_t operands[][3] = { {0x00, 0x00, 0x00}, {0x7F, 0x12, 0x34}, {0x80, 0xFF, 0x80}, {0xFE, 0xFF, 0xFF} };
+    for (int op = 0; op < 256; op++) {
+        for (const auto& o : operands) {
+            FlatMemoryBus bus("system", 16);
+            bus.write8(0x2000, (uint8_t)op);
+            for (int i = 0; i < 3; i++) bus.write8(0x2001 + i, o[i]);
+            DisasmEntry full, lite;
+            cpu.disassembleEntry(&bus, 0x2000, &full);
+            cpu.decodeEntry(&bus, 0x2000, &lite);
+            if (lite.bytes != full.bytes || lite.targetAddr != full.targetAddr)
+                printf("    op=$%02X '%s': bytes %d/%d target $%X/$%X\n", op, full.complete.c_str(),
+                       lite.bytes, full.bytes, lite.targetAddr, full.targetAddr);
+            ASSERT_EQ(lite.bytes, full.bytes);
+            ASSERT_EQ(lite.isCall, full.isCall);
+            ASSERT_EQ(lite.isReturn, full.isReturn);
+            ASSERT_EQ(lite.isBranch, full.isBranch);
+            ASSERT_EQ(lite.targetAddr, full.targetAddr);
+            ASSERT(lite.stackOp == full.stackOp);
+            ASSERT(full.stackOp == expectedStackOp(full.mnemonic));
+        }
+    }
+    // Prefixed forms take the full path
+    FlatMemoryBus bus("system", 16);
+    const uint8_t ldq[] = { 0x42, 0x42, 0xAD, 0x00, 0x20 };  // LDQ $2000
+    for (int i = 0; i < 5; i++) bus.write8(0x3000 + i, ldq[i]);
+    DisasmEntry full, lite;
+    cpu.disassembleEntry(&bus, 0x3000, &full);
+    cpu.decodeEntry(&bus, 0x3000, &lite);
+    ASSERT_EQ(lite.bytes, full.bytes);
+    ASSERT_EQ(lite.bytes, 5);
+}
