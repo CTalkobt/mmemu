@@ -25,6 +25,11 @@ struct DisasmEntry {
     bool     isIllegal;  // opcode is unofficial/undocumented
     uint32_t targetAddr;
     StackOp  stackOp = StackOp::NONE;
+
+    /** Instruction bytes as read by decodeEntry() (rawLen == 0 if not filled). */
+    static constexpr int MAX_RAW = 8;
+    uint8_t  raw[MAX_RAW];
+    uint8_t  rawLen = 0;
 };
 
 class SymbolTable;

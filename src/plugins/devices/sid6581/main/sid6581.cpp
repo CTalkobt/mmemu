@@ -224,43 +224,68 @@ void SID6581::synthesize(uint64_t cycles) {
     // Advance all three voice oscillators and envelopes.
     // Voice sync source: v0 syncs to v2, v1 syncs to v0, v2 syncs to v1
     // (standard C64 wiring: voice N is synced/ring-mod by voice N-1, wrapping).
-    tickVoice(m_voices[0], m_voices[2], cycles, m_clockHz);
-    tickVoice(m_voices[1], m_voices[0], cycles, m_clockHz);
-    tickVoice(m_voices[2], m_voices[1], cycles, m_clockHz);
+    //
+    // A silent idle voice (common: SIDs untouched during boot) has freq 0, no
+    // sync and no test bit, so its phase cannot move, there is no LFSR edge and
+    // only the idle envelope accumulator changes: skip the call for it.
+    auto silentIdle = [](const Voice& v) {
+        return v.freq == 0 && !(v.cr & (CR_SYNC | CR_TEST)) && v.envPhase == Voice::Env::IDLE &&
+               ((v.phase >> 19) & 1) == v.prevBit19;
+    };
+    if (silentIdle(m_voices[0])) m_voices[0].envAccum += cycles;
+    else tickVoice(m_voices[0], m_voices[2], cycles, m_clockHz);
+    if (silentIdle(m_voices[1])) m_voices[1].envAccum += cycles;
+    else tickVoice(m_voices[1], m_voices[0], cycles, m_clockHz);
+    if (silentIdle(m_voices[2])) m_voices[2].envAccum += cycles;
+    else tickVoice(m_voices[2], m_voices[1], cycles, m_clockHz);
 
-    // Build filter coefficient from cutoff register.
+    // Determine how many output samples this tick spans. Most ticks are one
+    // CPU instruction and produce none, so return before any filter maths.
+    m_sampleFrac += (uint64_t)cycles * (uint32_t)m_sampleRate;
+    uint32_t newSamples = (uint32_t)(m_sampleFrac / m_clockHz);
+    m_sampleFrac %= m_clockHz;
+    if (newSamples == 0) return;
+
     uint16_t cutoff = (uint16_t)(m_regs[FC_LO] & 0x07) | ((uint16_t)m_regs[FC_HI] << 3);
-    // Map 0–2047 to ~30–12000 Hz (approximately logarithmic).
-    float fcHz = 30.0f * std::pow(400.0f, (float)cutoff / 2047.0f);
-    // Chamberlin filter coefficient: f = 2*sin(pi*fc/sr)  (keep small for stability)
-    float f = 2.0f * std::sin(3.14159265f * fcHz / (float)m_sampleRate);
-    f = std::min(f, 0.95f);
-    // Resonance: Q from RES nibble (0=low, 15=high).
     uint8_t resMask = (m_regs[RES_FILT] >> 4) & 0x0F;
-    float q = 1.0f / (0.5f + (float)resMask / 15.0f * 3.5f); // Q range ~0.22–2.0
     uint8_t modeVol = m_regs[MODE_VOL];
     float vol = (float)(modeVol & 0x0F) / 15.0f;
 
     // Configure filter with current chip variant
     m_filter.isHardware6581 = (m_filterVariant == 0);  // 0 = 6581, 1 = 8580
 
-    // Apply nonlinear filter curve modeling (6581 vs 8580 variants)
-    // The real SID filter exhibits nonlinearity due to component tolerances,
-    // transistor gain variation, and op-amp limitations. This adjusts the
-    // cutoff frequency coefficient and resonance multiplier based on empirical
-    // measurements from real hardware (via reSIDfp reverse-engineering).
-    FilterCurve::Variant filterVariant = (m_filterVariant == 0)
-        ? FilterCurve::Variant::SID_6581
-        : FilterCurve::Variant::SID_8580;
-    FilterCurve::FilterCoeffs curved = FilterCurve::applyNonlinearity(
-        f, q, cutoff, resMask, filterVariant);
-    f = curved.f;
-    q = curved.q;
+    // Filter coefficients depend only on cutoff, resonance, variant and sample
+    // rate: recompute them only when one of those changes.
+    if (!m_coeffValid || cutoff != m_coeffCutoff || resMask != m_coeffRes ||
+        m_filterVariant != m_coeffVariant || m_sampleRate != m_coeffSampleRate) {
+        // Map 0–2047 to ~30–12000 Hz (approximately logarithmic).
+        float fcHz = 30.0f * std::pow(400.0f, (float)cutoff / 2047.0f);
+        // Chamberlin filter coefficient: f = 2*sin(pi*fc/sr)  (keep small for stability)
+        float f = 2.0f * std::sin(3.14159265f * fcHz / (float)m_sampleRate);
+        f = std::min(f, 0.95f);
+        // Resonance: Q from RES nibble (0=low, 15=high).
+        float q = 1.0f / (0.5f + (float)resMask / 15.0f * 3.5f); // Q range ~0.22–2.0
 
-    // Determine how many output samples this tick spans.
-    m_sampleFrac += (uint64_t)cycles * (uint32_t)m_sampleRate;
-    uint32_t newSamples = (uint32_t)(m_sampleFrac / m_clockHz);
-    m_sampleFrac %= m_clockHz;
+        // Apply nonlinear filter curve modeling (6581 vs 8580 variants)
+        // The real SID filter exhibits nonlinearity due to component tolerances,
+        // transistor gain variation, and op-amp limitations. This adjusts the
+        // cutoff frequency coefficient and resonance multiplier based on empirical
+        // measurements from real hardware (via reSIDfp reverse-engineering).
+        FilterCurve::Variant filterVariant = (m_filterVariant == 0)
+            ? FilterCurve::Variant::SID_6581
+            : FilterCurve::Variant::SID_8580;
+        FilterCurve::FilterCoeffs curved = FilterCurve::applyNonlinearity(
+            f, q, cutoff, resMask, filterVariant);
+        m_coeffF = curved.f;
+        m_coeffQ = curved.q;
+        m_coeffCutoff = cutoff;
+        m_coeffRes = resMask;
+        m_coeffVariant = m_filterVariant;
+        m_coeffSampleRate = m_sampleRate;
+        m_coeffValid = true;
+    }
+    const float f = m_coeffF;
+    const float q = m_coeffQ;
 
     for (uint32_t s = 0; s < newSamples; ++s) {
         float mix = 0.0f;
@@ -294,6 +319,7 @@ void SID6581::synthesize(uint64_t cycles) {
 
 void SID6581::tickVoice(Voice& v, Voice& syncSrc, uint64_t cycles, uint32_t clockHz) {
     if (v.cr & CR_TEST) return; // test bit freezes oscillator
+
 
     uint32_t prevPhase = v.phase;
     v.phase = (v.phase + (uint32_t)v.freq * (uint32_t)cycles) & 0xFFFFFF;

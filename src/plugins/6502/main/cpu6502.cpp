@@ -206,6 +206,10 @@ int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
         case Mode::ABS: case Mode::ABSX: case Mode::ABSY: case Mode::IND: entry->bytes = 3; break;
         default: entry->bytes = 2; break;  // IMM, BP, BPX, BPY, REL, BPXIND, INDBPY
     }
+    // Instruction bytes, reused by the debugger's trace
+    entry->raw[0] = op;
+    for (int i = 1; i < entry->bytes; i++) entry->raw[i] = bus->peek8(addr + i);
+    entry->rawLen = (uint8_t)entry->bytes;
 
     entry->isCall   = (op == 0x20); // JSR
     entry->isReturn = (op == 0x60 || op == 0x40); // RTS or RTI

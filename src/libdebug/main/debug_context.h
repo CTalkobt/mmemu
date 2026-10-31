@@ -110,6 +110,9 @@ private:
     std::unique_ptr<LuaEventRegistry> m_luaEventRegistry;
     std::vector<KernalCall> m_kernalStack;
     std::vector<KernalCall> m_basicStack;
+    ICore*           m_traceRegCpu = nullptr;   // CPU m_traceRegIdx was built for
+    std::vector<int> m_traceRegIdx;             // its non-internal register indices
+    int              m_traceStateSize = 0;      // its saveState() size if it fits a trace entry
     std::shared_ptr<spdlog::logger> m_kernalLog;   // cached: looked up on every step
     std::shared_ptr<spdlog::logger> m_basicLog;
     std::vector<SystemSnapshot> m_snapshots;
