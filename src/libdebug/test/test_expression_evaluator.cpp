@@ -416,3 +416,70 @@ TEST_CASE(expression_evaluator_memory_deref) {
     // No bus = dereference fails gracefully
     ASSERT(!ExpressionEvaluator::evaluate("*$1000", nullptr, res));
 }
+
+TEST_CASE(expression_evaluator_bitfields) {
+    FlatMemoryBus bus{"test", 16};
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+    uint32_t res;
+
+    // Literals: single bit and ranges (bit 0 = LSB)
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("$80:7", nullptr, res));
+    EXPECT_EQ(res, 1u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("$80:6", nullptr, res));
+    EXPECT_EQ(res, 0u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("%11010000:4-6", nullptr, res));
+    EXPECT_EQ(res, 5u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("%11010000:6-4", nullptr, res)); // reversed range
+    EXPECT_EQ(res, 5u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("$1234:8-15", nullptr, res));
+    EXPECT_EQ(res, 0x12u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("$F0 : 4 - 7", nullptr, res)); // whitespace
+    EXPECT_EQ(res, 0xFu);
+
+    // The '-' in a range is not subtraction; arithmetic around it still works
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("$C0:6-7 + 1", nullptr, res));
+    EXPECT_EQ(res, 4u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("10 - $C0:6-7", nullptr, res));
+    EXPECT_EQ(res, 7u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("($F0 + $10):8", nullptr, res));
+    EXPECT_EQ(res, 1u);
+
+    // Comparisons, including single '=' as equality
+    ASSERT(ExpressionEvaluator::evaluateCondition("$C0:6-7 = 3", nullptr));
+    ASSERT(ExpressionEvaluator::evaluateCondition("$C0:6-7 == 3", nullptr));
+    ASSERT(!ExpressionEvaluator::evaluateCondition("$C0:6-7 = 2", nullptr));
+    ASSERT(ExpressionEvaluator::evaluateCondition("$01:0 = 1 && $01:1 = 0", nullptr));
+    ASSERT(ExpressionEvaluator::evaluateCondition("5 <= 5", nullptr)); // '<=' not split at '='
+    ASSERT(ExpressionEvaluator::evaluateCondition("5 != 4", nullptr));
+
+    // Registers: P, and the generic SR alias for the status register
+    cpu.regWrite(5, 0x81);   // P: N and C set
+    ASSERT(ExpressionEvaluator::evaluateCondition("SR:0 = 1", &dbg));
+    ASSERT(ExpressionEvaluator::evaluateCondition("P:7 = 1", &dbg));
+    ASSERT(ExpressionEvaluator::evaluateCondition("SR:1 = 0", &dbg));
+    ASSERT(!ExpressionEvaluator::evaluateCondition("!SR:0", &dbg));   // !(SR:0)
+    cpu.regWrite(0, 0xA5);   // A
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("A:4-7", &dbg, res));
+    EXPECT_EQ(res, 0xAu);
+
+    // Memory: *addr:N is a bit of the byte; *addr:16 is still the word read
+    bus.write8(0x1000, 0x42);
+    bus.write8(0x1001, 0xAB);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*$1000:6", &dbg, res));
+    EXPECT_EQ(res, 1u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*$1000:16", &dbg, res));
+    EXPECT_EQ(res, 0xAB42u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("*$1000:16:8-15", &dbg, res));
+    EXPECT_EQ(res, 0xABu);
+
+    // Character literal containing ':' is untouched
+    EXPECT_TRUE(ExpressionEvaluator::evaluate("':'", nullptr, res));
+    EXPECT_EQ(res, (uint32_t)':');
+
+    // Malformed specs fail
+    ASSERT(!ExpressionEvaluator::evaluate("$80:", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("$80:32", nullptr, res));
+    ASSERT(!ExpressionEvaluator::evaluate("$80:x", nullptr, res));
+}

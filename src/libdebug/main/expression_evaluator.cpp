@@ -29,6 +29,40 @@ static bool removeOuterParentheses(std::string& expr) {
     return true;
 }
 
+/**
+ * Bit-field suffix (#117): if s[colon] is ':' followed by "N" or "L-H"
+ * (decimal bit numbers, whitespace allowed), return the index just past the
+ * spec and fill lo/hi (lo <= hi); otherwise npos.
+ */
+static size_t parseBitfieldSpec(const std::string& s, size_t colon, int& lo, int& hi) {
+    if (colon >= s.length() || s[colon] != ':') return std::string::npos;
+    size_t i = colon + 1;
+    auto skipWs = [&]() { while (i < s.length() && std::isspace((unsigned char)s[i])) ++i; };
+    auto number = [&](int& out) {
+        size_t start = i;
+        long v = 0;
+        while (i < s.length() && std::isdigit((unsigned char)s[i]) && i - start < 3) v = v * 10 + (s[i++] - '0');
+        if (i == start || (i < s.length() && std::isalnum((unsigned char)s[i]))) return false;
+        out = (int)v;
+        return true;
+    };
+    skipWs();
+    if (!number(lo)) return std::string::npos;
+    hi = lo;
+    size_t afterFirst = i;
+    skipWs();
+    if (i < s.length() && s[i] == '-') {
+        ++i;
+        skipWs();
+        if (!number(hi)) { i = afterFirst; hi = lo; }
+    } else {
+        i = afterFirst;
+    }
+    if (lo > hi) std::swap(lo, hi);
+    if (hi > 31) return std::string::npos;
+    return i;
+}
+
 bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* dbg, uint32_t& result, int defaultBase) {
     double res;
     if (evaluate(expression, dbg, res, defaultBase)) {
@@ -47,7 +81,7 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
     static const std::vector<OpInfo> binOps = {
         {"||", 0},
         {"&&", 0},
-        {"==", 1}, {"!=", 1}, {"<=", 1}, {">=", 1}, {"<",  1}, {">",  1},
+        {"==", 1}, {"=",  1}, {"!=", 1}, {"<=", 1}, {">=", 1}, {"<",  1}, {">",  1},
         {"|",  2},
         {"&",  3}, {"<<", 3}, {">>", 3},
         {"+",  4}, {"-",  4},
@@ -63,6 +97,12 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
     for (int i = 0; i < (int)expr.length(); ++i) {
         if (expr[i] == '(') depth++;
         else if (expr[i] == ')') depth--;
+        else if (expr[i] == ':' && depth == 0) {
+            // Skip a bit-field spec so the '-' in "x:5-7" isn't taken as subtraction
+            int lo, hi;
+            size_t end = parseBitfieldSpec(expr, (size_t)i, lo, hi);
+            if (end != std::string::npos) i = (int)end - 1;
+        }
         else if (depth == 0) {
             std::string foundOp;
             int foundPrec = -1;
@@ -109,7 +149,7 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
         if (evaluate(expr.substr(0, opPos), dbg, a, defaultBase) && evaluate(expr.substr(opPos + opStr.length()), dbg, b, defaultBase)) {
             if (opStr == "||") result = (double)(a != 0 || b != 0);
             else if (opStr == "&&") result = (double)(a != 0 && b != 0);
-            else if (opStr == "==") result = (double)(a == b);
+            else if (opStr == "==" || opStr == "=") result = (double)(a == b);
             else if (opStr == "!=") result = (double)(a != b);
             else if (opStr == "<=") result = (double)(a <= b);
             else if (opStr == ">=") result = (double)(a >= b);
@@ -169,6 +209,40 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
         }
         return false;
     }
+    // Bit-field extraction (#117): "value:N" is bit N, "value:L-H" is bits L..H
+    // shifted down (bit 0 = LSB). Binds tighter than the prefix operators above
+    // ("!SR:0" is "!(SR:0)"). "*addr:16" stays the 16-bit word dereference.
+    {
+        int depth2 = 0;
+        size_t colon = std::string::npos;
+        for (size_t i = 0; i < expr.length(); ++i) {
+            if (expr[i] == '(') depth2++;
+            else if (expr[i] == ')') depth2--;
+            else if (expr[i] == '\'' ) {
+                // skip a character literal such as ':' or '\''
+                size_t close = expr.find('\'', i + (expr.compare(i, 2, "'\\") == 0 ? 3 : 2));
+                if (close == std::string::npos) break;
+                i = close;
+            }
+            else if (expr[i] == ':' && depth2 == 0) colon = i;
+        }
+        int lo, hi;
+        if (colon != std::string::npos && colon > 0 &&
+            parseBitfieldSpec(expr, colon, lo, hi) == expr.length()) {
+            std::string base = trim(expr.substr(0, colon));
+            bool wordDeref = base[0] == '*' && lo == 16 && hi == 16 &&
+                             trim(expr.substr(colon + 1)) == "16";
+            if (!wordDeref) {
+                double a;
+                if (!evaluate(base, dbg, a, defaultBase)) return false;
+                uint64_t v = (uint64_t)(int64_t)a;
+                uint64_t mask = (1ULL << (hi - lo + 1)) - 1;   // hi <= 31
+                result = (double)((v >> lo) & mask);
+                return true;
+            }
+        }
+    }
+
     // Memory dereference: *addr reads byte, *addr:16 reads 16-bit LE word
     if (expr[0] == '*' && expr.length() > 1) {
         // Check for :16 suffix
@@ -413,6 +487,12 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
             std::string upperName = expr;
             std::transform(upperName.begin(), upperName.end(), upperName.begin(), ::toupper);
             int regIdx = dbg->cpu()->regIndexByName(upperName.c_str());
+            if (regIdx == -1 && (upperName == "SR" || upperName == "STATUS")) {
+                // Generic alias for the CPU's status register (P on the 6502 family)
+                ICore* cpu = dbg->cpu();
+                for (int i = 0; i < cpu->regCount() && regIdx == -1; ++i)
+                    if (cpu->regDescriptor(i)->flags & REGFLAG_STATUS) regIdx = i;
+            }
             if (regIdx != -1) {
                 result = (double)dbg->cpu()->regRead(regIdx);
                 return true;
