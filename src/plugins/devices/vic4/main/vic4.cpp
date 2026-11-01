@@ -217,6 +217,12 @@ uint8_t VIC4::getBackPalBank() const { return (m_extRegs[0x30] >> 6) & 0x03; } /
 
 bool VIC4::isVfast() const   { return (d054() & D054_VFAST) != 0; }
 
+void VIC4::setCpuSpeedSelect(int sel) {
+    m_c128Fast = !(sel & 4);
+    if (sel & 2) m_regs[0x31] |= D031_FAST;  else m_regs[0x31] &= ~D031_FAST;
+    if (sel & 1) m_extRegs[0x14] |= D054_VFAST; else m_extRegs[0x14] &= ~D054_VFAST;
+}
+
 int VIC4::cpuSpeedSelect() const {
     return (m_c128Fast ? 0 : 4) | ((m_regs[0x31] & D031_FAST) ? 2 : 0) | (isVfast() ? 1 : 0);
 }

@@ -9,7 +9,11 @@ enum {
     ID_PAUSE,
     ID_RESET,
     ID_RESET_TO_MONITOR,
-    ID_WARP,
+    ID_SPEED_1,          // Control > Speed: 1, 2, 3.5, 40.5 MHz, max (warp)
+    ID_SPEED_2,
+    ID_SPEED_3_5,
+    ID_SPEED_40,
+    ID_SPEED_MAX,
     ID_FILL_MEM,
     ID_COPY_MEM,
     ID_SWAP_MEM,

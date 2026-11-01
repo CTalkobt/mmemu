@@ -873,6 +873,19 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->getWarp = [speed]() { return speed->warp; };
     desc->setWarp = [speed](bool on) { speed->warp = on; speed->phiAcc = 0; };
     desc->cpuSpeedMHz = [halfRatio]() { return halfRatio() / 2.0; };
+    desc->cpuSpeeds = { 1.0, 2.0, 3.5, 40.5 };
+    desc->setCpuSpeedMHz = [vic4, bankCtrl](double mhz) {
+        // Speed select bits as gs4510.vhdl decodes them (see kHalfRatioBySelect)
+        int sel;
+        if      (mhz == 1.0)  sel = 0b100;
+        else if (mhz == 2.0)  sel = 0b000;
+        else if (mhz == 3.5)  sel = 0b110;
+        else if (mhz == 40.5) sel = 0b111;
+        else return false;
+        vic4->setCpuSpeedSelect(sel);
+        bankCtrl->setForceFast(false);
+        return true;
+    };
 
     desc->schedulerStep = [dma, phiBacklog, speed, halfRatio](MachineDescriptor& d) -> int {
         // Advance devices by `cycles` CPU cycles: CPU-clocked devices by the

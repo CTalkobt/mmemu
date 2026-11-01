@@ -734,3 +734,45 @@ TEST_CASE(mega65_cpu_speed_model) {
     ASSERT(warp40 >= 8090 && warp40 <= 8110);
     delete desc;
 }
+
+#include "cli/main/cli_interpreter.h"
+
+// CLI `speed`: report max (warp) or MHz, select 1/2/3.5/40.5 MHz the way
+// software does (speed bits, force_fast cleared), reject other values.
+TEST_CASE(mega65_cli_speed_command) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* cpu  = static_cast<MOS45GS02*>(desc->cpus[0].cpu);
+    auto* bank = dynamic_cast<C64BankController*>(desc->ioRegistry->findHandler("C64BankCtrl"));
+    ASSERT(bank != nullptr);
+    if (cpu->isHypervisor()) cpu->exitHypervisor();
+
+    CliContext ctx;
+    ctx.machine = desc;
+    ctx.cpu = cpu;
+    std::string out;
+    CliInterpreter cli(ctx, [&](const std::string& s) { out += s; });
+    auto run = [&](const std::string& line) { out.clear(); cli.processLine(line); return out; };
+
+    ASSERT(run("speed").find("Speed: max") != std::string::npos);      // warp is the default
+
+    ASSERT(run("speed 1").find("Speed: 1 MHz") != std::string::npos);
+    ASSERT(!desc->getWarp());
+    ASSERT_EQ(desc->cpuSpeedMHz(), 1.0);
+    ASSERT(run("speed 2mhz").find("Speed: 2 MHz") != std::string::npos);
+    ASSERT(run("speed 3.5").find("Speed: 3.5 MHz") != std::string::npos);
+
+    desc->ioRegistry->dispatchWrite(nullptr, 0x0000, 0x41);            // POKE 0,65
+    ASSERT_EQ(desc->cpuSpeedMHz(), 40.5);
+    ASSERT(run("speed 40").find("Speed: 40.5 MHz") != std::string::npos);
+    ASSERT(run("speed 1").find("Speed: 1 MHz") != std::string::npos);  // clears force_fast
+    ASSERT(!bank->forceFast());
+
+    ASSERT(run("speed 7").find("Syntax: speed [1|2|3.5|40.5|max]") != std::string::npos);
+    ASSERT_EQ(desc->cpuSpeedMHz(), 1.0);                               // unchanged
+
+    ASSERT(run("speed max").find("Speed: max") != std::string::npos);
+    ASSERT(desc->getWarp());
+    delete desc;
+}

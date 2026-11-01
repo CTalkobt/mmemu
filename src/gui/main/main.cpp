@@ -46,6 +46,7 @@
 #include <wx/config.h>
 #include <memory>
 #include <map>
+#include "libcore/main/machine_speed.h"
 #include <fstream>
 #include <vector>
 #include <cstdio>
@@ -59,7 +60,10 @@ static constexpr int kRunSliceMs = 28;
 class MmemuFrame : public wxFrame {
 public:
     MmemuFrame();
-    ~MmemuFrame() override { m_timer.Stop(); delete m_audio; delete m_dbg; }
+    ~MmemuFrame() override {
+        m_timer.Stop(); delete m_audio; delete m_dbg;
+        if (!m_speedMenuShown) delete m_speedMenuItem;   // detached items are not deleted by wx
+    }
 
     /** Toggle keyboard-capture mode and sync all UI + app key handler. */
     void setKeyCapture(bool active);
@@ -72,7 +76,12 @@ private:
     void OnPause(wxCommandEvent& event);
     void OnReset(wxCommandEvent& event);
     void OnResetToMonitor(wxCommandEvent& event);
-    void OnWarp(wxCommandEvent& event);
+    void OnSpeed(wxCommandEvent& event);
+    wxMenu*     m_controlMenu = nullptr;
+    wxMenuItem* m_speedMenuItem = nullptr;   // owned by us while removed from the menu
+    size_t      m_speedMenuPos = 0;
+    bool        m_speedMenuShown = false;
+    void OnSpeedUpdateUI(wxUpdateUIEvent& event);
     void OnFillMem(wxCommandEvent& event);
     void OnCopyMem(wxCommandEvent& event);
     void OnSwapMem(wxCommandEvent& event);
@@ -141,7 +150,7 @@ private:
     int m_nextPluginViewId = ID_VIEW_PANE_FIRST;
 
     wxMenuItem* m_resetToMonitorItem = nullptr;
-    wxMenuItem* m_warpItem = nullptr;
+
 
     wxTimer m_timer;
     bool m_running = false;
@@ -535,9 +544,20 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_RESET, "Reset\tCtrl-R");
     m_resetToMonitorItem = menuControl->Append(ID_RESET_TO_MONITOR, "Reset to Monitor");
     m_resetToMonitorItem->Enable(false);  // Hidden until MEGA65 is loaded
-    m_warpItem = menuControl->AppendCheckItem(ID_WARP, "Warp (ignore CPU speed)",
-        "On: devices advance one cycle per CPU cycle (fast). Off: real-time device clock.");
-    m_warpItem->Enable(false);  // Only for machines with a CPU speed model
+    // Speed: CPU clock, or max = warp (devices advance one cycle per CPU cycle).
+    // Enabled and checked by UPDATE_UI from the machine's current speed.
+    auto* menuSpeed = new wxMenu;
+    menuSpeed->AppendRadioItem(ID_SPEED_1,   "1 MHz");
+    menuSpeed->AppendRadioItem(ID_SPEED_2,   "2 MHz");
+    menuSpeed->AppendRadioItem(ID_SPEED_3_5, "3.5 MHz");
+    menuSpeed->AppendRadioItem(ID_SPEED_40,  "40.5 MHz");
+    menuSpeed->AppendRadioItem(ID_SPEED_MAX, "Max (unbounded)");
+    // Only shown for machines with a speed model (MEGA65): inserted/removed on machine load
+    m_controlMenu = menuControl;
+    m_speedMenuPos = menuControl->GetMenuItemCount();
+    m_speedMenuItem = menuControl->AppendSubMenu(menuSpeed, "Speed",
+        "CPU clock with real-time devices, or Max: devices advance one cycle per CPU cycle");
+    menuControl->Remove(m_speedMenuItem);
     menuControl->AppendSeparator();
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
@@ -682,7 +702,8 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_TOOL, &MmemuFrame::OnPause, this, ID_PAUSE);
     Bind(wxEVT_MENU, &MmemuFrame::OnReset, this, ID_RESET);
     Bind(wxEVT_MENU, &MmemuFrame::OnResetToMonitor, this, ID_RESET_TO_MONITOR);
-    Bind(wxEVT_MENU, &MmemuFrame::OnWarp, this, ID_WARP);
+    Bind(wxEVT_MENU, &MmemuFrame::OnSpeed, this, ID_SPEED_1, ID_SPEED_MAX);
+    Bind(wxEVT_UPDATE_UI, &MmemuFrame::OnSpeedUpdateUI, this, ID_SPEED_1, ID_SPEED_MAX);
     Bind(wxEVT_MENU, &MmemuFrame::OnFillMem, this, ID_FILL_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnCopyMem, this, ID_COPY_MEM);
     Bind(wxEVT_MENU, &MmemuFrame::OnSwapMem, this, ID_SWAP_MEM);
@@ -1087,11 +1108,13 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         }
     }
 
-    // Warp toggle: only machines with a CPU speed model
-    if (m_warpItem) {
-        bool hasSpeedModel = m_machine->getWarp && m_machine->setWarp;
-        m_warpItem->Enable(hasSpeedModel);
-        m_warpItem->Check(hasSpeedModel && m_machine->getWarp());
+
+    // Control > Speed: only for machines with a CPU speed model (MEGA65)
+    if (m_controlMenu && m_speedMenuItem) {
+        bool want = machine_speed::supported(*m_machine);
+        if (want && !m_speedMenuShown) m_controlMenu->Insert(m_speedMenuPos, m_speedMenuItem);
+        if (!want && m_speedMenuShown) m_controlMenu->Remove(m_speedMenuItem);
+        m_speedMenuShown = want;
     }
 
     if (m_machine->onReset) m_machine->onReset(*m_machine);
@@ -1183,12 +1206,45 @@ void MmemuFrame::OnReset(wxCommandEvent& event) {
     }
 }
 
-void MmemuFrame::OnWarp(wxCommandEvent& event) {
-    if (!m_machine || !m_machine->setWarp) return;
-    m_machine->setWarp(event.IsChecked());
-    wxString msg = event.IsChecked() ? "Warp on" : "Warp off: real-time device clock";
-    if (m_machine->cpuSpeedMHz) msg += wxString::Format(" (CPU %.1f MHz)", m_machine->cpuSpeedMHz());
+static const char* speedValueFor(int id) {
+    switch (id) {
+        case ID_SPEED_1:   return "1";
+        case ID_SPEED_2:   return "2";
+        case ID_SPEED_3_5: return "3.5";
+        case ID_SPEED_40:  return "40.5";
+        default:           return "max";
+    }
+}
+
+void MmemuFrame::OnSpeed(wxCommandEvent& event) {
+    if (!m_machine) return;
+    std::string error;
+    double requested = 0;
+    if (!machine_speed::apply(*m_machine, speedValueFor(event.GetId()), error, &requested)) {
+        SetStatusText(error);
+        return;
+    }
+    std::string msg = machine_speed::describe(*m_machine);
+    std::string note = machine_speed::pendingNote(*m_machine, requested);
+    if (!note.empty()) msg += " " + note;
     SetStatusText(msg);
+}
+
+void MmemuFrame::OnSpeedUpdateUI(wxUpdateUIEvent& event) {
+    if (!m_machine || !machine_speed::supported(*m_machine)) {
+        event.Enable(false);
+        return;
+    }
+    const std::string value = speedValueFor(event.GetId());
+    bool offered = value == "max";
+    for (double v : m_machine->cpuSpeeds)
+        if (machine_speed::formatMHz(v) == value) offered = true;
+    event.Enable(offered);
+    // Checked item follows the machine, including speed changes made by software
+    double mhz = m_machine->cpuSpeedMHz();
+    bool current = m_machine->getWarp() ? value == "max"
+                                        : (value != "max" && machine_speed::formatMHz(mhz) == value);
+    if (current) event.Check(true);
 }
 
 void MmemuFrame::OnResetToMonitor(wxCommandEvent& event) {

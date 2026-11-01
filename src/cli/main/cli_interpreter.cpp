@@ -1,4 +1,5 @@
 #include "cli_interpreter.h"
+#include "libcore/main/machine_speed.h"
 #include <csignal>
 #include "include/util/logging.h"
 #include "vice_snapshot.h"
@@ -27,6 +28,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 #include <set>
 #include <map>
 #include <unordered_map>
@@ -2320,6 +2322,19 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
            << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
         m_output(os.str());
+    } else if (cmd == "speed") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& m = *m_ctx.machine;
+        if (!machine_speed::supported(m)) { m_output(machine_speed::describe(m) + "\n"); return; }
+        std::string arg, error;
+        double requested = 0;
+        if (ss >> arg) {
+            if (!machine_speed::apply(m, arg, error, &requested)) { m_output(error + "\n"); return; }
+        }
+        std::string out = machine_speed::describe(m);
+        std::string note = machine_speed::pendingNote(m, requested);
+        if (!note.empty()) out += "\n" + note;
+        m_output(out + "\n");
     } else if (cmd == "warp") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
@@ -3140,6 +3155,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"
