@@ -81,14 +81,12 @@ public:
     // $D040-$D047: DAT ports
 
     // Palette access
+    /** Palette entry as 0xAARRGGBB (the frame pixel format). */
     uint32_t getPaletteRGBA(uint8_t index, uint8_t bank = 0) const;
 
     // IVideoInspect: 256-entry palette (bank 0), returned as 0xAARRGGBB
     int      paletteSize() const override { return 256; }
-    uint32_t paletteColor(int index) const override {
-        uint32_t abgr = getPaletteRGBA((uint8_t)index, 0);
-        return (abgr & 0xFF00FF00u) | ((abgr & 0xFF) << 16) | ((abgr >> 16) & 0xFF);
-    }
+    uint32_t paletteColor(int index) const override { return getPaletteRGBA((uint8_t)index, 0); }
 
     // $D030/$D031 accessors
     uint8_t d030() const { return m_regs[REG_D030]; }

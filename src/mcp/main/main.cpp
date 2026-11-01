@@ -1919,12 +1919,7 @@ Json handleToolsCall(const Json& params) {
                 std::string out = hdr;
                 std::string path = args.contains("path") ? args["path"].sVal : "";
                 if (!path.empty()) {
-                    std::vector<uint8_t> rgba((size_t)view.sheet.width * view.sheet.height * 4);
-                    for (size_t i = 0; i < view.sheet.argb.size(); ++i) {
-                        uint32_t px = view.sheet.argb[i];
-                        rgba[i * 4] = (px >> 16) & 0xFF; rgba[i * 4 + 1] = (px >> 8) & 0xFF;
-                        rgba[i * 4 + 2] = px & 0xFF;     rgba[i * 4 + 3] = 0xFF;
-                    }
+                    std::vector<uint8_t> rgba = IVideoOutput::toRgbaBytes(view.sheet.argb.data(), view.sheet.argb.size());
                     if (stbi_write_png(path.c_str(), view.sheet.width, view.sheet.height, 4, rgba.data(), view.sheet.width * 4))
                         out += "Saved " + std::to_string(view.sheet.width) + "x" + std::to_string(view.sheet.height) + " PNG to " + path;
                     else { fail("Failed to write " + path); out.clear(); }

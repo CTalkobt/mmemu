@@ -153,9 +153,9 @@ TEST_CASE(vic3_palette_readwrite) {
     ASSERT_EQ(g, (uint8_t)0xBB);
     ASSERT_EQ(b, (uint8_t)0xCC);
 
-    // Verify RGBA conversion
-    uint32_t rgba = f.vic.getPaletteRGBA(5);
-    ASSERT_EQ(rgba, (uint32_t)(0xFF000000u | (0xCC << 16) | (0xBB << 8) | 0xAA));
+    // Verify conversion to the 0xAARRGGBB frame format
+    uint32_t argb = f.vic.getPaletteRGBA(5);
+    ASSERT_EQ(argb, (uint32_t)(0xFF000000u | (0xAA << 16) | (0xBB << 8) | 0xCC));
 }
 
 TEST_CASE(vic3_palette_default_c64) {

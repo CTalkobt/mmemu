@@ -612,3 +612,16 @@ TEST_CASE(vic2_inspect_sprites_and_charset) {
     ASSERT_EQ(insp->peekVideo(0x9008), (uint8_t)0x5A);
     ASSERT_EQ(insp->peekVideo(0x5008), (uint8_t)0x22);
 }
+
+TEST_CASE(video_output_rgba_bytes) {
+    // 0xAARRGGBB words become R,G,B,A bytes for PNG export
+    const uint32_t px[2] = {0xFF352879u, 0x80112233u};
+    auto bytes = IVideoOutput::toRgbaBytes(px, 2);
+    ASSERT_EQ(bytes.size(), (size_t)8);
+    ASSERT_EQ(bytes[0], (uint8_t)0x35);
+    ASSERT_EQ(bytes[1], (uint8_t)0x28);
+    ASSERT_EQ(bytes[2], (uint8_t)0x79);
+    ASSERT_EQ(bytes[3], (uint8_t)0xFF);
+    ASSERT_EQ(bytes[4], (uint8_t)0x11);
+    ASSERT_EQ(bytes[7], (uint8_t)0x80);
+}
