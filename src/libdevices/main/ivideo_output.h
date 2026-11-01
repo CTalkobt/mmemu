@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 /**
  * Interface for devices that produce video output (e.g. VIC-I, VIC-II, VDC).
@@ -23,10 +24,14 @@ public:
     virtual VideoDimensions getDimensions() const = 0;
 
     /**
-     * Render the current frame into an RGBA8888 buffer.
-     * @param buffer Pointer to the destination buffer (width * height * 4 bytes).
+     * Render the current frame. Every pixel is a uint32_t 0xAARRGGBB (alpha in
+     * the top byte, then red, green, blue), whatever the chip.
+     * @param buffer Pointer to the destination buffer (width * height pixels).
      */
     virtual void renderFrame(uint32_t* buffer) = 0;
+
+    /** Convert 0xAARRGGBB pixels to R,G,B,A bytes (as PNG writers expect). */
+    static std::vector<uint8_t> toRgbaBytes(const uint32_t* argb, size_t count);
 
     /**
      * Export the current frame to a PNG file.

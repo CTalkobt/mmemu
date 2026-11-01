@@ -1019,3 +1019,41 @@ TEST_CASE(vic4_inspect_sprites) {
     ASSERT_EQ(ci.addr, 0x012000u);
     ASSERT(ci.fullColor);
 }
+
+// --- Frame pixel format: every personality renders 0xAARRGGBB ---
+
+TEST_CASE(vic4_frame_pixel_format_matches_vic2) {
+    // White is the same in any channel order, so use blue and red, which aren't.
+    for (uint8_t col : {(uint8_t)6, (uint8_t)2}) {
+        // Plain VIC-II
+        FlatMemoryBus bus2{"system", 16};
+        std::vector<uint8_t> charRom2(4096, 0), colorRam2(1024, 0);
+        VIC2 vic2;
+        vic2.setDmaBus(&bus2);
+        vic2.setCharRom(charRom2.data(), charRom2.size());
+        vic2.setColorRam(colorRam2.data());
+        vic2.reset();
+        vic2.ioWrite(nullptr, 0xD020, col);
+        std::vector<uint32_t> b2(VIC2::FRAME_W * VIC2::FRAME_H);
+        vic2.renderFrame(b2.data());
+
+        // VIC-IV locked (VIC-II personality) and unlocked (VIC-III/IV rendering)
+        Vic4Fixture locked;
+        locked.vic.ioWrite(nullptr, 0xD020, col);
+        std::vector<uint32_t> bl(VIC4::V4_FRAME_W * VIC2::FRAME_H);
+        locked.vic.renderFrame(bl.data());
+
+        Vic4Fixture unlocked;
+        unlocked.unlock();
+        unlocked.vic.ioWrite(nullptr, 0xD054, 0x00);
+        unlocked.vic.ioWrite(nullptr, 0xD020, col);
+        std::vector<uint32_t> bu(VIC4::V4_FRAME_W * VIC2::FRAME_H);
+        unlocked.vic.renderFrame(bu.data());
+
+        ASSERT_EQ(bl[0], b2[0]);
+        ASSERT_EQ(bu[0], b2[0]);
+        // Blue has more blue than red in the 0x00RRGGBB layout (and red the reverse)
+        uint32_t r = (b2[0] >> 16) & 0xFF, b = b2[0] & 0xFF;
+        ASSERT(col == 6 ? b > r : r > b);
+    }
+}
