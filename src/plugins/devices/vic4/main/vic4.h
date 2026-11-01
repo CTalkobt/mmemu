@@ -47,8 +47,8 @@ public:
     static constexpr uint8_t D054_FCLRHI = 0x04; // FCM for char > $FF
     static constexpr uint8_t D054_SMTH   = 0x08; // Horizontal smoothing
     static constexpr uint8_t D054_SPRH640= 0x10; // Sprite H640 mode
-    static constexpr uint8_t D054_VFAST  = 0x20; // 40 MHz mode
-    static constexpr uint8_t D054_PALEMU = 0x40; // PAL CRT emulation
+    static constexpr uint8_t D054_PALEMU = 0x20; // PAL CRT emulation (viciv.vhdl $D054.5)
+    static constexpr uint8_t D054_VFAST  = 0x40; // 40.5 MHz mode   (viciv.vhdl $D054.6)
     static constexpr uint8_t D054_ALPHEN = 0x80; // Alpha compositor enable
 
     // Extended register accessors
@@ -80,7 +80,14 @@ public:
     uint8_t getBackPalBank() const; // bits 7-6
 
     // System flags
-    bool isVfast() const;           // $D054.5
+    bool isVfast() const;           // $D054.6
+
+    /**
+     * CPU speed select bits as gs4510.vhdl combines them:
+     * bit 2 = vicii_2mhz (1 = C128 2 MHz bit NOT set), bit 1 = $D031.6 FAST,
+     * bit 0 = $D054.6 VFAST.
+     */
+    int cpuSpeedSelect() const;
     bool isPalNtsc() const;         // $D06F.7 (0=PAL, 1=NTSC)
 
     // Override VIC2 sprite rendering with VIC-IV extensions
@@ -90,6 +97,7 @@ public:
     std::vector<std::string> deviceAliases() const override { return {"VIC4", "VICIV", "VIC-IV"}; }
 
 private:
+    bool m_c128Fast = false;  // C128 2 MHz bit ($D030.0 in VIC-II I/O mode)
     void interpretLegacyRegisters();
     void renderFCM(uint32_t* buf);
     void renderBitplanes16(uint32_t* buf);

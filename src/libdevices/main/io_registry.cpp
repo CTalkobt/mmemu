@@ -7,6 +7,21 @@ void IORegistry::registerHandler(IOHandler* handler) {
     std::sort(m_handlers.begin(), m_handlers.end(), [](IOHandler* a, IOHandler* b) {
         return a->baseAddr() < b->baseAddr();
     });
+    rebuildDeviceClockFlags();
+}
+
+void IORegistry::setDeviceClocked(IOHandler* handler, bool deviceClocked) {
+    auto it = std::find(m_deviceClocked.begin(), m_deviceClocked.end(), handler);
+    if (deviceClocked && it == m_deviceClocked.end()) m_deviceClocked.push_back(handler);
+    if (!deviceClocked && it != m_deviceClocked.end()) m_deviceClocked.erase(it);
+    rebuildDeviceClockFlags();
+}
+
+void IORegistry::rebuildDeviceClockFlags() {
+    m_isDeviceClocked.assign(m_handlers.size(), 0);
+    for (size_t i = 0; i < m_handlers.size(); ++i)
+        if (std::find(m_deviceClocked.begin(), m_deviceClocked.end(), m_handlers[i]) != m_deviceClocked.end())
+            m_isDeviceClocked[i] = 1;
 }
 
 void IORegistry::registerOwnedHandler(IOHandler* handler) {
@@ -44,6 +59,16 @@ void IORegistry::tickAll(uint64_t cycles) {
     }
 }
 
+void IORegistry::tickAll(uint64_t cpuCycles, uint64_t deviceCycles) {
+    for (size_t i = 0; i < m_handlers.size(); ++i) {
+        if (m_isDeviceClocked[i]) {
+            if (deviceCycles) m_handlers[i]->tick(deviceCycles);
+        } else {
+            m_handlers[i]->tick(cpuCycles);
+        }
+    }
+}
+
 void IORegistry::resetAll() {
     for (auto* handler : m_handlers) {
         handler->reset();
@@ -67,6 +92,7 @@ IOHandler* IORegistry::findHandler(const std::string& name) {
 
 void IORegistry::clear() {
     m_handlers.clear();
+    m_isDeviceClocked.clear();
 }
 
 uint32_t IORegistry::lowestHandlerBase() const {

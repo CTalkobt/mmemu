@@ -41,6 +41,20 @@ public:
     void tickAll(uint64_t cycles);
 
     /**
+     * Mark a handler as running on the machine's device clock (e.g. the 1 MHz
+     * phi clock of the VIC/CIA/SID) rather than the CPU clock. Only matters
+     * for the two-argument tickAll().
+     */
+    void setDeviceClocked(IOHandler* handler, bool deviceClocked = true);
+
+    /**
+     * Tick CPU-clocked handlers by cpuCycles and device-clocked handlers by
+     * deviceCycles (skipped when 0). Used when the CPU runs faster than the
+     * device clock, e.g. the MEGA65 at 3.5 or 40.5 MHz.
+     */
+    void tickAll(uint64_t cpuCycles, uint64_t deviceCycles);
+
+    /**
      * Call reset() on all registered handlers.
      */
     void resetAll();
@@ -67,6 +81,10 @@ public:
     uint32_t lowestHandlerBase() const;
 
 private:
+    void rebuildDeviceClockFlags();
+
     std::vector<IOHandler*> m_handlers;
+    std::vector<IOHandler*> m_deviceClocked;   // handlers on the device clock
+    std::vector<uint8_t>    m_isDeviceClocked; // parallel to m_handlers
     std::vector<IOHandler*> m_ownedHandlers;
 };
