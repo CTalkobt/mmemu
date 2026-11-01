@@ -668,3 +668,69 @@ TEST_CASE(mega65_hypervisor_trap_saves_and_restores_machine_state) {
 
     delete desc;
 }
+
+// CPU speed as gs4510.vhdl selects it, POKE 0,65 (force_fast), and the clock
+// domains: with warp off, CIA timers (phi clock) run at real time relative to
+// the CPU; with warp on (default) they advance once per CPU cycle.
+TEST_CASE(mega65_cpu_speed_model) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* cpu  = static_cast<MOS45GS02*>(desc->cpus[0].cpu);
+    auto* bank = dynamic_cast<C64BankController*>(desc->ioRegistry->findHandler("C64BankCtrl"));
+    ASSERT(bank && desc->getWarp && desc->setWarp && desc->cpuSpeedMHz);
+    auto* io = desc->ioRegistry;
+    IBus* bus = desc->cpus[0].dataBus;
+
+    ASSERT(desc->getWarp());                       // warp is the default
+    ASSERT_EQ(desc->cpuSpeedMHz(), 40.5);          // hypervisor: always full speed
+    if (cpu->isHypervisor()) cpu->exitHypervisor();
+    io->dispatchWrite(nullptr, 0xD02F, 0x47);      // MEGA65 I/O personality
+    io->dispatchWrite(nullptr, 0xD02F, 0x53);
+    ASSERT_EQ(desc->cpuSpeedMHz(), 40.5);          // VHDL reset: FAST + VFAST
+
+    io->dispatchWrite(nullptr, 0xD054, 0x00);      // VFAST off, FAST still on
+    ASSERT_EQ(desc->cpuSpeedMHz(), 3.5);
+    io->dispatchWrite(nullptr, 0xD031, 0x00);      // FAST off too
+    ASSERT_EQ(desc->cpuSpeedMHz(), 1.0);
+
+    // POKE 0,65 forces full speed without touching the DDR; POKE 0,64 clears it
+    uint8_t ddr = bank->portDdr();
+    io->dispatchWrite(nullptr, 0x0000, 0x41);
+    ASSERT_EQ(desc->cpuSpeedMHz(), 40.5);
+    ASSERT_EQ((int)bank->portDdr(), (int)ddr);
+    io->dispatchWrite(nullptr, 0x0000, 0x40);
+    ASSERT_EQ(desc->cpuSpeedMHz(), 1.0);
+
+    // Timing: count CIA1 timer A down while the CPU spins in JMP *. Blank the
+    // screen so VIC badline stalls (CPU paused, devices running) stay out of it.
+    io->dispatchWrite(nullptr, 0xD011, 0x0B);
+    bus->write8(0x2000, 0x4C); bus->write8(0x2001, 0x00); bus->write8(0x2002, 0x20);
+    auto ciaTicksPer = [&](uint64_t cpuCycles) {
+        io->dispatchWrite(nullptr, 0xDC04, 0xFF);
+        io->dispatchWrite(nullptr, 0xDC05, 0xFF);
+        io->dispatchWrite(nullptr, 0xDC0E, 0x11);  // force load + start
+        cpu->setPc(0x2000);
+        uint64_t start = cpu->cycles();
+        while (cpu->cycles() - start < cpuCycles) desc->schedulerStep(*desc);
+        uint8_t lo = 0, hi = 0;
+        io->dispatchRead(nullptr, 0xDC04, &lo);
+        io->dispatchRead(nullptr, 0xDC05, &hi);
+        return 0xFFFF - (lo | (hi << 8));
+    };
+
+    int warp1 = ciaTicksPer(8100);                 // warp, 1 MHz: one tick per cycle
+    ASSERT(warp1 >= 8090 && warp1 <= 8110);
+
+    desc->setWarp(false);
+    int real1 = ciaTicksPer(8100);                 // 1 MHz: still one tick per cycle
+    ASSERT(real1 >= 8090 && real1 <= 8110);
+    io->dispatchWrite(nullptr, 0x0000, 0x41);      // 40.5 MHz
+    int real40 = ciaTicksPer(8100);                // 8100 / 40.5 = 200 phi ticks
+    ASSERT(real40 >= 195 && real40 <= 205);
+
+    desc->setWarp(true);
+    int warp40 = ciaTicksPer(8100);                // warp ignores the speed
+    ASSERT(warp40 >= 8090 && warp40 <= 8110);
+    delete desc;
+}

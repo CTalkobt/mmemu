@@ -371,6 +371,7 @@ int MOS45GS02::step() {
     }
 
     uint16_t startPc = m_state.pc;
+    const uint64_t cyclesAtStart = m_state.cycles;
     bool isQuad = false;
     bool is32BitInd = false;
 
@@ -1402,8 +1403,8 @@ int MOS45GS02::step() {
             break;
     }
 
-
-    return 1;
+    // Cycles this instruction took (the scheduler advances the devices by it)
+    return (int)(m_state.cycles - cyclesAtStart);
 }
 
 void MOS45GS02::triggerIrq() {

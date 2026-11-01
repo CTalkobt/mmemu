@@ -274,6 +274,24 @@ Json handleDescribe() {
     stepSchema.oVal["required"] = stepReq;
     addTool("step_cpu", "Step the CPU by count instructions (default 1). Returns registers after stepping.", stepSchema);
 
+    // set_warp
+    {
+        Json wSchema(Json::OBJ); wSchema.oVal["type"] = Json("object");
+        Json wProps(Json::OBJ);
+        wProps.oVal["machine_id"] = midProp;
+        Json enProp(Json::OBJ); enProp.oVal["type"] = Json("boolean");
+        enProp.oVal["description"] = Json("true = warp (devices advance one cycle per CPU cycle, fast; the default), "
+                                          "false = real-time device clock relative to the CPU speed. Omit to only report.");
+        wProps.oVal["enabled"] = enProp;
+        wSchema.oVal["properties"] = wProps;
+        Json wReq(Json::ARR); wReq.push_back(Json("machine_id"));
+        wSchema.oVal["required"] = wReq;
+        addTool("set_warp",
+                "Get or set the CPU speed model for machines whose CPU can outrun the device clock "
+                "(MEGA65: 1/2/3.5/40.5 MHz). Reports warp state and the current CPU speed.",
+                wSchema);
+    }
+
     // reverse_step
     {
         Json rsSchema(Json::OBJ); rsSchema.oVal["type"] = Json("object");
@@ -2222,6 +2240,21 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("Error: Unknown key " + key);
                 textItem.oVal["isError"] = Json(true);
             }
+        }
+    } else if (name == "set_warp") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!ms->machine->getWarp || !ms->machine->setWarp) {
+            textItem.oVal["text"] = Json("Error: This machine has no CPU speed model");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            if (args.contains("enabled")) ms->machine->setWarp(args["enabled"].bVal);
+            std::ostringstream os;
+            os << "Warp: " << (ms->machine->getWarp() ? "on" : "off");
+            if (ms->machine->cpuSpeedMHz) os << ", CPU speed: " << ms->machine->cpuSpeedMHz() << " MHz";
+            textItem.oVal["text"] = Json(os.str());
         }
     } else if (name == "type_string") {
         std::string mid = args["machine_id"].sVal;

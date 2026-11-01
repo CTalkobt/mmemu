@@ -97,6 +97,17 @@ struct MachineDescriptor {
     // Scheduler
     std::function<int(MachineDescriptor&)> schedulerStep;
 
+    /**
+     * CPU speed modelling (optional; set by machines whose CPU clock can run
+     * faster than the device clock, e.g. the MEGA65 at 3.5/40.5 MHz).
+     * Warp on: devices advance one cycle per CPU cycle whatever the speed
+     * (fast). Warp off: devices run at real time relative to the CPU.
+     */
+    std::function<bool()>     getWarp;
+    std::function<void(bool)> setWarp;
+    /** Current CPU clock in MHz as the hardware would run it (ignores warp). */
+    std::function<double()>   cpuSpeedMHz;
+
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine
     std::vector<std::string> symbolFiles;

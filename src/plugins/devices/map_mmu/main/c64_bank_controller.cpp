@@ -29,6 +29,7 @@ void C64BankController::setCharRom(const uint8_t* data, uint32_t size) {
 void C64BankController::reset() {
     m_portDDR = 0x2F;
     m_portOut = 0x37;  // LORAM=1, HIRAM=1, CHAREN=1 — KERNAL+BASIC visible, I/O active
+    m_forceFast = false;
     updateOverlays();
 }
 
@@ -133,8 +134,14 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 bool C64BankController::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     // CPU I/O port: $00 (DDR), $01 (port)
     if (addr == 0x0000) {
-        m_portDDR = val;
-        updateOverlays();
+        // gs4510.vhdl: writing $40/$41 to $00 clears/sets force_fast (full CPU
+        // speed, "POKE 0,65") instead of changing the DDR
+        if (val == 0x40)      m_forceFast = false;
+        else if (val == 0x41) m_forceFast = true;
+        else {
+            m_portDDR = val;
+            updateOverlays();
+        }
         return true;
     }
     if (addr == 0x0001) {
