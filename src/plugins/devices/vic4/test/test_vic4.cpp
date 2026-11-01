@@ -974,3 +974,48 @@ TEST_CASE(vic4_hotreg_disabled_defers_until_enabled) {
     vic.ioWrite(nullptr, 0xD05D, 0x80);
     ASSERT_EQ((int)vic.getLineStep(), 80);
 }
+
+// --- IVideoInspect (#28) ---
+
+TEST_CASE(vic4_inspect_sprites) {
+    Vic4Fixture f;
+    f.unlock();
+    IVideoInspect* insp = &f.vic;
+    ASSERT_EQ(insp->paletteSize(), 256);
+    // Palette entries come back as 0xAARRGGBB: entry 1 is white
+    ASSERT_EQ(insp->paletteColor(1) & 0xFFFFFFu, 0xFFFFFFu);
+
+    // Relocated 8-bit pointers at $0800 (same setup as the render test)
+    f.vic.ioWrite(nullptr, 0xD06C, 0x00);
+    f.vic.ioWrite(nullptr, 0xD06D, 0x08);
+    f.vic.ioWrite(nullptr, 0xD06E, 0x00);
+    f.bus.write8(0x0801, 0x0E);
+    f.vic.ioWrite(nullptr, 0xD06B, 0x02);   // sprite 1 16-colour
+    f.vic.ioWrite(nullptr, 0xD057, 0x02);   // sprite 1 64-wide
+    f.vic.ioWrite(nullptr, 0xD055, 0x02);   // sprite 1 extended height
+    f.vic.ioWrite(nullptr, 0xD056, 32);
+    IVideoInspect::SpriteInfo si;
+    ASSERT(insp->spriteInfo(1, si));
+    ASSERT_EQ(si.dataAddr, 0x0380u);
+    ASSERT(si.sixteenColor);
+    ASSERT(si.wide64);
+    ASSERT_EQ(si.height, 32);
+    ASSERT_EQ(si.paletteBase, 16);
+
+    // 16-bit pointers
+    f.vic.ioWrite(nullptr, 0xD06E, 0x80);
+    f.bus.write8(0x0802, 0x34);
+    f.bus.write8(0x0803, 0x12);
+    ASSERT(insp->spriteInfo(1, si));
+    ASSERT_EQ(si.dataAddr, 0x1234u * 64);
+
+    // Charset pointer is the 24-bit CHARPTR
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x01);
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    IVideoInspect::CharsetInfo ci;
+    ASSERT(insp->charsetInfo(ci));
+    ASSERT_EQ(ci.addr, 0x012000u);
+    ASSERT(ci.fullColor);
+}

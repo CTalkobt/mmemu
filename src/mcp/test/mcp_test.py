@@ -1001,6 +1001,29 @@ def run_tests():
     client.call_tool("destroy_machine", {"machine_id": c64})
     print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64 has no speed model)")
 
+    # render_graphics (#28)
+    print("\nTesting render_graphics...")
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    gid = res["result"]["content"][0]["text"].split('"')[1]
+    text = client.call_tool("render_graphics", {"machine_id": gid, "source": "address", "format": "char",
+                                                "address": "$1008", "video_view": True})["result"]["content"][0]["text"]
+    assert "..####.." in text and ".######." in text, f"char ROM 'A' not decoded: {text}"
+    client.call_tool("write_memory", {"machine_id": gid, "addr": 0x2000, "bytes": [0xFF, 0x00, 0x81]})
+    text = client.call_tool("render_graphics", {"machine_id": gid, "format": "sprite",
+                                                "address": 0x2000})["result"]["content"][0]["text"]
+    assert "########........#......#" in text, f"sprite row 0 wrong: {text}"
+    png = os.path.join(tempfile.gettempdir(), f"mmemu_gfx_{os.getpid()}.png")
+    try:
+        text = client.call_tool("render_graphics", {"machine_id": gid, "source": "charset",
+                                                    "path": png})["result"]["content"][0]["text"]
+        assert "Saved" in text and os.path.getsize(png) > 100, text
+    finally:
+        if os.path.exists(png): os.remove(png)
+    item = client.call_tool("render_graphics", {"machine_id": gid, "format": "bogus", "address": 0})["result"]["content"][0]
+    assert item.get("isError") and "Unknown format" in item["text"], item
+    client.call_tool("destroy_machine", {"machine_id": gid})
+    print("  ✓ render_graphics OK (char ROM via video view, sprite ASCII, charset PNG, bad format)")
+
     # project_open / project_build / project_run (#148)
     print("\nTesting project tools...")
     import tempfile, os, shutil

@@ -59,6 +59,14 @@ public:
 
     uint8_t dmaPeek(uint32_t addr) const override;
 
+    // IVideoInspect: 28-bit physical addresses unless the VIC-IV is locked
+    uint8_t  peekVideo(uint32_t addr) const override;
+    bool     spriteInfo(int n, SpriteInfo& out) const override;
+    bool     charsetInfo(CharsetInfo& out) const override;
+    uint32_t videoAddr(uint32_t offset) const override {
+        return isLocked() ? VIC2::videoAddr(offset) : offset;
+    }
+
     uint8_t getEditPalBank() const override { return getBackPalBank(); }
 
     // Display geometry accessors

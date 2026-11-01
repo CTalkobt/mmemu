@@ -8,6 +8,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Debugger
+- **Issue #28 - Sprite and character viewer**: New Graphics pane (View > Graphics) shows sprites and characters at any address in hires, multicolour and the VIC-IV 64-wide, 16-colour, FCM and NCM formats, or follows a VIC sprite (pointer, mode and colours) or the current character set. It can read memory as the CPU or as the video chip sees it (C64 character ROM), updates live while running, shows the address of the item under the mouse, opens items in the memory pane and exports PNG. The same decoder backs a new CLI `gfx` command (ASCII art or PNG) and MCP `render_graphics` tool. VIC-II and VIC-IV implement a new `IVideoInspect` interface for this. See `doc/README-graphics-viewer.md`.
 - **Issue #117 - Bit-field syntax in expressions**: The expression evaluator (breakpoint conditions, `runto`, CLI/GUI/MCP expressions) accepts `value:N` for bit N and `value:L-H` for bits L..H shifted down (bit 0 = LSB), e.g. `break when SR:0 = 1`, `runto A:6-7 = 2`, `*$D011:7`. Single `=` now compares like `==`, and `SR`/`STATUS` name the CPU's status register. `*addr:16` is still the 16-bit word read (`*addr:16:8-15` takes its high byte).
 
 ### MEGA65 Fixes

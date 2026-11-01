@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ivideo_output.h"
+#include "libdevices/main/ivideo_inspect.h"
 #include "libdevices/main/isignal_line.h"
 #include <cstdint>
 #include <string>
@@ -42,7 +43,7 @@
  *   vic2->setBankBase(0x0000);   // default; updated by CIA2 port-A change
  *   ioRegistry->registerHandler(vic2);
  */
-class VIC2 : public IOHandler, public IVideoOutput {
+class VIC2 : public IOHandler, public IVideoOutput, public IVideoInspect {
 public:
     // Total rendered frame dimensions (includes border).
     static constexpr int FRAME_W    = 384;
@@ -145,6 +146,18 @@ public:
 
     /** Manual DMA peek for testing and diagnostics. */
     virtual uint8_t dmaPeek(uint32_t offset) const;
+
+    // -----------------------------------------------------------------------
+    // IVideoInspect interface (#28): addresses are 16-bit, bank included
+    // -----------------------------------------------------------------------
+    int      paletteSize() const override { return 16; }
+    uint32_t paletteColor(int index) const override { return palette((uint8_t)index); }
+    uint8_t  peekVideo(uint32_t addr) const override;
+    int      spriteCount() const override { return 8; }
+    bool     spriteInfo(int n, SpriteInfo& out) const override;
+    bool     charsetInfo(CharsetInfo& out) const override;
+    /** Address the chip fetches for an internal (bank-relative) offset. */
+    virtual uint32_t videoAddr(uint32_t offset) const { return (m_bankBase + (offset & 0x3FFF)) & 0xFFFF; }
 
     // -----------------------------------------------------------------------
     // Register indices (relative to base address)

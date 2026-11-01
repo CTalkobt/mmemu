@@ -15,3 +15,6 @@ bool IVideoOutput::exportPng(const std::string& filename) {
     // stbi_write_png expects RGBA, so 4 components
     return stbi_write_png(filename.c_str(), dims.width, dims.height, 4, buffer.data(), dims.width * 4);
 }
+
+#include "ivideo_inspect.h"
+IVideoInspect::~IVideoInspect() = default;
