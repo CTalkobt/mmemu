@@ -37,6 +37,9 @@
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/ivideo_output.h"
+#include "libdevices/main/ivideo_inspect.h"
+#include "libdebug/main/gfx_view.h"
+#include "util/stb_image_write.h"
 #include "libdevices/main/io_registry.h"
 #include "imap_controller.h"
 
@@ -459,6 +462,30 @@ Json handleDescribe() {
     Json scrReq(Json::ARR); scrReq.push_back(Json("machine_id")); scrReq.push_back(Json("path"));
     scrSchema.oVal["required"] = scrReq;
     addTool("screenshot", "Save a screenshot of the machine's video output to a PNG file.", scrSchema);
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        auto prop = [](const char* type, const char* desc) {
+            Json p(Json::OBJ); p.oVal["type"] = Json(type); p.oVal["description"] = Json(desc); return p;
+        };
+        props.oVal["source"] = prop("string", "address (default), sprite (follow a VIC sprite) or charset (the VIC's current character set)");
+        props.oVal["address"] = prop("string", "Start address for source=address (number or expression, e.g. \"$2000\")");
+        props.oVal["format"] = prop("string", "For source=address: sprite, sprite-mc, sprite64, sprite16, char, char-mc, char-fcm, char-ncm");
+        props.oVal["sprite"] = prop("number", "Sprite number 0-7 for source=sprite");
+        props.oVal["count"] = prop("number", "Number of items (default 1; 256 for charset)");
+        props.oVal["columns"] = prop("number", "Items per row in the PNG (default 8; 16 for charset)");
+        props.oVal["stride"] = prop("number", "Bytes between items (default: the format's size)");
+        props.oVal["video_view"] = prop("boolean", "Read memory as the video chip sees it (default true for sprite/charset)");
+        props.oVal["swap_nibbles"] = prop("boolean", "Swap nibble order for 4-bit formats");
+        props.oVal["path"] = prop("string", "Write a PNG here; without it, returns ASCII art of up to 16 items");
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("render_graphics", "Decode sprites or characters from memory (C64/MEGA65 formats) as ASCII art or a PNG sheet.", schema);
+    }
 
     Json smSchema(Json::OBJ);
     smSchema.oVal["type"] = Json("object");
@@ -1846,6 +1873,74 @@ Json handleToolsCall(const Json& params) {
             } else {
                 textItem.oVal["text"] = Json("Error: No video output device found");
                 textItem.oVal["isError"] = Json(true);
+            }
+        }
+    } else if (name == "render_graphics") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        auto fail = [&](const std::string& msg) {
+            textItem.oVal["text"] = Json("Error: " + msg);
+            textItem.oVal["isError"] = Json(true);
+        };
+        if (!ms) { fail("Invalid machine ID"); }
+        else {
+            gfx::ViewRequest req;
+            std::string source = args.contains("source") ? args["source"].sVal : "address";
+            std::string err;
+            bool ok = true;
+            if (source == "sprite") {
+                req.source = gfx::Source::Sprite;
+                req.sprite = args.contains("sprite") ? (int)args["sprite"].nVal : 0;
+                req.videoView = true;
+            } else if (source == "charset") {
+                req.source = gfx::Source::Charset;
+                req.count = 256; req.columns = 16; req.videoView = true;
+            } else if (source == "address") {
+                std::string fmt = args.contains("format") ? args["format"].sVal : "sprite";
+                if (!gfx::formatById(fmt, req.format)) { ok = false; err = "Unknown format '" + fmt + "'"; }
+                else if (!args.contains("address")) { ok = false; err = "address is required for source=address"; }
+                else if (!resolveAddrWithDiagnostic(args["address"], ms->dbg, req.addr, err)) ok = false;
+            } else { ok = false; err = "source must be address, sprite or charset"; }
+            if (args.contains("count"))   req.count = std::max(1, std::min(1024, (int)args["count"].nVal));
+            if (args.contains("columns")) req.columns = std::max(1, std::min(64, (int)args["columns"].nVal));
+            if (args.contains("stride"))  req.stride = (uint32_t)args["stride"].nVal;
+            if (args.contains("video_view")) req.videoView = args["video_view"].bVal;
+            if (args.contains("swap_nibbles")) req.swapNibbles = args["swap_nibbles"].bVal;
+
+            IVideoInspect* video = gfx::findVideoInspect(ms->machine);
+            if (!video) req.videoView = false;
+            gfx::View view;
+            if (ok) { view = gfx::buildView(req, ms->bus, video); if (!view.error.empty()) { ok = false; err = view.error; } }
+            if (!ok) fail(err);
+            else {
+                const gfx::FormatInfo& fi = gfx::info(view.format);
+                char hdr[160];
+                snprintf(hdr, sizeof hdr, "%s at $%X, %d item(s), stride %u%s\n", fi.label, view.start,
+                         view.sheet.count, view.sheet.stride, req.videoView ? ", video chip view" : "");
+                std::string out = hdr;
+                std::string path = args.contains("path") ? args["path"].sVal : "";
+                if (!path.empty()) {
+                    std::vector<uint8_t> rgba((size_t)view.sheet.width * view.sheet.height * 4);
+                    for (size_t i = 0; i < view.sheet.argb.size(); ++i) {
+                        uint32_t px = view.sheet.argb[i];
+                        rgba[i * 4] = (px >> 16) & 0xFF; rgba[i * 4 + 1] = (px >> 8) & 0xFF;
+                        rgba[i * 4 + 2] = px & 0xFF;     rgba[i * 4 + 3] = 0xFF;
+                    }
+                    if (stbi_write_png(path.c_str(), view.sheet.width, view.sheet.height, 4, rgba.data(), view.sheet.width * 4))
+                        out += "Saved " + std::to_string(view.sheet.width) + "x" + std::to_string(view.sheet.height) + " PNG to " + path;
+                    else { fail("Failed to write " + path); out.clear(); }
+                } else {
+                    IBus* bus = ms->bus;
+                    gfx::ReadFn read = req.videoView ? gfx::ReadFn([video](uint32_t a) { return video->peekVideo(a); })
+                                                     : gfx::ReadFn([bus](uint32_t a) { return bus->peek8(a); });
+                    int rows = view.sheet.cellH != fi.height ? view.sheet.cellH : 0;
+                    int shown = std::min(view.sheet.count, 16);
+                    for (int i = 0; i < shown; ++i) {
+                        snprintf(hdr, sizeof hdr, "#%d $%X\n", i, gfx::itemAddress(view.sheet, i));
+                        out += hdr + gfx::asciiArt(view.format, read, gfx::itemAddress(view.sheet, i), req.swapNibbles, rows);
+                    }
+                    if (view.sheet.count > shown) out += "(" + std::to_string(view.sheet.count - shown) + " more; pass path for a PNG)\n";
+                }
+                if (!out.empty()) textItem.oVal["text"] = Json(out);
             }
         }
     } else if (name == "search_memory") {

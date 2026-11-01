@@ -71,6 +71,38 @@ uint8_t VIC2::dmaPeek(uint32_t offset) const {
     return m_dmaBus->peek8(addr);
 }
 
+uint8_t VIC2::peekVideo(uint32_t addr) const {
+    if (!m_dmaBus) return 0xFF;
+    addr &= 0xFFFF;
+    uint32_t bank = addr & 0xC000, offset = addr & 0x3FFF;
+    // Character ROM shadow at $1000-$1FFF of banks 0 and 2 (see dmaPeek)
+    if (m_charRom && (bank == 0x0000 || bank == 0x8000) && offset >= 0x1000 && offset <= 0x1FFF)
+        return m_charRom[offset & 0x0FFF];
+    return m_dmaBus->peek8(addr);
+}
+
+bool VIC2::spriteInfo(int n, SpriteInfo& out) const {
+    if (n < 0 || n > 7) return false;
+    out = SpriteInfo{};
+    out.enabled    = (m_regs[SPENA] >> n) & 1;
+    out.multicolor = (m_regs[SPMC] >> n) & 1;
+    out.color      = m_regs[SP0COL + n] & 0x0F;
+    out.mc0        = m_regs[SPMC0] & 0x0F;
+    out.mc1        = m_regs[SPMC1] & 0x0F;
+    uint8_t ptr    = peekVideo(videoAddr(screenBase() + 0x03F8 + n));
+    out.dataAddr   = videoAddr((uint32_t)ptr * 64);
+    return true;
+}
+
+bool VIC2::charsetInfo(CharsetInfo& out) const {
+    out = CharsetInfo{};
+    out.addr       = videoAddr(charBitmapBase());
+    out.multicolor = (m_regs[SCR2] & SCR2_MCM) != 0;
+    out.bitmap     = (m_regs[SCR1] & SCR1_BMM) != 0;
+    for (int i = 0; i < 4; ++i) out.bg[i] = m_regs[BGCOL0 + i] & 0x0F;
+    return true;
+}
+
 uint8_t VIC2::charRomByte(uint32_t offset) const {
     if (!m_charRom || m_charRomSize == 0) return 0xFF;
     return m_charRom[offset & 0x0FFF];

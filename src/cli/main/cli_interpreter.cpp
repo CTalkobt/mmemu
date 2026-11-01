@@ -27,6 +27,9 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdebug/main/debug_helpers.h"
 #include "libdebug/main/source_location_formatter.h"
 #include "libdebug/main/frame_analyzer.h"
+#include "libdebug/main/gfx_view.h"
+#include "libdevices/main/ivideo_inspect.h"
+#include "util/stb_image_write.h"
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
@@ -1457,6 +1460,106 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("No cartridge attached.\n");
         }
+    } else if (cmd == "gfx") {
+        // Sprite / character viewer (#28):
+        //   gfx formats
+        //   gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]
+        //   gfx vic-sprite <0-7> [file.png]
+        //   gfx vic-charset [count] [columns] [file.png]
+        std::vector<std::string> args;
+        for (std::string t; ss >> t;) args.push_back(t);
+        if (args.empty() || args[0] == "formats") {
+            if (args.empty())
+                m_output("Syntax: gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]\n"
+                         "        gfx vic-sprite <0-7> [file.png]\n"
+                         "        gfx vic-charset [count] [columns] [file.png]\n"
+                         "  vic = read memory as the video chip sees it; swap = swap nibble order\n");
+            m_output("Formats:\n");
+            for (const auto& f : gfx::formats()) {
+                std::ostringstream os;
+                os << "  " << std::left << std::setw(10) << f.id << f.label << " (" << f.width << "x"
+                   << f.height << ", " << f.stride << " bytes)\n";
+                m_output(os.str());
+            }
+            return;
+        }
+        if (!m_ctx.machine || !m_ctx.bus) { m_output("No machine created.\n"); return; }
+
+        gfx::ViewRequest req;
+        size_t next = 1;
+        if (args[0] == "vic-sprite") {
+            req.source = gfx::Source::Sprite;
+            if (args.size() < 2 || args[1].size() != 1 || args[1][0] < '0' || args[1][0] > '7') {
+                m_output("Syntax: gfx vic-sprite <0-7> [file.png]\n"); return;
+            }
+            req.sprite = args[1][0] - '0';
+            req.videoView = true;
+            next = 2;
+        } else if (args[0] == "vic-charset") {
+            req.source = gfx::Source::Charset;
+            req.videoView = true;
+            req.count = 256;
+            req.columns = 16;
+        } else {
+            if (!gfx::formatById(args[0], req.format)) { m_output("Unknown format '" + args[0] + "' (see 'gfx formats').\n"); return; }
+            if (args.size() < 2 || !parseAddr(args[1], req.addr)) { m_output("Missing or bad address.\n"); return; }
+            next = 2;
+        }
+        std::string file;
+        int numbers = 0;
+        for (size_t i = next; i < args.size(); ++i) {
+            const std::string& a = args[i];
+            if (a == "vic") req.videoView = true;
+            else if (a == "swap") req.swapNibbles = true;
+            else if (a.size() > 4 && a.substr(a.size() - 4) == ".png") file = a;
+            else {
+                uint32_t n = 0;
+                try { n = (uint32_t)std::stoul(a, nullptr, 0); } catch (...) { m_output("Bad argument: " + a + "\n"); return; }
+                if (numbers == 0) req.count = (int)std::max(1u, std::min(n, 1024u));
+                else if (numbers == 1) req.columns = (int)std::max(1u, std::min(n, 64u));
+                ++numbers;
+            }
+        }
+        if (numbers == 1 && req.source == gfx::Source::Address) req.columns = std::min(req.count, 8);
+
+        IVideoInspect* video = gfx::findVideoInspect(m_ctx.machine);
+        if (req.videoView && !video) { m_output("This machine's video chip can't be inspected; using the CPU view.\n"); req.videoView = false; }
+        gfx::View view = gfx::buildView(req, m_ctx.bus, video);
+        if (!view.error.empty()) { m_output(view.error + "\n"); return; }
+        const gfx::FormatInfo& fi = gfx::info(view.format);
+
+        std::ostringstream hdr;
+        hdr << fi.label << " at $" << std::hex << std::uppercase << view.start << std::dec << ", "
+            << view.sheet.count << " item" << (view.sheet.count == 1 ? "" : "s") << ", stride " << view.sheet.stride;
+        if (req.videoView) hdr << ", video chip view";
+        m_output(hdr.str() + "\n");
+
+        if (!file.empty()) {
+            std::vector<uint8_t> rgba((size_t)view.sheet.width * view.sheet.height * 4);
+            for (size_t i = 0; i < view.sheet.argb.size(); ++i) {
+                uint32_t px = view.sheet.argb[i];
+                rgba[i * 4] = (px >> 16) & 0xFF; rgba[i * 4 + 1] = (px >> 8) & 0xFF;
+                rgba[i * 4 + 2] = px & 0xFF;     rgba[i * 4 + 3] = 0xFF;
+            }
+            if (stbi_write_png(file.c_str(), view.sheet.width, view.sheet.height, 4, rgba.data(), view.sheet.width * 4))
+                m_output("Saved " + std::to_string(view.sheet.width) + "x" + std::to_string(view.sheet.height) + " image to " + file + "\n");
+            else
+                m_output("Failed to write " + file + "\n");
+            return;
+        }
+        // Terminal: ASCII art, at most 16 items
+        IBus* bus = m_ctx.bus;
+        gfx::ReadFn read = req.videoView ? gfx::ReadFn([video](uint32_t a) { return video->peekVideo(a); })
+                                         : gfx::ReadFn([bus](uint32_t a) { return bus->peek8(a); });
+        int rows = view.sheet.cellH != fi.height ? view.sheet.cellH : 0;
+        int shown = std::min(view.sheet.count, 16);
+        for (int i = 0; i < shown; ++i) {
+            std::ostringstream os;
+            os << "#" << i << " $" << std::hex << std::uppercase << gfx::itemAddress(view.sheet, i) << "\n";
+            m_output(os.str() + gfx::asciiArt(view.format, read, gfx::itemAddress(view.sheet, i), req.swapNibbles, rows));
+        }
+        if (view.sheet.count > shown)
+            m_output("(" + std::to_string(view.sheet.count - shown) + " more; give a .png file to see them all)\n");
     } else if (cmd == "screenshot") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string filename;
@@ -3145,6 +3248,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  f <addr> <val> [len] - Fill memory range with value\n"
                  "  save <path> <addr> <len> - Save memory to binary file\n"
                  "  screenshot <file>   - Save current screen to PNG\n"
+                 "  gfx <fmt> <addr> [n] [cols] [vic] [file.png] - Show sprites/characters (gfx formats)\n"
+                 "  gfx vic-sprite <n> | vic-charset [file.png]  - Show a VIC sprite / the current charset\n"
                  "  recordaudio <f> <d> - Record D ms of audio to WAV file\n"
                  "  stack [n]           - Show stack trace (default 8 entries)\n"
                  "  devinfo <name>      - Show device registers and state\n"

@@ -72,9 +72,9 @@ LIBPROJECT_SRCS   = src/libproject/main/project.cpp src/libproject/main/make_run
 LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main/variable_symbol.cpp \
 	src/libtoolchain/main/source_map.cpp src/libtoolchain/main/toolchain_registry.cpp \
 	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp \
-	src/libtoolchain/main/basic_tokenizer.cpp
+	src/libtoolchain/main/basic_tokenizer.cpp src/libtoolchain/main/gfx_decode.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
-	src/libdebug/main/source_stepper.cpp \
+	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
@@ -242,6 +242,7 @@ PLUGIN_MEGA65_MATH_SRCS = src/plugins/devices/mega65_math/main/mega65_math.cpp \
 GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/dock_layout.cpp \
 	src/gui/main/source_pane.cpp \
+	src/gui/main/graphics_pane.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
 	src/gui/main/memory_pane.cpp \
@@ -357,6 +358,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	tests/src/test_mcp_integration.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
 	src/libtoolchain/test/test_basic_tokenizer.cpp \
+	src/libtoolchain/test/test_gfx_decode.cpp \
 	src/libproject/test/test_project.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \

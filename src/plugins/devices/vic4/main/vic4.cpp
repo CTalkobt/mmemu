@@ -156,6 +156,52 @@ uint8_t VIC4::dmaPeek(uint32_t addr) const {
     return m_dmaBus->peek8(addr);
 }
 
+uint8_t VIC4::peekVideo(uint32_t addr) const {
+    if (isLocked()) return VIC2::peekVideo(addr);
+    return dmaPeek(addr);
+}
+
+bool VIC4::spriteInfo(int n, SpriteInfo& out) const {
+    if (n < 0 || n > 7) return false;
+    if (isLocked()) return VIC2::spriteInfo(n, out);
+    out = SpriteInfo{};
+    // Same pointer and mode logic as renderSpritesV4()
+    out.enabled      = (m_regs[SPENA] >> n) & 1;
+    out.multicolor   = (m_regs[SPMC] >> n) & 1;
+    out.wide64       = (m_extRegs[0x17] >> n) & 1;   // $D057 SPRX64EN
+    out.sixteenColor = (m_extRegs[0x2B] >> n) & 1;   // $D06B SPR16EN
+    if ((m_extRegs[0x15] >> n) & 1)                  // $D055 SPRHGTEN
+        out.height = m_extRegs[0x16];                // $D056 SPRHGHT
+    out.color       = m_regs[SP0COL + n];
+    out.mc0         = m_regs[SPMC0];
+    out.mc1         = m_regs[SPMC1];
+    out.paletteBase = n * 16;
+
+    uint32_t sprPtrBase = (uint32_t)m_extRegs[0x2C] | ((uint32_t)m_extRegs[0x2D] << 8)
+                        | ((uint32_t)(m_extRegs[0x2E] & 0x7F) << 16);
+    bool sprPtr16 = (m_extRegs[0x2E] & 0x80) != 0;
+    if (sprPtrBase == 0 && !sprPtr16) {
+        out.dataAddr = (uint32_t)dmaPeek(screenBase() + 0x03F8 + n) * 64;
+    } else if (m_dmaBus && sprPtr16) {
+        uint32_t p = sprPtrBase + n * 2;
+        out.dataAddr = ((uint32_t)m_dmaBus->peek8(p) | ((uint32_t)m_dmaBus->peek8(p + 1) << 8)) * 64;
+    } else if (m_dmaBus) {
+        out.dataAddr = (uint32_t)m_dmaBus->peek8(sprPtrBase + n) * 64;
+    }
+    return true;
+}
+
+bool VIC4::charsetInfo(CharsetInfo& out) const {
+    if (isLocked()) return VIC2::charsetInfo(out);
+    out = CharsetInfo{};
+    out.addr       = charBitmapBase();
+    out.multicolor = (m_regs[SCR2] & SCR2_MCM) != 0;
+    out.bitmap     = (m_regs[SCR1] & SCR1_BMM) != 0;
+    out.fullColor  = (d054() & D054_FCLRLO) != 0;
+    for (int i = 0; i < 4; ++i) out.bg[i] = m_regs[BGCOL0 + i];
+    return true;
+}
+
 uint16_t VIC4::getColBase() const {
     // $D064-$D065: COLPTR (16-bit offset into 32KB colour RAM)
     return ((uint16_t)m_extRegs[0x25] << 8) | m_extRegs[0x24];

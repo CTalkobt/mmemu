@@ -563,3 +563,52 @@ TEST_CASE(vic2_log_callback) {
     f.vic.log(0, "test message");
     ASSERT_EQ(logCount, 1);
 }
+
+// --- IVideoInspect (#28) ---
+
+TEST_CASE(vic2_inspect_sprites_and_charset) {
+    VicFixture f;
+    IVideoInspect* insp = &f.vic;
+    ASSERT_EQ(insp->paletteSize(), 16);
+    ASSERT_EQ(insp->spriteCount(), 8);
+
+    // Bank 0, screen at $0400 (VMEM $15 default), sprite 2 pointer $0400+$3FA = $80 -> $2000
+    f.vic.ioWrite(nullptr, 0xD018, 0x14);
+    f.bus.write8(0x07FA, 0x80);
+    f.vic.ioWrite(nullptr, 0xD015, 0x04);
+    f.vic.ioWrite(nullptr, 0xD01C, 0x04);
+    f.vic.ioWrite(nullptr, 0xD029, 0x07);
+    f.vic.ioWrite(nullptr, 0xD025, 0x02);
+    f.vic.ioWrite(nullptr, 0xD026, 0x03);
+    IVideoInspect::SpriteInfo si;
+    ASSERT(insp->spriteInfo(2, si));
+    ASSERT(si.enabled);
+    ASSERT(si.multicolor);
+    ASSERT_EQ(si.dataAddr, 0x2000u);
+    ASSERT_EQ(si.color, (uint8_t)7);
+    ASSERT_EQ(si.mc0, (uint8_t)2);
+    ASSERT_EQ(si.mc1, (uint8_t)3);
+    ASSERT(!insp->spriteInfo(8, si));
+
+    // Bank 1 ($4000): pointer and data addresses include the bank
+    f.vic.setBankBase(0x4000);
+    f.bus.write8(0x47FA, 0x10);
+    ASSERT(insp->spriteInfo(2, si));
+    ASSERT_EQ(si.dataAddr, 0x4400u);
+
+    // Charset base from $D018 bits 3-1 ($14 -> $1000), multicolour from $D016
+    f.vic.setBankBase(0x0000);
+    f.vic.ioWrite(nullptr, 0xD016, 0x18);
+    IVideoInspect::CharsetInfo ci;
+    ASSERT(insp->charsetInfo(ci));
+    ASSERT_EQ(ci.addr, 0x1000u);
+    ASSERT(ci.multicolor);
+
+    // peekVideo sees the character ROM at $1000 in bank 0, RAM elsewhere
+    f.charRom[0x0008] = 0x5A;
+    f.bus.write8(0x1008, 0x11);
+    f.bus.write8(0x5008, 0x22);
+    ASSERT_EQ(insp->peekVideo(0x1008), (uint8_t)0x5A);
+    ASSERT_EQ(insp->peekVideo(0x9008), (uint8_t)0x5A);
+    ASSERT_EQ(insp->peekVideo(0x5008), (uint8_t)0x22);
+}
