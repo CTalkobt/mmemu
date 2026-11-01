@@ -982,11 +982,22 @@ def run_tests():
     assert "Warp: on" in text and "40.5 MHz" in text, f"Unexpected default: {text}"
     text = client.call_tool("set_warp", {"machine_id": m65, "enabled": False})["result"]["content"][0]["text"]
     assert "Warp: off" in text, f"Warp did not turn off: {text}"
+    text = client.call_tool("set_speed", {"machine_id": m65, "speed": "3.5"})["result"]["content"][0]["text"]
+    # A new MEGA65 is still in the hypervisor (always full speed): 3.5 MHz is selected for afterwards
+    assert "Speed: 3.5 MHz" in text or "3.5 MHz is selected" in text, f"set_speed 3.5: {text}"
+    text = client.call_tool("set_speed", {"machine_id": m65, "speed": "max"})["result"]["content"][0]["text"]
+    assert "Speed: max" in text, f"set_speed max: {text}"
+    res = client.call_tool("set_speed", {"machine_id": m65, "speed": "7"})
+    item = res["result"]["content"][0]
+    assert item.get("isError") and "1|2|3.5|40.5|max" in item["text"], f"set_speed 7: {item}"
+    print("  ✓ set_speed OK (3.5 MHz, max, rejects 7)")
     client.call_tool("destroy_machine", {"machine_id": m65})
     res = client.call_tool("create_machine", {"machine_type": "c64"})
     c64 = res["result"]["content"][0]["text"].split('"')[1]
     res = client.call_tool("set_warp", {"machine_id": c64})
     assert res["result"].get("isError") or "no CPU speed model" in res["result"]["content"][0]["text"]
+    res = client.call_tool("set_speed", {"machine_id": c64, "speed": "1"})
+    assert res["result"]["content"][0].get("isError"), "set_speed should fail on the C64"
     client.call_tool("destroy_machine", {"machine_id": c64})
     print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64 has no speed model)")
 

@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <sstream>
+#include "libcore/main/machine_speed.h"
 #include <iomanip>
 #include <fstream>
 #include <algorithm>
@@ -273,6 +274,24 @@ Json handleDescribe() {
     Json stepReq(Json::ARR); stepReq.push_back(Json("machine_id"));
     stepSchema.oVal["required"] = stepReq;
     addTool("step_cpu", "Step the CPU by count instructions (default 1). Returns registers after stepping.", stepSchema);
+
+    // set_speed
+    {
+        Json spSchema(Json::OBJ); spSchema.oVal["type"] = Json("object");
+        Json spProps(Json::OBJ);
+        spProps.oVal["machine_id"] = midProp;
+        Json spdProp(Json::OBJ); spdProp.oVal["type"] = Json("string");
+        spdProp.oVal["description"] = Json("CPU clock in MHz (\"1\", \"2\", \"3.5\", \"40\" = 40.5) or \"max\" "
+                                           "for unbounded speed (warp). Omit to only report the current speed.");
+        spProps.oVal["speed"] = spdProp;
+        spSchema.oVal["properties"] = spProps;
+        Json spReq(Json::ARR); spReq.push_back(Json("machine_id"));
+        spSchema.oVal["required"] = spReq;
+        addTool("set_speed",
+                "MEGA65 only: get or set the CPU speed (1/2/3.5/40.5 MHz). "
+                "\"max\" runs unbounded (warp); a clock in MHz selects it the way software would.",
+                spSchema);
+    }
 
     // set_warp
     {
@@ -2239,6 +2258,28 @@ Json handleToolsCall(const Json& params) {
             } else {
                 textItem.oVal["text"] = Json("Error: Unknown key " + key);
                 textItem.oVal["isError"] = Json(true);
+            }
+        }
+    } else if (name == "set_speed") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (!machine_speed::supported(*ms->machine)) {
+            textItem.oVal["text"] = Json("Error: This machine has no CPU speed model");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            std::string error;
+            double requested = 0;
+            if (args.contains("speed") &&
+                !machine_speed::apply(*ms->machine, args["speed"].sVal, error, &requested)) {
+                textItem.oVal["text"] = Json("Error: " + error);
+                textItem.oVal["isError"] = Json(true);
+            } else {
+                std::string out = machine_speed::describe(*ms->machine);
+                std::string note = machine_speed::pendingNote(*ms->machine, requested);
+                if (!note.empty()) out += " " + note;
+                textItem.oVal["text"] = Json(out);
             }
         }
     } else if (name == "set_warp") {

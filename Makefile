@@ -60,7 +60,8 @@ LIBMEM_SRCS       = src/libmem/main/ibus.cpp src/libmem/main/memory_bus.cpp \
 LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp src/libcore/main/core_registry.cpp \
 	src/libcore/main/machines/machine_registry.cpp src/libcore/main/libcore.cpp \
 	src/libcore/main/image_loader.cpp src/libcore/main/json_machine_loader.cpp \
-	src/libcore/main/path_util.cpp src/libcore/main/sim_config.cpp
+	src/libcore/main/path_util.cpp src/libcore/main/sim_config.cpp \
+	src/libcore/main/machine_speed.cpp
 LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_registry.cpp \
                     src/libdevices/main/ivideo_output.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
