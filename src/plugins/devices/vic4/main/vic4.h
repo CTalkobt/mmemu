@@ -101,7 +101,18 @@ public:
     bool isPalNtsc() const;         // $D06F.7 (0=PAL, 1=NTSC)
 
     // Override VIC2 sprite rendering with VIC-IV extensions
+    /**
+     * Draw the enabled sprites over a V4_FRAME_W x FRAME_H frame, clipped to
+     * the display window. Mono, multicolour ($D01C, 8-bit $D025/$D026) and
+     * 16-colour sprites (palette sprite*16+nibble); 24/64 wide, variable
+     * height, X/Y expansion, SPR640. Sprite X=24 (48 with SPR640) and Y=50
+     * are the display's top-left, as on the VIC-II. Lower sprite numbers are
+     * on top; $D01B puts a sprite behind foreground pixels in m_fgMaskV4.
+     */
     void renderSpritesV4(uint32_t* buf);
+    /** Foreground pixels of the last background render (for $D01B); empty = none. */
+    std::vector<uint8_t> m_fgMaskV4;
+    void clearFgMaskV4() { m_fgMaskV4.assign((size_t)V4_FRAME_W * FRAME_H, 0); }
 
     std::vector<std::pair<std::string, uint32_t>> getDerivedValues() const override;
     std::vector<std::string> deviceAliases() const override { return {"VIC4", "VICIV", "VIC-IV"}; }
