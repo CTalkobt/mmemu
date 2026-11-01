@@ -42,6 +42,10 @@
 #include "mega65_status_pane.h"
 #include "include/util/logging.h"
 #include "gui_utils.h"
+#include "dock_layout.h"
+#include <wx/config.h>
+#include <memory>
+#include <map>
 #include "libcore/main/machine_speed.h"
 #include <fstream>
 #include <vector>
@@ -90,15 +94,9 @@ private:
     void OnAttachCart(wxCommandEvent& event);
     void OnEjectCart(wxCommandEvent& event);
     void OnKbdFocus(const wxCommandEvent& event);
-    void OnShowBpPane(wxCommandEvent& event);
-    void OnShowSymPane(wxCommandEvent& event);
-    void OnShowStackPane(wxCommandEvent& event);
-    void OnShowTracePane(wxCommandEvent& event);
-    void OnShowMachinePane(wxCommandEvent& event);
-    void OnShowDevicePane(wxCommandEvent& event);
-    void OnShowIOWatchPane(wxCommandEvent& event);
-    void OnShowCartPane(wxCommandEvent& event);
-    void OnShowMega65Pane(wxCommandEvent& event);
+    void OnViewPane(wxCommandEvent& event);
+    void rebuildViewMenu();
+    void syncViewMenu();
     void OnNewMemView(wxCommandEvent& event);
     void OnRenameMemView(wxCommandEvent& event);
     void OnLoadMachineDirect(wxCommandEvent& event);
@@ -107,15 +105,6 @@ private:
     void OnTypeTextDirect(wxCommandEvent& event);
     void OnTimer(wxTimerEvent& event);
     void OnCtrlShiftK(wxKeyEvent& event);
-    void ShowBreakpointPane() const;
-    void ShowSymbolPane();
-    void ShowStackPane() const;
-    void ShowTracePane() const;
-    void ShowMachineInspectorPane() const;
-    void ShowDeviceInfoPane();
-    void ShowIOWatchPane() const;
-    void ShowCartridgePane() const;
-    void ShowMega65StatusPane() const;
 
     // Returns the currently-selected MemoryPane, or nullptr if none exist.
     [[nodiscard]] MemoryPane* activeMemPane() const {
@@ -153,7 +142,12 @@ private:
     RegisterWatchPane* m_regWatchPane = nullptr;
     TracePane* m_tracePane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
-    wxAuiNotebook*  m_notebook  = nullptr;
+
+    // Dockable layout (#146) and the View menu that opens its panes
+    std::unique_ptr<DockLayout> m_dock;
+    wxMenu* m_viewMenu = nullptr;
+    std::map<int, std::string> m_viewIds;     // View menu id -> pane id
+    int m_nextPluginViewId = ID_VIEW_PANE_FIRST;
 
     wxMenuItem* m_resetToMonitorItem = nullptr;
 
@@ -463,6 +457,7 @@ public:
     }
 
     bool OnInit() override {
+        SetAppName("mmemu");   // wxConfig (saved window layout) lives in ~/.mmemu
         // wxApp::OnInit() drives OnInitCmdLine → parse → OnCmdLineParsed,
         // which populates m_startMachine etc.  Must be called first.
         if (!wxApp::OnInit())
@@ -531,7 +526,7 @@ wxIMPLEMENT_APP(MmemuApp);
 
 MmemuFrame::MmemuFrame()
     : wxFrame(nullptr, wxID_ANY, "mmemu - Multi Machine Emulator",
-              wxDefaultPosition, wxSize(1024, 768)),
+              wxDefaultPosition, wxSize(1280, 860)),
       m_timer(this, ID_GUI_TIMER)
 {
     // Menu
@@ -579,20 +574,10 @@ MmemuFrame::MmemuFrame()
     menuDebug->Append(ID_FILL_MEM, "Fill Memory...");
     menuDebug->Append(ID_COPY_MEM, "Copy Memory...");
     menuDebug->Append(ID_SWAP_MEM, "Swap Memory...");
-    menuDebug->AppendSeparator();
-    menuDebug->Append(ID_SHOW_BP_PANE,    "Breakpoints\tCtrl-B");
-    menuDebug->Append(ID_SHOW_SYM_PANE,   "Symbols\tCtrl-Y");
-    menuDebug->Append(ID_SHOW_STACK_PANE, "Stack Trace\tCtrl-T");
-    menuDebug->Append(ID_SHOW_TRACE_PANE, "Trace\tCtrl-H");
-    menuDebug->Append(ID_SHOW_MACHINE_PANE, "Machine Explorer\tCtrl-M");
-    menuDebug->Append(ID_SHOW_DEVICE_PANE, "Device Info\tCtrl-D");
-    menuDebug->Append(ID_SHOW_IOWATCH_PANE, "I/O Watch\tCtrl-W");
-    menuDebug->Append(ID_SHOW_CART_PANE, "Cartridge\tCtrl-G");
-    menuDebug->Append(ID_SHOW_MEGA65_PANE, "MEGA65 Status");
-    menuDebug->AppendSeparator();
-    menuDebug->Append(ID_NEW_MEM_VIEW,    "New Memory View\tCtrl-Shift-M");
-    menuDebug->Append(ID_RENAME_MEM_VIEW, "Rename Memory View...");
-    
+
+    // View: every pane, checked when open (filled by rebuildViewMenu())
+    m_viewMenu = new wxMenu;
+
     auto* menuTools = new wxMenu;
     menuTools->Append(ID_CALCULATOR, "Calculator\tCtrl-Shift-C");
     menuTools->AppendSeparator();
@@ -606,6 +591,7 @@ MmemuFrame::MmemuFrame()
 
     auto* menuBar = new wxMenuBar;
     menuBar->Append(menuFile, "&File");
+    menuBar->Append(m_viewMenu, "&View");
     menuBar->Append(menuControl, "&Control");
     menuBar->Append(menuDebug, "&Debug");
     menuBar->Append(menuTools, "&Tools");
@@ -628,17 +614,22 @@ MmemuFrame::MmemuFrame()
     // Status Bar
     wxFrameBase::CreateStatusBar();
     
-    // Main layout: Overall horizontal split
-    auto* mainSplitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
-    
-    // Left Column: Disasm, Memory, and Bottom Row (Registers + CLI)
-    // Split into Top (Disasm) and Bottom (Memory + Bottom Row)
-    auto* leftTopBottomSplitter = new wxSplitterWindow(mainSplitter, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
-    m_disasmPane = new DisasmPane(leftTopBottomSplitter);
-    
-    // Split Bottom into Memory and Bottom Row
-    auto* leftMemoryBottomRowSplitter = new wxSplitterWindow(leftTopBottomSplitter, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
-    m_memNotebook = new wxAuiNotebook(leftMemoryBottomRowSplitter, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+    // Dockable layout (#146): the machine screen in the centre, tool panes as
+    // tabs in the bottom and side docks. Only Console, CPU and Breakpoints are
+    // open by default; everything else is on the View menu.
+    m_dock = std::make_unique<DockLayout>(this);
+    wxWindow* host = m_dock->bottomBook();
+
+    // CPU: registers beside the disassembly
+    auto* cpuPane = new wxSplitterWindow(host, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
+    m_regPane = new RegisterPane(cpuPane);
+    m_disasmPane = new DisasmPane(cpuPane);
+    cpuPane->SplitVertically(m_regPane, m_disasmPane, 220);
+    cpuPane->SetMinimumPaneSize(120);
+
+    m_consolePane = new ConsolePane(host);
+
+    m_memNotebook = new wxAuiNotebook(host, wxID_ANY, wxDefaultPosition, wxDefaultSize,
         wxAUI_NB_TOP | wxAUI_NB_SCROLL_BUTTONS | wxAUI_NB_CLOSE_ON_ALL_TABS | wxAUI_NB_TAB_MOVE);
     addMemView("Memory 1");
     m_memNotebook->Bind(wxEVT_AUINOTEBOOK_PAGE_CLOSE, [this](wxAuiNotebookEvent& event) {
@@ -647,38 +638,53 @@ MmemuFrame::MmemuFrame()
         if (page != wxNOT_FOUND && page < (int)m_memPanes.size())
             m_memPanes.erase(m_memPanes.begin() + page);
     });
-    
-    // Split Bottom Row into Registers and CLI
-    auto* bottomRowSplitter = new wxSplitterWindow(leftMemoryBottomRowSplitter, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
-    m_regPane = new RegisterPane(bottomRowSplitter);
-    m_consolePane = new ConsolePane(bottomRowSplitter);
-    
-    bottomRowSplitter->SplitVertically(m_regPane, m_consolePane, 200);
-    leftMemoryBottomRowSplitter->SplitHorizontally(m_memNotebook, bottomRowSplitter, 300);
-    leftTopBottomSplitter->SplitHorizontally(m_disasmPane, leftMemoryBottomRowSplitter, 250);
-    
-    // Right side: Tool Notebook
-    m_notebook = new wxAuiNotebook(mainSplitter, wxID_ANY);
-    m_machineInspectorPane = new MachineInspectorPane(m_notebook);
-    m_notebook->AddPage(m_machineInspectorPane, "Machine");
-    m_deviceInfoPane = new DeviceInfoPane(m_notebook);
-    m_notebook->AddPage(m_deviceInfoPane, "Devices");
-    m_regWatchPane = new RegisterWatchPane(m_notebook);
-    m_notebook->AddPage(m_regWatchPane, "I/O Watch");
-    m_tracePane = new TracePane(m_notebook);
-    m_notebook->AddPage(m_tracePane, "Trace");
-    m_cartPane = new CartridgePane(m_notebook);
-    m_notebook->AddPage(m_cartPane, "Cartridge");
-    m_bpPane = new BreakpointPane(m_notebook);
-    m_notebook->AddPage(m_bpPane, "Breakpoints");
-    m_symPane = new SymbolPane(m_notebook);
-    m_notebook->AddPage(m_symPane, "Symbols");
-    m_stackPane = new StackPane(m_notebook);
-    m_notebook->AddPage(m_stackPane, "Stack");
-    m_mega65StatusPane = new Mega65StatusPane(m_notebook);
 
-    mainSplitter->SplitVertically(leftTopBottomSplitter, m_notebook, 750);
-    mainSplitter->SetMinimumPaneSize(200);
+    m_bpPane = new BreakpointPane(host);
+    m_symPane = new SymbolPane(host);
+    m_stackPane = new StackPane(host);
+    m_tracePane = new TracePane(host);
+    m_machineInspectorPane = new MachineInspectorPane(host);
+    m_deviceInfoPane = new DeviceInfoPane(host);
+    m_regWatchPane = new RegisterWatchPane(host);
+    m_cartPane = new CartridgePane(host);
+    m_mega65StatusPane = new Mega65StatusPane(host);
+
+    using Area = DockLayout::Area;
+    m_dock->addPane("console",     "Console",          m_consolePane,          Area::Bottom, true);
+    m_dock->addPane("cpu",         "CPU",              cpuPane,                Area::Bottom, true);
+    m_dock->addPane("breakpoints", "Breakpoints",      m_bpPane,               Area::Bottom, true);
+    m_dock->addPane("memory",      "Memory",           m_memNotebook,          Area::Bottom, false);
+    m_dock->addPane("stack",       "Stack",            m_stackPane,            Area::Bottom, false);
+    m_dock->addPane("trace",       "Trace",            m_tracePane,            Area::Bottom, false);
+    m_dock->addPane("symbols",     "Symbols",          m_symPane,              Area::Side,   false);
+    m_dock->addPane("machine",     "Machine Explorer", m_machineInspectorPane, Area::Side,   false);
+    m_dock->addPane("devices",     "Devices",          m_deviceInfoPane,       Area::Side,   false);
+    m_dock->addPane("iowatch",     "I/O Watch",        m_regWatchPane,         Area::Side,   false);
+    m_dock->addPane("cartridge",   "Cartridge",        m_cartPane,             Area::Side,   false);
+    m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
+    m_dock->setAvailable("mega65", false);   // until a MEGA65 is loaded
+
+    // Plugin panes: the screen goes in the centre, the rest onto the View menu
+    PluginPaneManager::instance().setHost(
+        [this](const PluginPaneInfo& info, wxWindow* win) {
+            if (std::string(info.paneId) == "screen") { m_dock->setCenter(win); return; }
+            m_dock->addPane(info.paneId, info.displayName ? info.displayName : info.paneId,
+                            win, DockLayout::Area::Bottom, false);
+            rebuildViewMenu();
+        },
+        [this](const PluginPaneInfo& info, wxWindow*) {
+            if (std::string(info.paneId) == "screen") { m_dock->setCenter(nullptr); return; }
+            m_dock->removePane(info.paneId);
+            rebuildViewMenu();
+        });
+
+    m_dock->setOnChange([this]() { syncViewMenu(); });
+    m_dock->restore();
+    rebuildViewMenu();
+    Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& e) {
+        if (m_dock) m_dock->save();
+        e.Skip();
+    });
     
     SetDropTarget(new MmemuDropTarget(this));
     
@@ -711,15 +717,9 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnAttachCart, this, ID_ATTACH_CART);
     Bind(wxEVT_MENU, &MmemuFrame::OnEjectCart, this, ID_EJECT_CART);
     Bind(wxEVT_MENU, &MmemuFrame::OnKbdFocus,   this, ID_KBD_FOCUS);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowBpPane,    this, ID_SHOW_BP_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowSymPane,   this, ID_SHOW_SYM_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowStackPane, this, ID_SHOW_STACK_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowTracePane, this, ID_SHOW_TRACE_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowMachinePane, this, ID_SHOW_MACHINE_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowDevicePane, this, ID_SHOW_DEVICE_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowIOWatchPane, this, ID_SHOW_IOWATCH_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowCartPane, this, ID_SHOW_CART_PANE);
-    Bind(wxEVT_MENU, &MmemuFrame::OnShowMega65Pane, this, ID_SHOW_MEGA65_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_SHOW_BP_PANE, ID_SHOW_MEGA65_PANE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_VIEW_PANE_FIRST, ID_VIEW_PANE_LAST);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_dock->resetToDefaults(); }, ID_VIEW_RESET_LAYOUT);
     Bind(wxEVT_MENU, &MmemuFrame::OnNewMemView,    this, ID_NEW_MEM_VIEW);
     Bind(wxEVT_MENU, &MmemuFrame::OnRenameMemView, this, ID_RENAME_MEM_VIEW);
     Bind(wxEVT_MENU, [this](wxCommandEvent&){ CalculatorDialog(this, m_dbg).ShowModal(); }, ID_CALCULATOR);
@@ -1100,16 +1100,8 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     // Show/hide MEGA65 status pane and Reset to Monitor menu based on machine type
     {
         bool isMega65 = (id.find("mega65") != std::string::npos);
-        for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-            if (m_notebook->GetPage(i) == m_mega65StatusPane) {
-                m_notebook->RemovePage(i);
-                break;
-            }
-        }
-        if (isMega65) {
-            m_mega65StatusPane->SetMachine(m_machine, m_cpu);
-            m_notebook->AddPage(m_mega65StatusPane, "MEGA65");
-        }
+        if (isMega65) m_mega65StatusPane->SetMachine(m_machine, m_cpu);
+        m_dock->setAvailable("mega65", isMega65);
         // Enable Reset to Monitor menu only for MEGA65
         if (m_resetToMonitorItem) {
             m_resetToMonitorItem->Enable(isMega65);
@@ -1149,7 +1141,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_capturePane = nullptr;
     setKeyCapture(false);
 
-    PluginPaneManager::instance().onMachineSwitch(id, m_notebook, m_notebook, m_machine);
+    PluginPaneManager::instance().onMachineSwitch(id, m_dock->bottomBook(), nullptr, m_machine);
 
     // Wire the screen pane's Capture button
     wxWindow* screenWin = PluginPaneManager::instance().getPaneWindow("screen");
@@ -1644,81 +1636,19 @@ void MmemuFrame::setKeyCapture(bool active) {
         : "Keyboard released.");
 }
 
-void MmemuFrame::ShowBreakpointPane() const {
-    // Find the pane in the notebook (it may have been closed by the user).
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_bpPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    // Not present — re-add it.
-    m_notebook->AddPage(m_bpPane, "Breakpoints", true);
-}
 
-void MmemuFrame::OnShowBpPane(wxCommandEvent&) {
-    ShowBreakpointPane();
-}
 
-void MmemuFrame::ShowSymbolPane() {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_symPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_symPane, "Symbols", true);
-}
 
-void MmemuFrame::OnShowSymPane(wxCommandEvent&) {
-    ShowSymbolPane();
-}
 
-void MmemuFrame::ShowStackPane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_stackPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_stackPane, "Stack", true);
-}
 
-void MmemuFrame::OnShowStackPane(wxCommandEvent&) {
-    ShowStackPane();
-}
 
-void MmemuFrame::ShowTracePane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_tracePane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_tracePane, "Trace", true);
-}
 
-void MmemuFrame::OnShowTracePane(wxCommandEvent&) {
-    ShowTracePane();
-}
 
 void MmemuFrame::OnKbdFocus(const wxCommandEvent& event) {
     setKeyCapture(event.IsChecked());
 }
 
-void MmemuFrame::ShowMachineInspectorPane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_machineInspectorPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_machineInspectorPane, "Machine", true);
-}
 
-void MmemuFrame::OnShowMachinePane(wxCommandEvent&) {
-    ShowMachineInspectorPane();
-}
 
 void MmemuFrame::OnCtrlShiftK(wxKeyEvent& event) {
     if (event.GetKeyCode() == 'K' && event.ControlDown() && event.ShiftDown()) {
@@ -1728,9 +1658,69 @@ void MmemuFrame::OnCtrlShiftK(wxKeyEvent& event) {
     event.Skip();
 }
 
+// Built-in panes keep their View menu ids (and shortcuts); plugin panes get
+// ids from ID_VIEW_PANE_FIRST on.
+static const struct { const char* pane; int id; const char* shortcut; } kBuiltInViews[] = {
+    {"breakpoints", ID_SHOW_BP_PANE,      "Ctrl-B"},
+    {"symbols",     ID_SHOW_SYM_PANE,     "Ctrl-Y"},
+    {"stack",       ID_SHOW_STACK_PANE,   "Ctrl-T"},
+    {"trace",       ID_SHOW_TRACE_PANE,   "Ctrl-H"},
+    {"machine",     ID_SHOW_MACHINE_PANE, "Ctrl-M"},
+    {"devices",     ID_SHOW_DEVICE_PANE,  "Ctrl-D"},
+    {"iowatch",     ID_SHOW_IOWATCH_PANE, "Ctrl-W"},
+    {"cartridge",   ID_SHOW_CART_PANE,    nullptr},
+    {"mega65",      ID_SHOW_MEGA65_PANE,  nullptr},
+};
+
+void MmemuFrame::rebuildViewMenu() {
+    if (!m_viewMenu || !m_dock) return;
+    while (m_viewMenu->GetMenuItemCount() > 0)
+        m_viewMenu->Destroy(m_viewMenu->FindItemByPosition(0));
+    m_viewIds.clear();
+
+    for (const auto& p : m_dock->panes()) {
+        if (!p.available) continue;
+        int id = 0;
+        const char* shortcut = nullptr;
+        for (const auto& b : kBuiltInViews)
+            if (p.id == b.pane) { id = b.id; shortcut = b.shortcut; }
+        if (!id) {
+            // Panes without a fixed id (console, cpu, memory, plugin panes)
+            static std::map<std::string, int> s_assigned;
+            auto it = s_assigned.find(p.id);
+            if (it == s_assigned.end() && m_nextPluginViewId <= ID_VIEW_PANE_LAST)
+                it = s_assigned.emplace(p.id, m_nextPluginViewId++).first;
+            if (it == s_assigned.end()) continue;
+            id = it->second;
+        }
+        wxString label = p.title;
+        if (shortcut) label += wxString("\t") + shortcut;
+        m_viewMenu->AppendCheckItem(id, label);
+        m_viewIds[id] = p.id;
+    }
+    m_viewMenu->AppendSeparator();
+    m_viewMenu->Append(ID_NEW_MEM_VIEW,    "New Memory View\tCtrl-Shift-M");
+    m_viewMenu->Append(ID_RENAME_MEM_VIEW, "Rename Memory View...");
+    m_viewMenu->AppendSeparator();
+    m_viewMenu->Append(ID_VIEW_RESET_LAYOUT, "Reset Layout");
+    syncViewMenu();
+}
+
+void MmemuFrame::syncViewMenu() {
+    if (!m_viewMenu || !m_dock) return;
+    for (const auto& [id, pane] : m_viewIds)
+        if (wxMenuItem* item = m_viewMenu->FindItem(id)) item->Check(m_dock->isOpen(pane));
+}
+
+void MmemuFrame::OnViewPane(wxCommandEvent& event) {
+    auto it = m_viewIds.find(event.GetId());
+    if (it != m_viewIds.end()) m_dock->toggle(it->second);
+}
+
 void MmemuFrame::OnNewMemView(wxCommandEvent&) {
     wxString label = wxString::Format("Memory %zu", m_memPanes.size() + 1);
     addMemView(label);
+    m_dock->open("memory");
 }
 
 void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
@@ -1787,80 +1777,30 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
 
         // History panes: refresh only when paused AND visible (not on every tick while running)
         if (isPaused) {
-            if (m_stackPane && m_notebook->GetCurrentPage() == m_stackPane)
+            if (m_stackPane && m_stackPane->IsShownOnScreen())
                 m_stackPane->RefreshValues();
-            if (m_tracePane && m_notebook->GetCurrentPage() == m_tracePane)
+            if (m_tracePane && m_tracePane->IsShownOnScreen())
                 m_tracePane->RefreshValues();
         }
 
         // Other expensive panes: only refresh when running to avoid continuous flicker
         if (!isPaused) {
-            if (m_machineInspectorPane && m_notebook->GetCurrentPage() == m_machineInspectorPane)
+            if (m_machineInspectorPane && m_machineInspectorPane->IsShownOnScreen())
                 m_machineInspectorPane->refreshValues();
-            if (m_deviceInfoPane && m_notebook->GetCurrentPage() == m_deviceInfoPane)
+            if (m_deviceInfoPane && m_deviceInfoPane->IsShownOnScreen())
                 m_deviceInfoPane->refreshValues();
-            if (m_regWatchPane && m_notebook->GetCurrentPage() == m_regWatchPane)
+            if (m_regWatchPane && m_regWatchPane->IsShownOnScreen())
                 m_regWatchPane->refreshValues();
-            if (m_mega65StatusPane && m_notebook->GetCurrentPage() == m_mega65StatusPane)
+            if (m_mega65StatusPane && m_mega65StatusPane->IsShownOnScreen())
                 m_mega65StatusPane->RefreshValues();
         }
     }
 }
 
-void MmemuFrame::ShowDeviceInfoPane() {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_deviceInfoPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_deviceInfoPane, "Devices", true);
-}
 
-void MmemuFrame::OnShowDevicePane(wxCommandEvent&) {
-    ShowDeviceInfoPane();
-}
 
-void MmemuFrame::ShowIOWatchPane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_regWatchPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_regWatchPane, "I/O Watch", true);
-}
 
-void MmemuFrame::OnShowIOWatchPane(wxCommandEvent&) {
-    ShowIOWatchPane();
-}
 
-void MmemuFrame::ShowCartridgePane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_cartPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    m_notebook->AddPage(m_cartPane, "Cartridge", true);
-}
 
-void MmemuFrame::OnShowCartPane(wxCommandEvent&) {
-    ShowCartridgePane();
-}
 
-void MmemuFrame::ShowMega65StatusPane() const {
-    for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
-        if (m_notebook->GetPage(i) == m_mega65StatusPane) {
-            m_notebook->SetSelection(i);
-            return;
-        }
-    }
-    if (m_mega65StatusPane) {
-        m_notebook->AddPage(m_mega65StatusPane, "MEGA65", true);
-    }
-}
 
-void MmemuFrame::OnShowMega65Pane(wxCommandEvent&) {
-    ShowMega65StatusPane();
-}

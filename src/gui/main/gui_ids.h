@@ -37,6 +37,9 @@ enum {
     ID_SHOW_MEGA65_PANE,
     ID_NEW_MEM_VIEW,
     ID_RENAME_MEM_VIEW,
+    ID_VIEW_RESET_LAYOUT,
+    ID_VIEW_PANE_FIRST,                         // View menu items for plugin panes
+    ID_VIEW_PANE_LAST = ID_VIEW_PANE_FIRST + 63,
     ID_CALCULATOR,
     ID_GUI_TIMER,
     ID_LOAD_MACHINE_DIRECT,

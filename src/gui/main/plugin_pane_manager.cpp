@@ -29,10 +29,11 @@ void PluginPaneManager::onMachineSwitch(const std::string& machineId, wxWindow* 
     auto it = m_livePanes.begin();
     while (it != m_livePanes.end()) {
         if (!isRelevant(it->second.info, machineId)) {
+            if (m_hostRemove && it->second.window) m_hostRemove(it->second.info, it->second.window);
             if (it->second.info.destroyPane && it->second.window) {
                 it->second.info.destroyPane(it->second.window, it->second.info.ctx);
             }
-            if (m_notebook) {
+            if (m_notebook && !m_hostRemove) {
                 for (size_t i = 0; i < m_notebook->GetPageCount(); ++i) {
                     if (m_notebook->GetPage(i) == it->second.window) {
                         m_notebook->DeletePage(i);
@@ -54,7 +55,9 @@ void PluginPaneManager::onMachineSwitch(const std::string& machineId, wxWindow* 
                 if (handle) {
                     wxWindow* win = static_cast<wxWindow*>(handle);
                     m_livePanes[info.paneId] = {info, win};
-                    if (m_notebook && win) {
+                    if (m_hostAdd && win) {
+                        m_hostAdd(info, win);
+                    } else if (m_notebook && win) {
                         m_notebook->AddPage(win, info.displayName ? info.displayName : info.paneId);
                     }
                 }
