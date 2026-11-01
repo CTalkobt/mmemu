@@ -4,6 +4,11 @@
 enum {
     ID_LOAD_MACHINE = wxID_HIGHEST + 1,
     ID_STEP,
+    ID_STEP_OVER,
+    ID_STEP_OUT,
+    ID_OPEN_SOURCE,
+    ID_SAVE_SOURCE,
+    ID_LOAD_SOURCE_MAP,
     ID_BACKSTEP,
     ID_RUN,
     ID_PAUSE,

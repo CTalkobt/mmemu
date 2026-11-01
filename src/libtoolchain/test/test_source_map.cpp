@@ -79,3 +79,46 @@ TEST_CASE(source_map_malformed_lines) {
     ASSERT(!loc.file.empty());
     fs::remove(path);
 }
+
+// ca45 --source-map files (#147): "Line N" rows belong to the given source,
+// "<file>:<line>" rows name their file; the Symbol Table section is returned.
+TEST_CASE(source_map_load_ca45_map) {
+    fs::path dir = fs::temp_directory_path() / "mmemu_test_ca45map";
+    fs::create_directories(dir);
+    fs::path map = dir / "demo.map";
+    {
+        std::ofstream f(map);
+        f << "Source Map \xE2\x80\x94 Binary Address to Source Line Mapping\n"
+             "=====================================================\n\n"
+             "00002000  Line 3  start:  lda #$00\n"
+             "00002002  Line 4  sta $d020\n"
+             "00002005  Line 4  ; second instruction on the same line keeps the first address\n"
+             "0000200d  sub.s:2  flash:  ldx #$03\n\n\n"
+             "Symbol Table\n"
+             "============\n"
+             "flash                            0000200d (ADDR)\n"
+             "start                            00002000 (ADDR)\n";
+    }
+    std::vector<std::pair<std::string, uint32_t>> symbols;
+    SourceMap sm;
+    int n = sm.loadCa45SourceMap(map.string(), (dir / "demo.s").string(), &symbols);
+    ASSERT_EQ(n, 4);
+
+    const std::string demo = SourceMap::normalizePath((dir / "demo.s").string());
+    const std::string sub  = SourceMap::normalizePath((dir / "sub.s").string());
+    ASSERT(sm.addrToSource(0x2000).file == demo);
+    ASSERT_EQ(sm.addrToSource(0x2000).line, 3);
+    ASSERT_EQ(sm.addrToSource(0x2005).line, 4);
+    ASSERT_EQ((int)sm.sourceToAddr(demo, 4), 0x2002);      // first address of the line
+    ASSERT(sm.addrToSource(0x200d).file == sub);           // file:line form, relative to the map
+    ASSERT_EQ(sm.addrToSource(0x200d).line, 2);
+    ASSERT_EQ((int)sm.sourceToAddr(demo, 99), (int)0xFFFFFFFF);
+
+    ASSERT_EQ((int)symbols.size(), 2);
+    ASSERT(symbols[0].first == "flash" && symbols[0].second == 0x200d);
+
+    ASSERT_EQ(sm.loadCa45SourceMap((dir / "missing.map").string(), demo), 0);
+    sm.clear();
+    ASSERT(sm.empty());
+    fs::remove_all(dir);
+}
