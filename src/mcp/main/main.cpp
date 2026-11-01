@@ -2343,9 +2343,9 @@ Json handleToolsCall(const Json& params) {
                     << " " << (d.file.empty() ? "?" : d.file) << ":" << d.line << ": " << d.message << "\n";
             bool failed = !res.ok();
             if (!failed && name == "project_run") {
-                std::string file = cfg.load == "auto" ? project::newestChangedProgram(cfg.dir, before) : cfg.resolve(cfg.load);
+                std::string file = project::programToRun(cfg, before);
                 if (file.empty()) {
-                    out << "No new .prg was written by make " << target << "; set run.load in .mmsim/project.json.\n";
+                    out << "No .prg found after make " << target << "; set run.load in .mmsim/project.json.\n";
                     failed = true;
                 } else {
                     if (!cfg.machine.empty() && ms->machine->machineId != cfg.machine)

@@ -96,6 +96,14 @@ LaunchResult launch(MachineDescriptor& m, DebugContext* dbg, const std::string& 
         kbd->enqueueText("RUN\n");
         r.typedRun = true;
         r.message = "Loaded " + fs::path(file).filename().string() + " at " + hex4(r.loadAddress) + " and typed RUN";
+    } else if (info.basicStart && kbd) {
+        // Machine code on a machine with BASIC: start it with SYS like a user
+        // would, so BASIC sets up the memory map first (on the MEGA65, BASIC 65
+        // maps ROM over $2000-$3FFF until SYS switches to RAM)
+        kbd->enqueueText("SYS " + std::to_string(r.loadAddress) + "\n");
+        r.typedRun = true;
+        r.message = "Loaded " + fs::path(file).filename().string() + " at " + hex4(r.loadAddress) +
+                    " and typed SYS " + std::to_string(r.loadAddress);
     } else {
         cpu->setPc(r.loadAddress);
         r.message = "Loaded " + fs::path(file).filename().string() + " at " + hex4(r.loadAddress) +

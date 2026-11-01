@@ -98,4 +98,11 @@ std::string newestChangedProgram(const std::string& dir, const FileTimes& before
     return best;
 }
 
+std::string programToRun(const Config& cfg, const FileTimes& beforeBuild) {
+    if (cfg.load != "auto") return cfg.resolve(cfg.load);
+    std::string changed = newestChangedProgram(cfg.dir, beforeBuild);
+    if (!changed.empty()) return changed;
+    return newestChangedProgram(cfg.dir, FileTimes{});   // up to date: newest .prg overall
+}
+
 }  // namespace project

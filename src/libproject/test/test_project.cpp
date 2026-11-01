@@ -157,3 +157,45 @@ TEST_CASE(project_launch_machine_code_sets_pc) {
     ASSERT_EQ((int)bus.peek8(0xC001), 0x42);
     m.buses.clear(); m.cpus.clear();   // not owned by the descriptor here
 }
+
+// Run when the build was up to date still finds the program
+TEST_CASE(project_program_to_run_falls_back_to_newest) {
+    TempDir t("mmemu_proj_torun");
+    t.write("Makefile", "all:\n\t@true\n");
+    project::Config cfg;
+    std::string err;
+    ASSERT(project::open(t.path.string(), cfg, err));
+    t.write("build/game.prg", "x");
+    auto before = project::snapshotPrograms(cfg.dir);           // nothing changes after this
+    ASSERT(fs::path(project::programToRun(cfg, before)).filename() == "game.prg");
+    cfg.load = "other.prg";
+    ASSERT(fs::path(project::programToRun(cfg, before)).filename() == "other.prg");
+}
+
+#include "libproject/main/templates.h"
+
+TEST_CASE(project_templates_create) {
+    TempDir t("mmemu_proj_tpl");
+    ASSERT(project::templates().size() >= 4);
+    std::string err, mainFile;
+    fs::path dir = t.path / "game";
+    ASSERT(project::createFromTemplate(dir.string(), "c64-basic", "/opt/mmemu/mmemu-cli", err, &mainFile));
+    ASSERT(fs::path(mainFile).filename() == "hello.bas");
+    std::ifstream mk(dir / "Makefile");
+    std::string makefile((std::istreambuf_iterator<char>(mk)), std::istreambuf_iterator<char>());
+    ASSERT(makefile.find("MMEMU ?= /opt/mmemu/mmemu-cli") != std::string::npos);
+    ASSERT(makefile.find("--dialect basic2") != std::string::npos);
+
+    project::Config cfg;
+    ASSERT(project::open(dir.string(), cfg, err));
+    ASSERT(cfg.machine == "c64");
+
+    ASSERT(!project::createFromTemplate(dir.string(), "c64-basic", "", err));     // already has a Makefile
+    ASSERT(err.find("already has a Makefile") != std::string::npos);
+    ASSERT(!project::createFromTemplate((t.path / "x").string(), "nope", "", err));
+    ASSERT(err.find("Unknown template") != std::string::npos);
+
+    ASSERT(project::createFromTemplate((t.path / "asm").string(), "mega65-asm", "", err));
+    ASSERT(project::open((t.path / "asm").string(), cfg, err));
+    ASSERT(cfg.machine == "mega65" && cfg.sourceMaps.size() == 1);
+}

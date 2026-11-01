@@ -24,7 +24,7 @@ struct LaunchResult {
     bool        ok = false;
     std::string message;
     uint32_t    loadAddress = 0;
-    bool        typedRun = false;   // started with RUN (BASIC); otherwise PC = load address
+    bool        typedRun = false;   // started by typing RUN / SYS; otherwise PC = load address
 };
 
 /**
@@ -32,7 +32,8 @@ struct LaunchResult {
  * - reset (if `reset`) and boot to READY,
  * - load the file (physical bus),
  * - a program at the machine's BASIC start: set the end-of-program pointer and
- *   type RUN; anything else: set the PC to the load address.
+ *   type RUN; other programs on a machine with BASIC: type SYS <load address>;
+ *   machines without BASIC (raw): set the PC to the load address.
  * The caller then runs the machine.
  */
 LaunchResult launch(MachineDescriptor& machine, DebugContext* dbg, const std::string& file, bool reset);

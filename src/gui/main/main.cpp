@@ -51,6 +51,8 @@
 #include "libproject/main/launcher.h"
 #include <wx/listctrl.h>
 #include <wx/dirdlg.h>
+#include <wx/filepicker.h>
+#include "libproject/main/templates.h"
 #include <atomic>
 #include <thread>
 #include "libdebug/main/source_stepper.h"
@@ -98,6 +100,8 @@ private:
     void onBuildDone(project::MakeResult res, bool run, project::FileTimes before);
     void appendOutput(const std::string& text);
     void stopBuildAndWait();
+    void switchLayout(bool debug);
+    void OnNewProject(wxCommandEvent& event);
     void OnLoadSourceMap(wxCommandEvent& event);
     void OnBackStep(wxCommandEvent& event);
     void OnRun(wxCommandEvent& event);
@@ -181,6 +185,11 @@ private:
     std::thread     m_buildThread;
     std::atomic<bool> m_buildCancel{false};
     bool            m_building = false;
+
+    // Edit / Debug layouts (#149): the debug one is used while stopped at a break
+    bool            m_inDebugLayout = false;
+    bool            m_autoDebugLayout = true;
+    std::string     m_editLayoutState, m_debugLayoutState;
 
     // Dockable layout (#146) and the View menu that opens its panes
     std::unique_ptr<DockLayout> m_dock;
@@ -650,6 +659,7 @@ MmemuFrame::MmemuFrame()
     menuBar->Append(menuFile, "&File");
     menuBar->Append(m_viewMenu, "&View");
     auto* menuProject = new wxMenu;
+    menuProject->Append(ID_PROJECT_NEW,   "New Project...\tCtrl-Shift-N", "Create a project from a template");
     menuProject->Append(ID_PROJECT_OPEN,  "Open Project...\tCtrl-Shift-O", "Open a directory with a Makefile");
     menuProject->Append(ID_PROJECT_BUILD, "Build\tCtrl-B", "make <build target> (default: all)");
     menuProject->Append(ID_PROJECT_RUN,   "Run Project\tCtrl-F5", "make <run target>, then load and start the new .prg");
@@ -764,6 +774,15 @@ MmemuFrame::MmemuFrame()
             rebuildViewMenu();
         });
 
+    if (wxConfigBase* cfg = wxConfigBase::Get()) {
+        wxString dbgState;
+        if (cfg->Read("Layout/DebugState", &dbgState)) m_debugLayoutState = dbgState.utf8_string();
+        m_autoDebugLayout = cfg->ReadBool("Layout/AutoDebug", true);
+    }
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { switchLayout(false); }, ID_VIEW_EDIT_LAYOUT);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { switchLayout(true); }, ID_VIEW_DEBUG_LAYOUT);
+    Bind(wxEVT_MENU, [this](wxCommandEvent& e) { m_autoDebugLayout = e.IsChecked(); }, ID_VIEW_AUTO_DEBUG);
+    Bind(wxEVT_MENU, &MmemuFrame::OnNewProject, this, ID_PROJECT_NEW);
     m_dock->setOnChange([this]() { syncViewMenu(); });
     // Pick up source files edited in another program when the window is reactivated
     Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& e) {
@@ -779,7 +798,14 @@ MmemuFrame::MmemuFrame()
             if (answer == wxCANCEL || (answer == wxYES && !m_sourcePane->SaveAll())) { e.Veto(); return; }
         }
         stopBuildAndWait();
-        if (m_dock) m_dock->save();
+        if (m_dock) {
+            switchLayout(false);   // the main saved layout is always the edit one
+            if (wxConfigBase* cfg = wxConfigBase::Get()) {
+                cfg->Write("Layout/DebugState", wxString::FromUTF8(m_debugLayoutState));
+                cfg->Write("Layout/AutoDebug", m_autoDebugLayout);
+            }
+            m_dock->save();
+        }
         e.Skip();
     });
     
@@ -1330,6 +1356,69 @@ void MmemuFrame::updateSourceView() {
 // Makefile projects (#148)
 // ---------------------------------------------------------------------------
 
+void MmemuFrame::switchLayout(bool debug) {
+    if (!m_dock || debug == m_inDebugLayout) return;
+    std::string current = m_dock->captureState();
+    if (debug) {
+        m_editLayoutState = current;
+        if (m_debugLayoutState.empty())
+            m_dock->showOnly({"cpu", "breakpoints", "stack", "trace", "memory", "console"}, {"source", "symbols"});
+        else
+            m_dock->applyState(m_debugLayoutState);
+    } else {
+        m_debugLayoutState = current;
+        if (!m_editLayoutState.empty()) m_dock->applyState(m_editLayoutState);
+    }
+    m_inDebugLayout = debug;
+}
+
+void MmemuFrame::OnNewProject(wxCommandEvent&) {
+    wxDialog dlg(this, wxID_ANY, "New Project", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* grid = new wxFlexGridSizer(2, wxSize(8, 8));
+    grid->AddGrowableCol(1);
+
+    const auto& tpls = project::templates();
+    wxArrayString names;
+    for (const auto& t : tpls) names.Add(wxString::FromUTF8(t.name));
+    auto* choice = new wxChoice(&dlg, wxID_ANY, wxDefaultPosition, wxDefaultSize, names);
+    choice->SetSelection(0);
+    auto* desc = new wxStaticText(&dlg, wxID_ANY, wxString::FromUTF8(tpls.empty() ? "" : tpls[0].description));
+    auto* name = new wxTextCtrl(&dlg, wxID_ANY, "hello");
+    auto* where = new wxDirPickerCtrl(&dlg, wxID_ANY, wxGetHomeDir(), "Create the project folder in",
+                                      wxDefaultPosition, wxSize(360, -1), wxDIRP_DEFAULT_STYLE | wxDIRP_DIR_MUST_EXIST);
+    choice->Bind(wxEVT_CHOICE, [&](wxCommandEvent&) {
+        int i = choice->GetSelection();
+        if (i >= 0) desc->SetLabel(wxString::FromUTF8(tpls[i].description));
+    });
+
+    grid->Add(new wxStaticText(&dlg, wxID_ANY, "Template:"), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(choice, 1, wxEXPAND);
+    grid->AddSpacer(0);
+    grid->Add(desc, 1, wxEXPAND);
+    grid->Add(new wxStaticText(&dlg, wxID_ANY, "Name:"), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(name, 1, wxEXPAND);
+    grid->Add(new wxStaticText(&dlg, wxID_ANY, "Location:"), 0, wxALIGN_CENTER_VERTICAL);
+    grid->Add(where, 1, wxEXPAND);
+    sizer->Add(grid, 1, wxEXPAND | wxALL, 12);
+    sizer->Add(dlg.CreateStdDialogButtonSizer(wxOK | wxCANCEL), 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 12);
+    dlg.SetSizerAndFit(sizer);
+    if (dlg.ShowModal() != wxID_OK) return;
+
+    int sel = choice->GetSelection();
+    std::string projName = name->GetValue().Trim().Trim(false).utf8_string();
+    if (sel < 0 || projName.empty()) { SetStatusText("Choose a template and a name."); return; }
+    std::string dir = (std::filesystem::path(where->GetPath().utf8_string()) / projName).string();
+    std::string err, mainFile;
+    if (!project::createFromTemplate(dir, tpls[sel].id, project::findMmemuCli(), err, &mainFile)) {
+        wxMessageBox(wxString::FromUTF8(err), "New Project", wxOK | wxICON_ERROR, this);
+        return;
+    }
+    if (!openProject(dir)) return;
+    if (m_sourcePane->OpenFile(mainFile)) m_dock->open("source");
+    SetStatusText(wxString::FromUTF8("Created " + tpls[sel].name + " project " + projName + " - Run Project: Ctrl-F5"));
+}
+
 bool MmemuFrame::openProject(const std::string& dir) {
     auto cfg = std::make_unique<project::Config>();
     std::string err;
@@ -1431,9 +1520,9 @@ void MmemuFrame::onBuildDone(project::MakeResult res, bool run, project::FileTim
     if (!run) { SetStatusText(wxString::FromUTF8("Build succeeded: " + summary)); return; }
 
     const project::Config& cfg = *m_project;
-    std::string file = cfg.load == "auto" ? project::newestChangedProgram(cfg.dir, before) : cfg.resolve(cfg.load);
+    std::string file = project::programToRun(cfg, before);
     if (file.empty()) {
-        appendOutput("No new .prg was written by make " + cfg.runTarget + "; set run.load in .mmsim/project.json.\n");
+        appendOutput("No .prg found after make " + cfg.runTarget + "; set run.load in .mmsim/project.json.\n");
         SetStatusText("No new .prg to run");
         return;
     }
@@ -1451,6 +1540,7 @@ void MmemuFrame::onBuildDone(project::MakeResult res, bool run, project::FileTim
     m_sourcePane->RefreshBreakpointMarkers(true);
     if (m_sourcePane) m_sourcePane->ClearExecutionLine();
     m_dbg->resume();
+    if (m_autoDebugLayout) switchLayout(false);
     m_running = true;
     SetStatusText(wxString::FromUTF8(launched.message));
 }
@@ -1520,6 +1610,7 @@ void MmemuFrame::OnRun(wxCommandEvent& event) {
     (void)event;
     if (m_dbg) m_dbg->resume();
     if (m_sourcePane) m_sourcePane->ClearExecutionLine();
+    if (m_autoDebugLayout) switchLayout(false);
     m_running = true;
     SetStatusText("Running...");
 }
@@ -2039,6 +2130,11 @@ void MmemuFrame::rebuildViewMenu() {
     m_viewMenu->Append(ID_NEW_MEM_VIEW,    "New Memory View\tCtrl-Shift-M");
     m_viewMenu->Append(ID_RENAME_MEM_VIEW, "Rename Memory View...");
     m_viewMenu->AppendSeparator();
+    m_viewMenu->Append(ID_VIEW_EDIT_LAYOUT, "Edit Layout", "The layout used while editing and running");
+    m_viewMenu->Append(ID_VIEW_DEBUG_LAYOUT, "Debug Layout", "The layout used while stopped at a breakpoint");
+    m_viewMenu->AppendCheckItem(ID_VIEW_AUTO_DEBUG, "Debug Layout on Break",
+                                "Switch to the Debug layout at a breakpoint and back on Run");
+    m_viewMenu->Check(ID_VIEW_AUTO_DEBUG, m_autoDebugLayout);
     m_viewMenu->Append(ID_VIEW_RESET_LAYOUT, "Reset Layout");
     syncViewMenu();
 }
@@ -2086,6 +2182,7 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 m_running = false;
                 SetStatusText(m_dbg->lastHitMessage());
                 if (m_bpPane) m_bpPane->RefreshValues();
+                if (m_autoDebugLayout) switchLayout(true);
                 updateSourceView();
                 break;
             }

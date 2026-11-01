@@ -1,4 +1,8 @@
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include "libtoolchain/main/basic_tokenizer.h"
 #include <string>
 #include <memory>
 #include <csignal>
@@ -18,6 +22,43 @@ extern volatile sig_atomic_t g_interrupted;
 static void sigintHandler(int) { g_interrupted = 1; }
 
 int main(int argc, char *argv[]) {
+    // --tokenize <in.bas> <out.prg> [--dialect basic2|basic65] [--start <addr>]  (#149)
+    // Runs on its own (for Makefiles): no plugins or machine needed.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--tokenize") continue;
+        if (i + 2 >= argc) {
+            std::cerr << "Usage: mmemu-cli --tokenize <in.bas> <out.prg> [--dialect basic2|basic65] [--start <addr>]\n";
+            return 2;
+        }
+        std::string inPath = argv[i + 1], outPath = argv[i + 2];
+        basic_tokenizer::Dialect dialect = basic_tokenizer::Dialect::Basic2;
+        long start = -1;
+        for (int j = 1; j < argc; ++j) {
+            std::string a = argv[j];
+            if (a == "--dialect" && j + 1 < argc && !basic_tokenizer::parseDialect(argv[j + 1], dialect)) {
+                std::cerr << "Unknown dialect '" << argv[j + 1] << "' (basic2 or basic65)\n";
+                return 2;
+            }
+            if (a == "--start" && j + 1 < argc) {
+                std::string v = argv[j + 1];
+                start = std::strtol(v.c_str() + (v[0] == '$' ? 1 : 0), nullptr, v[0] == '$' || v.rfind("0x", 0) == 0 ? 16 : 10);
+            }
+        }
+        std::ifstream in(inPath);
+        if (!in) { std::cerr << inPath << ": error: cannot open\n"; return 1; }
+        std::stringstream text;
+        text << in.rdbuf();
+        auto res = basic_tokenizer::tokenize(text.str(), dialect,
+                                             start >= 0 ? (uint16_t)start : basic_tokenizer::defaultStart(dialect), inPath);
+        for (const auto& e : res.errors) std::cerr << e << "\n";
+        if (!res.errors.empty()) return 1;
+        std::ofstream out(outPath, std::ios::binary);
+        out.write((const char*)res.prg.data(), (std::streamsize)res.prg.size());
+        if (!out) { std::cerr << outPath << ": error: cannot write\n"; return 1; }
+        std::cout << "Tokenised " << inPath << " -> " << outPath << " (" << res.prg.size() - 2 << " bytes)\n";
+        return 0;
+    }
+
     (void)argc; (void)argv;
 
     // Install SIGINT handler so Ctrl-C breaks out of run loops
@@ -70,6 +111,8 @@ int main(int argc, char *argv[]) {
                       << "  -i, --mount <path>        Mount a disk/tape/program image\n"
                       << "  -t, --type <text>         Type text into the machine\n"
                       << "  --run                     Auto-start the loaded program\n"
+                      << "  --tokenize <in.bas> <out.prg> [--dialect basic2|basic65] [--start <addr>]\n"
+                      << "                            Tokenise a BASIC text file to a PRG and exit\n"
                       << "  --gdb-port <port>         Start GDB RSP server on <port>\n"
                       << "  --serial-monitor-port <p> Start MEGA65 serial monitor server on <p>\n"
                       << "  --vice-monitor-port <p>   Start VICE protocol monitor server on <p> (default: 6510)\n"

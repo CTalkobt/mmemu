@@ -68,4 +68,11 @@ FileTimes snapshotPrograms(const std::string& dir);
  */
 std::string newestChangedProgram(const std::string& dir, const FileTimes& before);
 
+/**
+ * The file Run should load: run.load if set; otherwise ("auto") the newest
+ * .prg the build wrote, or, when the build was up to date, the newest .prg in
+ * the project. "" if there is none.
+ */
+std::string programToRun(const Config& cfg, const FileTimes& beforeBuild);
+
 }  // namespace project

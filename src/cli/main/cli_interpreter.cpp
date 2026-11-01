@@ -4,6 +4,7 @@
 #include "libproject/main/make_runner.h"
 #include "libproject/main/diagnostics.h"
 #include "libproject/main/launcher.h"
+#include "libproject/main/templates.h"
 #include <csignal>
 #include "include/util/logging.h"
 #include "vice_snapshot.h"
@@ -83,6 +84,28 @@ void CliInterpreter::handleProjectCommand(std::stringstream& ss) {
         m_output("Opened project " + m_project->name + " (" + m_project->dir + ")\n");
         return;
     }
+    if (sub == "templates") {
+        for (const auto& t : project::templates())
+            m_output(t.id + std::string(16 - std::min<size_t>(15, t.id.size()), ' ') + t.description + "\n");
+        return;
+    }
+    if (sub == "new") {
+        std::string id, dir;
+        ss >> id;
+        std::getline(ss >> std::ws, dir);
+        if (id.empty() || dir.empty()) { m_output("Syntax: project new <template> <dir>  (see: project templates)\n"); return; }
+        std::string err, mainFile;
+        if (!project::createFromTemplate(dir, id, project::findMmemuCli(), err, &mainFile)) {
+            m_output("Error: " + err + "\n");
+            return;
+        }
+        auto cfg = std::make_unique<project::Config>();
+        if (!project::open(dir, *cfg, err)) { m_output("Error: " + err + "\n"); return; }
+        m_project = std::move(cfg);
+        m_output("Created " + id + " project in " + m_project->dir + " (main file " + mainFile +
+                 "); it is now open. Try: project run\n");
+        return;
+    }
     if (sub == "close") { m_project.reset(); m_output("Project closed.\n"); return; }
     if (!m_project) { m_output("No project open. Use: project open <dir>\n"); return; }
     const project::Config& cfg = *m_project;
@@ -123,9 +146,9 @@ void CliInterpreter::handleProjectCommand(std::stringstream& ss) {
     m_output("Build succeeded: " + summary + "\n");
     if (sub == "build") return;
 
-    std::string file = cfg.load == "auto" ? project::newestChangedProgram(cfg.dir, before) : cfg.resolve(cfg.load);
+    std::string file = project::programToRun(cfg, before);
     if (file.empty()) {
-        m_output("No new .prg was written by make " + target +
+        m_output("No .prg found after make " + target +
                  "; set run.load in .mmsim/project.json to choose the file.\n");
         return;
     }
@@ -3153,6 +3176,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  project build [tgt] - Run make (default target: all)\n"
                  "  project run         - make run, then load and start the new .prg\n"
                  "  project info|close  - Show or close the open project\n"
+                 "  project templates   - List new-project templates\n"
+                 "  project new <t> <dir> - Create a project from a template and open it\n"
                  "  srcmap load <map> [src] - Load a ca45 --source-map file for source-level debugging\n"
                  "  srcmap list|clear   - Show or clear loaded source mappings\n"
                  "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"
