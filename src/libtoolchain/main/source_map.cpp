@@ -5,6 +5,7 @@
 #include <regex>
 #include <climits>
 #include <algorithm>
+#include <filesystem>
 
 bool SourceMap::loadKickAssList(const std::string& path) {
     std::ifstream f(path);
@@ -33,6 +34,63 @@ bool SourceMap::loadKickAssList(const std::string& path) {
     }
 
     return true;
+}
+
+std::string SourceMap::normalizePath(const std::string& path) {
+    std::error_code ec;
+    auto p = std::filesystem::weakly_canonical(std::filesystem::absolute(path, ec), ec);
+    return ec ? path : p.string();
+}
+
+void SourceMap::addMapping(uint32_t addr, const std::string& file, int line) {
+    m_addrToSource[addr] = {file, line};
+    // Keep the lowest address for a line (its first instruction)
+    auto& lines = m_sourceToAddr[file];
+    auto it = lines.find(line);
+    if (it == lines.end() || addr < it->second) lines[line] = addr;
+}
+
+void SourceMap::clear() {
+    m_addrToSource.clear();
+    m_sourceToAddr.clear();
+}
+
+int SourceMap::loadCa45SourceMap(const std::string& mapPath, const std::string& sourcePath,
+                                 std::vector<std::pair<std::string, uint32_t>>* symbols) {
+    std::ifstream f(mapPath);
+    if (!f.is_open()) return 0;
+    const std::string source = normalizePath(sourcePath);
+    const auto mapDir = std::filesystem::path(mapPath).parent_path();
+
+    // "00002000  Line 3  ..." or "00002000  sub.s:12  ..."
+    static const std::regex kLineRe(R"(^\s*([0-9A-Fa-f]{4,8})\s+Line\s+(\d+)\b)");
+    static const std::regex kFileRe(R"(^\s*([0-9A-Fa-f]{4,8})\s+(\S+):(\d+)\b)");
+    static const std::regex kSymRe(R"(^(\S+)\s+([0-9A-Fa-f]{4,8})\b)");
+
+    int count = 0;
+    bool inSymbols = false;
+    std::string line;
+    std::smatch m;
+    while (std::getline(f, line)) {
+        if (line.rfind("Symbol Table", 0) == 0) { inSymbols = true; continue; }
+        if (inSymbols) {
+            if (symbols && line.find_first_not_of("=") != std::string::npos &&
+                std::regex_search(line, m, kSymRe))
+                symbols->push_back({m[1].str(), (uint32_t)std::stoul(m[2].str(), nullptr, 16)});
+            continue;
+        }
+        if (std::regex_search(line, m, kLineRe)) {
+            addMapping((uint32_t)std::stoul(m[1].str(), nullptr, 16), source, std::stoi(m[2].str()));
+            ++count;
+        } else if (std::regex_search(line, m, kFileRe)) {
+            std::filesystem::path file = m[2].str();
+            if (file.is_relative()) file = mapDir / file;
+            addMapping((uint32_t)std::stoul(m[1].str(), nullptr, 16), normalizePath(file.string()),
+                       std::stoi(m[3].str()));
+            ++count;
+        }
+    }
+    return count;
 }
 
 SourceLocation SourceMap::addrToSource(uint32_t addr) const {

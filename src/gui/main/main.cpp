@@ -29,6 +29,7 @@
 #include "audio_output.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
+#include "libcore/main/json_machine_loader.h"
 #include "libcore/main/image_loader.h"
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/io_registry.h"
@@ -43,6 +44,10 @@
 #include "include/util/logging.h"
 #include "gui_utils.h"
 #include "dock_layout.h"
+#include "source_pane.h"
+#include "libdebug/main/source_stepper.h"
+#include "libtoolchain/main/source_map.h"
+#include <filesystem>
 #include <wx/config.h>
 #include <memory>
 #include <map>
@@ -71,6 +76,13 @@ public:
 private:
     void OnLoadMachine(wxCommandEvent& event);
     void OnStep(wxCommandEvent& event);
+    void OnStepOver(wxCommandEvent& event);
+    void OnStepOut(wxCommandEvent& event);
+    void doStep(source_stepper::Mode mode);
+    void refreshAfterStop();
+    void updateSourceView();
+    void OnOpenSource(wxCommandEvent& event);
+    void OnLoadSourceMap(wxCommandEvent& event);
     void OnBackStep(wxCommandEvent& event);
     void OnRun(wxCommandEvent& event);
     void OnPause(wxCommandEvent& event);
@@ -142,6 +154,7 @@ private:
     RegisterWatchPane* m_regWatchPane = nullptr;
     TracePane* m_tracePane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
+    SourcePane*     m_sourcePane = nullptr;
 
     // Dockable layout (#146) and the View menu that opens its panes
     std::unique_ptr<DockLayout> m_dock;
@@ -482,6 +495,11 @@ public:
         PluginPaneManager::instance().registerPane(&s_builtInTapePane);
         PluginPaneManager::instance().registerPane(&s_builtInDrivePane);
         PluginLoader::instance().loadFromStandardLocations();
+        // JSON-defined machines, after the plugins they use (as the CLI and MCP do)
+        {
+            JsonMachineLoader jsonLoader;
+            jsonLoader.loadFile("machines/rawMega65.json");
+        }
         auto *frame = new MmemuFrame();
         frame->Show(true);
 
@@ -533,10 +551,15 @@ MmemuFrame::MmemuFrame()
     auto* menuFile = new wxMenu;
     menuFile->Append(ID_LOAD_MACHINE, "Load Machine...\tCtrl-L");
     menuFile->AppendSeparator();
+    menuFile->Append(ID_OPEN_SOURCE, "Open Source...\tCtrl-O");
+    menuFile->Append(ID_SAVE_SOURCE, "Save Source\tCtrl-S");
+    menuFile->AppendSeparator();
     menuFile->Append(wxID_EXIT);
     
     auto* menuControl = new wxMenu;
-    menuControl->Append(ID_STEP, "Step\tF11");
+    menuControl->Append(ID_STEP, "Step Into\tF11", "Next source line (into subroutines), or one instruction without a source map");
+    menuControl->Append(ID_STEP_OVER, "Step Over\tF10", "Next source line at this level (runs subroutines), or one instruction");
+    menuControl->Append(ID_STEP_OUT, "Step Out\tCtrl-F11", "Run until the current subroutine returns");
     menuControl->Append(ID_BACKSTEP, "Back Step\tShift-F11");
     menuControl->Append(ID_RUN, "Run\tF5");
     menuControl->Append(ID_PAUSE, "Pause\tF6");
@@ -565,6 +588,7 @@ MmemuFrame::MmemuFrame()
 
     auto* menuDebug = new wxMenu;
     menuDebug->Append(ID_ASSEMBLE, "Assemble...\tCtrl-A");
+    menuDebug->Append(ID_LOAD_SOURCE_MAP, "Load Source Map...", "Load a ca45 --source-map file for source-level debugging");
     menuDebug->AppendSeparator();
     menuDebug->Append(ID_GOTO_ADDR, "Go to Address...\tCtrl-G");
     menuDebug->Append(ID_SEARCH_MEM, "Search Memory...\tCtrl-F");
@@ -648,6 +672,9 @@ MmemuFrame::MmemuFrame()
     m_regWatchPane = new RegisterWatchPane(host);
     m_cartPane = new CartridgePane(host);
     m_mega65StatusPane = new Mega65StatusPane(host);
+    m_sourcePane = new SourcePane(host);
+    m_sourcePane->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
+    m_sourcePane->SetBreakpointsChangedCallback([this]() { if (m_bpPane) m_bpPane->RefreshValues(); });
 
     using Area = DockLayout::Area;
     m_dock->addPane("console",     "Console",          m_consolePane,          Area::Bottom, true);
@@ -662,6 +689,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("iowatch",     "I/O Watch",        m_regWatchPane,         Area::Side,   false);
     m_dock->addPane("cartridge",   "Cartridge",        m_cartPane,             Area::Side,   false);
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
+    m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
     m_dock->setAvailable("mega65", false);   // until a MEGA65 is loaded
 
     // Plugin panes: the screen goes in the centre, the rest onto the View menu
@@ -682,6 +710,11 @@ MmemuFrame::MmemuFrame()
     m_dock->restore();
     rebuildViewMenu();
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& e) {
+        if (m_sourcePane && m_sourcePane->HasUnsavedChanges() && e.CanVeto()) {
+            int answer = wxMessageBox("Save changes to modified source files?", "Quit",
+                                      wxYES_NO | wxCANCEL | wxICON_QUESTION, this);
+            if (answer == wxCANCEL || (answer == wxYES && !m_sourcePane->SaveAll())) { e.Veto(); return; }
+        }
         if (m_dock) m_dock->save();
         e.Skip();
     });
@@ -693,6 +726,11 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnLoadMachine, this, ID_LOAD_MACHINE);
     Bind(wxEVT_TOOL, &MmemuFrame::OnLoadMachine, this, ID_LOAD_MACHINE);
     Bind(wxEVT_MENU, &MmemuFrame::OnStep, this, ID_STEP);
+    Bind(wxEVT_MENU, &MmemuFrame::OnStepOver, this, ID_STEP_OVER);
+    Bind(wxEVT_MENU, &MmemuFrame::OnStepOut, this, ID_STEP_OUT);
+    Bind(wxEVT_MENU, &MmemuFrame::OnOpenSource, this, ID_OPEN_SOURCE);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { if (m_sourcePane) m_sourcePane->SaveCurrent(); }, ID_SAVE_SOURCE);
+    Bind(wxEVT_MENU, &MmemuFrame::OnLoadSourceMap, this, ID_LOAD_SOURCE_MAP);
     Bind(wxEVT_TOOL, &MmemuFrame::OnStep, this, ID_STEP);
     Bind(wxEVT_MENU, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
     Bind(wxEVT_TOOL, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
@@ -1051,7 +1089,10 @@ void MmemuFrame::OnLoadMachine(wxCommandEvent& event) {
 
 void MmemuFrame::loadMachineById(const std::string& id) {
     MachineDescriptor* md = MachineRegistry::instance().createMachine(id);
-    if (!md) return;
+    if (!md) {
+        SetStatusText("Unknown machine: " + id);
+        return;
+    }
 
     if (m_machine != md) delete m_machine;
     m_machine = md;
@@ -1096,6 +1137,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_regWatchPane->setMachine(m_machine);
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
+    m_sourcePane->SetDebugContext(m_dbg);
 
     // Show/hide MEGA65 status pane and Reset to Monitor menu based on machine type
     {
@@ -1157,15 +1199,95 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     SetStatusText(statusMsg);
 }
 
-void MmemuFrame::OnStep(wxCommandEvent& event) {
-    (void)event;
-    if (m_cpu) {
+void MmemuFrame::OnStep(wxCommandEvent&)     { doStep(source_stepper::Mode::Into); }
+void MmemuFrame::OnStepOver(wxCommandEvent&) { doStep(source_stepper::Mode::Over); }
+void MmemuFrame::OnStepOut(wxCommandEvent&)  { doStep(source_stepper::Mode::Out); }
+
+// Step by source line where the PC has a source mapping, otherwise by
+// instruction (Over runs a called subroutine to its return). Goes through
+// the machine scheduler, so devices advance as when running.
+void MmemuFrame::doStep(source_stepper::Mode mode) {
+    if (!m_cpu || m_running) return;
+    if (!m_dbg) {
         m_cpu->step();
-        m_regPane->RefreshValues();
-        m_disasmPane->RefreshValues(m_cpu->pc());
-        m_stackPane->RefreshValues();
-        for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
+    } else {
+        // Bounded so a runaway loop cannot freeze the window for long
+        auto r = source_stepper::step(*m_dbg, m_cpu, m_bus, m_machine, mode, 5000000);
+        wxString msg = source_stepper::stopName(r.stop);
+        if (!r.location.file.empty())
+            msg += wxString::Format(" - %s:%d",
+                                    wxString::FromUTF8(std::filesystem::path(r.location.file).filename().string()),
+                                    r.location.line);
+        if (r.stop == source_stepper::Stop::Breakpoint) msg = m_dbg->lastHitMessage();
+        SetStatusText(msg);
     }
+    refreshAfterStop();
+}
+
+void MmemuFrame::refreshAfterStop() {
+    if (!m_cpu) return;
+    m_regPane->RefreshValues();
+    m_disasmPane->RefreshValues(m_cpu->pc());
+    m_stackPane->RefreshValues();
+    if (m_bpPane) m_bpPane->RefreshValues();
+    for (auto* p : m_memPanes) p->UpdatePc(m_cpu->pc());
+    updateSourceView();
+}
+
+// Show the source line for the PC (opening the Source pane) when mapped
+void MmemuFrame::updateSourceView() {
+    if (!m_sourcePane || !m_cpu || !m_dbg) return;
+    if (m_sourcePane->ShowExecutionLine(m_cpu->pc()))
+        m_dock->open("source");
+    m_sourcePane->RefreshBreakpointMarkers();
+}
+
+void MmemuFrame::OnOpenSource(wxCommandEvent&) {
+    wxFileDialog dlg(this, "Open Source", "", "",
+                     "Source files (*.s;*.asm;*.s45;*.a65;*.inc;*.bas;*.c;*.h)|*.s;*.asm;*.s45;*.a65;*.inc;*.bas;*.c;*.h|"
+                     "All files (*)|*", wxFD_OPEN | wxFD_FILE_MUST_EXIST | wxFD_MULTIPLE);
+    if (dlg.ShowModal() != wxID_OK) return;
+    wxArrayString paths;
+    dlg.GetPaths(paths);
+    for (const auto& p : paths) m_sourcePane->OpenFile(p.utf8_string());
+    m_dock->open("source");
+}
+
+void MmemuFrame::OnLoadSourceMap(wxCommandEvent&) {
+    if (!m_dbg) { SetStatusText("Load a machine first."); return; }
+    wxFileDialog mapDlg(this, "Load ca45 Source Map", "", "",
+                        "Source maps (*.map;*.txt)|*.map;*.txt|All files (*)|*", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (mapDlg.ShowModal() != wxID_OK) return;
+    std::string mapPath = mapDlg.GetPath().utf8_string();
+
+    // ca45 maps do not name the source file: use the open editor tab, or a
+    // same-named source next to the map, or ask
+    std::string srcPath = m_sourcePane->CurrentFile();
+    if (srcPath.empty()) {
+        std::filesystem::path base(mapPath);
+        for (const char* ext : {".s", ".asm", ".s45", ".a65"}) {
+            auto cand = base; cand.replace_extension(ext);
+            if (std::filesystem::exists(cand)) { srcPath = cand.string(); break; }
+        }
+    }
+    if (srcPath.empty()) {
+        wxFileDialog srcDlg(this, "Source File for This Map", "", "",
+                            "Source files (*.s;*.asm;*.s45;*.a65)|*.s;*.asm;*.s45;*.a65|All files (*)|*",
+                            wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+        if (srcDlg.ShowModal() != wxID_OK) return;
+        srcPath = srcDlg.GetPath().utf8_string();
+    }
+
+    std::vector<std::pair<std::string, uint32_t>> symbols;
+    int n = m_dbg->sourceMap().loadCa45SourceMap(mapPath, srcPath, &symbols);
+    if (n == 0) { SetStatusText("No address mappings found in " + wxString::FromUTF8(mapPath)); return; }
+    for (const auto& [label, addr] : symbols) m_dbg->symbols().addSymbol(addr, label);
+    m_sourcePane->OpenFile(srcPath);
+    m_dock->open("source");
+    m_sourcePane->RefreshBreakpointMarkers(true);
+    updateSourceView();
+    SetStatusText(wxString::Format("Loaded %d source lines and %zu symbols for %s", n, symbols.size(),
+                                   wxString::FromUTF8(std::filesystem::path(srcPath).filename().string())));
 }
 
 void MmemuFrame::OnBackStep(wxCommandEvent& event) {
@@ -1184,6 +1306,7 @@ void MmemuFrame::OnBackStep(wxCommandEvent& event) {
 void MmemuFrame::OnRun(wxCommandEvent& event) {
     (void)event;
     if (m_dbg) m_dbg->resume();
+    if (m_sourcePane) m_sourcePane->ClearExecutionLine();
     m_running = true;
     SetStatusText("Running...");
 }
@@ -1192,6 +1315,7 @@ void MmemuFrame::OnPause(wxCommandEvent& event) {
     (void)event;
     m_running = false;
     SetStatusText("Paused.");
+    refreshAfterStop();
 }
 
 void MmemuFrame::OnReset(wxCommandEvent& event) {
@@ -1749,12 +1873,14 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 m_running = false;
                 SetStatusText(m_dbg->lastHitMessage());
                 if (m_bpPane) m_bpPane->RefreshValues();
+                updateSourceView();
                 break;
             }
             // Check for program end (e.g., RTS on empty stack, JMP *, invalid BRK)
             if (m_cpu && m_cpu->isProgramEnd(m_bus)) {
                 m_running = false;
                 SetStatusText("Program ended.");
+                updateSourceView();
                 break;
             }
             if ((iters & 1023) == 0 && std::chrono::steady_clock::now() >= deadline)
@@ -1776,6 +1902,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
         }
 
         // History panes: refresh only when paused AND visible (not on every tick while running)
+        if (m_sourcePane && m_sourcePane->IsShownOnScreen())
+            m_sourcePane->RefreshBreakpointMarkers();   // only redraws if breakpoints changed
         if (isPaused) {
             if (m_stackPane && m_stackPane->IsShownOnScreen())
                 m_stackPane->RefreshValues();

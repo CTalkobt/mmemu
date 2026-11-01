@@ -716,3 +716,33 @@ TEST_CASE(plugin_registry_dispatch) {
     handled = reg.dispatch(tokens);
     ASSERT(handled == false);
 }
+
+// `next` steps over subroutine calls (it used to behave like `step`, #147)
+TEST_CASE(cli_next_steps_over_calls) {
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+    cpu.setObserver(&dbg);
+    bus.setObserver(&dbg);
+    const uint8_t prog[] = { 0x20, 0x10, 0x10, 0xA9, 0x01, 0x4C, 0x05, 0x10 };   // JSR $1010 / LDA #1 / JMP *
+    for (int i = 0; i < (int)sizeof(prog); i++) bus.write8(0x1000 + i, prog[i]);
+    bus.write8(0x1010, 0xA2); bus.write8(0x1011, 0x00); bus.write8(0x1012, 0x60);  // LDX #0 / RTS
+    auto& sm = dbg.sourceMap();
+    sm.addMapping(0x1000, "prog.s", 1); sm.addMapping(0x1003, "prog.s", 2);
+    sm.addMapping(0x1010, "prog.s", 10); sm.addMapping(0x1012, "prog.s", 11);
+    cpu.setPc(0x1000);
+
+    CliContext ctx;
+    ctx.cpu = &cpu; ctx.bus = &bus; ctx.dbg = &dbg;
+    std::string out;
+    CliInterpreter cli(ctx, [&](const std::string& s) { out += s; });
+    cli.processLine("next");
+    ASSERT_EQ((int)cpu.pc(), 0x1003);
+    ASSERT(out.find("Reached source line 2") != std::string::npos);
+
+    cpu.setPc(0x1000);
+    out.clear();
+    cli.processLine("step");          // step (no count) still steps into
+    ASSERT_EQ((int)cpu.pc(), 0x1010);
+}

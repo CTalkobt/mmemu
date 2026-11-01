@@ -137,3 +137,99 @@ TEST_CASE(debug_6502_decode_entry_matches_disassembly) {
         }
     }
 }
+
+#include "libdebug/main/source_stepper.h"
+
+// Source stepping (#147). Program (6502):
+//   $1000 JSR $1010   line 1
+//   $1003 LDA #$01    line 2
+//   $1005 JMP $1005   line 3
+//   $1010 LDX #$00    line 10   (subroutine)
+//   $1012 RTS         line 11
+namespace {
+struct StepFixture {
+    FlatMemoryBus bus{"system", 16};
+    MOS6502 cpu;
+    DebugContext dbg{&cpu, &bus};
+    StepFixture() {
+        cpu.setDataBus(&bus);
+        cpu.setObserver(&dbg);
+        bus.setObserver(&dbg);
+        const uint8_t prog[] = { 0x20, 0x10, 0x10, 0xA9, 0x01, 0x4C, 0x05, 0x10 };
+        for (int i = 0; i < (int)sizeof(prog); i++) bus.write8(0x1000 + i, prog[i]);
+        bus.write8(0x1010, 0xA2); bus.write8(0x1011, 0x00); bus.write8(0x1012, 0x60);
+        cpu.setPc(0x1000);
+    }
+    void mapAll() {
+        auto& sm = dbg.sourceMap();
+        sm.addMapping(0x1000, "prog.s", 1);
+        sm.addMapping(0x1003, "prog.s", 2);
+        sm.addMapping(0x1005, "prog.s", 3);
+        sm.addMapping(0x1010, "prog.s", 10);
+        sm.addMapping(0x1012, "prog.s", 11);
+    }
+};
+}
+
+TEST_CASE(source_step_into_follows_call) {
+    StepFixture f; f.mapAll();
+    auto r = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Into);
+    ASSERT(r.stop == source_stepper::Stop::NewLine);
+    ASSERT_EQ(r.location.line, 10);
+    ASSERT_EQ((int)f.cpu.pc(), 0x1010);
+}
+
+TEST_CASE(source_step_over_runs_call) {
+    StepFixture f; f.mapAll();
+    auto r = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Over);
+    ASSERT(r.stop == source_stepper::Stop::NewLine);
+    ASSERT_EQ(r.location.line, 2);
+    ASSERT_EQ((int)f.cpu.pc(), 0x1003);
+}
+
+TEST_CASE(source_step_out_returns) {
+    StepFixture f; f.mapAll();
+    source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Into);   // into the subroutine
+    auto r = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Out);
+    ASSERT(r.stop == source_stepper::Stop::Returned);
+    ASSERT_EQ((int)f.cpu.pc(), 0x1003);
+    ASSERT_EQ(r.location.line, 2);
+    // At depth 0 there is nothing to step out of
+    auto r2 = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Out);
+    ASSERT(r2.stop == source_stepper::Stop::NotInRoutine);
+}
+
+TEST_CASE(source_step_without_mapping_steps_instructions) {
+    StepFixture f;   // no source map
+    auto r = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Over);
+    ASSERT(r.stop == source_stepper::Stop::NextInstruction);
+    ASSERT_EQ((int)f.cpu.pc(), 0x1003);                 // over the JSR, not into it
+    StepFixture g;
+    auto r2 = source_stepper::step(g.dbg, &g.cpu, &g.bus, nullptr, source_stepper::Mode::Into);
+    ASSERT(r2.stop == source_stepper::Stop::NextInstruction);
+    ASSERT_EQ((int)g.cpu.pc(), 0x1010);                 // into it
+}
+
+TEST_CASE(source_step_stops_at_breakpoint_and_limit) {
+    StepFixture f; f.mapAll();
+    f.dbg.breakpoints().add(0x1012, BreakpointType::EXEC);
+    auto r = source_stepper::step(f.dbg, &f.cpu, &f.bus, nullptr, source_stepper::Mode::Over);
+    ASSERT(r.stop == source_stepper::Stop::Breakpoint);  // inside the stepped-over call
+    ASSERT_EQ((int)f.cpu.pc(), 0x1012);
+
+    StepFixture g; g.mapAll();
+    g.cpu.setPc(0x1005);                                  // JMP * never leaves line 3
+    auto r2 = source_stepper::step(g.dbg, &g.cpu, &g.bus, nullptr, source_stepper::Mode::Into, 50);
+    ASSERT(r2.stop == source_stepper::Stop::StepLimit || r2.stop == source_stepper::Stop::ProgramEnd);
+}
+
+TEST_CASE(source_toggle_line_breakpoint) {
+    StepFixture f; f.mapAll();
+    uint32_t addr = 0;
+    ASSERT(source_stepper::toggleLineBreakpoint(f.dbg, "prog.s", 2, &addr) == source_stepper::LineBreakpoint::Added);
+    ASSERT_EQ((int)addr, 0x1003);
+    ASSERT_EQ((int)f.dbg.breakpoints().breakpoints().size(), 1);
+    ASSERT(source_stepper::toggleLineBreakpoint(f.dbg, "prog.s", 2) == source_stepper::LineBreakpoint::Removed);
+    ASSERT(f.dbg.breakpoints().breakpoints().empty());
+    ASSERT(source_stepper::toggleLineBreakpoint(f.dbg, "prog.s", 5) == source_stepper::LineBreakpoint::NoCode);
+}

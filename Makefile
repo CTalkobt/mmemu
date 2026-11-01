@@ -48,7 +48,7 @@ MANDIR   = man
 
 # wxWidgets configuration
 WXCXXFLAGS = $(shell wx-config --cxxflags)
-WXLIBS     = $(shell wx-config --libs aui,xrc,html,qa,core,xml,net,base)
+WXLIBS     = $(shell wx-config --libs aui,stc,xrc,html,qa,core,xml,net,base)
 
 # Plugins must NOT link spdlog/fmt themselves; they use host API function pointers.
 # The host binary (BASE_LIBS) exports spdlog symbols; dlopen resolves them at load time.
@@ -70,6 +70,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 	src/libtoolchain/main/source_map.cpp src/libtoolchain/main/toolchain_registry.cpp \
 	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
+	src/libdebug/main/source_stepper.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
@@ -236,6 +237,7 @@ PLUGIN_MEGA65_MATH_SRCS = src/plugins/devices/mega65_math/main/mega65_math.cpp \
 
 GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/dock_layout.cpp \
+	src/gui/main/source_pane.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
 	src/gui/main/memory_pane.cpp \

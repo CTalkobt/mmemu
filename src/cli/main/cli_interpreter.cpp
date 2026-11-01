@@ -1,5 +1,6 @@
 #include "cli_interpreter.h"
 #include "libcore/main/machine_speed.h"
+#include "libdebug/main/source_stepper.h"
 #include <csignal>
 #include "include/util/logging.h"
 #include "vice_snapshot.h"
@@ -28,6 +29,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 #include <algorithm>
 #include <set>
 #include <map>
@@ -45,6 +47,22 @@ int CliInterpreter::addrWidth() const {
     if (!m_ctx.bus) return 4;
     uint32_t bits = m_ctx.bus->config().addrBits;
     return (bits + 3) / 4;  // round up to nearest hex digit
+}
+
+// Report a source-level step the way the CLI always has
+static void reportSourceStep(const source_stepper::Result& r, const std::function<void(const std::string&)>& out) {
+    using source_stepper::Stop;
+    switch (r.stop) {
+        case Stop::NewLine:
+            out("Reached source line " + std::to_string(r.location.line) + " in " + r.location.file + "\n");
+            break;
+        case Stop::Breakpoint:   out("Breakpoint hit.\n"); break;
+        case Stop::ProgramEnd:   out("Program end reached.\n"); break;
+        case Stop::StepLimit:    out("Warning: Step limit reached (possible infinite loop)\n"); break;
+        case Stop::Interrupted:  out("Interrupted.\n"); break;
+        case Stop::NotInRoutine: out("Not inside a function call (stack depth is 0).\n"); break;
+        default: break;
+    }
 }
 
 void CliInterpreter::processLine(const std::string& line) {
@@ -237,68 +255,15 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
             showRegisters();
         } else if (m_ctx.dbg) {
-            // New behavior: source-level step (Phase 4 - step-into)
-            // Step to next source line, following function calls
-            uint32_t startPC = m_ctx.cpu->pc();
-            auto startLoc = m_ctx.dbg->sourceMap().addrToSource(startPC);
-
-            if (startLoc.file.empty()) {
-                // No source mapping - fall back to one instruction
+            // Source-level step into (one instruction where the PC has no mapping)
+            if (m_ctx.dbg->sourceMap().addrToSource(m_ctx.cpu->pc()).file.empty())
                 m_output("No source mapping for current PC. Executing one instruction.\n");
-                if (m_ctx.machine && m_ctx.machine->schedulerStep) {
-                    m_ctx.machine->schedulerStep(*m_ctx.machine);
-                } else {
-                    m_ctx.cpu->step();
-                }
-            } else {
-                // Source-level step: execute until we reach a different source line
+            else
                 m_output("Stepping to next source line (following function calls)...\n");
-                m_ctx.dbg->resume();
-
-                int steps = 0;
-                const int MAX_STEPS = 10000000;
-
-                // Execute instructions until we reach a different source line
-                while (steps < MAX_STEPS && !g_interrupted) {
-                    if (m_ctx.machine && m_ctx.machine->schedulerStep) {
-                        m_ctx.machine->schedulerStep(*m_ctx.machine);
-                    } else {
-                        m_ctx.cpu->step();
-                    }
-                    ++steps;
-
-                    // Check if we hit a breakpoint
-                    if (m_ctx.dbg->isPaused()) {
-                        m_output("Breakpoint hit.\n");
-                        break;
-                    }
-
-                    // Check if program ended
-                    if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
-                        m_output("Program end reached.\n");
-                        break;
-                    }
-
-                    // Check if we reached a new source line
-                    uint32_t currentPC = m_ctx.cpu->pc();
-                    auto currentLoc = m_ctx.dbg->sourceMap().addrToSource(currentPC);
-
-                    // Stop if we're on a different line (in any file)
-                    if (!currentLoc.file.empty() &&
-                        (currentLoc.file != startLoc.file || currentLoc.line != startLoc.line)) {
-                        m_output("Reached source line " + std::to_string(currentLoc.line) + " in " + currentLoc.file + "\n");
-                        break;
-                    }
-                }
-
-                if (steps >= MAX_STEPS) {
-                    m_output("Warning: Step limit reached (possible infinite loop)\n");
-                }
-                if (g_interrupted) {
-                    m_output("Interrupted.\n");
-                    g_interrupted = 0;
-                }
-            }
+            auto r = source_stepper::step(*m_ctx.dbg, m_ctx.cpu, m_ctx.bus, m_ctx.machine,
+                                          source_stepper::Mode::Into, 10000000, &g_interrupted);
+            if (r.stop == source_stepper::Stop::Interrupted) g_interrupted = 0;
+            reportSourceStep(r, m_output);
             showRegisters();
         } else {
             // No source mapping available, just execute one instruction
@@ -327,124 +292,37 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
     } else if (cmd == "next") {
         if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
-
-        // Get current source line
-        uint32_t startPC = m_ctx.cpu->pc();
-        auto startLoc = m_ctx.dbg->sourceMap().addrToSource(startPC);
-
-        if (startLoc.file.empty()) {
-            m_output("No source mapping for current PC. Load source (.loc directives) to use 'next'.\n");
+        if (m_ctx.dbg->sourceMap().addrToSource(m_ctx.cpu->pc()).file.empty()) {
+            m_output("No source mapping for current PC. Load a source map (srcmap load) to use 'next'.\n");
             return;
         }
-
+        // Step over: next source line at the same call depth or shallower
         m_output("Stepping to next source line...\n");
-        m_ctx.dbg->resume();
-
-        int steps = 0;
-        const int MAX_STEPS = 10000000;  // Safety limit to prevent infinite loops
-
-        // Execute instructions until we reach a different source line
-        while (steps < MAX_STEPS && !g_interrupted) {
-            if (m_ctx.machine && m_ctx.machine->schedulerStep) {
-                m_ctx.machine->schedulerStep(*m_ctx.machine);
-            } else {
-                m_ctx.cpu->step();
-            }
-            ++steps;
-
-            // Check if we hit a breakpoint
-            if (m_ctx.dbg->isPaused()) {
-                m_output("Breakpoint hit.\n");
-                break;
-            }
-
-            // Check if program ended
-            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
-                m_output("Program end reached.\n");
-                break;
-            }
-
-            // Check if we reached a new source line
-            uint32_t currentPC = m_ctx.cpu->pc();
-            auto currentLoc = m_ctx.dbg->sourceMap().addrToSource(currentPC);
-
-            // Stop if we're on a different line in the same file, or different file entirely
-            if (!currentLoc.file.empty() &&
-                (currentLoc.file != startLoc.file || currentLoc.line != startLoc.line)) {
-                m_output("Reached source line " + std::to_string(currentLoc.line) + " in " + currentLoc.file + "\n");
-                break;
-            }
-        }
-
-        if (steps >= MAX_STEPS) {
-            m_output("Warning: Step limit reached (possible infinite loop)\n");
-        }
-        if (g_interrupted) {
-            m_output("Interrupted.\n");
-            g_interrupted = 0;
-        }
-
+        auto r = source_stepper::step(*m_ctx.dbg, m_ctx.cpu, m_ctx.bus, m_ctx.machine,
+                                      source_stepper::Mode::Over, 10000000, &g_interrupted);
+        if (r.stop == source_stepper::Stop::Interrupted) g_interrupted = 0;
+        reportSourceStep(r, m_output);
         showRegisters();
     } else if (cmd == "finish") {
         if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
-
-        int startDepth = m_ctx.dbg->stackTrace().depth();
-
-        if (startDepth == 0) {
+        if (m_ctx.dbg->stackTrace().depth() == 0) {
             m_output("Not inside a function call (stack depth is 0).\n");
             return;
         }
-
         m_output("Running until function returns...\n");
-        m_ctx.dbg->resume();
-
-        int steps = 0;
-        const int MAX_STEPS = 10000000;  // Safety limit
-
-        // Execute instructions until stack depth decreases (return from function)
-        while (steps < MAX_STEPS && !g_interrupted) {
-            if (m_ctx.machine && m_ctx.machine->schedulerStep) {
-                m_ctx.machine->schedulerStep(*m_ctx.machine);
-            } else {
-                m_ctx.cpu->step();
-            }
-            ++steps;
-
-            // Check if we hit a breakpoint
-            if (m_ctx.dbg->isPaused()) {
-                m_output("Breakpoint hit.\n");
-                break;
-            }
-
-            // Check if program ended
-            if (m_ctx.cpu->isProgramEnd(m_ctx.bus)) {
-                m_output("Program end reached.\n");
-                break;
-            }
-
-            // Check if we've returned from the function (stack depth decreased)
-            int currentDepth = m_ctx.dbg->stackTrace().depth();
-            if (currentDepth < startDepth) {
-                uint32_t returnPC = m_ctx.cpu->pc();
-                auto loc = m_ctx.dbg->sourceMap().addrToSource(returnPC);
-                if (!loc.file.empty()) {
-                    m_output("Function returned at $" + toHex(returnPC) +
-                             " (" + loc.file + ":" + std::to_string(loc.line) + ")\n");
-                } else {
-                    m_output("Function returned at $" + toHex(returnPC) + "\n");
-                }
-                break;
-            }
+        auto r = source_stepper::step(*m_ctx.dbg, m_ctx.cpu, m_ctx.bus, m_ctx.machine,
+                                      source_stepper::Mode::Out, 10000000, &g_interrupted);
+        if (r.stop == source_stepper::Stop::Interrupted) g_interrupted = 0;
+        if (r.stop == source_stepper::Stop::Returned) {
+            uint32_t returnPC = m_ctx.cpu->pc();
+            if (!r.location.file.empty())
+                m_output("Function returned at $" + toHex(returnPC) +
+                         " (" + r.location.file + ":" + std::to_string(r.location.line) + ")\n");
+            else
+                m_output("Function returned at $" + toHex(returnPC) + "\n");
+        } else {
+            reportSourceStep(r, m_output);
         }
-
-        if (steps >= MAX_STEPS) {
-            m_output("Warning: Step limit reached (possible infinite loop)\n");
-        }
-        if (g_interrupted) {
-            m_output("Interrupted.\n");
-            g_interrupted = 0;
-        }
-
         showRegisters();
     } else if (cmd == "until") {
         if (!m_ctx.cpu || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
@@ -2322,6 +2200,45 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
            << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
         m_output(os.str());
+    } else if (cmd == "srcmap") {
+        if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
+        auto& map = m_ctx.dbg->sourceMap();
+        std::string sub;
+        ss >> sub;
+        if (sub == "load") {
+            std::string mapPath, srcPath;
+            if (!(ss >> mapPath)) { m_output("Syntax: srcmap load <ca45 source map> [source file]\n"); return; }
+            if (!(ss >> srcPath)) {
+                // Guess the source next to the map: same name, common assembly extensions
+                std::filesystem::path base(mapPath);
+                for (const char* ext : {".s", ".asm", ".s45", ".a65"}) {
+                    auto cand = base; cand.replace_extension(ext);
+                    if (std::filesystem::exists(cand)) { srcPath = cand.string(); break; }
+                }
+                if (srcPath.empty()) {
+                    m_output("Could not guess the source file; use: srcmap load <map> <source file>\n");
+                    return;
+                }
+            }
+            std::vector<std::pair<std::string, uint32_t>> symbols;
+            int n = map.loadCa45SourceMap(mapPath, srcPath, &symbols);
+            if (n == 0) { m_output("No address mappings found in " + mapPath + "\n"); return; }
+            for (const auto& [label, addr] : symbols) m_ctx.dbg->symbols().addSymbol(addr, label);
+            m_output("Loaded " + std::to_string(n) + " source lines for " + SourceMap::normalizePath(srcPath)
+                     + " and " + std::to_string(symbols.size()) + " symbols.\n");
+        } else if (sub == "list") {
+            auto files = map.getSourceFiles();
+            if (files.empty()) { m_output("No source map loaded.\n"); return; }
+            for (const auto& f : files) {
+                auto range = map.getLineRange(f);
+                m_output(f + "  (lines " + std::to_string(range.first) + "-" + std::to_string(range.second) + ")\n");
+            }
+        } else if (sub == "clear") {
+            map.clear();
+            m_output("Source map cleared.\n");
+        } else {
+            m_output("Syntax: srcmap load <map> [source] | srcmap list | srcmap clear\n");
+        }
     } else if (cmd == "speed") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
@@ -3155,6 +3072,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  srcmap load <map> [src] - Load a ca45 --source-map file for source-level debugging\n"
+                 "  srcmap list|clear   - Show or clear loaded source mappings\n"
                  "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"

@@ -53,7 +53,7 @@ DockLayout::DockLayout(wxFrame* frame) : m_frame(frame) {
     auto* placeholder = new wxPanel(frame);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->AddStretchSpacer();
-    sizer->Add(new wxStaticText(placeholder, wxID_ANY, "No machine loaded — File > Load Machine (Ctrl-L)"),
+    sizer->Add(new wxStaticText(placeholder, wxID_ANY, "No machine loaded - File > Load Machine (Ctrl-L)"),
                0, wxALIGN_CENTER);
     sizer->AddStretchSpacer();
     placeholder->SetSizer(sizer);
