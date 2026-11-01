@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <functional>
 
 /**
  * Singleton manager for plugin-provided GUI panes.
@@ -41,6 +42,17 @@ public:
      */
     void populateMenu(wxMenuBar* menuBar);
 
+    /**
+     * Let the host place plugin panes (e.g. in a dock layout) instead of
+     * adding them to the notebook passed to onMachineSwitch(). onAdd runs after
+     * a pane is created; onRemove runs before it is destroyed.
+     */
+    using PaneHostFn = std::function<void(const PluginPaneInfo&, wxWindow*)>;
+    void setHost(PaneHostFn onAdd, PaneHostFn onRemove) {
+        m_hostAdd = std::move(onAdd);
+        m_hostRemove = std::move(onRemove);
+    }
+
 private:
     PluginPaneManager() = default;
 
@@ -53,4 +65,5 @@ private:
     std::map<std::string, LivePane> m_livePanes; // paneId -> LivePane
     std::string m_currentMachineId;
     wxAuiNotebook* m_notebook = nullptr;
+    PaneHostFn m_hostAdd, m_hostRemove;
 };

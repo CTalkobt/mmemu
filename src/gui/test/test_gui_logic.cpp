@@ -97,3 +97,50 @@ TEST_CASE(gui_keyboard_mapping) {
     ASSERT(wxKeyToVic20Name(WXK_NUMPAD5) == "5");
     ASSERT(wxKeyToVic20Name(0xFFFF) == ""); // Unknown key
 }
+
+// #146: a host (the dock layout) places plugin panes instead of a notebook.
+// onAdd runs after a pane is created, onRemove before it is destroyed.
+static std::vector<std::string> g_hostEvents;
+static void* createHostPane(void*, void*) { g_hostEvents.push_back("create"); return (void*)0x3000; }
+static void destroyHostPane(void*, void*) { g_hostEvents.push_back("destroy"); }
+
+TEST_CASE(plugin_pane_manager_host_callbacks) {
+    PluginPaneManager& manager = PluginPaneManager::instance();
+    static const char* ids[] = {"host_test_machine", nullptr};
+    PluginPaneInfo info;
+    std::memset(&info, 0, sizeof(info));
+    info.paneId = "host_test_pane";
+    info.displayName = "Host Test";
+    info.machineIds = ids;
+    info.createPane = createHostPane;
+    info.destroyPane = destroyHostPane;
+    manager.registerPane(&info);
+
+    g_hostEvents.clear();
+    manager.setHost(
+        [](const PluginPaneInfo& p, wxWindow* w) {
+            if (std::string(p.paneId) == "host_test_pane" && w == (wxWindow*)0x3000) g_hostEvents.push_back("add");
+        },
+        [](const PluginPaneInfo& p, wxWindow* w) {
+            if (std::string(p.paneId) == "host_test_pane" && w == (wxWindow*)0x3000) g_hostEvents.push_back("remove");
+        });
+
+    manager.onMachineSwitch("host_test_machine", (wxWindow*)0xDEADBEEF, nullptr, nullptr);
+    manager.onMachineSwitch("some_other_machine", (wxWindow*)0xDEADBEEF, nullptr, nullptr);
+    manager.setHost(nullptr, nullptr);
+
+    std::vector<std::string> expected = {"create", "add", "remove", "destroy"};
+    ASSERT(g_hostEvents == expected);
+}
+
+#include "dock_layout.h"
+
+TEST_CASE(dock_layout_id_lists_round_trip) {
+    using dock_layout_detail::joinIds;
+    using dock_layout_detail::splitIds;
+    std::vector<std::string> ids = {"console", "cpu", "breakpoints"};
+    ASSERT(joinIds(ids) == "console,cpu,breakpoints");
+    ASSERT(splitIds("console,cpu,breakpoints") == ids);
+    ASSERT(splitIds("").empty());
+    ASSERT(splitIds(",cpu,,") == std::vector<std::string>{"cpu"});
+}
