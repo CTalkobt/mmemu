@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <iomanip>
@@ -9,6 +10,8 @@
 #include "libtoolchain/main/idisasm.h"
 #include "libtoolchain/main/iassembler.h"
 #include "libdebug/main/debug_context.h"
+#include "libproject/main/project.h"
+#include <memory>
 
 struct CliContext {
     MachineDescriptor* machine = nullptr;
@@ -34,6 +37,8 @@ public:
 
 private:
     void handleNormalCommand(const std::string& line);
+    void handleProjectCommand(std::stringstream& ss);
+    std::unique_ptr<project::Config> m_project;   // open Makefile project (#148)
     void handleAssemblyLine(const std::string& line);
     void printHelp(const std::string& category = "");
     void printHelpOverview();

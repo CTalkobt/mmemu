@@ -1,6 +1,10 @@
 #include "cli_interpreter.h"
 #include "libcore/main/machine_speed.h"
 #include "libdebug/main/source_stepper.h"
+#include "libproject/main/make_runner.h"
+#include "libproject/main/diagnostics.h"
+#include "libproject/main/launcher.h"
+#include "libproject/main/templates.h"
 #include <csignal>
 #include "include/util/logging.h"
 #include "vice_snapshot.h"
@@ -63,6 +67,100 @@ static void reportSourceStep(const source_stepper::Result& r, const std::functio
         case Stop::NotInRoutine: out("Not inside a function call (stack depth is 0).\n"); break;
         default: break;
     }
+}
+
+// project open <dir> | info | build [target] | run | close   (#148)
+void CliInterpreter::handleProjectCommand(std::stringstream& ss) {
+    std::string sub;
+    ss >> sub;
+    if (sub == "open") {
+        std::string dir;
+        std::getline(ss >> std::ws, dir);
+        if (dir.empty()) dir = ".";
+        auto cfg = std::make_unique<project::Config>();
+        std::string err;
+        if (!project::open(dir, *cfg, err)) { m_output("Error: " + err + "\n"); return; }
+        m_project = std::move(cfg);
+        m_output("Opened project " + m_project->name + " (" + m_project->dir + ")\n");
+        return;
+    }
+    if (sub == "templates") {
+        for (const auto& t : project::templates())
+            m_output(t.id + std::string(16 - std::min<size_t>(15, t.id.size()), ' ') + t.description + "\n");
+        return;
+    }
+    if (sub == "new") {
+        std::string id, dir;
+        ss >> id;
+        std::getline(ss >> std::ws, dir);
+        if (id.empty() || dir.empty()) { m_output("Syntax: project new <template> <dir>  (see: project templates)\n"); return; }
+        std::string err, mainFile;
+        if (!project::createFromTemplate(dir, id, project::findMmemuCli(), err, &mainFile)) {
+            m_output("Error: " + err + "\n");
+            return;
+        }
+        auto cfg = std::make_unique<project::Config>();
+        if (!project::open(dir, *cfg, err)) { m_output("Error: " + err + "\n"); return; }
+        m_project = std::move(cfg);
+        m_output("Created " + id + " project in " + m_project->dir + " (main file " + mainFile +
+                 "); it is now open. Try: project run\n");
+        return;
+    }
+    if (sub == "close") { m_project.reset(); m_output("Project closed.\n"); return; }
+    if (!m_project) { m_output("No project open. Use: project open <dir>\n"); return; }
+    const project::Config& cfg = *m_project;
+
+    if (sub == "info" || sub.empty()) {
+        std::string env;
+        for (const auto& [k, v] : cfg.env) env += k + "=" + v + " ";
+        m_output("Project:  " + cfg.name + "\nDir:      " + cfg.dir +
+                 "\nMachine:  " + (cfg.machine.empty() ? "(current)" : cfg.machine) +
+                 "\nBuild:    make " + cfg.buildTarget + "\nRun:      make " + cfg.runTarget +
+                 ", load " + cfg.load + (cfg.reset ? ", reset first" : "") + "\nEnv:      " + env + "\n");
+        return;
+    }
+    if (sub != "build" && sub != "run") {
+        m_output("Syntax: project open <dir> | info | build [target] | run | close\n");
+        return;
+    }
+
+    std::string target = sub == "run" ? cfg.runTarget : cfg.buildTarget;
+    if (sub == "build") { std::string t; if (ss >> t) target = t; }
+    auto before = project::snapshotPrograms(cfg.dir);
+    project::DiagnosticParser parser(cfg.dir);
+    int errors = 0, warnings = 0;
+    m_output("make " + target + "\n");
+    auto res = project::runMake(cfg, target, [&](const std::string& line) {
+        m_output(line + "\n");
+        if (auto d = parser.feed(line)) {
+            if (d->severity == project::Diagnostic::Severity::Error) ++errors;
+            else if (d->severity == project::Diagnostic::Severity::Warning) ++warnings;
+        }
+    });
+    if (!res.started || !res.error.empty()) { m_output("Error: " + res.error + "\n"); return; }
+    std::string summary = std::to_string(errors) + " error(s), " + std::to_string(warnings) + " warning(s)";
+    if (!res.ok()) {
+        m_output("Build failed (make exit " + std::to_string(res.exitCode) + "): " + summary + "\n");
+        return;
+    }
+    m_output("Build succeeded: " + summary + "\n");
+    if (sub == "build") return;
+
+    std::string file = project::programToRun(cfg, before);
+    if (file.empty()) {
+        m_output("No .prg found after make " + target +
+                 "; set run.load in .mmsim/project.json to choose the file.\n");
+        return;
+    }
+    if (!cfg.machine.empty() && (!m_ctx.machine || m_ctx.machine->machineId != cfg.machine))
+        handleNormalCommand("create " + cfg.machine);
+    if (!m_ctx.machine || !m_ctx.dbg) { m_output("No machine created.\n"); return; }
+    auto launched = project::launch(*m_ctx.machine, m_ctx.dbg, file, cfg.reset);
+    m_output(launched.message + "\n");
+    if (!launched.ok) return;
+    std::string dbgInfo = project::loadDebugInfo(*m_ctx.dbg, cfg);
+    if (!dbgInfo.empty()) m_output(dbgInfo + "\n");
+    m_output("Program started; use 'run' to let it execute.\n");
 }
 
 void CliInterpreter::processLine(const std::string& line) {
@@ -2200,6 +2298,8 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
            << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
         m_output(os.str());
+    } else if (cmd == "project") {
+        handleProjectCommand(ss);
     } else if (cmd == "srcmap") {
         if (!m_ctx.dbg) { m_output("No machine created.\n"); return; }
         auto& map = m_ctx.dbg->sourceMap();
@@ -3072,6 +3172,12 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  project open <dir>  - Open a Makefile project (optional .mmsim/project.json)\n"
+                 "  project build [tgt] - Run make (default target: all)\n"
+                 "  project run         - make run, then load and start the new .prg\n"
+                 "  project info|close  - Show or close the open project\n"
+                 "  project templates   - List new-project templates\n"
+                 "  project new <t> <dir> - Create a project from a template and open it\n"
                  "  srcmap load <map> [src] - Load a ca45 --source-map file for source-level debugging\n"
                  "  srcmap list|clear   - Show or clear loaded source mappings\n"
                  "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"

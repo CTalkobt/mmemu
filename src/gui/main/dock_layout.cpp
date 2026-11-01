@@ -271,13 +271,49 @@ void DockLayout::save() {
     cfg->Flush();
 }
 
-void DockLayout::resetToDefaults() {
+std::vector<std::string> DockLayout::idsIn(wxAuiNotebook* book) const {
+    std::vector<std::string> ids;
+    for (size_t i = 0; i < book->GetPageCount(); ++i)
+        if (const Pane* p = findByWindow(book->GetPage(i))) ids.push_back(p->id);
+    return ids;
+}
+
+void DockLayout::closeAllPanes() {
     for (auto& p : m_panes)
         if (wxAuiNotebook* book = bookContaining(p.window)) {
             book->RemovePage(book->GetPageIndex(p.window));
             p.window->Hide();
             p.window->Reparent(m_frame);
         }
+}
+
+std::string DockLayout::captureState() {
+    return joinIds(idsIn(m_bottom)) + "\n" + joinIds(idsIn(m_side)) + "\n" +
+           m_aui.SavePerspective().utf8_string();
+}
+
+void DockLayout::showOnly(const std::vector<std::string>& bottom, const std::vector<std::string>& side) {
+    closeAllPanes();
+    for (const auto& id : bottom) if (Pane* p = find(id); p && p->available) addToBook(*p, m_bottom, false);
+    for (const auto& id : side)   if (Pane* p = find(id); p && p->available) addToBook(*p, m_side, false);
+    if (m_bottom->GetPageCount() > 0) m_bottom->SetSelection(0);
+    if (m_side->GetPageCount() > 0) m_side->SetSelection(0);
+    syncDocks();
+    changed();
+}
+
+void DockLayout::applyState(const std::string& state) {
+    std::vector<std::string> parts;
+    size_t start = 0, nl;
+    while ((nl = state.find('\n', start)) != std::string::npos) { parts.push_back(state.substr(start, nl - start)); start = nl + 1; }
+    parts.push_back(state.substr(start));
+    if (parts.size() < 2) return;
+    if (parts.size() >= 3 && !parts[2].empty()) m_aui.LoadPerspective(wxString::FromUTF8(parts[2]), false);
+    showOnly(splitIds(parts[0]), splitIds(parts[1]));
+}
+
+void DockLayout::resetToDefaults() {
+    closeAllPanes();
     m_savedBottom.clear();
     m_savedSide.clear();
     m_lastArea.clear();

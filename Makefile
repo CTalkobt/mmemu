@@ -66,9 +66,13 @@ LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_re
                     src/libdevices/main/ivideo_output.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
                     src/libdevices/main/ieee488.cpp
+LIBPROJECT_SRCS   = src/libproject/main/project.cpp src/libproject/main/make_runner.cpp \
+	src/libproject/main/diagnostics.cpp src/libproject/main/launcher.cpp \
+	src/libproject/main/templates.cpp
 LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main/variable_symbol.cpp \
 	src/libtoolchain/main/source_map.cpp src/libtoolchain/main/toolchain_registry.cpp \
-	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp
+	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp \
+	src/libtoolchain/main/basic_tokenizer.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
 	src/libdebug/main/source_stepper.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
@@ -352,6 +356,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdebug/test/test_lua_event_registry.cpp \
 	tests/src/test_mcp_integration.cpp \
 	src/libtoolchain/test/test_source_map.cpp \
+	src/libtoolchain/test/test_basic_tokenizer.cpp \
+	src/libproject/test/test_project.cpp \
 	src/plugins/cbm-loader/test/test_tap_parser.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
 	src/plugins/devices/mega65_rtc/test/test_mega65_rtc.cpp \
@@ -469,6 +475,7 @@ LIBMEM_OBJS       = $(LIBMEM_SRCS:.cpp=.o)
 LIBCORE_OBJS      = $(LIBCORE_SRCS:.cpp=.o)
 LIBDEVICES_OBJS   = $(LIBDEVICES_SRCS:.cpp=.o)
 LIBTOOLCHAIN_OBJS = $(LIBTOOLCHAIN_SRCS:.cpp=.o)
+LIBPROJECT_OBJS   = $(LIBPROJECT_SRCS:.cpp=.o)
 LIBDEBUG_OBJS     = $(LIBDEBUG_SRCS:.cpp=.o)
 LIBPLUGINS_OBJS   = $(LIBPLUGINS_SRCS:.cpp=.o)
 
@@ -569,9 +576,10 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-cbm-hle.so
 
 LIBS = $(ILIBDIR)/libmem.a $(ILIBDIR)/libcore.a $(ILIBDIR)/libdevices.a \
-	$(ILIBDIR)/libtoolchain.a $(ILIBDIR)/libdebug.a $(ILIBDIR)/libplugins.a
+	$(ILIBDIR)/libtoolchain.a $(ILIBDIR)/libdebug.a $(ILIBDIR)/libplugins.a \
+	$(ILIBDIR)/libproject.a
 
-BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt /lib/x86_64-linux-gnu/liblua5.4.so
+BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lproject -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt /lib/x86_64-linux-gnu/liblua5.4.so
 
 # ---------------------------------------------------------------------------
 # Build rules
@@ -603,6 +611,9 @@ $(ILIBDIR)/libdebug.a: $(LIBDEBUG_OBJS) | $(ILIBDIR)
 	$(AR) rcs $@ $^
 
 $(ILIBDIR)/libplugins.a: $(LIBPLUGINS_OBJS) | $(ILIBDIR)
+	$(AR) rcs $@ $^
+
+$(ILIBDIR)/libproject.a: $(LIBPROJECT_OBJS) | $(ILIBDIR)
 	$(AR) rcs $@ $^
 
 # Plugin rules

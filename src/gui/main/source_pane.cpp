@@ -14,6 +14,8 @@ constexpr int kMarginSymbols = 1;
 constexpr int kMarkBreakpoint = 0;
 constexpr int kMarkExecArrow  = 1;
 constexpr int kMarkExecLine   = 2;
+constexpr int kMarkErrorLine  = 3;
+constexpr int kMarkWarnLine   = 4;
 
 // 6502 / 65CE02 / 45GS02 mnemonics (lowercase: the asm lexer lowercases words)
 const char* kAsmMnemonics =
@@ -134,7 +136,8 @@ bool SourcePane::OpenFile(const std::string& rawPath) {
     configureEditor(stc, path);
     stc->EmptyUndoBuffer();
     stc->SetSavePoint();
-    m_docs.push_back({path, stc});
+    std::error_code ec;
+    m_docs.push_back({path, stc, std::filesystem::last_write_time(path, ec)});
     Doc& doc = m_docs.back();
     m_book->AddPage(stc, wxString::FromUTF8(std::filesystem::path(path).filename().string()), true);
     m_book->SetPageToolTip(m_book->GetPageIndex(stc), wxString::FromUTF8(path));
@@ -144,6 +147,7 @@ bool SourcePane::OpenFile(const std::string& rawPath) {
     stc->Bind(wxEVT_STC_SAVEPOINTREACHED, [this, stc](wxStyledTextEvent&) { if (Doc* d = docForCtrl(stc)) updateTabTitle(*d); });
     stc->Bind(wxEVT_STC_MARGINCLICK, &SourcePane::onMarginClick, this);
     RefreshBreakpointMarkers(true);
+    applyDiagnostics(doc);
     return true;
 }
 
@@ -226,6 +230,10 @@ void SourcePane::configureEditor(wxStyledTextCtrl* stc, const std::string& path)
     stc->MarkerDefine(kMarkExecArrow, wxSTC_MARK_SHORTARROW, wxColour(0x80, 0x60, 0x00), wxColour(0xFF, 0xD0, 0x30));
     stc->MarkerDefine(kMarkExecLine, wxSTC_MARK_BACKGROUND, wxNullColour,
                       dark ? wxColour(0x4A, 0x42, 0x10) : wxColour(0xFF, 0xF3, 0xB0));
+    stc->MarkerDefine(kMarkErrorLine, wxSTC_MARK_BACKGROUND, wxNullColour,
+                      dark ? wxColour(0x5A, 0x1E, 0x1E) : wxColour(0xFF, 0xD6, 0xD6));
+    stc->MarkerDefine(kMarkWarnLine, wxSTC_MARK_BACKGROUND, wxNullColour,
+                      dark ? wxColour(0x4E, 0x3C, 0x10) : wxColour(0xFF, 0xE8, 0xC0));
 }
 
 void SourcePane::updateTabTitle(Doc& doc) {
@@ -241,6 +249,8 @@ bool SourcePane::saveDoc(Doc& doc) {
         if (m_status) m_status("Could not save " + wxString::FromUTF8(doc.path));
         return false;
     }
+    std::error_code ec;
+    doc.mtime = std::filesystem::last_write_time(doc.path, ec);
     updateTabTitle(doc);
     return true;
 }
@@ -303,6 +313,52 @@ void SourcePane::onMarginClick(wxStyledTextEvent& e) {
     }
     RefreshBreakpointMarkers(true);
     if (m_bpChanged) m_bpChanged();
+}
+
+bool SourcePane::ShowLine(const std::string& rawPath, int line) {
+    const std::string path = SourceMap::normalizePath(rawPath);
+    if (!OpenFile(path)) return false;
+    Doc* d = findDoc(path);
+    if (!d || line < 1) return d != nullptr;
+    d->stc->EnsureVisibleEnforcePolicy(line - 1);
+    d->stc->GotoLine(line - 1);
+    d->stc->SetSelection(d->stc->PositionFromLine(line - 1), d->stc->GetLineEndPosition(line - 1));
+    d->stc->SetFocus();
+    return true;
+}
+
+void SourcePane::ReloadChangedFiles() {
+    for (auto& d : m_docs) {
+        std::error_code ec;
+        auto t = std::filesystem::last_write_time(d.path, ec);
+        if (ec || t == d.mtime || d.stc->GetModify()) continue;
+        int firstLine = d.stc->GetFirstVisibleLine();
+        int pos = d.stc->GetCurrentPos();
+        if (!d.stc->LoadFile(wxString::FromUTF8(d.path))) continue;
+        d.stc->EmptyUndoBuffer();
+        d.stc->SetSavePoint();
+        d.stc->GotoPos(std::min(pos, d.stc->GetLength()));
+        d.stc->SetFirstVisibleLine(firstLine);
+        d.mtime = t;
+        updateTabTitle(d);
+        applyDiagnostics(d);
+        if (m_status) m_status("Reloaded " + wxString::FromUTF8(std::filesystem::path(d.path).filename().string()));
+    }
+    RefreshBreakpointMarkers(true);
+}
+
+void SourcePane::SetDiagnostics(const std::vector<LineMark>& marks) {
+    m_diagnostics = marks;
+    for (auto& m : m_diagnostics) m.file = SourceMap::normalizePath(m.file);
+    for (auto& d : m_docs) applyDiagnostics(d);
+}
+
+void SourcePane::applyDiagnostics(Doc& doc) {
+    doc.stc->MarkerDeleteAll(kMarkErrorLine);
+    doc.stc->MarkerDeleteAll(kMarkWarnLine);
+    for (const auto& m : m_diagnostics)
+        if (m.file == doc.path && m.line >= 1)
+            doc.stc->MarkerAdd(m.line - 1, m.error ? kMarkErrorLine : kMarkWarnLine);
 }
 
 void SourcePane::ClearExecutionLine() {

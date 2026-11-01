@@ -72,6 +72,15 @@ public:
     void save();
     void resetToDefaults();
 
+    /**
+     * The current arrangement as a string (open panes per dock + AUI dock
+     * sizes), and back. Used for the Edit / Debug layouts (#149).
+     */
+    std::string captureState();
+    void applyState(const std::string& state);
+    /** Open exactly these panes (others closed), keeping the dock sizes. */
+    void showOnly(const std::vector<std::string>& bottom, const std::vector<std::string>& side);
+
     /** Called after any open/close/move so menus can update their check marks. */
     void setOnChange(std::function<void()> cb) { m_onChange = std::move(cb); }
 
@@ -84,6 +93,8 @@ private:
     wxAuiNotebook* bookFor(Area a) const { return a == Area::Side ? m_side : m_bottom; }
     wxAuiNotebook* bookContaining(wxWindow* w) const;
     void addToBook(Pane& p, wxAuiNotebook* book, bool select);
+    std::vector<std::string> idsIn(wxAuiNotebook* book) const;
+    void closeAllPanes();
     void syncDocks();   // show/hide each notebook's dock by whether it has tabs
     void changed();
 
