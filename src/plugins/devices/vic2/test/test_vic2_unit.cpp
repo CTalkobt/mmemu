@@ -4,6 +4,7 @@
 #include "libdevices/main/isignal_line.h"
 #include <cstring>
 #include <vector>
+#include <utility>
 
 namespace {
 
@@ -214,9 +215,9 @@ TEST_CASE(vic2_render_sprite) {
     VicFixture f;
     // Enable sprite 0
     f.vic.ioWrite(nullptr, 0xD015, 0x01);
-    // Position at (50, 50)
+    // Position at sprite coordinates (50, 60)
     f.vic.ioWrite(nullptr, 0xD000, 50);
-    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 60);
     // Color = white (1)
     f.vic.ioWrite(nullptr, 0xD027, 0x01);
 
@@ -232,8 +233,93 @@ TEST_CASE(vic2_render_sprite) {
     uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // Pixel at (50, 50) should be white
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF);
+    // Sprite (X, Y) lands at frame (X - 24 + DISPLAY_X, Y - 50 + DISPLAY_Y)
+    int fx = 50 - 24 + VIC2::DISPLAY_X, fy = 60 - 50 + VIC2::DISPLAY_Y;
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx], (uint32_t)0xFFFFFFFF);
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + 23], (uint32_t)0xFFFFFFFF);
+    ASSERT_NE(buf[fy * VIC2::FRAME_W + fx + 24], (uint32_t)0xFFFFFFFF);
+    ASSERT_NE(buf[fy * VIC2::FRAME_W + fx - 1], (uint32_t)0xFFFFFFFF);
+}
+
+namespace {
+// Sprite 0 with data at $0340, colour cyan (3); returns the frame position of its top-left pixel.
+std::pair<int,int> setupSprite0(VicFixture& f, int x, int y) {
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, (uint8_t)x);
+    f.vic.ioWrite(nullptr, 0xD010, x > 255 ? 1 : 0);
+    f.vic.ioWrite(nullptr, 0xD001, (uint8_t)y);
+    f.vic.ioWrite(nullptr, 0xD027, 0x03);
+    f.bus.write8(0x07F8, 0x0D);
+    return {x - 24 + VIC2::DISPLAY_X, y - 50 + VIC2::DISPLAY_Y};
+}
+uint32_t pal(VicFixture& f, int idx) {
+    // Read a palette colour through the border
+    f.vic.ioWrite(nullptr, 0xD020, (uint8_t)idx);
+    std::vector<uint32_t> b(VIC2::FRAME_W * VIC2::FRAME_H);
+    f.vic.renderFrame(b.data());
+    return b[0];
+}
+}
+
+// #159: multicolour sprites use pixel pairs: 01 = $D025, 10 = sprite colour, 11 = $D026
+TEST_CASE(vic2_render_multicolor_sprite) {
+    VicFixture f;
+    uint32_t c5 = pal(f, 5), c3 = pal(f, 3), c7 = pal(f, 7);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    auto [fx, fy] = setupSprite0(f, 100, 100);
+    f.vic.ioWrite(nullptr, 0xD01C, 0x01);   // sprite 0 multicolour
+    f.vic.ioWrite(nullptr, 0xD025, 0x05);   // MC0 = green
+    f.vic.ioWrite(nullptr, 0xD026, 0x07);   // MC1 = yellow
+    f.bus.write8(0x0340, 0x1B);             // pairs 00 01 10 11
+
+    std::vector<uint32_t> buf(VIC2::FRAME_W * VIC2::FRAME_H);
+    f.vic.renderFrame(buf.data());
+    uint32_t bg = buf[fy * VIC2::FRAME_W + fx - 1];
+    const uint32_t want[8] = {bg, bg, c5, c5, c3, c3, c7, c7};
+    for (int i = 0; i < 8; ++i)
+        ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + i], want[i]);
+
+    // The same data as a hires sprite: every set bit in the sprite colour
+    f.vic.ioWrite(nullptr, 0xD01C, 0x00);
+    f.vic.renderFrame(buf.data());
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + 3], c3);   // bit 4 of $1B set
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + 2], bg);   // bit 5 clear
+}
+
+// Sprites are covered by the border (it is drawn over them on the VIC-II)
+TEST_CASE(vic2_sprite_clipped_by_border) {
+    VicFixture f;
+    uint32_t c3 = pal(f, 3);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    auto [fx, fy] = setupSprite0(f, 12, 100);          // starts 12 px left of the display
+    f.bus.write8(0x0340, 0xFF); f.bus.write8(0x0341, 0xFF); f.bus.write8(0x0342, 0xFF);
+    std::vector<uint32_t> buf(VIC2::FRAME_W * VIC2::FRAME_H);
+    f.vic.renderFrame(buf.data());
+    ASSERT_NE(buf[fy * VIC2::FRAME_W + fx], c3);       // in the border
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + VIC2::DISPLAY_X], c3);
+}
+
+// $D01B: a behind-background sprite is hidden by foreground pixels only
+TEST_CASE(vic2_sprite_background_priority) {
+    VicFixture f;
+    uint32_t c3 = pal(f, 3);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    // Character 1 at the top-left cell: left half set (hires text, colour RAM 1)
+    f.charRom[1 * 8 + 0] = 0xF0;
+    f.bus.write8(0x0400, 0x01);
+    f.colorRam[0] = 0x01;
+    auto [fx, fy] = setupSprite0(f, 24, 50);            // exactly over that cell
+    f.bus.write8(0x0340, 0xFF);
+    std::vector<uint32_t> buf(VIC2::FRAME_W * VIC2::FRAME_H);
+
+    f.vic.renderFrame(buf.data());
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx], c3);        // in front by default
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + 5], c3);
+
+    f.vic.ioWrite(nullptr, 0xD01B, 0x01);               // behind background
+    f.vic.renderFrame(buf.data());
+    ASSERT_NE(buf[fy * VIC2::FRAME_W + fx], c3);        // char pixel set: covered
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx + 5], c3);    // char pixel clear: visible
 }
 
 TEST_CASE(vic2_bank_select) {
@@ -528,7 +614,7 @@ TEST_CASE(vic2_sprite_y_expansion) {
     f.vic.ioWrite(nullptr, 0xD015, 0x01); // SPENA
     f.vic.ioWrite(nullptr, 0xD017, 0x01); // YXPAND sprite 0
     f.vic.ioWrite(nullptr, 0xD000, 50);   // SP0X
-    f.vic.ioWrite(nullptr, 0xD001, 50);   // SP0Y
+    f.vic.ioWrite(nullptr, 0xD001, 60);   // SP0Y
     f.vic.ioWrite(nullptr, 0xD027, 0x01); // SP0COL = white
 
     // Sprite pointer at default screen base + $3F8
@@ -542,12 +628,13 @@ TEST_CASE(vic2_sprite_y_expansion) {
     uint32_t buf[VIC2::FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // Y-expanded: row 0 of sprite data appears at y=50 AND y=51
-    ASSERT_EQ(buf[50 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF);
-    ASSERT_EQ(buf[51 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF); // duplicated row
+    // Y-expanded: row 0 of sprite data covers two frame lines
+    int fx = 50 - 24 + VIC2::DISPLAY_X, fy = 60 - 50 + VIC2::DISPLAY_Y;
+    ASSERT_EQ(buf[fy * VIC2::FRAME_W + fx], (uint32_t)0xFFFFFFFF);
+    ASSERT_EQ(buf[(fy + 1) * VIC2::FRAME_W + fx], (uint32_t)0xFFFFFFFF); // duplicated row
 
-    // Row 2 (next sprite data row at y=52,53) should NOT be white (data is 0)
-    ASSERT_NE(buf[52 * VIC2::FRAME_W + 50], (uint32_t)0xFFFFFFFF);
+    // Sprite row 1 (frame lines fy+2, fy+3) should NOT be white (data is 0)
+    ASSERT_NE(buf[(fy + 2) * VIC2::FRAME_W + fx], (uint32_t)0xFFFFFFFF);
 }
 
 // --- Logger callback ---
