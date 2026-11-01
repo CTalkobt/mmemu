@@ -1477,7 +1477,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_output("Formats:\n");
             for (const auto& f : gfx::formats()) {
                 std::ostringstream os;
-                os << "  " << std::left << std::setw(10) << f.id << f.label << " (" << f.width << "x"
+                os << "  " << std::left << std::setw(12) << f.id << f.label << " (" << f.width << "x"
                    << f.height << ", " << f.stride << " bytes)\n";
                 m_output(os.str());
             }
