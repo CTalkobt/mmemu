@@ -146,8 +146,9 @@ bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             *val = 0xFF; // paddle inputs not implemented
             break;
         case OSC3:
-            // Upper 8 bits of voice 3 phase accumulator.
-            *val = (uint8_t)(m_voices[2].phase >> 16);
+            // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
+            // folded triangle, pulse, noise etc., not the raw accumulator.
+            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2])) >> 4);
             break;
         case ENV3:
             *val = m_voices[2].envLevel;
@@ -221,23 +222,52 @@ void SID6581::tick(uint64_t cycles) {
 // ---------------------------------------------------------------------------
 
 void SID6581::synthesize(uint64_t cycles) {
-    // Advance all three voice oscillators and envelopes.
-    // Voice sync source: v0 syncs to v2, v1 syncs to v0, v2 syncs to v1
-    // (standard C64 wiring: voice N is synced/ring-mod by voice N-1, wrapping).
+    // Voice N is synced / ring-modulated by voice N-1, wrapping (v0←v2,
+    // v1←v0, v2←v1).
     //
-    // A silent idle voice (common: SIDs untouched during boot) has freq 0, no
-    // sync and no test bit, so its phase cannot move, there is no LFSR edge and
-    // only the idle envelope accumulator changes: skip the call for it.
-    auto silentIdle = [](const Voice& v) {
-        return v.freq == 0 && !(v.cr & (CR_SYNC | CR_TEST)) && v.envPhase == Voice::Env::IDLE &&
-               ((v.phase >> 19) & 1) == v.prevBit19;
+    // 1. Oscillators. As in reSID, all three accumulators advance first and
+    //    hard sync is applied afterwards from the sync sources' MSB rising
+    //    edges, so the result does not depend on the order voices are updated.
+    //    riseAt[i] = cycle (1..cycles) of voice i's last MSB rising edge in
+    //    this tick, 0 if none.
+    uint64_t riseAt[3] = {0, 0, 0};
+    bool anyRise = false;
+    if (m_voices[0].freq | m_voices[1].freq | m_voices[2].freq) {   // all silent: nothing moves
+        for (int i = 0; i < 3; ++i) {
+            Voice& v = m_voices[i];
+            if ((v.cr & CR_TEST) || v.freq == 0) continue;   // test bit freezes the oscillator
+            uint64_t f = v.freq, p0 = v.phase, end = p0 + f * cycles;
+            if (end >= 0x800000) {
+                // Last crossing of 0x800000 + k * 2^24 (bit 23 going 0 -> 1)
+                uint64_t c = 0x800000 + (((end - 0x800000) >> 24) << 24);
+                if (c > p0) { riseAt[i] = (c - p0 + f - 1) / f; anyRise = true; }
+            }
+            v.phase = (uint32_t)(end & 0xFFFFFF);
+        }
+    }
+    for (int i = 0; anyRise && i < 3; ++i) {
+        Voice& v = m_voices[i];
+        int src = (i + 2) % 3, srcSrc = (i + 1) % 3;
+        if (!(v.cr & CR_SYNC) || (v.cr & CR_TEST) || !riseAt[src]) continue;
+        // reSID: no sync when the source is itself being synced in that cycle
+        if ((m_voices[src].cr & CR_SYNC) && riseAt[srcSrc] == riseAt[src]) continue;
+        // Reset to 0 at the edge, then run for the rest of the tick
+        v.phase = (uint32_t)(((uint64_t)v.freq * (cycles - riseAt[src])) & 0xFFFFFF);
+    }
+
+    // 2. Noise LFSR and envelopes. A silent idle voice (common: SIDs untouched
+    //    during boot) has no LFSR edge and only its idle envelope accumulator
+    //    changes: skip the call for it.
+    auto lfsrAndEnvelope = [&](Voice& v) {
+        if (v.freq == 0 && !(v.cr & CR_TEST) && v.envPhase == Voice::Env::IDLE &&
+            ((v.phase >> 19) & 1) == v.prevBit19)
+            v.envAccum += cycles;
+        else
+            tickVoice(v, cycles, m_clockHz);
     };
-    if (silentIdle(m_voices[0])) m_voices[0].envAccum += cycles;
-    else tickVoice(m_voices[0], m_voices[2], cycles, m_clockHz);
-    if (silentIdle(m_voices[1])) m_voices[1].envAccum += cycles;
-    else tickVoice(m_voices[1], m_voices[0], cycles, m_clockHz);
-    if (silentIdle(m_voices[2])) m_voices[2].envAccum += cycles;
-    else tickVoice(m_voices[2], m_voices[1], cycles, m_clockHz);
+    lfsrAndEnvelope(m_voices[0]);
+    lfsrAndEnvelope(m_voices[1]);
+    lfsrAndEnvelope(m_voices[2]);
 
     // Determine how many output samples this tick spans. Most ticks are one
     // CPU instruction and produce none, so return before any filter maths.
@@ -317,19 +347,9 @@ void SID6581::synthesize(uint64_t cycles) {
 // Per-voice oscillator and envelope advance
 // ---------------------------------------------------------------------------
 
-void SID6581::tickVoice(Voice& v, Voice& syncSrc, uint64_t cycles, uint32_t clockHz) {
+void SID6581::tickVoice(Voice& v, uint64_t cycles, uint32_t clockHz) {
+    // The oscillator phase (and hard sync) is advanced in synthesize()
     if (v.cr & CR_TEST) return; // test bit freezes oscillator
-
-
-    uint32_t prevPhase = v.phase;
-    v.phase = (v.phase + (uint32_t)v.freq * (uint32_t)cycles) & 0xFFFFFF;
-
-    // Hard sync: if sync source overflowed, reset our phase to 0.
-    if ((v.cr & CR_SYNC) && (syncSrc.phase < (uint32_t)syncSrc.freq)) {
-        // Approximate: sync source overflowed if its current phase < freq
-        // (it just wrapped around). This is not cycle-exact but functional.
-        v.phase = 0;
-    }
 
     // Noise LFSR: clocked on rising edge of phase bit 19.
     uint32_t bit19 = (v.phase >> 19) & 1;
@@ -339,7 +359,6 @@ void SID6581::tickVoice(Voice& v, Voice& syncSrc, uint64_t cycles, uint32_t cloc
         v.lfsr = ((v.lfsr << 1) | newBit) & 0x7FFFFFu;
     }
     v.prevBit19 = bit19;
-    (void)prevPhase;
 
     // ---------------------------------------------------------------------------
     // Envelope generator
@@ -434,20 +453,19 @@ uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb) const {
     return out;
 }
 
-float SID6581::voiceOutput(const Voice& v) const {
-    // Sync / ring source is the previous voice (wiring: v0←v2, v1←v0, v2←v1).
-    // We only need syncReset and ringMsb for the waveform call, approximated here.
-    bool syncReset = false; // sync already applied in tickVoice
-    bool ringMsb   = false; // approximate: ring mod not fully cycle-exact here
+bool SID6581::ringMsbFor(const Voice& v) const {
+    // Ring modulation only when the voice's RING bit is set: the triangle then
+    // folds on (own MSB XOR source MSB), as in reSID. Source = previous voice.
+    if (!(v.cr & CR_RING)) return false;
+    int srcIdx = (int)(&v - m_voices + 2) % 3;
+    return (m_voices[srcIdx].phase & 0x800000u) != 0u;
+}
 
-    // Find source voice index (v0's source is v2, etc.)
-    int srcIdx = -1;
-    for (int i = 0; i < 3; ++i) {
-        if (&m_voices[i] == &v) { srcIdx = (i + 2) % 3; break; }
-    }
-    if (srcIdx >= 0) {
-        ringMsb = (m_voices[srcIdx].phase & 0x800000u) != 0u;
-    }
+float SID6581::voiceOutput(const Voice& v) const {
+    // Ring / sync source is the previous voice (wiring: v0←v2, v1←v0, v2←v1).
+    bool syncReset = false; // sync already applied in synthesize()
+
+    bool ringMsb = ringMsbFor(v);
 
     uint16_t raw = v.waveOutput(syncReset, ringMsb);
 
