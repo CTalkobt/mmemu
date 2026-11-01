@@ -256,7 +256,7 @@ void VIC2::log(int level, const char* msg) const {
 
 void VIC2::renderFrame(uint32_t* buf) {
     renderBackground(buf);
-    renderSprites(buf);
+    renderSprites(buf, m_fgMask.data());
 }
 
 void VIC2::renderBackground(uint32_t* buf) {
@@ -268,6 +268,10 @@ void VIC2::renderBackground(uint32_t* buf) {
 
     // Fill with border color
     for (int i = 0; i < FRAME_W * FRAME_H; ++i) buf[i] = extCol;
+    // Foreground mask for sprite-background priority: hires 1 bits and
+    // multicolour 10/11 pairs are foreground; 0 and 01 are background.
+    m_fgMask.assign((size_t)FRAME_W * FRAME_H, 0);
+    uint8_t* fg = m_fgMask.data();
 
     bool bmm = (m_regs[SCR1] & SCR1_BMM) != 0;
     bool ecm = (m_regs[SCR1] & SCR1_ECM) != 0;
@@ -320,7 +324,9 @@ void VIC2::renderBackground(uint32_t* buf) {
                         for (int b = 7; b >= 0; --b) {
                             int fx = px + (7 - b);
                             if (fx < DISPLAY_X || fx >= DISPLAY_X + DISPLAY_W) continue;
-                            buf[fy * FRAME_W + fx] = (bits >> b) & 1 ? fgCol : bgCol;
+                            bool on = (bits >> b) & 1;
+                            buf[fy * FRAME_W + fx] = on ? fgCol : bgCol;
+                            fg[fy * FRAME_W + fx] = on;
                         }
                     }
                 } else {
@@ -344,6 +350,7 @@ void VIC2::renderBackground(uint32_t* buf) {
                             if (fx >= DISPLAY_X && fx + 1 < DISPLAY_X + DISPLAY_W) {
                                 buf[fy * FRAME_W + fx]     = c;
                                 buf[fy * FRAME_W + fx + 1] = c;
+                                fg[fy * FRAME_W + fx] = fg[fy * FRAME_W + fx + 1] = (sel >= 2);
                             }
                         }
                     }
@@ -397,6 +404,7 @@ void VIC2::renderBackground(uint32_t* buf) {
                             if (fx >= DISPLAY_X && fx + 1 < DISPLAY_X + DISPLAY_W) {
                                 buf[fy * FRAME_W + fx]     = mc[sel];
                                 buf[fy * FRAME_W + fx + 1] = mc[sel];
+                                fg[fy * FRAME_W + fx] = fg[fy * FRAME_W + fx + 1] = (sel >= 2);
                             }
                         }
                     } else {
@@ -405,7 +413,9 @@ void VIC2::renderBackground(uint32_t* buf) {
                         for (int b = 7; b >= 0; --b) {
                             int fx = px + (7 - b);
                             if (fx < DISPLAY_X || fx >= DISPLAY_X + DISPLAY_W) continue;
-                            buf[fy * FRAME_W + fx] = (bits >> b) & 1 ? fgCol : bgPx;
+                            bool on = (bits >> b) & 1;
+                            buf[fy * FRAME_W + fx] = on ? fgCol : bgPx;
+                            fg[fy * FRAME_W + fx] = on;
                         }
                     }
                 }
@@ -418,63 +428,71 @@ void VIC2::renderBackground(uint32_t* buf) {
 // Sprite rendering
 // ---------------------------------------------------------------------------
 
-void VIC2::renderSprites(uint32_t* buf) {
+void VIC2::renderSprites(uint32_t* buf, const uint8_t* fgMask) {
+    if (!m_regs[SPENA]) return;
     uint32_t scrBase = screenBase();
+    uint32_t mc0 = palette(m_regs[SPMC0] & 0x0F);
+    uint32_t mc1 = palette(m_regs[SPMC1] & 0x0F);
 
-    // Render sprites in reverse priority order (sprite 7 first, 0 last → 0 on top)
-    for (int sp = 7; sp >= 0; --sp) {
-        if (!(m_regs[SPENA] & (1 << sp))) continue; // sprite disabled
+    // The highest-priority (lowest-numbered) sprite with a non-transparent
+    // pixel decides it; its $D01B bit then decides whether a background
+    // foreground pixel covers it.
+    std::vector<uint32_t> col((size_t)FRAME_W * FRAME_H);
+    std::vector<int8_t>   owner((size_t)FRAME_W * FRAME_H, -1);
 
-        // Sprite position
-        uint16_t spX = (uint16_t)m_regs[SP0X + sp * 2];
-        if (m_regs[MSIGX] & (1 << sp)) spX |= 0x100;
-        uint8_t  spY = m_regs[SP0Y + sp * 2];
+    for (int sp = 7; sp >= 0; --sp) {           // 0 drawn last -> on top
+        if (!(m_regs[SPENA] & (1 << sp))) continue;
 
-        bool xExp = (m_regs[XXPAND] & (1 << sp)) != 0;
-        bool yExp = (m_regs[YXPAND] & (1 << sp)) != 0;
+        int spX = m_regs[SP0X + sp * 2] | ((m_regs[MSIGX] & (1 << sp)) ? 0x100 : 0);
+        int spY = m_regs[SP0Y + sp * 2];
+        int fx0 = spX - SPRITE_X_ORIGIN + DISPLAY_X;
+        int fy0 = spY - SPRITE_Y_ORIGIN + DISPLAY_Y;
 
-        uint8_t  colorIdx = m_regs[SP0COL + sp] & 0x0F;
-        uint32_t spColor  = palette(colorIdx);
+        bool xExp  = (m_regs[XXPAND] & (1 << sp)) != 0;
+        bool yExp  = (m_regs[YXPAND] & (1 << sp)) != 0;
+        bool multi = (m_regs[SPMC]   & (1 << sp)) != 0;
+        uint32_t spColor = palette(m_regs[SP0COL + sp] & 0x0F);
+        // Multicolour pairs: 01 = $D025, 10 = sprite colour, 11 = $D026
+        const uint32_t mcCols[4] = {0, mc0, spColor, mc1};
 
-        // Fetch sprite pointer from end of screen RAM
-        uint32_t ptrAddr = scrBase + 0x03F8 + sp;
-        uint8_t  ptrVal  = dmaPeek(ptrAddr);
-        uint32_t dataAddr = ptrVal * 64;
+        uint32_t dataAddr = (uint32_t)dmaPeek(scrBase + 0x03F8 + sp) * 64;
+        int xScale = xExp ? 2 : 1;
+        int yScale = yExp ? 2 : 1;
 
         for (int r = 0; r < 21; ++r) {
-            uint32_t rowBits = (dmaPeek(dataAddr + r * 3) << 16) |
-                               (dmaPeek(dataAddr + r * 3 + 1) << 8) |
-                               (dmaPeek(dataAddr + r * 3 + 2));
-
-            int py = spY + (yExp ? r * 2 : r);
-            if (py < 0 || py >= FRAME_H) continue;
-
-            for (int b = 0; b < 24; ++b) {
-                bool bit = (rowBits >> (23 - b)) & 1;
-                if (!bit) continue;
-
-                int pxStart = spX + (xExp ? b * 2 : b);
-                int pxEnd   = xExp ? pxStart + 2 : pxStart + 1;
-
-                for (int px = pxStart; px < pxEnd; ++px) {
-                    if (px < 0 || px >= FRAME_W) continue;
-                    buf[py * FRAME_W + px] = spColor;
-                }
-            }
-            if (yExp && (py + 1 < FRAME_H)) {
-                // duplicate row for Y expansion
+            uint32_t rowBits = ((uint32_t)dmaPeek(dataAddr + r * 3) << 16) |
+                               ((uint32_t)dmaPeek(dataAddr + r * 3 + 1) << 8) |
+                                (uint32_t)dmaPeek(dataAddr + r * 3 + 2);
+            if (!rowBits) continue;
+            for (int dy = 0; dy < yScale; ++dy) {
+                int py = fy0 + r * yScale + dy;
+                if (py < DISPLAY_Y || py >= DISPLAY_Y + DISPLAY_H) continue;
                 for (int b = 0; b < 24; ++b) {
-                    bool bit = (rowBits >> (23 - b)) & 1;
-                    if (!bit) continue;
-                    int pxStart = spX + (xExp ? b * 2 : b);
-                    int pxEnd   = xExp ? pxStart + 2 : pxStart + 1;
-                    for (int px = pxStart; px < pxEnd; ++px) {
-                        if (px < 0 || px >= FRAME_W) continue;
-                        buf[(py+1) * FRAME_W + px] = spColor;
+                    uint32_t c;
+                    if (multi) {
+                        int sel = (rowBits >> (22 - (b & ~1))) & 3;   // pixel pairs
+                        if (!sel) continue;
+                        c = mcCols[sel];
+                    } else {
+                        if (!((rowBits >> (23 - b)) & 1)) continue;
+                        c = spColor;
+                    }
+                    for (int dx = 0; dx < xScale; ++dx) {
+                        int px = fx0 + b * xScale + dx;
+                        if (px < DISPLAY_X || px >= DISPLAY_X + DISPLAY_W) continue;
+                        col[(size_t)py * FRAME_W + px] = c;
+                        owner[(size_t)py * FRAME_W + px] = (int8_t)sp;
                     }
                 }
             }
         }
+    }
+
+    for (size_t i = 0; i < owner.size(); ++i) {
+        int sp = owner[i];
+        if (sp < 0) continue;
+        if (fgMask && (m_regs[SPBGPR] & (1 << sp)) && fgMask[i]) continue;
+        buf[i] = col[i];
     }
 }
 

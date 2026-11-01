@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/ivideo_inspect.h"
@@ -219,7 +221,20 @@ protected:
     virtual uint32_t charBitmapBase() const;
 
     void renderBackground(uint32_t* buf);
-    void renderSprites(uint32_t* buf);
+    /**
+     * Draw the enabled sprites over buf (FRAME_W x FRAME_H), clipped to the
+     * display window: hires or multicolour ($D01C, shared colours $D025/$D026),
+     * X/Y expansion, lower sprite numbers on top. With fgMask (one byte per
+     * frame pixel, non-zero = background foreground), sprites whose $D01B bit
+     * is set appear behind foreground pixels.
+     */
+    void renderSprites(uint32_t* buf, const uint8_t* fgMask = nullptr);
+
+    /** Sprite coordinates of the top-left display pixel (C64 PRG: X=24, Y=50). */
+    static constexpr int SPRITE_X_ORIGIN = 24;
+    static constexpr int SPRITE_Y_ORIGIN = 50;
+
+    std::vector<uint8_t> m_fgMask;  ///< filled by renderBackground for sprite priority
     void updateIrq();
 
     std::string  m_name;
