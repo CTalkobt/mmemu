@@ -46,7 +46,9 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
         IVideoInspect::SpriteInfo si;
         if (!video->spriteInfo(req.sprite, si)) { v.error = "No such sprite."; return v; }
         start = si.dataAddr;
-        fmt = si.sixteenColor ? Format::Sprite16
+        // 16-colour sprites are 16 pixels wide only with SPRX64EN; otherwise
+        // 3 bytes per row give 6 pixels (MEGA65 book, Full-Colour Sprite Mode)
+        fmt = si.sixteenColor ? (si.wide64 ? Format::Sprite16 : Format::Sprite16Narrow)
             : si.wide64       ? Format::Sprite64
             : si.multicolor   ? Format::SpriteMulti
                               : Format::SpriteHires;

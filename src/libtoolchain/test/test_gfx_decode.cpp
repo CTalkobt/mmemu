@@ -63,6 +63,14 @@ TEST_CASE(gfx_decode_4bpp_and_8bpp) {
     auto s16 = gfx::decode(gfx::Format::Sprite16, mem.fn(), 0x4000);
     ASSERT_EQ(s16[0], 1);
     ASSERT_EQ(s16[1], 2);
+    // 16-colour sprite without SPRX64EN: 6 pixels from 3 bytes per row
+    mem.m[0x4003] = 0x9A;   // row 1, first byte
+    auto s16n = gfx::decode(gfx::Format::Sprite16Narrow, mem.fn(), 0x4000);
+    ASSERT_EQ(s16n.size(), (size_t)(6 * 21));
+    ASSERT_EQ(s16n[0], 1);
+    ASSERT_EQ(s16n[1], 2);
+    ASSERT_EQ(s16n[6], 9);
+    ASSERT_EQ(s16n[7], 0xA);
     // FCM: one byte per pixel
     mem.m[0x4009] = 0xAB;
     auto fcm = gfx::decode(gfx::Format::CharFCM, mem.fn(), 0x4000);

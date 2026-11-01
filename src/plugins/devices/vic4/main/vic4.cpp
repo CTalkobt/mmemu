@@ -38,6 +38,9 @@ void VIC4::reset() {
 
     // $D05D.7 HOTREG: VIC-II hot registers enabled by default
     m_extRegs[0x1D] = 0x80;
+    // viciv.vhdl defaults: single_side_border = 80 ($D05C), sprite_first_x = 31 ($D067)
+    m_extRegs[0x1C] = 80;
+    m_extRegs[0x27] = 31;
     m_legacyTouched = false;
 }
 
@@ -64,6 +67,14 @@ void VIC4::interpretLegacyRegisters() {
 
     // Character set: only the VIC-II bank bits 15-14 follow $DD00
     m_extRegs[0x29] = (m_extRegs[0x29] & 0x3F) | ((m_bankBase >> 8) & 0xC0);
+
+    // $D04C/$D04D TEXTXPOS (x_chargen_start) = side border + 2 x $D016 X scroll
+    // (VIC-II pixels are two physical pixels); H640 subtracts the VIC-III
+    // compatibility delta of 2 (bug_compat_vic_iii_d016_delta).
+    int textX = (int)getSideBorderWidth() + 2 * (m_regs[0x16] & 0x07) - (h640 ? 2 : 0);
+    if (textX < 0) textX = 0;
+    m_extRegs[0x0C] = textX & 0xFF;
+    m_extRegs[0x0D] = (m_extRegs[0x0D] & 0xF0) | ((textX >> 8) & 0x0F);
 }
 
 void VIC4::tick(uint64_t cycles) {
@@ -559,9 +570,13 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
 
     // $D054 bit 4 SPR640: sprite X and pixels in physical (640) pixels;
     // otherwise VIC-II resolution, each sprite pixel two physical pixels wide.
+    // viciv.vhdl: the sprite X counter starts one pixel after the physical
+    // pixel counter reaches $D067 (sprite_first_x), or at pixel 0 with SPR640.
+    // The frame draws the text area (physical TEXTXPOS) at V4_DISPLAY_X.
     bool spr640 = (d054() & D054_SPRH640) != 0;
     int  xScale = spr640 ? 1 : 2;
-    int  xOrigin = SPRITE_X_ORIGIN * (spr640 ? 2 : 1);
+    int  xStart = spr640 ? 0 : (int)m_extRegs[0x27] + 1;
+    int  textX  = (int)getTextXPos();
 
     // Sprite pointer base: $D06C-$D06E (24-bit, bottom 7 bits of $D06E)
     uint32_t sprPtrBase = (uint32_t)m_extRegs[0x2C]
@@ -582,7 +597,7 @@ void VIC4::renderSpritesV4(uint32_t* buf) {
         int rawX = m_regs[SP0X + sp * 2] | ((m_regs[MSIGX] & (1 << sp)) ? 0x100 : 0);
         if (spr640 && (sprXSMsbs & (1 << sp))) rawX |= 0x200;
         int rawY = m_regs[SP0Y + sp * 2] | ((sprYMsbs & (1 << sp)) ? 0x100 : 0);
-        int fx0 = V4_DISPLAY_X + (rawX - xOrigin) * xScale;
+        int fx0 = V4_DISPLAY_X + xStart + rawX * xScale - textX;
         int fy0 = DISPLAY_Y + (rawY - SPRITE_Y_ORIGIN);
 
         bool xExp   = (m_regs[XXPAND] & (1 << sp)) != 0;

@@ -105,8 +105,9 @@ public:
      * Draw the enabled sprites over a V4_FRAME_W x FRAME_H frame, clipped to
      * the display window. Mono, multicolour ($D01C, 8-bit $D025/$D026) and
      * 16-colour sprites (palette sprite*16+nibble); 24/64 wide, variable
-     * height, X/Y expansion, SPR640. Sprite X=24 (48 with SPR640) and Y=50
-     * are the display's top-left, as on the VIC-II. Lower sprite numbers are
+     * height, X/Y expansion, SPR640. X is placed as in viciv.vhdl: physical
+     * pixel $D067+1+2X (SPR640: X), relative to TEXTXPOS ($D04C), so with the
+     * defaults X=24 meets the text area; Y=50 is its top line. Lower sprite numbers are
      * on top; $D01B puts a sprite behind foreground pixels in m_fgMaskV4.
      */
     void renderSpritesV4(uint32_t* buf);

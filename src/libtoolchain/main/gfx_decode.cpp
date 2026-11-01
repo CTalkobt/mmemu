@@ -11,6 +11,7 @@ const std::vector<FormatInfo>& formats() {
         {Format::SpriteMulti, "sprite-mc",  "Sprite (multicolour)",       12, 21, 2, 2, 3,   64,  true,  false},
         {Format::Sprite64,    "sprite64",   "Sprite 64-wide (VIC-IV)",    64, 21, 1, 1, 8,  192,  true,  false},
         {Format::Sprite16,    "sprite16",   "Sprite 16-colour (VIC-IV)",  16, 21, 1, 4, 8,  192,  true,  false},
+        {Format::Sprite16Narrow, "sprite16-6", "Sprite 16-colour 6-wide (VIC-IV)", 6, 21, 1, 4, 3, 64, true, false},
         {Format::CharHires,   "char",       "Character (hires)",           8,  8, 1, 1, 1,    8,  false, false},
         {Format::CharMulti,   "char-mc",    "Character (multicolour)",     4,  8, 2, 2, 1,    8,  false, false},
         {Format::CharFCM,     "char-fcm",   "Character FCM (VIC-IV)",      8,  8, 1, 8, 8,   64,  false, false},

@@ -16,6 +16,7 @@ for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 | `sprite-mc` | VIC-II sprite, multicolour             | 12x21 (double-wide pixels) | 64 |
 | `sprite64`  | VIC-IV 64-wide sprite (SPRX64EN)       | 64x21  | 192            |
 | `sprite16`  | VIC-IV 16-colour sprite with SPRX64EN  | 16x21  | 192            |
+| `sprite16-6` | VIC-IV 16-colour sprite without SPRX64EN (3 bytes per row) | 6x21 | 64 |
 | `char`      | Character, hires                       | 8x8    | 8              |
 | `char-mc`   | Character, multicolour                 | 4x8 (double-wide pixels) | 8 |
 | `char-fcm`  | VIC-IV full-colour character           | 8x8, 1 byte per pixel | 64 |

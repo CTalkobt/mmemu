@@ -18,6 +18,7 @@ enum class Format {
     SpriteMulti,   ///< VIC-II multicolour sprite, 12x21 double-wide pixels, 2 bpp
     Sprite64,      ///< VIC-IV 64-wide sprite (SPRX64EN), 64x21, 1 bpp, 8 bytes per row
     Sprite16,      ///< VIC-IV 16-colour sprite with SPRX64EN, 16x21, 4 bpp, 8 bytes per row
+    Sprite16Narrow,///< VIC-IV 16-colour sprite without SPRX64EN, 6x21, 4 bpp, 3 bytes per row
     CharHires,     ///< 8x8 character, 1 bpp
     CharMulti,     ///< VIC-II multicolour character, 4x8 double-wide pixels, 2 bpp
     CharFCM,       ///< VIC-IV full-colour character, 8x8, 8 bpp (64 bytes)
