@@ -23,10 +23,10 @@
  *   - Lower self-resonance
  *   - More predictable Q behavior
  *
- * This implementation uses lookup tables based on:
- *   - reSIDfp reverse-engineered filter measurements
- *   - Real 6581 hardware measurements from multiple units
- *   - 8580 characterization from similar sources
+ * This implementation is an approximation, not measured data (see #120):
+ *   - the cutoff curve is a smooth multiplier around 1.0 (6581 sags at the top
+ *     of the range, 8580 is linear)
+ *   - the resonance tables give a Q multiplier per cutoff band and resonance
  *
  * Application:
  *   1. Convert 11-bit cutoff register to actual frequency (with curve)
@@ -43,12 +43,12 @@ public:
     };
 
     /**
-     * Get the nonlinear frequency mapping for a given cutoff register value.
-     * Converts 11-bit register value (0-2047) to normalized frequency coefficient.
+     * Multiplier applied to the Chamberlin frequency coefficient, which is
+     * already derived from the cutoff register: close to 1.0 for every value.
      *
      * @param cutoff    11-bit cutoff register (FC_HI:FC_LO, 0-2047)
      * @param variant   Chip variant (6581 vs 8580)
-     * @return          Adjusted frequency coefficient (0.0-1.0)
+     * @return          Coefficient multiplier (0.88-1.0)
      */
     static float getCutoffCurve(uint16_t cutoff, Variant variant);
 
@@ -84,16 +84,13 @@ public:
                                          uint8_t resonance, Variant variant);
 
 private:
-    // Lookup tables for cutoff frequency nonlinearity (11-bit → 11-bit with curve applied)
-    // Each entry represents the actual frequency response at that register position.
-    // Derived from empirical measurements of real 6581 hardware.
-    static const uint16_t CUTOFF_CURVE_6581[2048];
-    static const uint16_t CUTOFF_CURVE_8580[2048];
-
     // Resonance correction factors (indexed by cutoff band + resonance nibble)
     // Shape: resonance[cutoff_band * 16 + res_nibble]
     // Range: 0.8-1.2, applied as multiplier to Q
-    // Size: 35 cutoff bands * 16 resonance values = 560 entries
+    // Size: 35 cutoff bands * 16 resonance values = 560 entries (the 8580
+    // table defines 32 bands; RESONANCE_ROWS_* say how many are used)
+    static constexpr int RESONANCE_ROWS_6581 = 35;   // cutoff bands in the table
+    static constexpr int RESONANCE_ROWS_8580 = 32;
     static const float RESONANCE_TABLE_6581[560];
     static const float RESONANCE_TABLE_8580[560];
 

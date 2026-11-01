@@ -502,3 +502,64 @@ TEST_CASE(filter_voice3_disconnect_functionality) {
 
     delete sid;
 }
+
+// ===========================================================================
+// Issue #142: the filter must work across the whole cutoff range
+// ===========================================================================
+
+/** The coefficient synthesize() feeds the filter: non-zero and rising with cutoff. */
+TEST_CASE(filter_curve_defined_for_every_cutoff) {
+    for (auto variant : { FilterCurve::Variant::SID_6581, FilterCurve::Variant::SID_8580 }) {
+        float prev = 0.0f;
+        for (int cutoff = 0; cutoff < 2048; cutoff++) {
+            // Same register→coefficient mapping as SID6581::synthesize()
+            float fcHz = 30.0f * std::pow(400.0f, (float)cutoff / 2047.0f);
+            float f = std::min(2.0f * std::sin(3.14159265f * fcHz / 44100.0f), 0.95f);
+            float curve = FilterCurve::getCutoffCurve((uint16_t)cutoff, variant);
+            ASSERT(curve > 0.85f && curve <= 1.0f);
+            auto c = FilterCurve::applyNonlinearity(f, 1.0f, (uint16_t)cutoff, 8, variant);
+            ASSERT(c.f > 0.0f);
+            ASSERT(c.f >= prev * 0.999f);   // monotonic (allow float noise)
+            prev = c.f;
+        }
+    }
+}
+
+static float rmsOf(const float* buf, int n) {
+    double sum = 0.0;
+    for (int i = 0; i < n; i++) sum += (double)buf[i] * buf[i];
+    return n > 0 ? (float)std::sqrt(sum / n) : 0.0f;
+}
+
+/** A filtered voice in low-pass mode at maximum cutoff is audible (was silent). */
+TEST_CASE(filter_lowpass_audible_at_high_cutoff) {
+    float level[2] = {};
+    for (int filtered = 0; filtered < 2; filtered++) {
+        auto* sid = createTestSID();
+        setupTestVoice(sid, 0, 0x1010);            // ~245 Hz sawtooth
+        sid->ioWrite(nullptr, 0xD400 + 5, 0x00);   // AD: attack 2 ms (the helper's $F0 is the slowest)
+        sid->ioWrite(nullptr, 0xD400 + 6, 0xF0);   // SR: full sustain
+        setFilterCutoff(sid, 0x7FF);
+        setFilterResonance(sid, 0, filtered ? 0x01 : 0x00);
+        setFilterMode(sid, 0x01, 15);              // LP
+        sid->tick(985248 / 10);                    // 100 ms
+        float buf[8192] = {};
+        int n = pullAllSamples(sid, buf, 8192);
+        ASSERT(n > 1000);
+        level[filtered] = rmsOf(buf + n / 2, n / 2);   // skip the attack
+        delete sid;
+    }
+    // A 245 Hz sawtooth is far below the top cutoff: LP should pass most of it
+    ASSERT(level[0] > 0.05f);
+    ASSERT(level[1] > 0.5f * level[0]);
+}
+
+/** Resonance still matters at high cutoffs (was ignored above $117). */
+TEST_CASE(filter_resonance_matters_at_high_cutoff) {
+    for (auto variant : { FilterCurve::Variant::SID_6581, FilterCurve::Variant::SID_8580 }) {
+        float lo = FilterCurve::getResonanceCorrection(0x7FF, 0, variant);
+        float hi = FilterCurve::getResonanceCorrection(0x7FF, 15, variant);
+        ASSERT(lo > 0.0f);
+        ASSERT(hi != lo);
+    }
+}
