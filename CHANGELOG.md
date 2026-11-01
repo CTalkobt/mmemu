@@ -7,6 +7,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Debugger
+- **Issue #117 - Bit-field syntax in expressions**: The expression evaluator (breakpoint conditions, `runto`, CLI/GUI/MCP expressions) accepts `value:N` for bit N and `value:L-H` for bits L..H shifted down (bit 0 = LSB), e.g. `break when SR:0 = 1`, `runto A:6-7 = 2`, `*$D011:7`. Single `=` now compares like `==`, and `SR`/`STATUS` name the CPU's status register. `*addr:16` is still the 16-bit word read (`*addr:16:8-15` takes its high byte).
+
 ### MEGA65 Fixes
 - **Issue #127 - Hypervisor entry/exit per gs4510.vhdl**: Traps save the CPU port, VIC I/O mode and DMA list address into `$D650-$D658`, give the hypervisor port `$3F/$35`, MEGA65 I/O, an 8-bit stack and the upper 32KB mapped to `$FFF8000` (the lower mapping is kept), and restore it all on exit. The non-hardware "TAB leaves the hypervisor" shortcut is removed; HYPPO now leaves only through `$D67F`. As in xemu, a minimal flash-utility stand-in is preloaded at `$50000` when no flash utility file is configured, so HYPPO's boot path completes normally.
 - **VIC-IV hot registers**: With `$D05D.7` set, writes to `$D011/$D016/$D018/$D031` re-derive the line step, character count, screen and colour RAM pointers (viciv.vhdl); `$D018` also sets the character set pointer.
