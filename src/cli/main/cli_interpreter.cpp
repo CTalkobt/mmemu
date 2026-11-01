@@ -27,6 +27,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 #include <set>
 #include <map>
 #include <unordered_map>
@@ -2320,6 +2321,46 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         os << "\n  MB Low: $" << toHex(ms.megabyteLow >> 20, 2)
            << "  MB High: $" << toHex(ms.megabyteHigh >> 20, 2) << "\n";
         m_output(os.str());
+    } else if (cmd == "speed") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& m = *m_ctx.machine;
+        if (!m.getWarp || !m.setWarp || !m.cpuSpeedMHz) {
+            m_output("This machine has no CPU speed model.\n");
+            return;
+        }
+        auto fmtMHz = [](double v) { std::ostringstream o; o << v; return o.str(); };
+        std::string arg;
+        double requested = 0;
+        if (ss >> arg) {
+            std::transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+            if (arg.size() > 3 && arg.substr(arg.size() - 3) == "mhz") arg.resize(arg.size() - 3);
+            if (arg == "max") {
+                m.setWarp(true);
+            } else {
+                double mhz = 0;
+                try { size_t used = 0; mhz = std::stod(arg, &used); if (used != arg.size()) mhz = 0; }
+                catch (...) { mhz = 0; }
+                if (mhz == 40.0) mhz = 40.5;   // "speed 40" means the 40.5 MHz mode
+                if (!m.setCpuSpeedMHz || !m.setCpuSpeedMHz(mhz)) {
+                    std::string choices;
+                    for (double v : m.cpuSpeeds) choices += fmtMHz(v) + "|";
+                    m_output("Syntax: speed [" + choices + "max]\n");
+                    return;
+                }
+                m.setWarp(false);
+                requested = mhz;
+            }
+        }
+        std::string out;
+        if (m.getWarp())
+            out = "Speed: max (warp: devices advance one cycle per CPU cycle; CPU set to "
+                  + fmtMHz(m.cpuSpeedMHz()) + " MHz)";
+        else
+            out = "Speed: " + fmtMHz(m.cpuSpeedMHz()) + " MHz";
+        if (requested > 0 && m.cpuSpeedMHz() != requested)
+            out += "\n(" + fmtMHz(requested) + " MHz is selected; the CPU runs at full speed for now, "
+                   "e.g. in the hypervisor or after POKE 0,65)";
+        m_output(out + "\n");
     } else if (cmd == "warp") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
@@ -3140,6 +3181,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  log <list|level>    - Logging configuration\n"
                  "  map [offsets] [mask] - Read/Write MEGA65 MAP state\n"
                  "  personality <m>     - Switch MEGA65 I/O personality\n"
+                 "  speed [MHz|max]     - Show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded, warp)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"

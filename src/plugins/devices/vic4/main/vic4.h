@@ -88,6 +88,8 @@ public:
      * bit 0 = $D054.6 VFAST.
      */
     int cpuSpeedSelect() const;
+    /** Set the three speed-select bits directly (no hot-register side effects). */
+    void setCpuSpeedSelect(int sel);
     bool isPalNtsc() const;         // $D06F.7 (0=PAL, 1=NTSC)
 
     // Override VIC2 sprite rendering with VIC-IV extensions

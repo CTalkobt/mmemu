@@ -107,6 +107,14 @@ struct MachineDescriptor {
     std::function<void(bool)> setWarp;
     /** Current CPU clock in MHz as the hardware would run it (ignores warp). */
     std::function<double()>   cpuSpeedMHz;
+    /**
+     * Select a CPU clock (MHz) the way software would (e.g. MEGA65 speed
+     * registers). Returns false if the machine has no such speed. Software
+     * may change it again afterwards, as on hardware.
+     */
+    std::function<bool(double)> setCpuSpeedMHz;
+    /** CPU clocks setCpuSpeedMHz() accepts, slowest first. */
+    std::vector<double>       cpuSpeeds;
 
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine

@@ -70,6 +70,7 @@ public:
     uint8_t portValue() const { return m_portOut; }
     /** force_fast: set by writing $41 to $00 ("POKE 0,65"), cleared by $40. */
     bool forceFast() const { return m_forceFast; }
+    void setForceFast(bool on) { m_forceFast = on; }
     uint8_t portDdr()   const { return m_portDDR; }
     /** Set the CPU port ($00 DDR, $01 data) directly, e.g. on hypervisor entry/exit. */
     void setPort(uint8_t ddr, uint8_t value) { m_portDDR = ddr; m_portOut = value; updateOverlays(); }
