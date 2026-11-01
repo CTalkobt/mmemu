@@ -234,6 +234,7 @@ PLUGIN_MEGA65_MATH_SRCS = src/plugins/devices/mega65_math/main/mega65_math.cpp \
 	src/plugins/devices/mega65_math/main/plugin_init.cpp
 
 GUI_SRCS = src/gui/main/main.cpp \
+	src/gui/main/dock_layout.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
 	src/gui/main/memory_pane.cpp \
@@ -446,7 +447,8 @@ REGISTRY_OBJS = src/cli/main/cli_interpreter.o \
 	src/mcp/main/plugin_tool_registry.o \
 	src/mcp/main/main_test.o \
 	src/gui/main/gui_utils.o \
-	src/gui/main/plugin_pane_manager.o
+	src/gui/main/plugin_pane_manager.o \
+	src/gui/main/dock_layout.o
 
 TEST_OBJS = $(TEST_SRCS:.cpp=.o) \
             $(LIBDEBUG_TEST_SRCS:.cpp=.o) \
