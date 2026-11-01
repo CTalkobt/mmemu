@@ -45,6 +45,14 @@
 #include "gui_utils.h"
 #include "dock_layout.h"
 #include "source_pane.h"
+#include "libproject/main/project.h"
+#include "libproject/main/make_runner.h"
+#include "libproject/main/diagnostics.h"
+#include "libproject/main/launcher.h"
+#include <wx/listctrl.h>
+#include <wx/dirdlg.h>
+#include <atomic>
+#include <thread>
 #include "libdebug/main/source_stepper.h"
 #include "libtoolchain/main/source_map.h"
 #include <filesystem>
@@ -66,9 +74,12 @@ class MmemuFrame : public wxFrame {
 public:
     MmemuFrame();
     ~MmemuFrame() override {
-        m_timer.Stop(); delete m_audio; delete m_dbg;
+        m_timer.Stop(); stopBuildAndWait(); delete m_audio; delete m_dbg;
         if (!m_speedMenuShown) delete m_speedMenuItem;   // detached items are not deleted by wx
     }
+
+    /** Open a Makefile project (#148); also used by --project. */
+    bool openProject(const std::string& dir);
 
     /** Toggle keyboard-capture mode and sync all UI + app key handler. */
     void setKeyCapture(bool active);
@@ -82,6 +93,11 @@ private:
     void refreshAfterStop();
     void updateSourceView();
     void OnOpenSource(wxCommandEvent& event);
+    void startBuild(bool run);
+    void onBuildLine(const std::string& line);
+    void onBuildDone(project::MakeResult res, bool run, project::FileTimes before);
+    void appendOutput(const std::string& text);
+    void stopBuildAndWait();
     void OnLoadSourceMap(wxCommandEvent& event);
     void OnBackStep(wxCommandEvent& event);
     void OnRun(wxCommandEvent& event);
@@ -155,6 +171,16 @@ private:
     TracePane* m_tracePane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     SourcePane*     m_sourcePane = nullptr;
+
+    // Makefile project (#148)
+    std::unique_ptr<project::Config> m_project;
+    wxTextCtrl*     m_outputPane = nullptr;
+    wxListCtrl*     m_problemsPane = nullptr;
+    std::vector<project::Diagnostic> m_problems;
+    std::unique_ptr<project::DiagnosticParser> m_buildParser;
+    std::thread     m_buildThread;
+    std::atomic<bool> m_buildCancel{false};
+    bool            m_building = false;
 
     // Dockable layout (#146) and the View menu that opens its panes
     std::unique_ptr<DockLayout> m_dock;
@@ -447,6 +473,7 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] =
     { wxCMD_LINE_SWITCH, "v", "verbose", "Enable debug logging", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "trace", "Enable trace logging (very verbose)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "run", "Auto-start the loaded program", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_OPTION, "p", "project", "Open a Makefile project directory", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, "h", "help",    "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_SWITCH, "?", "",        "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_NONE, nullptr, nullptr, nullptr, wxCMD_LINE_VAL_NONE, 0 }
@@ -462,6 +489,7 @@ public:
     bool OnCmdLineParsed(wxCmdLineParser& parser) override {
         parser.Found("machine", &m_startMachine);
         parser.Found("mount", &m_startMount);
+        parser.Found("project", &m_startProject);
         parser.Found("type", &m_startType);
         m_autoRun = parser.Found("run");
         m_trace = parser.Found("trace");
@@ -522,6 +550,10 @@ public:
             wxCommandEvent evt(wxEVT_MENU, ID_RUN);
             frame->GetEventHandler()->AddPendingEvent(evt);
         }
+        if (!m_startProject.empty()) {
+            std::string dir = m_startProject.utf8_string();
+            frame->CallAfter([frame, dir]() { frame->openProject(dir); });
+        }
 
         return true;
     }
@@ -533,6 +565,7 @@ public:
 
     KeyboardCaptureFilter m_keyFilter;
     wxString m_startMachine;
+    wxString m_startProject;
     wxString m_startMount;
     wxString m_startType;
     bool     m_autoRun = false;
@@ -616,6 +649,14 @@ MmemuFrame::MmemuFrame()
     auto* menuBar = new wxMenuBar;
     menuBar->Append(menuFile, "&File");
     menuBar->Append(m_viewMenu, "&View");
+    auto* menuProject = new wxMenu;
+    menuProject->Append(ID_PROJECT_OPEN,  "Open Project...\tCtrl-Shift-O", "Open a directory with a Makefile");
+    menuProject->Append(ID_PROJECT_BUILD, "Build\tCtrl-B", "make <build target> (default: all)");
+    menuProject->Append(ID_PROJECT_RUN,   "Run Project\tCtrl-F5", "make <run target>, then load and start the new .prg");
+    menuProject->Append(ID_PROJECT_STOP,  "Stop Build");
+    menuProject->AppendSeparator();
+    menuProject->Append(ID_PROJECT_CLOSE, "Close Project");
+    menuBar->Append(menuProject, "&Project");
     menuBar->Append(menuControl, "&Control");
     menuBar->Append(menuDebug, "&Debug");
     menuBar->Append(menuTools, "&Tools");
@@ -673,6 +714,21 @@ MmemuFrame::MmemuFrame()
     m_cartPane = new CartridgePane(host);
     m_mega65StatusPane = new Mega65StatusPane(host);
     m_sourcePane = new SourcePane(host);
+    m_outputPane = new wxTextCtrl(host, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
+                                  wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP | wxTE_RICH2);
+    m_outputPane->SetFont(wxFont(wxFontInfo(9).Family(wxFONTFAMILY_TELETYPE)));
+    m_problemsPane = new wxListCtrl(host, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_SINGLE_SEL);
+    m_problemsPane->AppendColumn("", wxLIST_FORMAT_LEFT, 70);
+    m_problemsPane->AppendColumn("File", wxLIST_FORMAT_LEFT, 160);
+    m_problemsPane->AppendColumn("Line", wxLIST_FORMAT_RIGHT, 50);
+    m_problemsPane->AppendColumn("Message", wxLIST_FORMAT_LEFT, 600);
+    m_problemsPane->Bind(wxEVT_LIST_ITEM_ACTIVATED, [this](wxListEvent& e) {
+        long idx = (long)e.GetData();
+        if (idx < 0 || idx >= (long)m_problems.size()) return;
+        const auto& d = m_problems[idx];
+        if (d.file.empty()) { SetStatusText("The tool did not say which file this is in."); return; }
+        if (m_sourcePane->ShowLine(d.file, d.line)) m_dock->open("source");
+    });
     m_sourcePane->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
     m_sourcePane->SetBreakpointsChangedCallback([this]() { if (m_bpPane) m_bpPane->RefreshValues(); });
 
@@ -690,6 +746,8 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("cartridge",   "Cartridge",        m_cartPane,             Area::Side,   false);
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
     m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
+    m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
+    m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
     m_dock->setAvailable("mega65", false);   // until a MEGA65 is loaded
 
     // Plugin panes: the screen goes in the centre, the rest onto the View menu
@@ -707,6 +765,11 @@ MmemuFrame::MmemuFrame()
         });
 
     m_dock->setOnChange([this]() { syncViewMenu(); });
+    // Pick up source files edited in another program when the window is reactivated
+    Bind(wxEVT_ACTIVATE, [this](wxActivateEvent& e) {
+        if (e.GetActive() && m_sourcePane) m_sourcePane->ReloadChangedFiles();
+        e.Skip();
+    });
     m_dock->restore();
     rebuildViewMenu();
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& e) {
@@ -715,6 +778,7 @@ MmemuFrame::MmemuFrame()
                                       wxYES_NO | wxCANCEL | wxICON_QUESTION, this);
             if (answer == wxCANCEL || (answer == wxYES && !m_sourcePane->SaveAll())) { e.Veto(); return; }
         }
+        stopBuildAndWait();
         if (m_dock) m_dock->save();
         e.Skip();
     });
@@ -731,6 +795,26 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnOpenSource, this, ID_OPEN_SOURCE);
     Bind(wxEVT_MENU, [this](wxCommandEvent&) { if (m_sourcePane) m_sourcePane->SaveCurrent(); }, ID_SAVE_SOURCE);
     Bind(wxEVT_MENU, &MmemuFrame::OnLoadSourceMap, this, ID_LOAD_SOURCE_MAP);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        wxDirDialog dlg(this, "Open Project (directory with a Makefile)", "", wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+        if (dlg.ShowModal() == wxID_OK) openProject(dlg.GetPath().utf8_string());
+    }, ID_PROJECT_OPEN);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { startBuild(false); }, ID_PROJECT_BUILD);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { startBuild(true); }, ID_PROJECT_RUN);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) { m_buildCancel = true; }, ID_PROJECT_STOP);
+    Bind(wxEVT_MENU, [this](wxCommandEvent&) {
+        stopBuildAndWait();
+        m_project.reset();
+        SetStatusText("Project closed.");
+    }, ID_PROJECT_CLOSE);
+    Bind(wxEVT_UPDATE_UI, [this](wxUpdateUIEvent& e) {
+        switch (e.GetId()) {
+            case ID_PROJECT_BUILD: case ID_PROJECT_RUN: e.Enable(m_project && !m_building); break;
+            case ID_PROJECT_STOP:  e.Enable(m_building); break;
+            case ID_PROJECT_CLOSE: e.Enable(m_project != nullptr); break;
+            default: break;
+        }
+    }, ID_PROJECT_OPEN, ID_PROJECT_STOP);
     Bind(wxEVT_TOOL, &MmemuFrame::OnStep, this, ID_STEP);
     Bind(wxEVT_MENU, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
     Bind(wxEVT_TOOL, &MmemuFrame::OnBackStep, this, ID_BACKSTEP);
@@ -1240,6 +1324,135 @@ void MmemuFrame::updateSourceView() {
     if (m_sourcePane->ShowExecutionLine(m_cpu->pc()))
         m_dock->open("source");
     m_sourcePane->RefreshBreakpointMarkers();
+}
+
+// ---------------------------------------------------------------------------
+// Makefile projects (#148)
+// ---------------------------------------------------------------------------
+
+bool MmemuFrame::openProject(const std::string& dir) {
+    auto cfg = std::make_unique<project::Config>();
+    std::string err;
+    if (!project::open(dir, *cfg, err)) {
+        SetStatusText(wxString::FromUTF8(err));
+        return false;
+    }
+    stopBuildAndWait();
+    m_project = std::move(cfg);
+    if (!m_project->machine.empty() && (!m_machine || m_machine->machineId != m_project->machine))
+        loadMachineById(m_project->machine);
+    SetStatusText(wxString::FromUTF8("Opened project " + m_project->name + " - Build: Ctrl-B, Run: Ctrl-F5"));
+    return true;
+}
+
+void MmemuFrame::appendOutput(const std::string& text) {
+    if (m_outputPane) m_outputPane->AppendText(wxString::FromUTF8(text));
+}
+
+void MmemuFrame::stopBuildAndWait() {
+    m_buildCancel = true;
+    if (m_buildThread.joinable()) m_buildThread.join();
+}
+
+void MmemuFrame::startBuild(bool run) {
+    if (!m_project || m_building) return;
+    if (m_sourcePane) m_sourcePane->SaveAll();
+    if (m_buildThread.joinable()) m_buildThread.join();
+
+    m_outputPane->Clear();
+    m_problemsPane->DeleteAllItems();
+    m_problems.clear();
+    m_sourcePane->SetDiagnostics({});
+    m_dock->open("output");
+
+    const project::Config cfg = *m_project;   // the worker gets its own copy
+    const std::string target = run ? cfg.runTarget : cfg.buildTarget;
+    m_buildParser = std::make_unique<project::DiagnosticParser>(cfg.dir);
+    project::FileTimes before = project::snapshotPrograms(cfg.dir);
+    m_building = true;
+    m_buildCancel = false;
+    appendOutput("make " + target + "   (" + cfg.dir + ")\n");
+    SetStatusText("Building...");
+
+    m_buildThread = std::thread([this, cfg, target, run, before]() {
+        auto res = project::runMake(cfg, target, [this](const std::string& line) {
+            CallAfter([this, line]() { onBuildLine(line); });
+        }, &m_buildCancel);
+        CallAfter([this, res, run, before]() { onBuildDone(res, run, before); });
+    });
+}
+
+void MmemuFrame::onBuildLine(const std::string& line) {
+    appendOutput(line + "\n");
+    if (!m_buildParser) return;
+    auto d = m_buildParser->feed(line);
+    if (!d) return;
+    long idx = (long)m_problems.size();
+    m_problems.push_back(*d);
+    const char* sev = d->severity == project::Diagnostic::Severity::Error ? "error"
+                    : d->severity == project::Diagnostic::Severity::Warning ? "warning" : "note";
+    long row = m_problemsPane->InsertItem(m_problemsPane->GetItemCount(), sev);
+    m_problemsPane->SetItem(row, 1, d->file.empty() ? wxString("?")
+                                    : wxString::FromUTF8(std::filesystem::path(d->file).filename().string()));
+    m_problemsPane->SetItem(row, 2, wxString::Format("%d", d->line));
+    m_problemsPane->SetItem(row, 3, wxString::FromUTF8(d->message));
+    m_problemsPane->SetItemData(row, idx);
+}
+
+void MmemuFrame::onBuildDone(project::MakeResult res, bool run, project::FileTimes before) {
+    if (m_buildThread.joinable()) m_buildThread.join();
+    m_building = false;
+    m_sourcePane->ReloadChangedFiles();   // the build may have regenerated sources
+
+    int errors = 0, warnings = 0;
+    std::vector<SourcePane::LineMark> marks;
+    for (const auto& d : m_problems) {
+        bool err = d.severity == project::Diagnostic::Severity::Error;
+        if (err) ++errors; else if (d.severity == project::Diagnostic::Severity::Warning) ++warnings;
+        if (!d.file.empty() && d.severity != project::Diagnostic::Severity::Note)
+            marks.push_back({d.file, d.line, err});
+    }
+    m_sourcePane->SetDiagnostics(marks);
+    const std::string summary = std::to_string(errors) + " error(s), " + std::to_string(warnings) + " warning(s)";
+
+    if (!res.started || !res.error.empty()) {
+        appendOutput("Error: " + res.error + "\n");
+        SetStatusText(wxString::FromUTF8("Build could not run: " + res.error));
+        return;
+    }
+    if (res.cancelled) { appendOutput("Build stopped.\n"); SetStatusText("Build stopped."); return; }
+    if (!res.ok()) {
+        appendOutput("Build failed (make exit " + std::to_string(res.exitCode) + "): " + summary + "\n");
+        SetStatusText(wxString::FromUTF8("Build failed: " + summary));
+        if (!m_problems.empty()) m_dock->open("problems");
+        return;
+    }
+    appendOutput("Build succeeded: " + summary + "\n");
+    if (!run) { SetStatusText(wxString::FromUTF8("Build succeeded: " + summary)); return; }
+
+    const project::Config& cfg = *m_project;
+    std::string file = cfg.load == "auto" ? project::newestChangedProgram(cfg.dir, before) : cfg.resolve(cfg.load);
+    if (file.empty()) {
+        appendOutput("No new .prg was written by make " + cfg.runTarget + "; set run.load in .mmsim/project.json.\n");
+        SetStatusText("No new .prg to run");
+        return;
+    }
+    if (!cfg.machine.empty() && (!m_machine || m_machine->machineId != cfg.machine))
+        loadMachineById(cfg.machine);
+    if (!m_machine || !m_dbg) { SetStatusText("Load a machine first."); return; }
+
+    m_running = false;
+    SetStatusText("Starting...");
+    auto launched = project::launch(*m_machine, m_dbg, file, cfg.reset);
+    appendOutput(launched.message + "\n");
+    if (!launched.ok) { SetStatusText(wxString::FromUTF8(launched.message)); return; }
+    std::string dbgInfo = project::loadDebugInfo(*m_dbg, cfg);
+    if (!dbgInfo.empty()) appendOutput(dbgInfo + "\n");
+    m_sourcePane->RefreshBreakpointMarkers(true);
+    if (m_sourcePane) m_sourcePane->ClearExecutionLine();
+    m_dbg->resume();
+    m_running = true;
+    SetStatusText(wxString::FromUTF8(launched.message));
 }
 
 void MmemuFrame::OnOpenSource(wxCommandEvent&) {
@@ -1785,7 +1998,7 @@ void MmemuFrame::OnCtrlShiftK(wxKeyEvent& event) {
 // Built-in panes keep their View menu ids (and shortcuts); plugin panes get
 // ids from ID_VIEW_PANE_FIRST on.
 static const struct { const char* pane; int id; const char* shortcut; } kBuiltInViews[] = {
-    {"breakpoints", ID_SHOW_BP_PANE,      "Ctrl-B"},
+    {"breakpoints", ID_SHOW_BP_PANE,      "Ctrl-Shift-B"},
     {"symbols",     ID_SHOW_SYM_PANE,     "Ctrl-Y"},
     {"stack",       ID_SHOW_STACK_PANE,   "Ctrl-T"},
     {"trace",       ID_SHOW_TRACE_PANE,   "Ctrl-H"},

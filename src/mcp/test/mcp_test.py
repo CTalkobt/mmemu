@@ -1001,6 +1001,30 @@ def run_tests():
     client.call_tool("destroy_machine", {"machine_id": c64})
     print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64 has no speed model)")
 
+    # project_open / project_build / project_run (#148)
+    print("\nTesting project tools...")
+    import tempfile, os, shutil
+    pdir = tempfile.mkdtemp(prefix="mmemu_mcp_proj_")
+    try:
+        with open(os.path.join(pdir, "prog.src"), "wb") as f:
+            f.write(bytes([0x00, 0xC0, 0xA9, 0x42, 0x4C, 0x02, 0xC0]))   # $C000: LDA #$42 / JMP $C002
+        with open(os.path.join(pdir, "Makefile"), "w") as f:
+            f.write("all: prog.prg\nprog.prg: prog.src\n\tcp prog.src prog.prg\n"
+                    "run: all\n\t$(EMU) prog.prg\n"
+                    "broken:\n\t@echo bad.s:3:1: error: Unknown instruction\n\t@exit 1\n")
+        text = client.call_tool("project_open", {"dir": pdir})["result"]["content"][0]["text"]
+        assert "Opened project" in text, text
+        item = client.call_tool("project_build", {"target": "broken"})["result"]["content"][0]
+        assert item.get("isError") and "1 error(s)" in item["text"] and "bad.s:3: Unknown instruction" in item["text"], item
+        res = client.call_tool("create_machine", {"machine_type": "raw6502"})
+        rid = res["result"]["content"][0]["text"].split('"')[1]
+        item = client.call_tool("project_run", {"machine_id": rid})["result"]["content"][0]
+        assert not item.get("isError") and "PC = $C000" in item["text"], item
+        client.call_tool("destroy_machine", {"machine_id": rid})
+        print("  ✓ project tools OK (open, build with an error, run sets PC)")
+    finally:
+        shutil.rmtree(pdir, ignore_errors=True)
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

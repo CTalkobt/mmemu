@@ -4,6 +4,10 @@
 #include <map>
 #include <sstream>
 #include "libcore/main/machine_speed.h"
+#include "libproject/main/project.h"
+#include "libproject/main/make_runner.h"
+#include "libproject/main/diagnostics.h"
+#include "libproject/main/launcher.h"
 #include <iomanip>
 #include <fstream>
 #include <algorithm>
@@ -194,6 +198,9 @@ static std::map<std::string, std::map<std::string, MachineSnapshot>> g_snapshots
 static std::map<std::string, std::string> g_assemblerOverrides;  // per-instance assembler overrides
 static std::map<std::string, int> g_typeCounters;  // per-type instance counter for auto-generation
 
+// Open Makefile project for the project_* tools (#148)
+static std::unique_ptr<project::Config> g_project;
+
 static MachineState* getMachine(const std::string& instanceId) {
     auto it = g_machines.find(instanceId);
     return (it != g_machines.end()) ? &it->second : nullptr;
@@ -274,6 +281,33 @@ Json handleDescribe() {
     Json stepReq(Json::ARR); stepReq.push_back(Json("machine_id"));
     stepSchema.oVal["required"] = stepReq;
     addTool("step_cpu", "Step the CPU by count instructions (default 1). Returns registers after stepping.", stepSchema);
+
+    // Makefile projects (#148)
+    {
+        Json dirProp(Json::OBJ); dirProp.oVal["type"] = Json("string");
+        dirProp.oVal["description"] = Json("Project directory containing a Makefile (optional .mmsim/project.json)");
+        Json poSchema(Json::OBJ); poSchema.oVal["type"] = Json("object");
+        Json poProps(Json::OBJ); poProps.oVal["dir"] = dirProp;
+        poSchema.oVal["properties"] = poProps;
+        Json poReq(Json::ARR); poReq.push_back(Json("dir")); poSchema.oVal["required"] = poReq;
+        addTool("project_open", "Open a Makefile project; reports its build/run targets and machine.", poSchema);
+
+        Json tgtProp(Json::OBJ); tgtProp.oVal["type"] = Json("string");
+        tgtProp.oVal["description"] = Json("make target (default: the project's build target, normally all)");
+        Json pbSchema(Json::OBJ); pbSchema.oVal["type"] = Json("object");
+        Json pbProps(Json::OBJ); pbProps.oVal["target"] = tgtProp;
+        pbSchema.oVal["properties"] = pbProps;
+        addTool("project_build", "Run make for the open project. Returns the output tail and the errors/warnings found.", pbSchema);
+
+        Json prSchema(Json::OBJ); prSchema.oVal["type"] = Json("object");
+        Json prProps(Json::OBJ); prProps.oVal["machine_id"] = midProp;
+        prSchema.oVal["properties"] = prProps;
+        Json prReq(Json::ARR); prReq.push_back(Json("machine_id")); prSchema.oVal["required"] = prReq;
+        addTool("project_run",
+                "make the project's run target, then load the newest .prg it wrote (or run.load) into the machine "
+                "and start it (RUN for BASIC programs, PC = load address otherwise). Step or run the machine afterwards.",
+                prSchema);
+    }
 
     // set_speed
     {
@@ -2259,6 +2293,75 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("Error: Unknown key " + key);
                 textItem.oVal["isError"] = Json(true);
             }
+        }
+    } else if (name == "project_open") {
+        auto cfg = std::make_unique<project::Config>();
+        std::string err;
+        if (!project::open(args["dir"].sVal, *cfg, err)) {
+            textItem.oVal["text"] = Json("Error: " + err);
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            g_project = std::move(cfg);
+            textItem.oVal["text"] = Json("Opened project " + g_project->name + " (" + g_project->dir + "): build `make " +
+                                         g_project->buildTarget + "`, run `make " + g_project->runTarget + "`, machine " +
+                                         (g_project->machine.empty() ? std::string("(any)") : g_project->machine));
+        }
+    } else if (name == "project_build" || name == "project_run") {
+        MachineState* ms = name == "project_run" ? getMachine(args["machine_id"].sVal) : nullptr;
+        if (!g_project) {
+            textItem.oVal["text"] = Json("Error: No project open (use project_open)");
+            textItem.oVal["isError"] = Json(true);
+        } else if (name == "project_run" && !ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            const project::Config& cfg = *g_project;
+            std::string target = name == "project_run" ? cfg.runTarget
+                               : (args.contains("target") && !args["target"].sVal.empty() ? args["target"].sVal : cfg.buildTarget);
+            auto before = project::snapshotPrograms(cfg.dir);
+            project::DiagnosticParser parser(cfg.dir);
+            std::vector<std::string> lines;
+            std::vector<project::Diagnostic> diags;
+            auto res = project::runMake(cfg, target, [&](const std::string& l) {
+                lines.push_back(l);
+                if (auto d = parser.feed(l)) diags.push_back(*d);
+            });
+            std::ostringstream out;
+            size_t from = lines.size() > 80 ? lines.size() - 80 : 0;
+            if (from) out << "... (" << from << " earlier lines)\n";
+            for (size_t i = from; i < lines.size(); ++i) out << lines[i] << "\n";
+            int errors = 0, warnings = 0;
+            for (const auto& d : diags) {
+                if (d.severity == project::Diagnostic::Severity::Error) ++errors;
+                else if (d.severity == project::Diagnostic::Severity::Warning) ++warnings;
+            }
+            out << "\n" << (res.ok() ? "Build succeeded" : "Build FAILED (make exit " + std::to_string(res.exitCode) + ")")
+                << ": " << errors << " error(s), " << warnings << " warning(s)\n";
+            for (const auto& d : diags)
+                out << (d.severity == project::Diagnostic::Severity::Error ? "error" :
+                        d.severity == project::Diagnostic::Severity::Warning ? "warning" : "note")
+                    << " " << (d.file.empty() ? "?" : d.file) << ":" << d.line << ": " << d.message << "\n";
+            bool failed = !res.ok();
+            if (!failed && name == "project_run") {
+                std::string file = cfg.load == "auto" ? project::newestChangedProgram(cfg.dir, before) : cfg.resolve(cfg.load);
+                if (file.empty()) {
+                    out << "No new .prg was written by make " << target << "; set run.load in .mmsim/project.json.\n";
+                    failed = true;
+                } else {
+                    if (!cfg.machine.empty() && ms->machine->machineId != cfg.machine)
+                        out << "Note: the project names machine " << cfg.machine << " but " << args["machine_id"].sVal
+                            << " is " << ms->machine->machineId << ".\n";
+                    auto launched = project::launch(*ms->machine, ms->dbg, file, cfg.reset);
+                    out << launched.message << "\n";
+                    failed = !launched.ok;
+                    if (launched.ok) {
+                        std::string dbgInfo = project::loadDebugInfo(*ms->dbg, cfg);
+                        if (!dbgInfo.empty()) out << dbgInfo << "\n";
+                    }
+                }
+            }
+            textItem.oVal["text"] = Json(out.str());
+            if (failed) textItem.oVal["isError"] = Json(true);
         }
     } else if (name == "set_speed") {
         MachineState* ms = getMachine(args["machine_id"].sVal);
