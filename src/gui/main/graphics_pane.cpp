@@ -126,11 +126,20 @@ GraphicsPane::GraphicsPane(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
     m_format = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, fmts);
     m_format->SetSelection(0);
 
-    m_count = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(80, -1), wxSP_ARROW_KEYS, 1, 1024, 64);
+    // A fixed pixel width narrower than GTK3's entry + "-" + "+" buttons makes
+    // GTK log "gtk_box_gadget_distribute: assertion 'size >= 0' failed in
+    // GtkSpinButton" (#161). Size each control to fit its widest value.
+    auto makeSpin = [this](int lo, int hi, int initial) {
+        auto* spin = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
+                                    wxSP_ARROW_KEYS, lo, hi, initial);
+        spin->SetInitialSize(spin->GetSizeFromTextSize(spin->GetTextExtent(wxString::Format("%d", hi)).x));
+        return spin;
+    };
+    m_count = makeSpin(1, 1024, 64);
     m_count->SetToolTip("Number of items to show");
-    m_cols = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(70, -1), wxSP_ARROW_KEYS, 1, 64, 8);
+    m_cols = makeSpin(1, 64, 8);
     m_cols->SetToolTip("Items per row");
-    m_stride = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(80, -1), wxSP_ARROW_KEYS, 0, 65536, 0);
+    m_stride = makeSpin(0, 65536, 0);
     m_stride->SetToolTip("Bytes from one item to the next (0 = the format's size: 64 for sprites, 8 for characters)");
 
     wxArrayString zooms;
@@ -146,7 +155,7 @@ GraphicsPane::GraphicsPane(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
     m_memSel->SetToolTip("CPU view reads through the CPU's memory map; video chip view reads what the "
                          "VIC fetches (e.g. the character ROM at $1000/$9000 on a C64)");
 
-    m_palBase = new wxSpinCtrl(this, wxID_ANY, "", wxDefaultPosition, wxSize(70, -1), wxSP_ARROW_KEYS, 0, 255, 0);
+    m_palBase = makeSpin(0, 255, 0);
     m_palBase->SetToolTip("16-colour formats: palette index added to each nibble (sprite number x 16, or the colour RAM high nibble for NCM)");
     m_swap = new wxCheckBox(this, wxID_ANY, "Swap nibbles");
     m_live = new wxCheckBox(this, wxID_ANY, "Live");
