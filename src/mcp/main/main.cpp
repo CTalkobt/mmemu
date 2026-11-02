@@ -12,6 +12,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <set>
 #include <unordered_map>
 
@@ -39,6 +40,9 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "libdebug/main/gfx_view.h"
+#include "libdebug/main/audio_scope.h"
+#include "libdebug/main/gif_writer.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "util/stb_image_write.h"
 #include "libdevices/main/io_registry.h"
 #include "imap_controller.h"
@@ -485,6 +489,28 @@ Json handleDescribe() {
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
         addTool("render_graphics", "Decode sprites or characters from memory (C64/MEGA65 formats) as ASCII art or a PNG sheet.", schema);
+    }
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        auto prop = [](const char* type, const char* desc) {
+            Json p(Json::OBJ); p.oVal["type"] = Json(type); p.oVal["description"] = Json(desc); return p;
+        };
+        props.oVal["chip"] = prop("number", "Sound chip index (default 0; the MEGA65 has SID1 = 0 and SID2 = 1)");
+        props.oVal["timebase_ms"] = prop("number", "Time across each trace in ms, 1-80 (default 20)");
+        props.oVal["trigger"] = prop("string", "rising (default: each trace starts at a rising zero crossing) or free (latest samples)");
+        props.oVal["path"] = prop("string", "Write the scope image here: .png, or .gif (required for frames > 1). Without it, only the voice state is returned.");
+        props.oVal["frames"] = prop("number", "Number of frames, 1-300 (default 1). More than 1 runs the machine between frames and writes an animated GIF.");
+        props.oVal["frame_ms"] = prop("number", "Emulated ms between frames, 5-1000 (default 40); also the GIF frame delay");
+        props.oVal["width"] = prop("number", "Image width in pixels, 160-1600 (default 480)");
+        props.oVal["row_height"] = prop("number", "Height of each voice/output row in pixels, 40-400 (default 100)");
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("sid_scope", "SID oscilloscope: each voice's waveform and the mixed output, with frequency, note, pulse width, ADSR and envelope state. Returns the voice state as text and optionally writes a PNG or an animated GIF captured while the machine runs.", schema);
     }
 
     Json smSchema(Json::OBJ);
@@ -1937,6 +1963,94 @@ Json handleToolsCall(const Json& params) {
                 }
                 if (!out.empty()) textItem.oVal["text"] = Json(out);
             }
+        }
+    } else if (name == "sid_scope") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        auto fail = [&](const std::string& msg) {
+            textItem.oVal["text"] = Json("Error: " + msg);
+            textItem.oVal["isError"] = Json(true);
+        };
+        std::vector<IAudioInspect*> chips = ms ? scope::findAudioInspect(ms->machine) : std::vector<IAudioInspect*>{};
+        // Flatten (handler, chip) pairs so "chip" counts across handlers
+        std::vector<std::pair<IAudioInspect*, int>> all;
+        for (auto* a : chips) for (int c = 0; c < a->chipCount(); ++c) all.push_back({a, c});
+        auto num = [&](const char* key, int def, int lo, int hi) {
+            return args.contains(key) ? std::max(lo, std::min(hi, (int)args[key].nVal)) : def;
+        };
+        int chipNo = args.contains("chip") ? (int)args["chip"].nVal : 0;
+        std::string path = args.contains("path") ? args["path"].sVal : "";
+        std::string trig = args.contains("trigger") ? args["trigger"].sVal : "rising";
+        int frames = num("frames", 1, 1, 300);
+        int frameMs = num("frame_ms", 40, 5, 1000);
+        auto endsWith = [](const std::string& s, const char* ext) {
+            size_t n = std::strlen(ext);
+            if (s.size() < n) return false;
+            for (size_t i = 0; i < n; ++i) if (std::tolower((unsigned char)s[s.size() - n + i]) != ext[i]) return false;
+            return true;
+        };
+        bool isGif = endsWith(path, ".gif"), isPng = endsWith(path, ".png");
+        if (!ms) fail("Invalid machine ID");
+        else if (all.empty()) fail("This machine has no sound chip with a scope");
+        else if (chipNo < 0 || chipNo >= (int)all.size()) fail("chip must be 0-" + std::to_string(all.size() - 1));
+        else if (trig != "rising" && trig != "free") fail("trigger must be rising or free");
+        else if (!path.empty() && !isGif && !isPng) fail("path must end in .png or .gif");
+        else if (frames > 1 && !isGif) fail("frames > 1 needs a .gif path");
+        else {
+            IAudioInspect* insp = all[chipNo].first;
+            scope::RenderOptions opt;
+            opt.chip = all[chipNo].second;
+            opt.timebaseMs = num("timebase_ms", 20, 1, 80);
+            opt.triggered = trig == "rising";
+            opt.width = num("width", 480, 160, 1600);
+            opt.rowHeight = num("row_height", 100, 40, 400);
+
+            std::vector<gif::Frame> gifFrames;
+            std::string stopNote;
+            const int rate = insp->scopeSampleRate();
+            const uint64_t perFrame = std::max<uint64_t>(1, (uint64_t)rate * frameMs / 1000);
+            for (int f = 0; f < frames; ++f) {
+                if (f > 0) {
+                    // Run until the chip has produced frame_ms more samples
+                    uint64_t target = insp->scopeTotal(opt.chip) + perFrame;
+                    ms->dbg->resume();
+                    uint64_t steps = 0;
+                    const uint64_t budget = 2000000 + perFrame * 2000;   // no sound progress: give up
+                    while (insp->scopeTotal(opt.chip) < target && steps < budget) {
+                        if (ms->machine && ms->machine->schedulerStep) ms->machine->schedulerStep(*ms->machine);
+                        else ms->cpu->step();
+                        ++steps;
+                        if (ms->dbg->isPaused()) break;
+                    }
+                    if (ms->dbg->isPaused()) { stopNote = "Stopped at a breakpoint after " + std::to_string(f) + " frame(s).\n"; break; }
+                    if (insp->scopeTotal(opt.chip) < target) { stopNote = "The sound chip stopped producing samples; stopped after " + std::to_string(f) + " frame(s).\n"; break; }
+                }
+                if (!path.empty()) {
+                    scope::Image img = scope::renderScope(insp, opt);
+                    gifFrames.push_back({std::move(img.argb), std::max(2, frameMs / 10)});
+                }
+            }
+
+            std::string out = insp->chipName(opt.chip) + ", " + std::to_string(opt.timebaseMs) + " ms, " +
+                              (opt.triggered ? "triggered" : "free run") + "\n" + scope::voiceSummary(insp, opt.chip) + stopNote;
+            bool ok = true;
+            if (!path.empty() && !gifFrames.empty()) {
+                int w = opt.width, h = (insp->voiceCount(opt.chip) + 1) * opt.rowHeight;
+                std::string err;
+                if (isGif) {
+                    ok = gif::write(path, gifFrames, w, h, &err);
+                    if (ok) {
+                        char buf[200];
+                        snprintf(buf, sizeof buf, "Saved %zu-frame %dx%d GIF (%d ms emulated per frame) to ", gifFrames.size(), w, h, frameMs);
+                        out += buf + path;
+                    } else fail(err);
+                } else {
+                    std::vector<uint8_t> rgba = IVideoOutput::toRgbaBytes(gifFrames[0].argb.data(), gifFrames[0].argb.size());
+                    ok = stbi_write_png(path.c_str(), w, h, 4, rgba.data(), w * 4) != 0;
+                    if (ok) out += "Saved " + std::to_string(w) + "x" + std::to_string(h) + " PNG to " + path;
+                    else fail("Failed to write " + path);
+                }
+            }
+            if (ok) textItem.oVal["text"] = Json(out);
         }
     } else if (name == "search_memory") {
         std::string mid = args["machine_id"].sVal;

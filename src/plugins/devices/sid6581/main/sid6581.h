@@ -90,6 +90,7 @@ public:
     int  scopeSampleRate() const override { return m_sampleRate; }
     int  scopeCapacity() const override { return SCOPE_LEN; }
     int  scopeSamples(int chip, int channel, float* out, int n) const override;
+    uint64_t scopeTotal(int /*chip*/) const override { return m_scopeTotal; }
 
     // -----------------------------------------------------------------------
     // Register offsets (relative to base address)
@@ -221,6 +222,7 @@ private:
     float   m_scope[4][SCOPE_LEN] = {};
     int     m_scopePos   = 0;   // next write index
     int     m_scopeCount = 0;   // valid entries (<= SCOPE_LEN)
+    uint64_t m_scopeTotal = 0;  // entries since reset
 
     // Ring buffer for pullSamples()
     static constexpr int AUDIO_BUF = 8192;

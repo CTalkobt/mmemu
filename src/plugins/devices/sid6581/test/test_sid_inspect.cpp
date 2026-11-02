@@ -190,3 +190,42 @@ TEST_CASE(scope_envelope_times) {
     ASSERT(scope::attackMs(0) == 2 && scope::attackMs(15) == 8000);
     ASSERT(scope::decayReleaseMs(0) == 6 && scope::decayReleaseMs(9) == 750);
 }
+
+TEST_CASE(scope_render_image) {
+    SID6581 sid("SID", BASE);
+    sid.setClockHz(985248);
+    sid.setSampleRate(44100);
+    scope::RenderOptions opt;
+    opt.width = 400;
+    opt.rowHeight = 80;
+    ASSERT(scope::renderScope(nullptr, opt).argb.empty());
+    opt.chip = 1;
+    ASSERT(scope::renderScope(&sid, opt).argb.empty());   // no such chip
+    opt.chip = 0;
+
+    // Voice 1 plays a sawtooth; voices 2 and 3 are silent
+    w(sid, SID6581::V1_FREQ_LO, 0x00); w(sid, SID6581::V1_FREQ_HI, 0x43);
+    w(sid, SID6581::V1_AD, 0x00);      w(sid, SID6581::V1_SR, 0xF0);
+    w(sid, SID6581::V1_CR, SID6581::CR_SAW | SID6581::CR_GATE);
+    w(sid, SID6581::MODE_VOL, 0x0F);
+    run(sid, 30000);
+
+    scope::Image img = scope::renderScope(&sid, opt);
+    ASSERT(img.width == 400 && img.height == 4 * 80);
+    ASSERT(img.argb.size() == (size_t)400 * 320);
+    auto count = [&](int row, uint32_t colour, int xMax) {
+        int n = 0;
+        for (int y = row * 80; y < (row + 1) * 80; ++y)
+            for (int x = 0; x < xMax; ++x) n += img.argb[(size_t)y * 400 + x] == colour;
+        return n;
+    };
+    // Voice 1's trace spans many rows; voice 2's is a flat line plus its label
+    int traceW = 400 - 12 - 90 - 8;   // left of the envelope diagram
+    ASSERT(count(0, scope::traceColour(0), traceW) > 300);
+    ASSERT(count(1, scope::traceColour(1), traceW) < traceW + 100);
+    ASSERT(count(3, scope::traceColour(3), 400) > 300);   // the output follows voice 1
+    // Labels are drawn: text pixels in the voice 1 header
+    int text = 0;
+    for (int y = 0; y < 24; ++y) for (int x = 0; x < 400; ++x) text += img.argb[(size_t)y * 400 + x] == scope::COLOUR_TEXT;
+    ASSERT(text > 50);
+}

@@ -74,7 +74,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp \
 	src/libtoolchain/main/basic_tokenizer.cpp src/libtoolchain/main/gfx_decode.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
-	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp src/libdebug/main/audio_scope.cpp \
+	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp src/libdebug/main/audio_scope.cpp src/libdebug/main/gif_writer.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
@@ -307,6 +307,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libdevices/test/test_ieee488.cpp \
 	src/libdebug/test/test_debug.cpp \
 	src/libdebug/test/test_trace_buffer.cpp \
+	src/libdebug/test/test_gif_writer.cpp \
 	src/libdebug/test/test_expression_evaluator.cpp \
 	src/libdebug/test/test_persistence.cpp \
 	src/libtoolchain/test/test_toolchain.cpp \

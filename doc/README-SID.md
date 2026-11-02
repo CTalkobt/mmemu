@@ -131,6 +131,29 @@ envelope level. The pane updates while the machine runs and after each step.
 The trigger search, note names and envelope times are in
 `src/libdebug/main/audio_scope.cpp`.
 
+#### MCP: `sid_scope`
+
+The same scope as an image, drawn by `scope::renderScope()` (no GUI needed):
+
+| Argument | Meaning |
+|----------|---------|
+| `machine_id` | Required |
+| `chip` | Sound chip index (default 0; MEGA65 SID1 = 0, SID2 = 1) |
+| `timebase_ms` | Time across each trace, 1-80 (default 20) |
+| `trigger` | `rising` (default) or `free` |
+| `path` | `.png` or `.gif`; without it only the voice state is returned |
+| `frames` | 1-300 (default 1). More than 1 runs the machine between frames and writes an animated, looping GIF |
+| `frame_ms` | Emulated ms between frames, 5-1000 (default 40); also the GIF frame delay |
+| `width`, `row_height` | Image size: width 160-1600 (default 480), each of the 4 rows 40-400 (default 100) |
+
+The reply lists each voice's state, e.g.
+`Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%, ADSR 0/9/A/5, Sustain 170`.
+Frames are spaced by the chip's sample count (`IAudioInspect::scopeTotal()`),
+so they are in emulated time whatever the CPU speed. The first frame shows the
+state before running. Capture stops early at a breakpoint, or if the chip
+stops producing samples. GIFs are written by `src/libdebug/main/gif_writer.cpp`
+(palette + LZW, no quantisation: the scope uses only a few colours).
+
 ---
 
 ## 3. Register Map

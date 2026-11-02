@@ -6,26 +6,15 @@
 
 namespace {
 
-const int TIMEBASES_MS[] = {2, 5, 10, 20, 50};
 const int DEFAULT_TIMEBASE = 3;   // 20 ms
 
-// Scope colours: a dark screen in both light and dark themes
-const wxColour BG(16, 20, 24);
-const wxColour GRID(40, 48, 56);
-const wxColour TEXT(200, 200, 200);
-const wxColour DIM(120, 128, 136);
-const wxColour TRACE[4] = {wxColour(80, 220, 100), wxColour(80, 190, 255),
-                           wxColour(255, 170, 70), wxColour(225, 225, 225)};
+wxColour wxc(uint32_t argb) { return wxColour((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF); }
 
-const char* phaseName(IAudioInspect::EnvPhase p) {
-    switch (p) {
-        case IAudioInspect::EnvPhase::Attack:  return "Attack";
-        case IAudioInspect::EnvPhase::Decay:   return "Decay";
-        case IAudioInspect::EnvPhase::Sustain: return "Sustain";
-        case IAudioInspect::EnvPhase::Release: return "Release";
-        default:                               return "Idle";
-    }
-}
+// Scope colours: a dark screen in both light and dark themes
+const wxColour BG = wxc(scope::COLOUR_BG);
+const wxColour GRID = wxc(scope::COLOUR_GRID);
+const wxColour TEXT = wxc(scope::COLOUR_TEXT);
+const wxColour DIM = wxc(scope::COLOUR_DIM);
 
 } // namespace
 
@@ -59,7 +48,7 @@ SidScopePane::SidScopePane(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
     m_chip->SetToolTip("Sound chip to show");
 
     wxArrayString tbs;
-    for (int ms : TIMEBASES_MS) tbs.Add(wxString::Format("%d ms", ms));
+    for (int ms : scope::TIMEBASES_MS) tbs.Add(wxString::Format("%d ms", ms));
     m_timebase = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, tbs);
     m_timebase->SetSelection(DEFAULT_TIMEBASE);
     m_timebase->SetToolTip("Time across each trace");
@@ -138,7 +127,7 @@ void SidScopePane::Paint(wxDC& dc, const wxSize& size) {
 void SidScopePane::PaintRow(wxDC& dc, const wxRect& r, int channel, bool output) {
     const Chip& chip = m_chips[m_chip->GetSelection()];
     const int lineH = dc.GetCharHeight();
-    const wxColour& colour = TRACE[std::min(channel, 3)];
+    const wxColour colour = wxc(scope::traceColour(channel));
 
     // Separator
     dc.SetPen(wxPen(GRID));
@@ -167,7 +156,7 @@ void SidScopePane::PaintRow(wxDC& dc, const wxRect& r, int channel, bool output)
 
         wxString line2 = wxString::Format("PW %.1f%%   ADSR %X %X %X %X   %s %d",
                                           vi.pulseWidth * 100.0 / 4096.0, vi.attack, vi.decay,
-                                          vi.sustain, vi.release, phaseName(vi.envPhase), vi.envLevel);
+                                          vi.sustain, vi.release, scope::phaseName((int)vi.envPhase), vi.envLevel);
         if (vi.filtered) line2 += "   Filter";
         if (vi.muted) line2 += "   Off";
         dc.DrawText(line2, x, r.y + 2 + lineH);
@@ -194,22 +183,16 @@ void SidScopePane::PaintRow(wxDC& dc, const wxRect& r, int channel, bool output)
     int cap = chip.insp->scopeCapacity();
     if ((int)m_buf.size() < cap) m_buf.resize(cap);
     int n = chip.insp->scopeSamples(chip.index, channel, m_buf.data(), cap);
-    int rate = chip.insp->scopeSampleRate();
-    int window = std::min(n, std::max(2, rate * TIMEBASES_MS[m_timebase->GetSelection()] / 1000));
-    if (n < 2 || window < 2) return;
-
-    int start = n - window;
-    if (m_trigger->GetSelection() == 0) {
-        int t = scope::findTrigger(m_buf.data(), n, window);
-        bool silent = std::all_of(m_buf.begin() + start, m_buf.begin() + n,
-                                  [](float v) { return std::fabs(v) < 0.01f; });
-        if (t >= 0) start = t;
-        else if (!silent) {   // a flat trace needs no warning
-            dc.SetTextForeground(DIM);
-            wxString msg = "no trigger";
-            dc.DrawText(msg, tr.GetRight() - dc.GetTextExtent(msg).x - 3, tr.y + 2);
-        }
+    scope::TraceWindow win = scope::traceWindow(m_buf.data(), n, chip.insp->scopeSampleRate(),
+                                                scope::TIMEBASES_MS[m_timebase->GetSelection()],
+                                                m_trigger->GetSelection() == 0);
+    if (win.untriggered) {
+        dc.SetTextForeground(DIM);
+        wxString msg = "no trigger";
+        dc.DrawText(msg, tr.GetRight() - dc.GetTextExtent(msg).x - 3, tr.y + 2);
     }
+    if (win.length < 2) return;
+    const int window = win.length, start = win.start;
 
     auto yOf = [&](float v) {
         v = std::max(-1.0f, std::min(1.0f, v));

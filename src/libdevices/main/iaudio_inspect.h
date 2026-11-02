@@ -50,4 +50,9 @@ public:
      * @return number of samples written.
      */
     virtual int scopeSamples(int chip, int channel, float* out, int n) const = 0;
+    /**
+     * Samples recorded since reset (keeps counting after the history wraps).
+     * Lets tools space snapshots in emulated time.
+     */
+    virtual uint64_t scopeTotal(int chip) const = 0;
 };

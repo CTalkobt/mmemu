@@ -133,6 +133,7 @@ void SID6581::reset() {
     m_audioBufCount = 0;
     m_scopePos   = 0;
     m_scopeCount = 0;
+    m_scopeTotal = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +348,7 @@ void SID6581::synthesize(uint64_t cycles) {
         m_scope[3][m_scopePos] = mix;
         m_scopePos = (m_scopePos + 1) & (SCOPE_LEN - 1);
         if (m_scopeCount < SCOPE_LEN) ++m_scopeCount;
+        ++m_scopeTotal;
         pushSample(mix);
     }
 }

@@ -60,6 +60,7 @@ public:
         if (chip < 0 || chip > 1) return 0;
         return (chip ? m_sid2 : m_sid1).scopeSamples(0, channel, out, n);
     }
+    uint64_t scopeTotal(int chip) const override { return chip ? m_sid2.scopeTotal(0) : m_sid1.scopeTotal(0); }
 
 private:
     std::string m_name{"Dual SID"};
