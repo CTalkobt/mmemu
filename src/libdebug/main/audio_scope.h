@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
+#include "gif_writer.h"
 
 class IAudioInspect;
 struct MachineDescriptor;
@@ -87,5 +89,42 @@ struct Image {
 
 /** Draw the scope for one chip. Empty image if the chip does not exist. */
 Image renderScope(IAudioInspect* insp, const RenderOptions& opt);
+
+/** One sound chip: a handler and its chip index. */
+struct ChipRef {
+    IAudioInspect* insp = nullptr;
+    int chip = 0;
+};
+
+/** Every chip of every IAudioInspect handler, numbered as the CLI/MCP "chip" argument. */
+std::vector<ChipRef> listChips(MachineDescriptor* desc);
+
+/** Frames captured by capture(), ready for writeCapture(). */
+struct Capture {
+    std::vector<gif::Frame> frames;
+    int width = 0, height = 0;
+    int frameMs = 0;        ///< emulated ms between frames
+    std::string stopNote;   ///< why capture ended early, or empty
+};
+
+/**
+ * Render `frames` scope images of chip (opt.chip is ignored). Between frames,
+ * call step() until the chip has produced frameMs more samples; step()
+ * returns false to stop (breakpoint, interrupt). The first frame is the
+ * current state. Capture also ends if the chip stops producing samples.
+ */
+Capture capture(const ChipRef& chip, RenderOptions opt, int frames, int frameMs,
+                const std::function<bool()>& step);
+
+/**
+ * Write a capture to path: .png (first frame) or .gif (all frames, looping
+ * when more than one). Returns false and sets err on failure; on success
+ * sets saved to e.g.
+ * "Saved 12-frame 480x400 GIF (40 ms emulated per frame) to <path>".
+ */
+bool writeCapture(const std::string& path, const Capture& cap, std::string& err, std::string& saved);
+
+/** True when path ends in .png or .gif (case-insensitive); sets isGif. */
+bool snapshotPathOk(const std::string& path, bool& isGif);
 
 } // namespace scope

@@ -154,6 +154,28 @@ state before running. Capture stops early at a breakpoint, or if the chip
 stops producing samples. GIFs are written by `src/libdebug/main/gif_writer.cpp`
 (palette + LZW, no quantisation: the scope uses only a few colours).
 
+#### CLI: `sid voices` and `sid scope`
+
+```
+sid voices [chip]
+sid scope <file.png|file.gif> [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]
+```
+
+`sid voices` prints the same voice table as the MCP tool, e.g. after `step`
+or at a breakpoint. `sid scope` writes the same image: `ms` is `frame_ms`,
+`timebase` is `timebase_ms`, `free` selects free run, and `height` is the row
+height. More than one frame needs a `.gif` and runs the machine; a
+breakpoint or Ctrl-C ends the capture early. Both front ends share
+`scope::listChips()`, `scope::capture()` and `scope::writeCapture()`.
+
+```
+> sid scope song.gif frames 50 ms 40
+SID $D400
+Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%, ADSR 0/9/A/5, Sustain 170
+...
+Saved 50-frame 480x400 GIF (40 ms emulated per frame) to song.gif
+```
+
 ---
 
 ## 3. Register Map

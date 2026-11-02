@@ -74,8 +74,11 @@ int decayReleaseMs(int nibble) { return attackMs(nibble) * 3; }
 // ---------------------------------------------------------------------------
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include "libdevices/main/ivideo_output.h"
+#include "util/stb_image_write.h"
 
 namespace scope {
 
@@ -353,6 +356,81 @@ Image renderScope(IAudioInspect* insp, const RenderOptions& opt) {
         }
     }
     return img;
+}
+
+std::vector<ChipRef> listChips(MachineDescriptor* desc) {
+    std::vector<ChipRef> out;
+    for (IAudioInspect* a : findAudioInspect(desc))
+        for (int c = 0; c < a->chipCount(); ++c) out.push_back({a, c});
+    return out;
+}
+
+Capture capture(const ChipRef& chip, RenderOptions opt, int frames, int frameMs,
+                const std::function<bool()>& step) {
+    Capture cap;
+    cap.frameMs = frameMs;
+    if (!chip.insp) return cap;
+    opt.chip = chip.chip;
+    const uint64_t perFrame = std::max<uint64_t>(1, (uint64_t)chip.insp->scopeSampleRate() * frameMs / 1000);
+    for (int f = 0; f < frames; ++f) {
+        if (f > 0) {
+            uint64_t target = chip.insp->scopeTotal(chip.chip) + perFrame;
+            const uint64_t budget = 2000000 + perFrame * 2000;   // steps without sound progress: give up
+            uint64_t steps = 0;
+            bool stopped = false;
+            while (chip.insp->scopeTotal(chip.chip) < target && steps < budget) {
+                ++steps;
+                if (!step()) { stopped = true; break; }
+            }
+            if (stopped) {
+                cap.stopNote = "Stopped (breakpoint or interrupt) after " + std::to_string(f) + " frame(s).";
+                break;
+            }
+            if (chip.insp->scopeTotal(chip.chip) < target) {
+                cap.stopNote = "The sound chip stopped producing samples; stopped after " + std::to_string(f) + " frame(s).";
+                break;
+            }
+        }
+        Image img = renderScope(chip.insp, opt);
+        cap.width = img.width;
+        cap.height = img.height;
+        cap.frames.push_back({std::move(img.argb), std::max(2, frameMs / 10)});
+    }
+    return cap;
+}
+
+bool snapshotPathOk(const std::string& path, bool& isGif) {
+    auto endsWith = [&](const char* ext) {
+        size_t n = std::strlen(ext);
+        if (path.size() < n) return false;
+        for (size_t i = 0; i < n; ++i)
+            if (std::tolower((unsigned char)path[path.size() - n + i]) != ext[i]) return false;
+        return true;
+    };
+    isGif = endsWith(".gif");
+    return isGif || endsWith(".png");
+}
+
+bool writeCapture(const std::string& path, const Capture& cap, std::string& err, std::string& saved) {
+    bool isGif = false;
+    if (!snapshotPathOk(path, isGif)) { err = "path must end in .png or .gif"; return false; }
+    if (cap.frames.empty()) { err = "nothing captured"; return false; }
+    std::string size = std::to_string(cap.width) + "x" + std::to_string(cap.height);
+    if (isGif) {
+        if (!gif::write(path, cap.frames, cap.width, cap.height, &err)) return false;
+        saved = cap.frames.size() > 1
+            ? "Saved " + std::to_string(cap.frames.size()) + "-frame " + size + " GIF (" +
+                  std::to_string(cap.frameMs) + " ms emulated per frame) to " + path
+            : "Saved " + size + " GIF to " + path;
+        return true;
+    }
+    std::vector<uint8_t> rgba = IVideoOutput::toRgbaBytes(cap.frames[0].argb.data(), cap.frames[0].argb.size());
+    if (!stbi_write_png(path.c_str(), cap.width, cap.height, 4, rgba.data(), cap.width * 4)) {
+        err = "Failed to write " + path;
+        return false;
+    }
+    saved = "Saved " + size + " PNG to " + path;
+    return true;
 }
 
 } // namespace scope
