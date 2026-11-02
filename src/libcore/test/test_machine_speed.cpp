@@ -37,6 +37,7 @@ TEST_CASE(machine_speed_real_time_and_max) {
     ASSERT(!machine_speed::controllable(m));
     std::string err;
     ASSERT(!machine_speed::apply(m, "max", err));
+    ASSERT(machine_speed::applyStartSpeed(m, "real", err));   // no speed setting: ignored
 
     uint64_t cycles = 0;
     m.clockHz = 985248;
@@ -44,7 +45,13 @@ TEST_CASE(machine_speed_real_time_and_max) {
     ASSERT(machine_speed::controllable(m));
     ASSERT(!machine_speed::supported(m));
     ASSERT_EQ(machine_speed::choices(m), std::string("real|max"));
+    // Created at max (tests, MCP); front ends select real time on startup
+    ASSERT(machine_speed::atMax(m));
+    ASSERT(machine_speed::applyStartSpeed(m, "real", err));
     ASSERT_EQ(machine_speed::describe(m), std::string("Speed: real time (985248 Hz)"));
+    ASSERT(!machine_speed::applyStartSpeed(m, "fast", err));
+    ASSERT(machine_speed::applyStartSpeed(m, "", err));    // "" leaves it alone
+    ASSERT(!machine_speed::atMax(m));
 
     ASSERT(machine_speed::apply(m, "max", err));
     ASSERT(machine_speed::atMax(m));

@@ -489,11 +489,15 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] =
     { wxCMD_LINE_SWITCH, "v", "verbose", "Enable debug logging", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "trace", "Enable trace logging (very verbose)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "run", "Auto-start the loaded program", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_OPTION, nullptr, "speed", "Speed for loaded machines: real (default), max or a MEGA65 clock in MHz", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "p", "project", "Open a Makefile project directory", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, "h", "help",    "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_SWITCH, "?", "",        "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_NONE, nullptr, nullptr, nullptr, wxCMD_LINE_VAL_NONE, 0 }
 };
+
+// Speed applied to each machine the GUI loads (#169); --speed overrides
+static std::string g_startSpeed = "real";
 
 class MmemuApp : public wxApp {
 public:
@@ -508,6 +512,8 @@ public:
         parser.Found("project", &m_startProject);
         parser.Found("type", &m_startType);
         m_autoRun = parser.Found("run");
+        wxString speed;
+        if (parser.Found("speed", &speed)) g_startSpeed = speed.utf8_string();
         m_trace = parser.Found("trace");
         m_verbose = parser.Found("verbose");
         return true;
@@ -1217,6 +1223,11 @@ void MmemuFrame::loadMachineById(const std::string& id) {
 
     if (m_machine != md) delete m_machine;
     m_machine = md;
+    {
+        std::string speedErr;   // #169: start at real time
+        if (!machine_speed::applyStartSpeed(*m_machine, g_startSpeed, speedErr))
+            SetStatusText("--speed " + g_startSpeed + ": " + speedErr);
+    }
     m_cpu = m_machine->cpus[0].cpu;
     m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
     if (m_disasm) {
