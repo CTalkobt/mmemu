@@ -301,6 +301,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libmem/test/test_sparse_memory_bus.cpp \
 	src/libcore/test/test_libcore.cpp \
 	src/libcore/test/test_registry.cpp \
+	src/libcore/test/test_machine_speed.cpp \
 	src/libcore/test/test_json_machine_loader.cpp \
 	src/libcore/test/test_machine_boot.cpp \
 	src/libdevices/test/test_devices.cpp \

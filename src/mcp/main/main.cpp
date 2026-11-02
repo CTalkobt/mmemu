@@ -322,15 +322,17 @@ Json handleDescribe() {
         Json spProps(Json::OBJ);
         spProps.oVal["machine_id"] = midProp;
         Json spdProp(Json::OBJ); spdProp.oVal["type"] = Json("string");
-        spdProp.oVal["description"] = Json("CPU clock in MHz (\"1\", \"2\", \"3.5\", \"40\" = 40.5) or \"max\" "
-                                           "for unbounded speed (warp). Omit to only report the current speed.");
+        spdProp.oVal["description"] = Json("MEGA65: CPU clock in MHz (\"1\", \"2\", \"3.5\", \"40\" = 40.5); any paced "
+                                           "machine: \"real\" (real time) or \"max\" (unbounded; warp on the MEGA65). "
+                                           "Omit to only report the current speed.");
         spProps.oVal["speed"] = spdProp;
         spSchema.oVal["properties"] = spProps;
         Json spReq(Json::ARR); spReq.push_back(Json("machine_id"));
         spSchema.oVal["required"] = spReq;
         addTool("set_speed",
-                "MEGA65 only: get or set the CPU speed (1/2/3.5/40.5 MHz). "
-                "\"max\" runs unbounded (warp); a clock in MHz selects it the way software would.",
+                "Get or set the speed setting: real time or max for C64/VIC-20/PET, plus the CPU "
+                "clock (1/2/3.5/40.5 MHz) on the MEGA65, selected the way software would. The GUI "
+                "and CLI `run` pace to real time unless max; the MCP server always runs unpaced.",
                 spSchema);
     }
 
@@ -2533,7 +2535,7 @@ Json handleToolsCall(const Json& params) {
         if (!ms) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
-        } else if (!machine_speed::supported(*ms->machine)) {
+        } else if (!machine_speed::controllable(*ms->machine)) {
             textItem.oVal["text"] = Json("Error: This machine has no CPU speed model");
             textItem.oVal["isError"] = Json(true);
         } else {

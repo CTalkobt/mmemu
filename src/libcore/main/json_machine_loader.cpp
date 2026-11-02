@@ -164,6 +164,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     desc->machineId        = spec.value("id",          "");
     desc->displayName      = spec.value("displayName",  "");
     desc->licenseClass     = spec.value("licenseClass", "");
+    if (spec.contains("clockHz") && spec["clockHz"].is_number())
+        desc->clockHz      = spec["clockHz"].get<double>();   // real-time pacing (#169)
     desc->preferredAssembler = spec.value("assembler",  "");
     desc->sourceSpec       = spec;
     log->debug("JsonMachineLoader: building '{}'", desc->machineId);

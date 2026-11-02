@@ -5,6 +5,7 @@
       "id": "pet2001",
       "displayName": "Commodore PET 2001",
       "licenseClass": "proprietary",
+      "clockHz": 1000000,
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
@@ -64,6 +65,7 @@
       "id": "pet4032",
       "displayName": "Commodore PET 4032",
       "licenseClass": "proprietary",
+      "clockHz": 1000000,
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
@@ -125,6 +127,7 @@
       "id": "pet8032",
       "displayName": "Commodore PET 8032",
       "licenseClass": "proprietary",
+      "clockHz": 1000000,
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
