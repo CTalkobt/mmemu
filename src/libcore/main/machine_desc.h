@@ -116,6 +116,18 @@ struct MachineDescriptor {
     /** CPU clocks setCpuSpeedMHz() accepts, slowest first. */
     std::vector<double>       cpuSpeeds;
 
+    /**
+     * Real-time pacing (#169). clockHz is the device (phi) clock in Hz; 0
+     * means the machine is never paced. Front ends that pace (GUI, CLI `run`)
+     * keep deviceCycles() in step with the wall clock unless the machine runs
+     * at max speed (warp on, or maxSpeed for machines without getWarp).
+     */
+    double                      clockHz = 0;
+    /** Device cycles elapsed; unset = the main CPU's cycle count. */
+    std::function<uint64_t()>   deviceCycles;
+    /** Run unpaced; used by machines without getWarp/setWarp. */
+    bool                        maxSpeed = false;
+
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine
     std::vector<std::string> symbolFiles;

@@ -989,7 +989,7 @@ def run_tests():
     assert "Speed: max" in text, f"set_speed max: {text}"
     res = client.call_tool("set_speed", {"machine_id": m65, "speed": "7"})
     item = res["result"]["content"][0]
-    assert item.get("isError") and "1|2|3.5|40.5|max" in item["text"], f"set_speed 7: {item}"
+    assert item.get("isError") and "1|2|3.5|40.5|real|max" in item["text"], f"set_speed 7: {item}"
     print("  ✓ set_speed OK (3.5 MHz, max, rejects 7)")
     client.call_tool("destroy_machine", {"machine_id": m65})
     res = client.call_tool("create_machine", {"machine_type": "c64"})
@@ -998,8 +998,13 @@ def run_tests():
     assert res["result"].get("isError") or "no CPU speed model" in res["result"]["content"][0]["text"]
     res = client.call_tool("set_speed", {"machine_id": c64, "speed": "1"})
     assert res["result"]["content"][0].get("isError"), "set_speed should fail on the C64"
+    # #169: the C64 has real time and max (no CPU clocks)
+    text = client.call_tool("set_speed", {"machine_id": c64})["result"]["content"][0]["text"]
+    assert "Speed: real time (985248 Hz)" in text, f"set_speed c64: {text}"
+    text = client.call_tool("set_speed", {"machine_id": c64, "speed": "max"})["result"]["content"][0]["text"]
+    assert "Speed: max (unpaced)" in text, f"set_speed c64 max: {text}"
     client.call_tool("destroy_machine", {"machine_id": c64})
-    print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64 has no speed model)")
+    print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64: real time or max)")
 
     # render_graphics (#28)
     print("\nTesting render_graphics...")

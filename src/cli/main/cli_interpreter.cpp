@@ -35,6 +35,8 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
+#include <chrono>
+#include <thread>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -619,7 +621,18 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         int steps = 0;
         const int STATUS_INTERVAL = 100000; // Report status every 100k steps
         int nextStatusAt = STATUS_INTERVAL;
+        // Real time (#169): sleep whenever emulated time gets ahead of the wall
+        // clock, unless the machine runs at max (`speed max`).
+        machine_speed::RealTimePacer pacer;
         while (!m_ctx.dbg->isPaused() && !g_interrupted) {
+            if (m_ctx.machine && (steps & 255) == 0) {
+                auto now = machine_speed::RealTimePacer::Clock::now();
+                if (pacer.ahead(*m_ctx.machine, now)) {
+                    auto wait = pacer.waitTime(machine_speed::deviceCycles(*m_ctx.machine), now);
+                    std::this_thread::sleep_for(std::min<decltype(wait)>(wait, std::chrono::milliseconds(5)));
+                    continue;   // re-check (and Ctrl-C) before stepping on
+                }
+            }
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);
             } else {
@@ -2502,7 +2515,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "speed") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
-        if (!machine_speed::supported(m)) { m_output(machine_speed::describe(m) + "\n"); return; }
+        if (!machine_speed::controllable(m)) { m_output(machine_speed::describe(m) + "\n"); return; }
         std::string arg, error;
         double requested = 0;
         if (ss >> arg) {
@@ -3345,7 +3358,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  project new <t> <dir> - Create a project from a template and open it\n"
                  "  srcmap load <map> [src] - Load a ca45 --source-map file for source-level debugging\n"
                  "  srcmap list|clear   - Show or clear loaded source mappings\n"
-                 "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"
+                 "  speed [real|max|MHz] - show/set speed: real time or max (unpaced) for `run`;\n"
+                 "                        MEGA65 also 1, 2, 3.5, 40 (40.5) MHz (each real time)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"
