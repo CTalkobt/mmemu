@@ -54,6 +54,19 @@ WXLIBS     = $(shell wx-config --libs aui,stc,xrc,html,qa,core,xml,net,base)
 # The host binary (BASE_LIBS) exports spdlog symbols; dlopen resolves them at load time.
 PLUGIN_LIBS =
 
+# libca45 (the MEGA65 compiler suite's assembler as a library, its
+# include/ca45/ca45.hpp): the 45GS02 ca45 backend's assembleLine() (the CLI's
+# and MCP's dot-assembly) uses it when it is found. CA45_DIR is a built
+# m65compiler checkout (lib45/libca45.a) or an install prefix (lib/libca45.a);
+# without it assembleLine() returns -1 and the 6502 assembler is used instead.
+CA45_DIR ?= $(firstword $(wildcard ../m65compiler /usr/local))
+CA45_LIB := $(firstword $(wildcard $(CA45_DIR)/lib45/libca45.a $(CA45_DIR)/lib/libca45.a))
+CA45_INC := $(firstword $(wildcard $(CA45_DIR)/include/ca45/ca45.hpp))
+ifneq ($(and $(CA45_LIB),$(CA45_INC)),)
+CA45_CXXFLAGS = -DMMEMU_HAVE_LIBCA45 -I$(CA45_DIR)/include
+CA45_LIBS     = $(CA45_LIB)
+endif
+
 # Library Sources
 LIBMEM_SRCS       = src/libmem/main/ibus.cpp src/libmem/main/memory_bus.cpp \
 	src/libmem/main/sparse_memory_bus.cpp src/libmem/main/libmem.cpp
@@ -370,6 +383,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/45gs02/test/test_cpu45gs02.cpp \
 	src/plugins/45gs02/test/test_neg_prefix_flags.cpp \
 	src/plugins/45gs02/test/test_neg_prefix_modes.cpp \
+	src/plugins/45gs02/test/test_ca45_assemble_line.cpp \
 	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp \
@@ -398,6 +412,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/6502/main/assembler_6502.o \
 	src/plugins/6502/main/kickassembler.o \
 	src/plugins/45gs02/main/cpu45gs02.o \
+	src/plugins/45gs02/main/ca45_assembler.o \
 	src/plugins/devices/via6522/main/via6522.o \
 	src/plugins/devices/vic6560/main/vic6560.o \
 	src/plugins/devices/kbd_vic20/main/kbd_vic20.o \
@@ -623,7 +638,7 @@ $(LIBDIR)/mmemu-plugin-6502.so: $(PLUGIN_6502_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-45gs02.so: $(PLUGIN_45GS02_OBJS) | $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS) $(CA45_LIBS)
 
 $(LIBDIR)/mmemu-plugin-hyper-serial.so: $(PLUGIN_HYPERSERIAL_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
@@ -707,7 +722,7 @@ $(LIBDIR)/mmemu-plugin-map-mmu.so: $(PLUGIN_MAP_MMU_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS) $(CA45_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
@@ -756,7 +771,9 @@ $(TEST_RUNNER_BIN): $(TEST_RUNNER_OBJS) $(LIBS) | $(BINDIR)
 test-runner: $(TEST_RUNNER_BIN) plugins
 
 $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound
+
+src/plugins/45gs02/main/ca45_assembler.o src/plugins/45gs02/test/test_ca45_assemble_line.o: CXXFLAGS += $(CA45_CXXFLAGS)
 
 # Generic rules
 %.o: %.cpp

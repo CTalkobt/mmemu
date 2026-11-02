@@ -4,11 +4,29 @@
 #include <fstream>
 #include <sstream>
 #include <spdlog/spdlog.h>
+#ifdef MMEMU_HAVE_LIBCA45
+#include <ca45/ca45.hpp>
+#endif
 
 Ca45AssemblerBackend::Ca45AssemblerBackend() = default;
 
 bool Ca45AssemblerBackend::isaSupported(const std::string& isa) const {
     return isa == "45GS02" || isa == "6502" || isa == "65CE02";
+}
+
+int Ca45AssemblerBackend::assembleLine(const std::string& line, uint8_t* buf, int bufsz,
+                                       uint32_t currentAddr) {
+#ifdef MMEMU_HAVE_LIBCA45
+    m_lastError.clear();
+    int n = ca45::assembleLine(line, buf, bufsz, currentAddr, &m_lastError);
+    if (n < 0)
+        spdlog::debug("ca45: '{}': {}", line, m_lastError);
+    return n;
+#else
+    (void)line; (void)buf; (void)bufsz; (void)currentAddr;
+    m_lastError = "built without libca45 (CA45_DIR)";
+    return -1;
+#endif
 }
 
 AssemblerResult Ca45AssemblerBackend::assemble(const std::string& sourcePath,
