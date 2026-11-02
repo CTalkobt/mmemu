@@ -28,7 +28,7 @@ class MMEMUBootTest:
         """Start MEGA65 emulator."""
         try:
             self.process = subprocess.Popen(
-                ["./bin/mmemu-cli"],
+                ["./bin/mmemu-cli", "--speed", "max"],   # unpaced: real time is not needed here
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

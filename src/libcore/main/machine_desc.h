@@ -121,12 +121,15 @@ struct MachineDescriptor {
      * means the machine is never paced. Front ends that pace (GUI, CLI `run`)
      * keep deviceCycles() in step with the wall clock unless the machine runs
      * at max speed (warp on, or maxSpeed for machines without getWarp).
+     * Machines are created at max speed, so tests and the MCP server run
+     * flat out; the GUI and CLI select real time when they create one
+     * (`--speed` overrides).
      */
     double                      clockHz = 0;
     /** Device cycles elapsed; unset = the main CPU's cycle count. */
     std::function<uint64_t()>   deviceCycles;
     /** Run unpaced; used by machines without getWarp/setWarp. */
-    bool                        maxSpeed = false;
+    bool                        maxSpeed = true;
 
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine

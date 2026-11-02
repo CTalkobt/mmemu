@@ -998,11 +998,11 @@ def run_tests():
     assert res["result"].get("isError") or "no CPU speed model" in res["result"]["content"][0]["text"]
     res = client.call_tool("set_speed", {"machine_id": c64, "speed": "1"})
     assert res["result"]["content"][0].get("isError"), "set_speed should fail on the C64"
-    # #169: the C64 has real time and max (no CPU clocks)
+    # #169: the C64 has real time and max (no CPU clocks); MCP machines start at max
     text = client.call_tool("set_speed", {"machine_id": c64})["result"]["content"][0]["text"]
-    assert "Speed: real time (985248 Hz)" in text, f"set_speed c64: {text}"
-    text = client.call_tool("set_speed", {"machine_id": c64, "speed": "max"})["result"]["content"][0]["text"]
-    assert "Speed: max (unpaced)" in text, f"set_speed c64 max: {text}"
+    assert "Speed: max (unpaced)" in text, f"set_speed c64: {text}"
+    text = client.call_tool("set_speed", {"machine_id": c64, "speed": "real"})["result"]["content"][0]["text"]
+    assert "Speed: real time (985248 Hz)" in text, f"set_speed c64 real: {text}"
     client.call_tool("destroy_machine", {"machine_id": c64})
     print("  ✓ set_warp OK (MEGA65 default warp at 40.5 MHz, toggles off; C64: real time or max)")
 

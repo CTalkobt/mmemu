@@ -83,6 +83,11 @@ bool apply(MachineDescriptor& m, const std::string& value, std::string& error, d
     return true;
 }
 
+bool applyStartSpeed(MachineDescriptor& m, const std::string& value, std::string& error) {
+    if (value.empty() || !controllable(m)) return true;
+    return apply(m, value, error);
+}
+
 std::string describe(const MachineDescriptor& m) {
     if (!controllable(m)) return "This machine has no CPU speed model.";
     if (supported(m)) {

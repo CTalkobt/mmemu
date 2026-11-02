@@ -46,6 +46,13 @@ bool apply(MachineDescriptor& m, const std::string& value, std::string& error,
 /** The accepted values, e.g. "1|2|3.5|40.5|real|max" or "real|max". */
 std::string choices(const MachineDescriptor& m);
 
+/**
+ * Apply a front end's startup speed (`--speed`, default "real") to a newly
+ * created machine. Machines without a speed setting are left alone and
+ * return true; an invalid value returns false with `error` set.
+ */
+bool applyStartSpeed(MachineDescriptor& m, const std::string& value, std::string& error);
+
 /** One-line description, e.g. "Speed: max (warp: ...)", "Speed: 3.5 MHz, real time". */
 std::string describe(const MachineDescriptor& m);
 

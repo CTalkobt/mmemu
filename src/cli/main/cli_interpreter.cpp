@@ -296,6 +296,11 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 }
                 m_ctx.machine = md;
                 m_ctx.cpu = md->cpus[0].cpu;
+                {
+                    std::string speedErr;   // #169: the CLI starts machines at real time
+                    if (!machine_speed::applyStartSpeed(*md, m_ctx.startSpeed, speedErr))
+                        m_output("Warning: --speed " + m_ctx.startSpeed + ": " + speedErr + "\n");
+                }
                 // Use CPU data bus if available, otherwise fallback to machine bus
                 m_ctx.bus = m_ctx.cpu->getDataBus() ? m_ctx.cpu->getDataBus() : md->buses[0].bus;
                 
