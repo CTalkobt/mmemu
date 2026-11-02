@@ -63,7 +63,7 @@ LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp s
 	src/libcore/main/path_util.cpp src/libcore/main/sim_config.cpp \
 	src/libcore/main/machine_speed.cpp
 LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_registry.cpp \
-                    src/libdevices/main/ivideo_output.cpp \
+                    src/libdevices/main/ivideo_output.cpp src/libdevices/main/iaudio_inspect.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
                     src/libdevices/main/ieee488.cpp
 LIBPROJECT_SRCS   = src/libproject/main/project.cpp src/libproject/main/make_runner.cpp \
@@ -74,7 +74,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp \
 	src/libtoolchain/main/basic_tokenizer.cpp src/libtoolchain/main/gfx_decode.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
-	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp \
+	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp src/libdebug/main/audio_scope.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
@@ -243,6 +243,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/dock_layout.cpp \
 	src/gui/main/source_pane.cpp \
 	src/gui/main/graphics_pane.cpp \
+	src/gui/main/sid_scope_pane.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
 	src/gui/main/memory_pane.cpp \
@@ -348,6 +349,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid_pair/test/test_sid_pair.cpp \
 	src/plugins/devices/sid6581/test/test_combined_waveforms.cpp \
 	src/plugins/devices/sid6581/test/test_sid_filter.cpp \
+	src/plugins/devices/sid6581/test/test_sid_inspect.cpp \
 	src/plugins/devices/sid6581/test/test_soft_clip_distortion.cpp \
 	src/plugins/devices/sid6581/test/test_spectral_analyzer.cpp \
 	tests/src/test_sid_filter_integration.cpp \

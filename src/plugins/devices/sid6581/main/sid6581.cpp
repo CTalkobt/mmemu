@@ -1,5 +1,6 @@
 #include "sid6581.h"
 #include "filter_curve.h"
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -130,6 +131,8 @@ void SID6581::reset() {
     m_audioBufRead  = 0;
     m_audioBufWrite = 0;
     m_audioBufCount = 0;
+    m_scopePos   = 0;
+    m_scopeCount = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -321,10 +324,12 @@ void SID6581::synthesize(uint64_t cycles) {
         float mix = 0.0f;
 
         for (int i = 0; i < 3; ++i) {
+            float vout = voiceOutput(m_voices[i]);
+            m_scope[i][m_scopePos] = vout;   // scope shows voice 3 even when disconnected
+
             // Voice 3 can be disconnected from audio output (used as LFO/modulator).
             if (i == 2 && (modeVol & MV_3OFF)) continue;
 
-            float vout = voiceOutput(m_voices[i]);
             bool filtered = (m_regs[RES_FILT] >> i) & 1;
 
             if (filtered) {
@@ -339,6 +344,9 @@ void SID6581::synthesize(uint64_t cycles) {
 
         // Clamp and scale by master volume.
         mix = std::max(-1.0f, std::min(1.0f, mix / 3.0f)) * vol;
+        m_scope[3][m_scopePos] = mix;
+        m_scopePos = (m_scopePos + 1) & (SCOPE_LEN - 1);
+        if (m_scopeCount < SCOPE_LEN) ++m_scopeCount;
         pushSample(mix);
     }
 }
@@ -598,4 +606,47 @@ void SID6581::getDeviceInfo(DeviceInfo& out) const {
     out.state.push_back({"Filter Cutoff", std::to_string(fc)});
     out.state.push_back({"Filter Res", std::to_string(m_regs[RES_FILT] >> 4)});
     out.state.push_back({"Main Volume", std::to_string(m_regs[MODE_VOL] & 0x0F)});
+}
+
+// ---------------------------------------------------------------------------
+// IAudioInspect (#30)
+// ---------------------------------------------------------------------------
+
+std::string SID6581::chipName(int /*chip*/) const {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%s $%04X", m_name.c_str(), (unsigned)m_baseAddr);
+    return buf;
+}
+
+bool SID6581::voiceInfo(int chip, int voice, VoiceInfo& out) const {
+    if (chip != 0 || voice < 0 || voice > 2) return false;
+    const Voice& v = m_voices[voice];
+    out.freq       = v.freq;
+    out.freqHz     = (double)v.freq * (double)m_clockHz / 16777216.0;
+    out.pulseWidth = v.pw & 0x0FFF;
+    out.control    = v.cr;
+    out.attack     = v.ad >> 4;
+    out.decay      = v.ad & 0x0F;
+    out.sustain    = v.sr >> 4;
+    out.release    = v.sr & 0x0F;
+    switch (v.envPhase) {
+        case Voice::Env::IDLE:    out.envPhase = EnvPhase::Idle;    break;
+        case Voice::Env::ATTACK:  out.envPhase = EnvPhase::Attack;  break;
+        case Voice::Env::DECAY:   out.envPhase = EnvPhase::Decay;   break;
+        case Voice::Env::SUSTAIN: out.envPhase = EnvPhase::Sustain; break;
+        case Voice::Env::RELEASE: out.envPhase = EnvPhase::Release; break;
+    }
+    out.envLevel = v.envLevel;
+    out.filtered = (m_regs[RES_FILT] >> voice) & 1;
+    out.muted    = voice == 2 && (m_regs[MODE_VOL] & MV_3OFF);
+    return true;
+}
+
+int SID6581::scopeSamples(int chip, int channel, float* out, int n) const {
+    if (chip != 0 || channel < 0 || channel > 3 || n <= 0 || !out) return 0;
+    if (n > m_scopeCount) n = m_scopeCount;
+    int start = (m_scopePos - n) & (SCOPE_LEN - 1);
+    for (int i = 0; i < n; ++i)
+        out[i] = m_scope[channel][(start + i) & (SCOPE_LEN - 1)];
+    return n;
 }

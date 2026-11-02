@@ -46,6 +46,7 @@
 #include "dock_layout.h"
 #include "source_pane.h"
 #include "graphics_pane.h"
+#include "sid_scope_pane.h"
 #include "libproject/main/project.h"
 #include "libproject/main/make_runner.h"
 #include "libproject/main/diagnostics.h"
@@ -177,6 +178,7 @@ private:
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     SourcePane*     m_sourcePane = nullptr;
     GraphicsPane*   m_graphicsPane = nullptr;
+    SidScopePane*   m_sidScopePane = nullptr;
 
     // Makefile project (#148)
     std::unique_ptr<project::Config> m_project;
@@ -727,6 +729,7 @@ MmemuFrame::MmemuFrame()
     m_mega65StatusPane = new Mega65StatusPane(host);
     m_sourcePane = new SourcePane(host);
     m_graphicsPane = new GraphicsPane(host);
+    m_sidScopePane = new SidScopePane(host);
     m_graphicsPane->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
     m_graphicsPane->SetMemoryCallback([this](uint32_t addr) {
         if (auto* mp = activeMemPane()) mp->SetAddress(addr);
@@ -765,6 +768,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
     m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
     m_dock->addPane("graphics",    "Graphics",         m_graphicsPane,         Area::Side,   false);
+    m_dock->addPane("sidscope",    "SID Scope",        m_sidScopePane,         Area::Side,   false);
     m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
     m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
     m_dock->setAvailable("mega65", false);   // until a MEGA65 is loaded
@@ -1255,6 +1259,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_deviceInfoPane->setMachine(m_machine);
     m_regWatchPane->setMachine(m_machine);
     m_graphicsPane->SetMachine(m_machine, m_bus, m_dbg);
+    m_sidScopePane->SetMachine(m_machine);
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
     m_sourcePane->SetDebugContext(m_dbg);
@@ -2226,6 +2231,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_sourcePane->RefreshBreakpointMarkers();   // only redraws if breakpoints changed
         if (m_graphicsPane)
             m_graphicsPane->RefreshValues();            // no-op unless shown; throttled while live
+        if (m_sidScopePane)
+            m_sidScopePane->RefreshValues(m_cpu->cycles());   // no-op unless shown and the machine ran
         if (isPaused) {
             if (m_stackPane && m_stackPane->IsShownOnScreen())
                 m_stackPane->RefreshValues();

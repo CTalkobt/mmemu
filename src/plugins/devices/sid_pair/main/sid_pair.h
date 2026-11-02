@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "plugins/devices/sid6581/main/sid6581.h"
 #include <string>
 
@@ -17,8 +18,9 @@
  * Pan weights configurable (default 0.75/0.25 split).
  *
  * IAudioOutput produces interleaved stereo float samples.
+ * IAudioInspect exposes the two SIDs as chips 0 and 1.
  */
-class SidPair : public IOHandler, public IAudioOutput {
+class SidPair : public IOHandler, public IAudioOutput, public IAudioInspect {
 public:
     SidPair();
     ~SidPair() override = default;
@@ -43,6 +45,21 @@ public:
     // IAudioOutput (stereo interleaved: L, R, L, R, ...)
     int nativeSampleRate() const override { return m_sid1.nativeSampleRate(); }
     int pullSamples(float* buffer, int maxSamples) override;
+
+    // IAudioInspect (#30): chip 0 = SID1, chip 1 = SID2
+    int  chipCount() const override { return 2; }
+    std::string chipName(int chip) const override { return chip ? m_sid2.chipName(0) : m_sid1.chipName(0); }
+    int  voiceCount(int chip) const override { return chip ? m_sid2.voiceCount(0) : m_sid1.voiceCount(0); }
+    bool voiceInfo(int chip, int voice, VoiceInfo& out) const override {
+        if (chip < 0 || chip > 1) return false;
+        return (chip ? m_sid2 : m_sid1).voiceInfo(0, voice, out);
+    }
+    int  scopeSampleRate() const override { return m_sid1.scopeSampleRate(); }
+    int  scopeCapacity() const override { return m_sid1.scopeCapacity(); }
+    int  scopeSamples(int chip, int channel, float* out, int n) const override {
+        if (chip < 0 || chip > 1) return 0;
+        return (chip ? m_sid2 : m_sid1).scopeSamples(0, channel, out, n);
+    }
 
 private:
     std::string m_name{"Dual SID"};

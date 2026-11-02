@@ -97,6 +97,40 @@ sid->setClockHz(985248);    // PAL; NTSC = 1022727
 int n = sid->pullSamples(buffer, maxSamples);
 ```
 
+### 2.6 Inspection and the SID Scope pane (IAudioInspect, #30)
+
+`SID6581` and the MEGA65's `SidPair` implement `IAudioInspect`
+(`src/libdevices/main/iaudio_inspect.h`), which debugger tools use without
+knowing the chip type:
+
+- `voiceInfo(chip, voice, out)`: frequency register and Hz, pulse width,
+  control register, ADSR nibbles, envelope phase and level, filter routing,
+  and whether voice 3 is disconnected ($D418 bit 7).
+- `scopeSamples(chip, channel, out, n)`: the latest samples, oldest first, at
+  the audio sample rate. Channels 0-2 are the voices (waveform x envelope,
+  before the filter; voice 3 is recorded even when disconnected) and channel
+  3 is the mixed output after the filter and volume. The history holds 4096
+  samples (~93 ms at 44.1 kHz) and is cleared on reset.
+
+`SidPair` reports two chips, `SID1 $D400` and `SID2 $D420`.
+
+The GUI's **SID Scope** pane (View > SID Scope) draws one trace per voice and
+one for the output. Controls:
+
+| Control | Meaning |
+|---------|---------|
+| Chip | Which SID to show, when the machine has more than one |
+| Timebase | Time across each trace: 2, 5, 10, 20 or 50 ms |
+| Triggered / Free run | Triggered holds a rising zero crossing at the left edge of each trace, so steady tones stand still; free run shows the latest samples |
+
+Each voice row shows its waveform and modifiers (Sync, Ring, Test, Gate), the
+frequency with the nearest note and its offset in cents, the pulse width, the
+ADSR settings, the envelope phase and level, and Filter / Off flags. On the
+right, an ADSR diagram highlights the current phase and a bar shows the
+envelope level. The pane updates while the machine runs and after each step.
+The trigger search, note names and envelope times are in
+`src/libdebug/main/audio_scope.cpp`.
+
 ---
 
 ## 3. Register Map

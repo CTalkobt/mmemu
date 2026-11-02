@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "combined_waveforms.h"
 #include <cstdint>
 #include <string>
@@ -42,8 +43,11 @@
  *   sid->setClockHz(985248); // PAL; NTSC = 1022727
  *   ioRegistry->registerHandler(sid);
  *   audioOutput->start(sid);
+ *
+ * IAudioInspect (#30): per-voice state and a scope history of each voice
+ * (waveform x envelope, before the filter) and of the mixed output.
  */
-class SID6581 : public IOHandler, public IAudioOutput {
+class SID6581 : public IOHandler, public IAudioOutput, public IAudioInspect {
 public:
     SID6581() : m_name("SID"), m_baseAddr(0xD400) { SID6581::reset(); }
     SID6581(const std::string& name, uint32_t baseAddr);
@@ -75,6 +79,17 @@ public:
 
     int nativeSampleRate() const override { return m_sampleRate; }
     int pullSamples(float* buffer, int maxSamples) override;
+
+    // -----------------------------------------------------------------------
+    // IAudioInspect interface (#30): one chip, 3 voices + output channel
+    // -----------------------------------------------------------------------
+
+    std::string chipName(int chip) const override;
+    int  voiceCount(int /*chip*/) const override { return 3; }
+    bool voiceInfo(int chip, int voice, VoiceInfo& out) const override;
+    int  scopeSampleRate() const override { return m_sampleRate; }
+    int  scopeCapacity() const override { return SCOPE_LEN; }
+    int  scopeSamples(int chip, int channel, float* out, int n) const override;
 
     // -----------------------------------------------------------------------
     // Register offsets (relative to base address)
@@ -199,6 +214,13 @@ private:
 
     // Fractional sample accumulator (same approach as VIC-I)
     uint64_t     m_sampleFrac = 0;
+
+    // Scope history for IAudioInspect: voices 0-2 and the output (channel 3),
+    // one entry per output sample.
+    static constexpr int SCOPE_LEN = 4096;   // power of two
+    float   m_scope[4][SCOPE_LEN] = {};
+    int     m_scopePos   = 0;   // next write index
+    int     m_scopeCount = 0;   // valid entries (<= SCOPE_LEN)
 
     // Ring buffer for pullSamples()
     static constexpr int AUDIO_BUF = 8192;
