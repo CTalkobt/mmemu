@@ -41,9 +41,10 @@ public:
     // Color Palette
     // -----------------------------------------------------------------------
     /**
-     * Get RGBA8888 for an Atari color index (0-255).
+     * Get the 0xAARRGGBB colour for an Atari colour index (0-255): hue in
+     * bits 7-4, luminance in bits 3-0 (NTSC palette).
      */
-    static uint32_t getRGBA(uint8_t index);
+    static uint32_t getARGB(uint8_t index);
 
     // -----------------------------------------------------------------------
     // Registers ($D000–$D01F)
