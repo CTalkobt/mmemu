@@ -2,6 +2,7 @@
 #include "plugins/devices/vic4/main/vic4.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include "libmem/main/memory_bus.h"
+#include "libdebug/main/gfx_view.h"
 #include <vector>
 
 TEST_CASE(vic4_personality_lock) {
@@ -594,9 +595,15 @@ TEST_CASE(vic4_ncm_without_chr16_is_fcm) {
 
 // --- Sprite extension tests ---
 
+// Frame position of VIC-IV sprite coordinates (VIC-II resolution): X=24, Y=50
+// is the display's top-left, each sprite pixel two physical pixels wide.
+static int sprFx(int x) { return VIC4::V4_DISPLAY_X + (x - 24) * 2; }
+static int sprFy(int y) { return VIC2::DISPLAY_Y + (y - 50); }
+
 TEST_CASE(vic4_sprite_extended_height) {
     Vic4Fixture f;
     f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
 
     // FCM mode so renderFCM calls renderSpritesV4
     f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
@@ -611,7 +618,7 @@ TEST_CASE(vic4_sprite_extended_height) {
     // Enable sprite 0
     f.vic.ioWrite(nullptr, 0xD015, 0x01);
     f.vic.ioWrite(nullptr, 0xD000, 50); // X
-    f.vic.ioWrite(nullptr, 0xD001, 50); // Y
+    f.vic.ioWrite(nullptr, 0xD001, 60); // Y
     f.vic.ioWrite(nullptr, 0xD027, 0x01); // color = white
 
     // Default pointer: screen=$0400, ptr at $07F8
@@ -631,20 +638,21 @@ TEST_CASE(vic4_sprite_extended_height) {
     uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // Sprite X=50 in VIC-II space → output X=100 (SPRH640=0 doubles X)
+    int fx = sprFx(50), fy = sprFy(60);
     // Row 0 should be white
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(1));
     // Row 21 (beyond VIC-II limit) should also be white
-    ASSERT_EQ(buf[71 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[(fy + 21) * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(1));
     // Row 29 (last) should be white
-    ASSERT_EQ(buf[79 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
-    // Row 30 should NOT be sprite (border = black)
-    ASSERT_EQ(buf[80 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[(fy + 29) * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(1));
+    // Row 30 should NOT be sprite (background = black)
+    ASSERT_EQ(buf[(fy + 30) * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(0));
 }
 
 TEST_CASE(vic4_sprite_16colour) {
     Vic4Fixture f;
     f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
 
     f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
     f.vic.ioWrite(nullptr, 0xD020, 0x00);
@@ -658,7 +666,7 @@ TEST_CASE(vic4_sprite_16colour) {
     // Enable sprite 0
     f.vic.ioWrite(nullptr, 0xD015, 0x01);
     f.vic.ioWrite(nullptr, 0xD000, 50);
-    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 60);
 
     f.bus.write8(0x07F8, 0x0D); // data at $0340
 
@@ -672,15 +680,16 @@ TEST_CASE(vic4_sprite_16colour) {
     uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // Color = sprite# * 16 + nibble. Sprite 0 → 0*16+5=5, 0*16+3=3
-    // X=50 → output 100, each pixel doubled (sprXScale=2)
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(5));
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 102], f.vic.getPaletteRGBA(3));
+    // Color = sprite# * 16 + nibble. Sprite 0 → 0*16+5=5, 0*16+3=3; each pixel doubled
+    int fx = sprFx(50), fy = sprFy(60);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(5));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 2], f.vic.getPaletteRGBA(3));
 }
 
 TEST_CASE(vic4_sprite_16colour_transparent) {
     Vic4Fixture f;
     f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
 
     f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
     f.vic.ioWrite(nullptr, 0xD020, 0x06); // blue border/bg
@@ -693,7 +702,7 @@ TEST_CASE(vic4_sprite_16colour_transparent) {
 
     f.vic.ioWrite(nullptr, 0xD015, 0x01);
     f.vic.ioWrite(nullptr, 0xD000, 50);
-    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 60);
     f.bus.write8(0x07F8, 0x0D);
 
     f.vic.ioWrite(nullptr, 0xD06B, 0x01); // 16-colour sprite 0
@@ -704,49 +713,17 @@ TEST_CASE(vic4_sprite_16colour_transparent) {
     uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // First pixel: transparent → should be border color (blue). X=50 → output 100.
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(6));
-    // Second pixel: nibble 5 → palette 0*16+5=5, at output 102 (doubled)
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 102], f.vic.getPaletteRGBA(5));
+    // First pixel: transparent → background (blue)
+    int fx = sprFx(50), fy = sprFy(60);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(6));
+    // Second pixel: nibble 5 → palette 0*16+5=5 (doubled)
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 2], f.vic.getPaletteRGBA(5));
 }
 
 TEST_CASE(vic4_sprite_y_msb) {
     Vic4Fixture f;
     f.unlock();
-
-    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
-    f.vic.ioWrite(nullptr, 0xD020, 0x00);
-    f.vic.ioWrite(nullptr, 0xD021, 0x00);
-    f.vic.ioWrite(nullptr, 0xD060, 0x00);
-    f.vic.ioWrite(nullptr, 0xD061, 0x04);
-    f.vic.ioWrite(nullptr, 0xD068, 0x00);
-    f.vic.ioWrite(nullptr, 0xD069, 0x20);
-    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
-
-    f.vic.ioWrite(nullptr, 0xD015, 0x01);
-    f.vic.ioWrite(nullptr, 0xD000, 10);
-    f.vic.ioWrite(nullptr, 0xD001, 0x05); // Y low = 5
-    f.vic.ioWrite(nullptr, 0xD077, 0x01); // SPRYMSBS: sprite 0 bit 8 set → Y = 256+5 = 261
-
-    f.bus.write8(0x07F8, 0x0D);
-    f.vic.ioWrite(nullptr, 0xD027, 0x01);
-
-    f.bus.write8(0x0340, 0xFF);
-    f.bus.write8(0x0341, 0xFF);
-    f.bus.write8(0x0342, 0xFF);
-
-    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
-    f.vic.renderFrame(buf);
-
-    // Sprite at Y=261 — should be visible near bottom of frame. X=10 → output 20.
-    ASSERT_EQ(buf[261 * VIC4::V4_FRAME_W + 20], f.vic.getPaletteRGBA(1));
-    // Y=260 should be border
-    ASSERT_EQ(buf[260 * VIC4::V4_FRAME_W + 20], f.vic.getPaletteRGBA(0));
-}
-
-TEST_CASE(vic4_sprite_pointer_relocation) {
-    Vic4Fixture f;
-    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
 
     f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
     f.vic.ioWrite(nullptr, 0xD020, 0x00);
@@ -759,7 +736,43 @@ TEST_CASE(vic4_sprite_pointer_relocation) {
 
     f.vic.ioWrite(nullptr, 0xD015, 0x01);
     f.vic.ioWrite(nullptr, 0xD000, 50);
-    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 100);  // Y low = 100
+
+    f.bus.write8(0x07F8, 0x0D);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+
+    f.bus.write8(0x0340, 0xFF);
+    f.bus.write8(0x0341, 0xFF);
+    f.bus.write8(0x0342, 0xFF);
+
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+    int fx = sprFx(50), fy = sprFy(100);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(1));
+
+    // SPRYMSBS: sprite 0 bit 8 set → Y = 356, below the display window
+    f.vic.ioWrite(nullptr, 0xD077, 0x01);
+    f.vic.renderFrame(buf);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(0));
+}
+
+TEST_CASE(vic4_sprite_pointer_relocation) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 50);
+    f.vic.ioWrite(nullptr, 0xD001, 60);
     f.vic.ioWrite(nullptr, 0xD027, 0x01);
 
     // Relocate sprite pointers to $0800
@@ -778,8 +791,148 @@ TEST_CASE(vic4_sprite_pointer_relocation) {
     uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
     f.vic.renderFrame(buf);
 
-    // X=50 → output 100 (SPRH640=0 doubles X)
-    ASSERT_EQ(buf[50 * VIC4::V4_FRAME_W + 100], f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[sprFy(60) * VIC4::V4_FRAME_W + sprFx(50)], f.vic.getPaletteRGBA(1));
+}
+
+// #159 follow-up: VIC-IV multicolour sprites, 8-bit colours
+TEST_CASE(vic4_sprite_multicolor) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 100);
+    f.vic.ioWrite(nullptr, 0xD001, 100);
+    f.vic.ioWrite(nullptr, 0xD01C, 0x01);   // multicolour
+    f.vic.ioWrite(nullptr, 0xD025, 0x25);   // 8-bit palette indexes
+    f.vic.ioWrite(nullptr, 0xD026, 0x47);
+    f.vic.ioWrite(nullptr, 0xD027, 0x83);
+    f.bus.write8(0x07F8, 0x0D);
+    f.bus.write8(0x0340, 0x1B);             // pairs 00 01 10 11
+
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+    int fx = sprFx(100), fy = sprFy(100);
+    // Each sprite pixel is 2 physical pixels; a multicolour pair is 4
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 0],  f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 4],  f.vic.getPaletteRGBA(0x25));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 7],  f.vic.getPaletteRGBA(0x25));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 8],  f.vic.getPaletteRGBA(0x83));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 12], f.vic.getPaletteRGBA(0x47));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 15], f.vic.getPaletteRGBA(0x47));
+}
+
+// SPR640: X counts physical pixels from the raster's left (viciv.vhdl), so
+// X = TEXTXPOS (80) is the display's left edge; pixels 1 wide
+TEST_CASE(vic4_sprite_spr640_and_clipping) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO | VIC4::D054_SPRH640);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 72);     // SPR640: X counts from pixel 0; display at 80
+    f.vic.ioWrite(nullptr, 0xD001, 100);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+    f.bus.write8(0x07F8, 0x0D);
+    f.bus.write8(0x0340, 0xFF); f.bus.write8(0x0341, 0xFF); f.bus.write8(0x0342, 0xFF);
+
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
+    f.vic.renderFrame(buf);
+    int fy = sprFy(100);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + VIC4::V4_DISPLAY_X - 1], f.vic.getPaletteRGBA(0));  // border
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + VIC4::V4_DISPLAY_X],      f.vic.getPaletteRGBA(1));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + VIC4::V4_DISPLAY_X + 15], f.vic.getPaletteRGBA(1));  // 24-8 px
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + VIC4::V4_DISPLAY_X + 16], f.vic.getPaletteRGBA(0));
+}
+
+// $D01B: behind-background sprites are covered by FCM pixels that are not 0
+TEST_CASE(vic4_sprite_background_priority) {
+    Vic4Fixture f;
+    f.unlock();
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);   // legacy write: TEXTXPOS = $D05C + 0 = 80
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+    // Top-left cell shows FCM character $40 (charset $2000 + $40*64 = $3000): first pixel 2, rest 0
+    f.bus.write8(0x0400, 0x40);
+    f.bus.write8(0x3000, 0x02);
+
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 24);
+    f.vic.ioWrite(nullptr, 0xD001, 50);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+    f.bus.write8(0x07F8, 0x0D);
+    f.bus.write8(0x0340, 0xFF);
+
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
+    int fx = sprFx(24), fy = sprFy(50);
+    f.vic.renderFrame(buf);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(1));      // in front
+    f.vic.ioWrite(nullptr, 0xD01B, 0x01);
+    f.vic.renderFrame(buf);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx], f.vic.getPaletteRGBA(2));      // FCM pixel covers it
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + fx + 2], f.vic.getPaletteRGBA(1));  // pixel 0: sprite shows
+}
+
+// viciv.vhdl: legacy register writes set TEXTXPOS from the side border and
+// $D016 X scroll, and sprites are placed relative to $D067 and TEXTXPOS
+TEST_CASE(vic4_textxpos_and_sprite_first_x) {
+    Vic4Fixture f;
+    f.unlock();
+    ASSERT_EQ(f.vic.getSideBorderWidth(), 80);
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);
+    ASSERT_EQ(f.vic.getTextXPos(), 80);
+    f.vic.ioWrite(nullptr, 0xD016, 0xCB);           // X scroll 3: 2 physical pixels each
+    ASSERT_EQ(f.vic.getTextXPos(), 86);
+    f.vic.ioWrite(nullptr, 0xD031, 0x80);           // H640: VIC-III compatibility delta -2
+    ASSERT_EQ(f.vic.getTextXPos(), 84);
+    f.vic.ioWrite(nullptr, 0xD031, 0x00);
+    f.vic.ioWrite(nullptr, 0xD016, 0xC8);
+
+    f.vic.ioWrite(nullptr, 0xD054, VIC4::D054_FCLRLO);
+    f.vic.ioWrite(nullptr, 0xD020, 0x00);
+    f.vic.ioWrite(nullptr, 0xD021, 0x00);
+    f.vic.ioWrite(nullptr, 0xD060, 0x00);
+    f.vic.ioWrite(nullptr, 0xD061, 0x04);
+    f.vic.ioWrite(nullptr, 0xD068, 0x00);
+    f.vic.ioWrite(nullptr, 0xD069, 0x20);
+    f.vic.ioWrite(nullptr, 0xD06A, 0x00);
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    f.vic.ioWrite(nullptr, 0xD000, 100);
+    f.vic.ioWrite(nullptr, 0xD001, 100);
+    f.vic.ioWrite(nullptr, 0xD027, 0x01);
+    f.bus.write8(0x07F8, 0x0D);
+    f.bus.write8(0x0340, 0x80);                     // one sprite pixel
+
+    uint32_t buf[VIC4::V4_FRAME_W * VIC2::FRAME_H];
+    int fy = sprFy(100);
+    f.vic.renderFrame(buf);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + sprFx(100)], f.vic.getPaletteRGBA(1));
+
+    f.vic.ioWrite(nullptr, 0xD067, 41);             // sprite X counting starts 10 pixels later
+    f.vic.renderFrame(buf);
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + sprFx(100)], f.vic.getPaletteRGBA(0));
+    ASSERT_EQ(buf[fy * VIC4::V4_FRAME_W + sprFx(100) + 10], f.vic.getPaletteRGBA(1));
 }
 
 // --- Display geometry accessors ---
@@ -1001,6 +1154,20 @@ TEST_CASE(vic4_inspect_sprites) {
     ASSERT(si.wide64);
     ASSERT_EQ(si.height, 32);
     ASSERT_EQ(si.paletteBase, 16);
+
+    // The Graphics view picks the matching layout: 16 wide with SPRX64EN,
+    // otherwise 6 pixels from 3 bytes per row
+    gfx::ViewRequest req;
+    req.source = gfx::Source::Sprite;
+    req.sprite = 1;
+    gfx::View view = gfx::buildView(req, &f.bus, insp);
+    ASSERT(view.error.empty());
+    ASSERT(view.format == gfx::Format::Sprite16);
+    f.vic.ioWrite(nullptr, 0xD057, 0x00);
+    view = gfx::buildView(req, &f.bus, insp);
+    ASSERT(view.format == gfx::Format::Sprite16Narrow);
+    ASSERT_EQ(view.sheet.cellW, 6);
+    f.vic.ioWrite(nullptr, 0xD057, 0x02);
 
     // 16-bit pointers
     f.vic.ioWrite(nullptr, 0xD06E, 0x80);

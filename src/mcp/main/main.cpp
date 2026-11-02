@@ -473,7 +473,7 @@ Json handleDescribe() {
         };
         props.oVal["source"] = prop("string", "address (default), sprite (follow a VIC sprite) or charset (the VIC's current character set)");
         props.oVal["address"] = prop("string", "Start address for source=address (number or expression, e.g. \"$2000\")");
-        props.oVal["format"] = prop("string", "For source=address: sprite, sprite-mc, sprite64, sprite16, char, char-mc, char-fcm, char-ncm");
+        props.oVal["format"] = prop("string", "For source=address: sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm");
         props.oVal["sprite"] = prop("number", "Sprite number 0-7 for source=sprite");
         props.oVal["count"] = prop("number", "Number of items (default 1; 256 for charset)");
         props.oVal["columns"] = prop("number", "Items per row in the PNG (default 8; 16 for charset)");
