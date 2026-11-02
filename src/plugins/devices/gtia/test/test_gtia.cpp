@@ -20,11 +20,32 @@ TEST_CASE(gtia_registers) {
 }
 
 TEST_CASE(gtia_palette) {
-    // Test a few known colors
-    // Color 0 is usually black
-    ASSERT(GTIA::getRGBA(0x00) == 0x000000FF);
-    // Color 0x0F is white
-    ASSERT(GTIA::getRGBA(0x09) == 0xFFFFFFFF);
+    // Frames are 0xAARRGGBB: every entry is opaque.
+    for (int i = 0; i < 256; i++) ASSERT((GTIA::getARGB((uint8_t)i) >> 24) == 0xFF);
+
+    auto r = [](uint32_t c) { return (int)((c >> 16) & 0xFF); };
+    auto g = [](uint32_t c) { return (int)((c >> 8) & 0xFF); };
+    auto b = [](uint32_t c) { return (int)(c & 0xFF); };
+
+    // Hue 0 is grey, from near black ($00) to near white ($0F).
+    ASSERT(GTIA::getARGB(0x00) == 0xFF040404);
+    ASSERT(GTIA::getARGB(0x0F) == 0xFFEAEAEA);
+    for (int l = 0; l < 16; l++) {
+        uint32_t c = GTIA::getARGB((uint8_t)l);
+        ASSERT(r(c) == g(c) && g(c) == b(c));
+        if (l) ASSERT(r(c) > r(GTIA::getARGB((uint8_t)(l - 1))));  // luminance rises
+    }
+
+    // Every hue uses all 16 luminance steps (no black filler entries).
+    for (int h = 1; h < 16; h++)
+        ASSERT(GTIA::getARGB((uint8_t)(h << 4 | 0x0E)) != 0xFF000000);
+
+    // Known hues: $4x red/pink, $94 (Atari BASIC background) blue, $Cx green.
+    uint32_t red = GTIA::getARGB(0x46), blue = GTIA::getARGB(0x94), green = GTIA::getARGB(0xC6);
+    ASSERT(r(red) > g(red) && r(red) > b(red));
+    ASSERT(blue == 0xFF143382);
+    ASSERT(b(blue) > r(blue) && b(blue) > g(blue));
+    ASSERT(g(green) > r(green) && g(green) > b(green));
 }
 
 TEST_CASE(gtia_collisions) {
