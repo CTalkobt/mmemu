@@ -1024,6 +1024,44 @@ def run_tests():
     client.call_tool("destroy_machine", {"machine_id": gid})
     print("  ✓ render_graphics OK (char ROM via video view, sprite ASCII, charset PNG, bad format)")
 
+    # sid_scope (#30)
+    print("\nTesting sid_scope...")
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    sid = res["result"]["content"][0]["text"].split('"')[1]
+    # $C000: copy 25 SID register values from $C100, then loop. Voice 1: 440 Hz pulse,
+    # voice 2: 660 Hz saw through the filter, voice 3: 220 Hz triangle.
+    prog = [0xA2, 0x00, 0xBD, 0x00, 0xC1, 0x9D, 0x00, 0xD4, 0xE8, 0xE0, 0x19, 0xD0, 0xF5,
+            0xE6, 0xFB, 0x4C, 0x0D, 0xC0]
+    regs = [0x45, 0x1D, 0x00, 0x08, 0x41, 0x09, 0xA5,  0xE7, 0x2B, 0x00, 0x00, 0x21, 0x00, 0xF0,
+            0xA2, 0x0E, 0x00, 0x00, 0x11, 0x00, 0xF0,  0x00, 0x40, 0xF2, 0x1F]
+    client.call_tool("write_memory", {"machine_id": sid, "addr": 0xC000, "bytes": prog})
+    client.call_tool("write_memory", {"machine_id": sid, "addr": 0xC100, "bytes": regs})
+    client.call_tool("set_pc", {"machine_id": sid, "addr": "$C000"})
+    gif = os.path.join(tempfile.gettempdir(), f"mmemu_scope_{os.getpid()}.gif")
+    png = os.path.join(tempfile.gettempdir(), f"mmemu_scope_{os.getpid()}.png")
+    try:
+        text = client.call_tool("sid_scope", {"machine_id": sid, "path": gif, "frames": 6,
+                                              "frame_ms": 20})["result"]["content"][0]["text"]
+        assert "Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%" in text, text
+        assert "Voice 2: Saw Gate, 660.0 Hz (E5 +2c)" in text and "filtered" in text, text
+        assert "Saved 6-frame 480x400 GIF" in text, text
+        with open(gif, "rb") as f:
+            data = f.read()
+        assert data[:6] == b"GIF89a" and data[-1] == 0x3B and b"NETSCAPE2.0" in data, "not an animated GIF"
+        assert int.from_bytes(data[6:8], "little") == 480 and int.from_bytes(data[8:10], "little") == 400
+        text = client.call_tool("sid_scope", {"machine_id": sid, "path": png, "trigger": "free", "timebase_ms": 5,
+                                              "width": 320, "row_height": 60})["result"]["content"][0]["text"]
+        assert "5 ms, free run" in text and "Saved 320x240 PNG" in text and os.path.getsize(png) > 100, text
+    finally:
+        for p in (gif, png):
+            if os.path.exists(p): os.remove(p)
+    item = client.call_tool("sid_scope", {"machine_id": sid, "frames": 3, "path": png})["result"]["content"][0]
+    assert item.get("isError") and ".gif" in item["text"], item
+    item = client.call_tool("sid_scope", {"machine_id": sid, "chip": 1})["result"]["content"][0]
+    assert item.get("isError") and "chip must be 0-0" in item["text"], item
+    client.call_tool("destroy_machine", {"machine_id": sid})
+    print("  ✓ sid_scope OK (voice state, 6-frame GIF, free-run PNG, bad path / chip)")
+
     # project_open / project_build / project_run (#148)
     print("\nTesting project tools...")
     import tempfile, os, shutil

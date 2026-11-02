@@ -6,11 +6,15 @@
 #include "plugins/6502/main/disassembler_6502.h"
 #include "libmem/main/memory_bus.h"
 #include "libdebug/main/debug_context.h"
+#include "libcore/main/machine_desc.h"
+#include "libdevices/main/io_registry.h"
+#include "plugins/devices/sid6581/main/sid6581.h"
 #include <vector>
 #include <string>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <unistd.h>
 
 TEST_CASE(cli_basic_commands) {
     CliContext ctx;
@@ -745,4 +749,81 @@ TEST_CASE(cli_next_steps_over_calls) {
     out.clear();
     cli.processLine("step");          // step (no count) still steps into
     ASSERT_EQ((int)cpu.pc(), 0x1010);
+}
+
+// --- sid voices / sid scope (#30) ---
+
+TEST_CASE(cli_sid_voices_and_scope) {
+    CliContext ctx;
+    std::string output;
+    CliInterpreter cli(ctx, [&](const std::string& s) { output += s; });
+
+    cli.processLine("sid voices");
+    ASSERT(output.find("No machine") != std::string::npos);
+    output.clear();
+
+    // A minimal machine: a 6502 looping at $C000, and a SID the scheduler ticks
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+    bus.write8(0xC000, 0x4C); bus.write8(0xC001, 0x00); bus.write8(0xC002, 0xC0);   // JMP $C000
+    cpu.setPc(0xC000);
+    MachineDescriptor md;
+    md.ioRegistry = new IORegistry();
+    auto* sid = new SID6581("SID", 0xD400);   // owned by the registry
+    md.ioRegistry->registerHandler(sid);
+    md.schedulerStep = [&](MachineDescriptor&) {
+        uint64_t before = cpu.cycles();
+        cpu.step();
+        sid->tick(cpu.cycles() - before);
+        return 1;
+    };
+    ctx.machine = &md; ctx.cpu = &cpu; ctx.bus = &bus; ctx.dbg = &dbg;
+
+    // Voice 1: 440 Hz pulse, voice 2: 660 Hz saw through the filter, voice 3: 220 Hz triangle
+    const uint8_t regs[] = {0x45, 0x1D, 0x00, 0x08, 0x41, 0x09, 0xA5,  0xE7, 0x2B, 0x00, 0x00, 0x21, 0x00, 0xF0,
+                            0xA2, 0x0E, 0x00, 0x00, 0x11, 0x00, 0xF0,  0x00, 0x40, 0xF2, 0x1F};
+    for (size_t i = 0; i < sizeof regs; ++i) sid->ioWrite(nullptr, 0xD400 + (uint32_t)i, regs[i]);
+    output.clear();
+
+    cli.processLine("sid voices");
+    ASSERT(output.find("SID $D400") != std::string::npos);
+    ASSERT(output.find("Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%, ADSR 0/9/A/5") != std::string::npos);
+    ASSERT(output.find("Voice 2: Saw Gate, 660.0 Hz (E5 +2c)") != std::string::npos);
+    ASSERT(output.find("filtered") != std::string::npos);
+    output.clear();
+
+    namespace fs = std::filesystem;
+    fs::path dir = fs::temp_directory_path() / ("mmemu_sid_cli_" + std::to_string(::getpid()));
+    fs::create_directories(dir);
+    std::string gif = (dir / "scope.gif").string(), png = (dir / "scope.png").string();
+
+    cli.processLine("sid scope " + gif + " frames 4 ms 20");
+    ASSERT(output.find("Saved 4-frame 480x400 GIF (20 ms emulated per frame)") != std::string::npos);
+    ASSERT(fs::file_size(gif) > 1000);
+    std::ifstream in(gif, std::ios::binary);
+    char sig[6] = {};
+    in.read(sig, 6);
+    ASSERT(std::string(sig, 6) == "GIF89a");
+    output.clear();
+
+    cli.processLine("sid scope " + png + " free timebase 5 width 320 height 60");
+    ASSERT(output.find("Saved 320x240 PNG") != std::string::npos);
+    ASSERT(fs::file_size(png) > 100);
+    output.clear();
+
+    cli.processLine("sid scope " + png + " frames 2");
+    ASSERT(output.find("need a .gif") != std::string::npos);
+    output.clear();
+    cli.processLine("sid scope out.bmp");
+    ASSERT(output.find(".png or .gif") != std::string::npos);
+    output.clear();
+    cli.processLine("sid voices 1");
+    ASSERT(output.find("Chip must be 0-0") != std::string::npos);
+    output.clear();
+    cli.processLine("sid scope " + png + " colour 3");
+    ASSERT(output.find("Unknown option 'colour'") != std::string::npos);
+
+    fs::remove_all(dir);
 }

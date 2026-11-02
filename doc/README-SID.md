@@ -97,6 +97,85 @@ sid->setClockHz(985248);    // PAL; NTSC = 1022727
 int n = sid->pullSamples(buffer, maxSamples);
 ```
 
+### 2.6 Inspection and the SID Scope pane (IAudioInspect, #30)
+
+`SID6581` and the MEGA65's `SidPair` implement `IAudioInspect`
+(`src/libdevices/main/iaudio_inspect.h`), which debugger tools use without
+knowing the chip type:
+
+- `voiceInfo(chip, voice, out)`: frequency register and Hz, pulse width,
+  control register, ADSR nibbles, envelope phase and level, filter routing,
+  and whether voice 3 is disconnected ($D418 bit 7).
+- `scopeSamples(chip, channel, out, n)`: the latest samples, oldest first, at
+  the audio sample rate. Channels 0-2 are the voices (waveform x envelope,
+  before the filter; voice 3 is recorded even when disconnected) and channel
+  3 is the mixed output after the filter and volume. The history holds 4096
+  samples (~93 ms at 44.1 kHz) and is cleared on reset.
+
+`SidPair` reports two chips, `SID1 $D400` and `SID2 $D420`.
+
+The GUI's **SID Scope** pane (View > SID Scope) draws one trace per voice and
+one for the output. Controls:
+
+| Control | Meaning |
+|---------|---------|
+| Chip | Which SID to show, when the machine has more than one |
+| Timebase | Time across each trace: 2, 5, 10, 20 or 50 ms |
+| Triggered / Free run | Triggered holds a rising zero crossing at the left edge of each trace, so steady tones stand still; free run shows the latest samples |
+
+Each voice row shows its waveform and modifiers (Sync, Ring, Test, Gate), the
+frequency with the nearest note and its offset in cents, the pulse width, the
+ADSR settings, the envelope phase and level, and Filter / Off flags. On the
+right, an ADSR diagram highlights the current phase and a bar shows the
+envelope level. The pane updates while the machine runs and after each step.
+The trigger search, note names and envelope times are in
+`src/libdebug/main/audio_scope.cpp`.
+
+#### MCP: `sid_scope`
+
+The same scope as an image, drawn by `scope::renderScope()` (no GUI needed):
+
+| Argument | Meaning |
+|----------|---------|
+| `machine_id` | Required |
+| `chip` | Sound chip index (default 0; MEGA65 SID1 = 0, SID2 = 1) |
+| `timebase_ms` | Time across each trace, 1-80 (default 20) |
+| `trigger` | `rising` (default) or `free` |
+| `path` | `.png` or `.gif`; without it only the voice state is returned |
+| `frames` | 1-300 (default 1). More than 1 runs the machine between frames and writes an animated, looping GIF |
+| `frame_ms` | Emulated ms between frames, 5-1000 (default 40); also the GIF frame delay |
+| `width`, `row_height` | Image size: width 160-1600 (default 480), each of the 4 rows 40-400 (default 100) |
+
+The reply lists each voice's state, e.g.
+`Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%, ADSR 0/9/A/5, Sustain 170`.
+Frames are spaced by the chip's sample count (`IAudioInspect::scopeTotal()`),
+so they are in emulated time whatever the CPU speed. The first frame shows the
+state before running. Capture stops early at a breakpoint, or if the chip
+stops producing samples. GIFs are written by `src/libdebug/main/gif_writer.cpp`
+(palette + LZW, no quantisation: the scope uses only a few colours).
+
+#### CLI: `sid voices` and `sid scope`
+
+```
+sid voices [chip]
+sid scope <file.png|file.gif> [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]
+```
+
+`sid voices` prints the same voice table as the MCP tool, e.g. after `step`
+or at a breakpoint. `sid scope` writes the same image: `ms` is `frame_ms`,
+`timebase` is `timebase_ms`, `free` selects free run, and `height` is the row
+height. More than one frame needs a `.gif` and runs the machine; a
+breakpoint or Ctrl-C ends the capture early. Both front ends share
+`scope::listChips()`, `scope::capture()` and `scope::writeCapture()`.
+
+```
+> sid scope song.gif frames 50 ms 40
+SID $D400
+Voice 1: Pulse Gate, 440.0 Hz (A4 +0c), PW 50.0%, ADSR 0/9/A/5, Sustain 170
+...
+Saved 50-frame 480x400 GIF (40 ms emulated per frame) to song.gif
+```
+
 ---
 
 ## 3. Register Map

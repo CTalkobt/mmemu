@@ -28,6 +28,8 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdebug/main/source_location_formatter.h"
 #include "libdebug/main/frame_analyzer.h"
 #include "libdebug/main/gfx_view.h"
+#include "libdebug/main/audio_scope.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "util/stb_image_write.h"
 #include "imap_controller.h"
@@ -41,6 +43,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <set>
 #include <map>
 #include <unordered_map>
+#include <cctype>
 #include <cstring>
 #include "libdevices/main/device_info.h"
 
@@ -2294,7 +2297,66 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "sid") {
         if (!m_ctx.cpu || !m_ctx.bus) { m_output("No machine created.\n"); return; }
         std::string sub;
-        if (ss >> sub && sub == "load") {
+        ss >> sub;
+        const char* sidSyntax =
+            "Syntax: sid load <path> [subtune]\n"
+            "        sid voices [chip]\n"
+            "        sid scope <file.png|file.gif> [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]\n";
+        if (sub == "voices" || sub == "scope") {
+            std::vector<scope::ChipRef> chips = scope::listChips(m_ctx.machine);
+            if (chips.empty()) { m_output("This machine has no sound chip with a scope.\n"); return; }
+            std::string path;
+            if (sub == "scope" && !(ss >> path)) { m_output(sidSyntax); return; }
+            bool isGif = false;
+            if (sub == "scope" && !scope::snapshotPathOk(path, isGif)) { m_output("The file must end in .png or .gif.\n"); return; }
+
+            // Options: "chip N" etc.; "sid voices 1" is short for chip 1
+            int chipNo = 0, frames = 1, frameMs = 40;
+            scope::RenderOptions opt;
+            std::string key;
+            while (ss >> key) {
+                if (key == "free") { opt.triggered = false; continue; }
+                int val = 0;
+                bool bare = sub == "voices" && !key.empty() && std::isdigit((unsigned char)key[0]);
+                if (bare) val = std::atoi(key.c_str());
+                else {
+                    std::string v;
+                    if (!(ss >> v) || v.empty() || !std::isdigit((unsigned char)v[0])) {
+                        m_output("Expected a number after '" + key + "'.\n" + sidSyntax); return;
+                    }
+                    val = std::atoi(v.c_str());
+                }
+                if (bare || key == "chip")   chipNo = val;
+                else if (key == "frames")    frames = std::max(1, std::min(300, val));
+                else if (key == "ms")        frameMs = std::max(5, std::min(1000, val));
+                else if (key == "timebase")  opt.timebaseMs = std::max(1, std::min(80, val));
+                else if (key == "width")     opt.width = std::max(160, std::min(1600, val));
+                else if (key == "height")    opt.rowHeight = std::max(40, std::min(400, val));
+                else { m_output("Unknown option '" + key + "'.\n" + sidSyntax); return; }
+            }
+            if (chipNo < 0 || chipNo >= (int)chips.size()) {
+                m_output("Chip must be 0-" + std::to_string(chips.size() - 1) + ".\n"); return;
+            }
+            if (frames > 1 && !isGif) { m_output("Several frames need a .gif file.\n"); return; }
+            const scope::ChipRef& chip = chips[chipNo];
+            if (sub == "voices") {
+                m_output(chip.insp->chipName(chip.chip) + "\n" + scope::voiceSummary(chip.insp, chip.chip));
+                return;
+            }
+            if (m_ctx.dbg) m_ctx.dbg->resume();
+            scope::Capture cap = scope::capture(chip, opt, frames, frameMs, [this]() {
+                if (m_ctx.machine && m_ctx.machine->schedulerStep) m_ctx.machine->schedulerStep(*m_ctx.machine);
+                else m_ctx.cpu->step();
+                if (g_interrupted) return false;
+                return !(m_ctx.dbg && m_ctx.dbg->isPaused());
+            });
+            if (g_interrupted) g_interrupted = 0;
+            m_output(chip.insp->chipName(chip.chip) + "\n" + scope::voiceSummary(chip.insp, chip.chip));
+            if (!cap.stopNote.empty()) m_output(cap.stopNote + "\n");
+            std::string err, saved;
+            if (scope::writeCapture(path, cap, err, saved)) m_output(saved + "\n");
+            else m_output("Error: " + err + "\n");
+        } else if (sub == "load") {
             std::string path;
             if (!(ss >> path)) { m_output("Syntax: sid load <path> [subtune]\n"); return; }
             int subtune = -1;
@@ -2375,7 +2437,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             m_output("Load: $" + toHex(loadAddr) + " Init: $" + toHex(initAddr) + " Play: $" + toHex(playAddr) + "\n");
             if (playAddr) m_output("Play loop installed at $0002. Use 'recordaudio' to capture.\n");
         } else {
-            m_output("Syntax: sid load <path> [subtune]\n");
+            m_output(sidSyntax);
         }
     } else if (cmd == "map") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
@@ -3190,6 +3252,9 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape stoprecord     - Release Record button\n"
                  "  tape save <path>    - Write captured buffer to .tap file\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
+                 "  sid voices [chip]   - Show each SID voice: waveform, frequency/note, PW, ADSR, envelope\n"
+                 "  sid scope <file>    - Save the SID oscilloscope as .png, or .gif with 'frames N'\n"
+                 "                        [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]\n"
                  "  sym load <path>     - Load symbol table from file\n"
                  "\nExample workflow:\n"
                  "  create c64\n"
