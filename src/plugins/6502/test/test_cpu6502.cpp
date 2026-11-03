@@ -303,3 +303,53 @@ TEST_CASE(cpu6502_flags_overflow) {
     ASSERT(cpu.regRead(5) & FLAG_V);
     ASSERT(cpu.regRead(5) & FLAG_C);
 }
+
+// NMOS decimal mode (SED): ADC/SBC adjust to BCD. Values from Bruce Clark's
+// "Decimal Mode in NMOS 6500 series" (6502.org): Z from the binary result,
+// N/V from the sum before the high-nibble adjustment; SBC's flags as binary.
+namespace {
+struct DecResult { uint8_t a; bool c, z, n, v; };
+DecResult decimalOp(bool sbc, uint8_t a, uint8_t m, bool carry) {
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    uint8_t prog[] = { 0xF8, (uint8_t)(carry ? 0x38 : 0x18), 0xA9, a, (uint8_t)(sbc ? 0xE9 : 0x69), m };
+    for (size_t i = 0; i < sizeof(prog); ++i) bus.write8(0xC000 + (uint32_t)i, prog[i]);
+    cpu.setPc(0xC000);
+    for (int i = 0; i < 4; ++i) cpu.step();
+    uint8_t p = (uint8_t)cpu.regRead(5);
+    return { (uint8_t)cpu.regRead(0), (p & FLAG_C) != 0, (p & FLAG_Z) != 0, (p & FLAG_N) != 0, (p & FLAG_V) != 0 };
+}
+}  // namespace
+
+TEST_CASE(cpu6502_decimal_adc) {
+    auto r = decimalOp(false, 0x12, 0x34, false); ASSERT_EQ((int)r.a, 0x46); ASSERT(!r.c);
+    r = decimalOp(false, 0x58, 0x46, true);  ASSERT_EQ((int)r.a, 0x05); ASSERT(r.c);    // 58+46+1 = 105
+    r = decimalOp(false, 0x15, 0x26, false); ASSERT_EQ((int)r.a, 0x41); ASSERT(!r.c);
+    r = decimalOp(false, 0x81, 0x92, false); ASSERT_EQ((int)r.a, 0x73); ASSERT(r.c);
+    r = decimalOp(false, 0x99, 0x00, true);  ASSERT_EQ((int)r.a, 0x00); ASSERT(r.c);
+    ASSERT(!r.z);                                         // binary $9A: NMOS Z is clear
+    r = decimalOp(false, 0x0F, 0x01, false); ASSERT_EQ((int)r.a, 0x16);   // invalid BCD in
+    r = decimalOp(false, 0x79, 0x00, true);  ASSERT_EQ((int)r.a, 0x80); ASSERT(r.n); ASSERT(r.v);
+    r = decimalOp(false, 0x02, 0x03, false); ASSERT_EQ((int)r.a, 0x05);   // 2+3 (Atari BASIC's 2+3*4)
+}
+
+TEST_CASE(cpu6502_decimal_sbc) {
+    auto r = decimalOp(true, 0x46, 0x12, true);  ASSERT_EQ((int)r.a, 0x34); ASSERT(r.c);
+    r = decimalOp(true, 0x40, 0x13, true);  ASSERT_EQ((int)r.a, 0x27); ASSERT(r.c);
+    r = decimalOp(true, 0x32, 0x02, false); ASSERT_EQ((int)r.a, 0x29); ASSERT(r.c);   // borrow in
+    r = decimalOp(true, 0x12, 0x21, true);  ASSERT_EQ((int)r.a, 0x91); ASSERT(!r.c);  // borrow out
+    r = decimalOp(true, 0x00, 0x01, true);  ASSERT_EQ((int)r.a, 0x99); ASSERT(!r.c); ASSERT(r.n);
+    r = decimalOp(true, 0x21, 0x21, true);  ASSERT_EQ((int)r.a, 0x00); ASSERT(r.z); ASSERT(r.c);
+}
+
+TEST_CASE(cpu6502_binary_unchanged_without_sed) {
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    uint8_t prog[] = { 0xD8, 0x18, 0xA9, 0x09, 0x69, 0x05 };   // CLD CLC LDA #9 ADC #5
+    for (size_t i = 0; i < sizeof(prog); ++i) bus.write8(0xC000 + (uint32_t)i, prog[i]);
+    cpu.setPc(0xC000);
+    for (int i = 0; i < 4; ++i) cpu.step();
+    ASSERT_EQ((int)cpu.regRead(0), 0x0E);
+}

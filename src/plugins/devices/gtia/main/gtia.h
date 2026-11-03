@@ -37,9 +37,46 @@ public:
     // -----------------------------------------------------------------------
     void setConsoleSwitches(uint8_t bits) { m_consoleSwitches = bits & 0x07; }
 
+    /** Console keys (CONSOL bits, active low): START, SELECT, OPTION. */
+    static constexpr uint8_t CONSOL_START  = 0x01;
+    static constexpr uint8_t CONSOL_SELECT = 0x02;
+    static constexpr uint8_t CONSOL_OPTION = 0x04;
+    void setConsoleKey(uint8_t bit, bool pressed) {
+        if (pressed) m_consoleSwitches &= (uint8_t)~bit; else m_consoleSwitches |= bit;
+    }
+    /** Joystick trigger n (0-3) pressed. */
+    void setTrigger(int n, bool pressed) { if (n >= 0 && n < 4) m_trig[n] = pressed; }
+    void setPal(bool pal) { m_isPal = pal; }
+
     // -----------------------------------------------------------------------
-    // Color Palette
+    // Scanline composition (ANTIC hands GTIA each line's playfield)
     // -----------------------------------------------------------------------
+
+    /** Visible line: colour clocks 32-223 (a wide playfield), two pixels each. */
+    static constexpr int LINE_PIXELS = 384;
+    static constexpr int FIRST_COLOUR_CLOCK = 32;
+
+    /** Playfield class of a pixel, as ANTIC produces it. */
+    enum : uint8_t { PF_BK = 0, PF_0 = 1, PF_1 = 2, PF_2 = 3, PF_3 = 4 };
+    /** With PF_2: a lit high-resolution pixel (PF2 hue, PF1 luminance). */
+    static constexpr uint8_t PF_HIRES = 0x10;
+    /** A pixel of a high-resolution line (modes 2, 3, F): PF2 collides only where lit. */
+    static constexpr uint8_t PF_HIRES_MODE = 0x20;
+
+    /**
+     * Compose one scanline: the playfield (LINE_PIXELS classes) with the
+     * players and missiles, by PRIOR's priority, into 0xAARRGGBB pixels.
+     * Updates the collision registers.
+     */
+    void renderLine(const uint8_t* pf, uint32_t* out);
+
+    /** Player/missile DMA from ANTIC: stored if GRACTL enables it. */
+    void dmaPlayer(int n, uint8_t data) { if (m_regs[GRACTL] & 0x02) m_regs[GRAFP0 + n] = data; }
+    void dmaMissiles(uint8_t data)      { if (m_regs[GRACTL] & 0x01) m_regs[GRAFM] = data; }
+
+    /** A write register's current value (colours, positions, PRIOR...). */
+    uint8_t reg(int r) const { return m_regs[r & 0x1F]; }
+
     /**
      * Get the 0xAARRGGBB colour for an Atari colour index (0-255): hue in
      * bits 7-4, luminance in bits 3-0 (NTSC palette).
@@ -82,6 +119,8 @@ private:
     uint8_t     m_regs[32];
     uint8_t     m_collisions[16];
     uint8_t     m_consoleSwitches = 0x07; // Start, Select, Option (active low)
+    bool        m_trig[4] = {false, false, false, false};
+    bool        m_trigLatched[4] = {false, false, false, false};   // GRACTL bit 2
     bool        m_isPal = false;
 
     // Static color table

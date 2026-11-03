@@ -37,6 +37,33 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #159 - VIC-II sprites**: Multicolour sprites ($D01C) now render as pixel pairs in $D025 / sprite colour / $D026 instead of as hires bits. Sprites are placed at the hardware coordinates (X=24, Y=50 is the top-left of the text area; they were drawn 8 pixels too far left and 14 lines too low), are covered by the border, and honour sprite-background priority ($D01B: behind-background sprites are hidden by foreground pixels, including multicolour 10/11 pairs). Lower-numbered sprites stay on top. Also applies to the VIC-III and the VIC-IV in its VIC-II personality.
 
 ### Atari Fixes
+- **Issue #10 - Atari 8-bit machines (`atari800`, `atari800xl`, `atari65xe`)**: The Atari now boots to Atari BASIC's READY prompt and runs BASIC programs with graphics and sound, in the GUI and CLI.
+  - **Machine plugin** (`mmemu-plugin-atari.so`):
+    - A dedicated bus for the 800 map (48 KB, OS-B, BASIC cartridge) and the XL/XE map (64 KB, PORTB banking of the OS, BASIC and the self-test ROM).
+    - I/O mirrors, POKEY+PIA IRQ and ANTIC NMI.
+    - A scheduler that holds the CPU for WSYNC and the cycles ANTIC's DMA takes.
+    - Real-time pacing on ANTIC's cycle count.
+  - **Keyboard and joysticks:**
+    - GUI and CLI key names, with shift and control.
+    - Console keys and RESET, HELP and BREAK on F1-F8.
+    - Typed text paced on the OS's key buffer.
+    - Joysticks on PIA port A and the GTIA triggers.
+  - **ANTIC** was a stub that never drew anything. It is rewritten:
+    - Display lists, character modes 2-7 and map modes 8-F, LMS, DLI and JVB.
+    - Narrow, normal and wide playfields, HSCROL/VSCROL, CHACTL/CHBASE.
+    - Player/missile DMA, DLI and VBI NMIs, NMIST/NMIRES, VCOUNT.
+    - WSYNC and the DMA cycles it takes from the CPU.
+    - A 384 × 240 frame.
+  - **GTIA** composes each line: players and missiles with sizes and the PRIOR priorities (including the fifth player), all 16 collision registers, high-resolution luminance, console keys and triggers.
+  - **POKEY** is rewritten:
+    - 64 kHz, 15 kHz and 1.79 MHz clocking, 16-bit joins, the polynomial distortions, high-pass filters and volume-only mode.
+    - Timer IRQs, keyboard (KBCODE, SKSTAT, BREAK) and RANDOM.
+    - A serial transmitter at channel 4's rate, so the OS's disk boot times out properly instead of being faked.
+    - Both POKEY and ANTIC previously treated `tick()`'s cycle count as absolute.
+  - **6502 decimal mode:** ADC and SBC ignored the D flag on every 6502 machine. They now follow NMOS decimal mode, per Bruce Clark's documentation. Atari BASIC, which does its arithmetic in BCD, printed `2+3*4` as `>`.
+  - **Recordings:** `recordaudio` and MCP `record_audio` use the machine's clock (they assumed a PAL C64's).
+  - **Removed:** the old Atari boot tests, which used a machine factory that didn't exist.
+  - **Tests:** ANTIC, POKEY, decimal mode and machine tests: boot to READY on the 800 and 800XL, BASIC arithmetic, PORTB banking, keys, and the rendered screen. See `doc/README-ATARI.md`.
 - **GTIA palette (#160)**: the 256-entry palette is now 0xAARRGGBB, the format every video chip's frames use since #156, instead of 0xRRGGBBAA. The old table was also wrong in layout: each hue had only 10 luminance steps followed by 6 black entries, and the grey row had a red at $05. It is replaced with the full 16-hue × 16-luminance NTSC palette from atari800's palette model ("standard" preset). `GTIA::getRGBA` is renamed `getARGB`.
 
 ### MEGA65 Fixes
