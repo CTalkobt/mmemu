@@ -1,6 +1,7 @@
 #include "atari_sio.h"
 #include "plugins/devices/pokey/main/pokey.h"
 #include <cstring>
+#include <fstream>
 
 namespace atari {
 
@@ -175,7 +176,7 @@ void AtariSio::serialOut(uint8_t byte) {
             bool ok = checksum(m_writeData.data(), m_writeLen) == m_writeData[m_writeLen];
             Drive& d = m_drives[m_writeDrive];
             send(ok ? 'A' : 'N', 1000);
-            if (ok) send(d.image.write(m_writeSector, m_writeData.data()) ? 'C' : 'E', 2000);
+            if (ok) send(writeSector(d, m_writeSector, m_writeData.data()) ? 'C' : 'E', 2000);
             m_writeDrive = -1;
             m_writeData.clear();
         }
@@ -189,6 +190,8 @@ void AtariSio::command() {
     int n = dev - 0x31;
     Drive& d = m_drives[n];
     if (!d.present) return;                          // no drive there
+    m_activeDrive = n;
+    if (cmd == 'R' || cmd == 'W' || cmd == 'P') d.lastSector = sector;
 
     const int ACK_DELAY = 2000, COMPLETE_DELAY = 3000;
     switch (cmd) {
@@ -210,7 +213,9 @@ void AtariSio::command() {
             send('A', ACK_DELAY);
             // Drive status (bit 5: double density), FDC status (inverted: $FF
             // = fine), format timeout, unused
-            uint8_t st[4] = { (uint8_t)(d.image.sectorSize() == 256 ? 0x20 : 0x00), 0xFF, 0xE0, 0x00 };
+            // Drive status: bit 5 double density, bit 3 write protected
+            uint8_t st[4] = { (uint8_t)((d.image.sectorSize() == 256 ? 0x20 : 0x00) | (d.readOnly ? 0x08 : 0x00)),
+                              0xFF, 0xE0, 0x00 };
             send('C', COMPLETE_DELAY);
             sendFrame(st, 4, BYTE_CYCLES);
             break;
@@ -228,7 +233,25 @@ void AtariSio::command() {
     }
 }
 
+bool AtariSio::writeSector(Drive& d, int sector, const uint8_t* data) {
+    if (d.readOnly) return false;
+    if (!d.image.write(sector, data)) return false;
+    if (d.path.empty()) return true;
+    // Write through to the file
+    std::fstream f(d.path, std::ios::in | std::ios::out | std::ios::binary);
+    if (f) {
+        f.seekp((std::streamoff)d.image.offsetOf(sector));
+        f.write(reinterpret_cast<const char*>(data), d.image.sizeOf(sector));
+    }
+    if (!f) {
+        m_lastError = "Could not save sector " + std::to_string(sector) + " to " + d.path + ".";
+        return false;
+    }
+    return true;
+}
+
 void AtariSio::tick(uint64_t cycles) {
+    if (m_out.empty() && m_writeDrive < 0) m_activeDrive = -1;
     while (cycles > 0 && !m_out.empty()) {
         Pending& p = m_out.front();
         if ((uint64_t)p.delay > cycles) { p.delay -= (int)cycles; return; }
@@ -239,14 +262,48 @@ void AtariSio::tick(uint64_t cycles) {
     }
 }
 
-bool AtariSio::mount(int drive, std::vector<uint8_t> atrBytes, const std::string& label, std::string& err) {
+bool AtariSio::mount(int drive, std::vector<uint8_t> atrBytes, const std::string& label, std::string& err,
+                     const std::string& path) {
     if (drive < 0 || drive > 3) { err = "Drive must be 1-4."; return false; }
     AtrImage img;
     if (!img.load(std::move(atrBytes), err)) return false;
-    m_drives[drive].image = std::move(img);
-    m_drives[drive].present = true;
-    m_drives[drive].label = label;
+    Drive& d = m_drives[drive];
+    d = Drive();
+    d.image = std::move(img);
+    d.present = true;
+    d.label = label;
+    d.path = path;
+    if (!path.empty()) {
+        std::fstream probe(path, std::ios::in | std::ios::out | std::ios::binary);
+        d.readOnly = !probe;
+    }
     return true;
+}
+
+bool AtariSio::mountDisk(int unit, const std::string& path) {
+    if (unit < 1 || unit > 4) return false;
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { m_lastError = "Cannot open " + path + "."; return false; }
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return mount(unit - 1, std::move(bytes), path, m_lastError, path);
+}
+
+void AtariSio::ejectDisk(int unit) {
+    if (unit >= 1 && unit <= 4) unmount(unit - 1);
+}
+
+bool AtariSio::getDiskStatus(int unit, int& track, int& sector, bool& led) {
+    if (unit < 1 || unit > 4) return false;
+    const Drive& d = m_drives[unit - 1];
+    track = 0;
+    sector = d.lastSector;
+    led = m_activeDrive == unit - 1;
+    return true;
+}
+
+std::string AtariSio::getMountedDiskPath(int unit) {
+    if (unit < 1 || unit > 4 || !m_drives[unit - 1].present) return "";
+    return m_drives[unit - 1].label;
 }
 
 void AtariSio::unmount(int drive) {

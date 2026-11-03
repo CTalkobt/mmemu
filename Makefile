@@ -221,6 +221,7 @@ PLUGIN_SID_PAIR_SRCS = src/plugins/devices/sid_pair/main/sid_pair.cpp \
 PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/machines/atari/main/plugin_init.cpp \
 	src/plugins/machines/atari/main/atari_sio.cpp \
+	src/plugins/machines/atari/main/atari_cart.cpp \
 	src/plugins/devices/antic/main/antic.cpp \
 	src/plugins/devices/gtia/main/gtia.cpp \
 	src/plugins/devices/pokey/main/pokey.cpp \
@@ -461,6 +462,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/pokey/main/pokey.o \
 	src/plugins/machines/atari/main/machine_atari.o \
 	src/plugins/machines/atari/main/atari_sio.o \
+	src/plugins/machines/atari/main/atari_cart.o \
 	src/plugins/devices/virtual_iec/main/virtual_iec.o \
 	src/plugins/devices/f018b_dma/main/f018b_dma.o \
 	src/plugins/devices/audio_dma/main/audio_dma.o \

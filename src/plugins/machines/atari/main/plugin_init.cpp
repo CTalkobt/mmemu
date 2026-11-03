@@ -43,7 +43,7 @@ public:
     bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
         std::vector<uint8_t> data;
         std::string err;
-        return readFile(path, data) && atari::bootDisk(m, std::move(data), path, err);
+        return readFile(path, data) && atari::bootDisk(m, std::move(data), path, err, path);
     }
     const char* name() const override { return "Atari ATR Disk Loader"; }
 };
@@ -51,6 +51,41 @@ public:
 IImageLoader* createXexLoader() { return new XexLoader(); }
 IImageLoader* createAtrLoader() { return new AtrLoader(); }
 ImageLoaderPluginInfo s_loaders[] = { { createXexLoader }, { createAtrLoader } };
+
+/** .car / .rom cartridges: the CLI `cart`, the GUI's Attach Cartridge, MCP attach_cartridge. */
+class AtariCartHandler : public ICartridgeHandler {
+public:
+    explicit AtariCartHandler(std::string path) : m_path(std::move(path)) {}
+    bool attach(IBus*, MachineDescriptor* m) override {
+        std::vector<uint8_t> data;
+        std::string err;
+        if (!readFile(m_path, data) || !atari::insertCartridge(m, data, m_path, err)) return false;
+        m_machine = m;
+        return true;
+    }
+    void eject(IBus*) override {
+        if (m_machine) atari::removeCartridge(m_machine);
+        m_machine = nullptr;
+    }
+    CartridgeMetadata metadata() const override {
+        CartridgeMetadata md;
+        std::string info = m_machine ? atari::cartridgeInfo(m_machine) : "";
+        auto paren = info.rfind(" (");
+        md.type = paren == std::string::npos ? "Atari cartridge" : info.substr(paren + 2, info.size() - paren - 3);
+        md.startAddr = 0x8000;
+        md.endAddr = 0xBFFF;
+        md.imagePath = m_path;
+        auto slash = m_path.find_last_of('/');
+        md.displayName = slash == std::string::npos ? m_path : m_path.substr(slash + 1);
+        return md;
+    }
+private:
+    std::string m_path;
+    MachineDescriptor* m_machine = nullptr;
+};
+
+ICartridgeHandler* createCartHandler(const char* path) { return new AtariCartHandler(path); }
+CartridgePluginInfo s_carts[] = { { "car", createCartHandler }, { "rom", createCartHandler } };
 
 }  // namespace
 
@@ -66,7 +101,7 @@ static SimPluginManifest s_manifest = {
     0, nullptr,
     0, nullptr,
     2, s_loaders,
-    0, nullptr
+    2, s_carts
 };
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
@@ -77,5 +112,11 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
         []() { return atari::create(atari::Model::Atari800XL); }, "Atari 800XL");
     reg.registerMachine("atari65xe",
         []() { return atari::create(atari::Model::Atari65XE); }, "Atari 65XE");
+    reg.registerMachine("atari800-pal",
+        []() { return atari::create(atari::Model::Atari800, nullptr, true); }, "Atari 800 (PAL)");
+    reg.registerMachine("atari800xl-pal",
+        []() { return atari::create(atari::Model::Atari800XL, nullptr, true); }, "Atari 800XL (PAL)");
+    reg.registerMachine("atari65xe-pal",
+        []() { return atari::create(atari::Model::Atari65XE, nullptr, true); }, "Atari 65XE (PAL)");
     return &s_manifest;
 }

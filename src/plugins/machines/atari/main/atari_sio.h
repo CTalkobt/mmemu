@@ -23,8 +23,9 @@ public:
     bool read(int n, uint8_t* out) const;
     bool write(int n, const uint8_t* data);
     const std::vector<uint8_t>& bytes() const { return m_data; }
-private:
+    /** File offset of sector n (1-based). */
     size_t offsetOf(int n) const;
+private:
     std::vector<uint8_t> m_data;
     int m_sectorSize = 128;
     int m_sectorCount = 0;
@@ -46,6 +47,13 @@ bool xexToAtr(const std::vector<uint8_t>& xex, std::vector<uint8_t>& atr, std::s
  * input with ACK ('A'), COMPLETE ('C') or ERROR ('E'), the data frame and
  * its checksum, at 19,200 baud. Commands: read sector ('R'), write
  * ('W', 'P'), status ('S'); others are refused ('N').
+ *
+ * A disk mounted from a file is written through: each sector written goes
+ * back into the .atr at once. A file that cannot be opened for writing is
+ * write-protected (status bit 3; writes end in ERROR). Disks with no file
+ * (a generated .xex boot disk) keep their writes in memory.
+ *
+ * Drives are units 1-4 to the CLI `disk` command and the GUI's drive pane.
  */
 class AtariSio : public IOHandler {
 public:
@@ -64,10 +72,25 @@ public:
     /** A byte the computer sent (POKEY serial output). */
     void serialOut(uint8_t byte);
 
-    bool mount(int drive, std::vector<uint8_t> atrBytes, const std::string& label, std::string& err);
+    /**
+     * Put an image in drive 0-3. `path`: the file it came from, which
+     * sector writes are saved to (empty: keep them in memory).
+     */
+    bool mount(int drive, std::vector<uint8_t> atrBytes, const std::string& label, std::string& err,
+               const std::string& path = "");
     void unmount(int drive);
     const std::string& label(int drive) const { return m_drives[drive].label; }
     bool mounted(int drive) const { return m_drives[drive].present; }
+    bool writeProtected(int drive) const { return m_drives[drive].readOnly; }
+    /** The image as it is now (with any writes). */
+    const std::vector<uint8_t>& image(int drive) const { return m_drives[drive].image.bytes(); }
+    const std::string& lastError() const { return m_lastError; }
+
+    // IOHandler disk interface (units 1-4 are D1:-D4:)
+    bool mountDisk(int unit, const std::string& path) override;
+    void ejectDisk(int unit) override;
+    bool getDiskStatus(int unit, int& track, int& sector, bool& led) override;
+    std::string getMountedDiskPath(int unit) override;
 
     /** Cycles between bytes at 19,200 baud (10 bits). */
     static constexpr int BYTE_CYCLES = 940;
@@ -84,7 +107,11 @@ private:
         bool present = false;
         AtrImage image;
         std::string label;
+        std::string path;       // the file writes are saved to
+        bool readOnly = false;
+        int lastSector = 0;
     };
+    bool writeSector(Drive& d, int sector, const uint8_t* data);
     struct Pending { int delay; uint8_t byte; };
 
     void command();
@@ -102,6 +129,8 @@ private:
     std::vector<uint8_t> m_writeData;
     std::deque<Pending> m_out;         // response bytes, each after a delay
     int m_wait = 0;
+    int m_activeDrive = -1;            // the drive answering (its LED)
+    std::string m_lastError;
 };
 
 }  // namespace atari

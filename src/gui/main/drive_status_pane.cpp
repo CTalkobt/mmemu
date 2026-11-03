@@ -19,6 +19,14 @@ DriveStatusPane::DriveStatusPane(wxWindow* parent)
     SetSizer(sizer);
 }
 
+namespace {
+/** "Unit 8: IDLE T:18 S:00"; Atari drives (units 1-4) as "D1: IDLE S:0001". */
+wxString unitLabel(int unit, const char* state, int t, int s) {
+    if (unit < 8) return wxString::Format("D%d: %s S:%04d", unit, state, s);
+    return wxString::Format("Unit %d: %s T:%02d S:%02d", unit, state, t, s);
+}
+}  // namespace
+
 void DriveStatusPane::SetMachine(MachineDescriptor* md) {
     m_md = md;
     m_drives.clear();
@@ -27,8 +35,8 @@ void DriveStatusPane::SetMachine(MachineDescriptor* md) {
     if (m_md && m_md->ioRegistry) {
         std::vector<IOHandler*> handlers;
         m_md->ioRegistry->enumerate(handlers);
-        // Common Commodore drive units
-        std::vector<int> units = {8, 9, 10, 11};
+        // Atari D1:-D4: (units 1-4) and the common Commodore drive units
+        std::vector<int> units = {1, 2, 3, 4, 8, 9, 10, 11};
         for (int unit : units) {
             for (auto* h : handlers) {
                 int t, s;
@@ -38,7 +46,7 @@ void DriveStatusPane::SetMachine(MachineDescriptor* md) {
                     auto* driveSizer = new wxBoxSizer(wxHORIZONTAL);
                     auto* infoSizer = new wxBoxSizer(wxVERTICAL);
                     
-                    auto* label = new wxStaticText(m_scroll, wxID_ANY, wxString::Format("Unit %d: IDLE T:%02d S:%02d", unit, t, s));
+                    auto* label = new wxStaticText(m_scroll, wxID_ANY, unitLabel(unit, "IDLE", t, s));
                     label->SetFont(wxFont(10, wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
                     
                     auto* fileLabel = new wxStaticText(m_scroll, wxID_ANY, "Empty");
@@ -89,8 +97,7 @@ void DriveStatusPane::RefreshStatus() {
             std::string path = drive.handler->getMountedDiskPath(drive.unit);
             bool isMounted = !path.empty();
             
-            drive.label->SetLabel(wxString::Format("Unit %d: %s T:%02d S:%02d", 
-                drive.unit, led ? "BUSY" : (isMounted ? "IDLE" : "OFF "), t, s));
+            drive.label->SetLabel(unitLabel(drive.unit, led ? "BUSY" : (isMounted ? "IDLE" : "OFF "), t, s));
             
             if (isMounted) {
                 drive.fileLabel->SetLabel(fs::path(path).filename().string());
@@ -116,7 +123,8 @@ void DriveStatusPane::RefreshStatus() {
 void DriveStatusPane::OnMount(wxCommandEvent& event) {
     int unit = event.GetId();
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
-                       "Disk images (*.d64;*.g64;*.prg)|*.d64;*.g64;*.prg", 
+                       unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
+                                : "Disk images (*.d64;*.g64;*.prg)|*.d64;*.g64;*.prg",
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (openFileDialog.ShowModal() == wxID_OK) {
         std::string path = openFileDialog.GetPath().ToStdString();

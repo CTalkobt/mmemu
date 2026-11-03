@@ -38,6 +38,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Issue #159 - VIC-II sprites**: Multicolour sprites ($D01C) now render as pixel pairs in $D025 / sprite colour / $D026 instead of as hires bits. Sprites are placed at the hardware coordinates (X=24, Y=50 is the top-left of the text area; they were drawn 8 pixels too far left and 14 lines too low), are covered by the border, and honour sprite-background priority ($D01B: behind-background sprites are hidden by foreground pixels, including multicolour 10/11 pairs). Lower-numbered sprites stay on top. Also applies to the VIC-III and the VIC-IV in its VIC-II personality.
 
 ### Atari Fixes
+- **Atari: cartridges, saved disk writes, GTIA modes, PAL (#10 follow-up)**:
+  - **Cartridges:** `.car` and raw 8/16 KB `.rom` images go in through CLI `cart`/`eject`, the GUI's Attach Cartridge and MCP `attach_cartridge`, and cold-start. The supported types are standard, OSS, Williams, Express, Diamond, SpartaDOS X, DB, XEGS and switchable XEGS, MegaCart, Atarimax, Phoenix and Blizzard, with bank switching on `$D5xx` after atari800's `cartridge.c`. On the XL/XE, TRIG3 reads the cartridge's RD5 line.
+  - **Disk writes are saved:** sectors written to a disk mounted from a `.atr` go back into the file at once. An unwritable file makes the drive write-protected (status bit 3; writes fail). CLI `disk mount <1-4> <file>`/`disk eject` and the GUI's Drive Status pane now handle D1:-D4: (the pane offers `.atr` files for them).
+  - **GTIA modes 9, 10 and 11**, **VDELAY** and **multicolour players** (PRIOR bit 5).
+  - **PAL machines:** `atari800-pal`, `atari800xl-pal`, `atari65xe-pal`: 312 lines, 1,773,447 Hz, the GTIA PAL flag and a PAL palette from atari800's PAL colour model.
+  - **Tests:** GTIA modes, VDELAY, multicolour and the PAL palette; cartridge banking for each scheme; a cartridge booting on the 800XL and 800 and BASIC returning after eject; SIO writes saved to the file and refused on a read-only one; the PAL 800XL booting with `PALNTS` = 1 and 312 lines. Also checked through the CLI: the OS's `DSKINV` writing a sector to D2:, and GRAPHICS 9 and 11 from BASIC.
 - **Issue #10 - Atari 8-bit machines (`atari800`, `atari800xl`, `atari65xe`)**: The Atari now boots to Atari BASIC's READY prompt and runs BASIC programs with graphics and sound, in the GUI and CLI.
   - **Machine plugin** (`mmemu-plugin-atari.so`):
     - A dedicated bus for the 800 map (48 KB, OS-B, BASIC cartridge) and the XL/XE map (64 KB, PORTB banking of the OS, BASIC and the self-test ROM).

@@ -154,13 +154,14 @@ void Antic::startLine() {
         uint16_t mAddr = (uint16_t)(base + (single ? 0x300 : 0x180) + idx);
         uint8_t missiles = fetch(mAddr);
         ++m_stealPending;
-        if (m_gtia) m_gtia->dmaMissiles(missiles);
+        const bool even = !(m_line & 1);   // VDELAY objects skip even lines
+        if (m_gtia) m_gtia->dmaMissiles(missiles, even);
         if (dma & DMA_PLAYER) {
             for (int p = 0; p < 4; ++p) {
                 uint16_t pAddr = single ? (uint16_t)(base + 0x400 + p * 0x100 + idx)
                                         : (uint16_t)(base + 0x200 + p * 0x80 + idx);
                 uint8_t d = fetch(pAddr);
-                if (m_gtia) m_gtia->dmaPlayer(p, d);
+                if (m_gtia) m_gtia->dmaPlayer(p, d, even);
             }
             m_stealPending += 4;
         }
@@ -338,6 +339,9 @@ void Antic::drawLine() {
     if (m_line < FIRST_LINE || m_line >= VBLANK_LINE) return;
     uint8_t pf[GTIA::LINE_PIXELS];
     buildPlayfieldLine(pf);
+    const int width = m_regs[DMACTL] & DMA_PF_MASK;
+    if (m_mode >= 2 && width && (m_regs[DMACTL] & DMA_DL) && !m_waitVbl)
+        for (int i = WIN_START[width]; i < WIN_END[width]; ++i) pf[i] |= GTIA::PF_WINDOW;
     uint32_t* out = &m_frame[(size_t)(m_line - FIRST_LINE) * FRAME_W];
     if (m_gtia) {
         m_gtia->renderLine(pf, out);

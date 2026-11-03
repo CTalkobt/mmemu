@@ -46,7 +46,9 @@ public:
     }
     /** Joystick trigger n (0-3) pressed. */
     void setTrigger(int n, bool pressed) { if (n >= 0 && n < 4) m_trig[n] = pressed; }
+    /** PAL chip: the PAL register reads 1 and colours come from the PAL palette. */
     void setPal(bool pal) { m_isPal = pal; }
+    bool isPal() const { return m_isPal; }
 
     // -----------------------------------------------------------------------
     // Scanline composition (ANTIC hands GTIA each line's playfield)
@@ -62,6 +64,8 @@ public:
     static constexpr uint8_t PF_HIRES = 0x10;
     /** A pixel of a high-resolution line (modes 2, 3, F): PF2 collides only where lit. */
     static constexpr uint8_t PF_HIRES_MODE = 0x20;
+    /** Inside the playfield window (GTIA modes 9-11 colour the border apart). */
+    static constexpr uint8_t PF_WINDOW = 0x40;
 
     /**
      * Compose one scanline: the playfield (LINE_PIXELS classes) with the
@@ -70,18 +74,32 @@ public:
      */
     void renderLine(const uint8_t* pf, uint32_t* out);
 
-    /** Player/missile DMA from ANTIC: stored if GRACTL enables it. */
-    void dmaPlayer(int n, uint8_t data) { if (m_regs[GRACTL] & 0x02) m_regs[GRAFP0 + n] = data; }
-    void dmaMissiles(uint8_t data)      { if (m_regs[GRACTL] & 0x01) m_regs[GRAFM] = data; }
+    /**
+     * Player/missile DMA from ANTIC: stored if GRACTL enables it. With a
+     * VDELAY bit set, that object ignores DMA on even scan lines (it moves
+     * down a line in double-line resolution).
+     */
+    void dmaPlayer(int n, uint8_t data, bool evenLine = false) {
+        if (!(m_regs[GRACTL] & 0x02)) return;
+        if (evenLine && (m_regs[VDELAY] & (0x10 << n))) return;
+        m_regs[GRAFP0 + n] = data;
+    }
+    void dmaMissiles(uint8_t data, bool evenLine = false) {
+        if (!(m_regs[GRACTL] & 0x01)) return;
+        uint8_t keep = 0;   // missiles held by VDELAY keep their bits
+        if (evenLine)
+            for (int m = 0; m < 4; ++m) if (m_regs[VDELAY] & (1 << m)) keep |= (uint8_t)(3 << (m * 2));
+        m_regs[GRAFM] = (uint8_t)((m_regs[GRAFM] & keep) | (data & ~keep));
+    }
 
     /** A write register's current value (colours, positions, PRIOR...). */
     uint8_t reg(int r) const { return m_regs[r & 0x1F]; }
 
     /**
      * Get the 0xAARRGGBB colour for an Atari colour index (0-255): hue in
-     * bits 7-4, luminance in bits 3-0 (NTSC palette).
+     * bits 7-4, luminance in bits 3-0 (NTSC palette, or PAL's).
      */
-    static uint32_t getARGB(uint8_t index);
+    static uint32_t getARGB(uint8_t index, bool pal = false);
 
     // -----------------------------------------------------------------------
     // Registers ($D000–$D01F)
@@ -123,6 +141,7 @@ private:
     bool        m_trigLatched[4] = {false, false, false, false};   // GRACTL bit 2
     bool        m_isPal = false;
 
-    // Static color table
+    // Colour tables
     static const uint32_t s_palette[256];
+    static const uint32_t s_palettePal[256];
 };
