@@ -158,10 +158,10 @@ private:
 
         bool prevGate  = false;
 
-        // Waveform output: returns 12-bit value (0–4095)
-        // Multiple active waveforms are ANDed.
-        uint16_t waveOutput(bool syncReset, bool ringMsb) const;
-        // Noise output bits {20,18,14,11,9,5,3,0} of LFSR → 12-bit value
+        // Waveform output: 12-bit value (0–4095); combined waveforms follow
+        // the 6581 or 8580 model (CombinedWaveformTable, #119).
+        uint16_t waveOutput(bool syncReset, bool ringMsb, CombinedWaveformTable::Chip chip) const;
+        // Noise output bits {20,18,14,11,9,5,2,0} of LFSR → 12-bit value
         uint16_t noiseOutput() const;
     };
 
@@ -188,6 +188,10 @@ private:
     void    tickVoice(Voice& v, uint64_t cycles, uint32_t clockHz);   // LFSR + envelope
     float   voiceOutput(const Voice& v) const;
     bool    ringMsbFor(const Voice& v) const;   // source MSB if v's RING bit is set
+    CombinedWaveformTable::Chip chipModel() const {
+        return m_filterVariant == 0 ? CombinedWaveformTable::Chip::MOS6581
+                                    : CombinedWaveformTable::Chip::MOS8580;
+    }
     void    pushSample(float s);
 
     // Envelope rates: cycles per envelope-level step at the configured clock.

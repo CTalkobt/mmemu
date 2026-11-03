@@ -152,7 +152,7 @@ bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case OSC3:
             // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
             // folded triangle, pulse, noise etc., not the raw accumulator.
-            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2])) >> 4);
+            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2]), chipModel()) >> 4);
             break;
         case ENV3:
             *val = m_voices[2].envLevel;
@@ -367,6 +367,12 @@ void SID6581::tickVoice(Voice& v, uint64_t cycles, uint32_t clockHz) {
         // Step LFSR: feedback from bits 22 and 17 (0-indexed).
         uint32_t newBit = ((v.lfsr >> 22) ^ (v.lfsr >> 17)) & 1u;
         v.lfsr = ((v.lfsr << 1) | newBit) & 0x7FFFFFu;
+        // Noise with another waveform: 0 output bits pull the LFSR bits that
+        // feed them low (reSID noise writeback), so the noise dies away.
+        if ((v.cr & 0x80) && (v.cr & 0x70)) {
+            uint16_t out = v.waveOutput(false, ringMsbFor(v), chipModel());
+            v.lfsr &= ~CombinedWaveformTable::NOISE_TAPS | CombinedWaveformTable::noiseWriteback(out);
+        }
     }
     v.prevBit19 = bit19;
 
@@ -444,21 +450,19 @@ uint16_t SID6581::Voice::noiseOutput() const {
         (((lfsr >> 11) & 1) <<  8) |
         (((lfsr >>  9) & 1) <<  7) |
         (((lfsr >>  5) & 1) <<  6) |
-        (((lfsr >>  3) & 1) <<  5) |
+        (((lfsr >>  2) & 1) <<  5) |
         (((lfsr >>  0) & 1) <<  4)
     );
 }
 
-uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb) const {
+uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb,
+                                    CombinedWaveformTable::Chip chip) const {
     // Effective phase: hard sync resets to 0 (affects waveform output).
     uint32_t p = syncReset ? 0 : phase;
 
-    // Combined waveforms: use empirically-derived lookup tables instead of AND operation.
-    // Real 6581 hardware uses open-collector NMOS DAC with asymmetric driving strength,
-    // producing complex harmonic patterns (30-40% amplitude reduction vs AND operation).
-    // Table data derived from reSIDfp reverse-engineered measurements.
+    // Combined waveforms use the pulldown model fitted to real chips (#119)
     uint8_t  wavSel = cr & 0xF0u;
-    uint16_t out    = CombinedWaveformTable::getCombinedOutput(p, wavSel, pw, lfsr, ringMsb);
+    uint16_t out    = CombinedWaveformTable::getCombinedOutput(p, wavSel, pw, lfsr, ringMsb, chip);
 
     return out;
 }
@@ -477,7 +481,7 @@ float SID6581::voiceOutput(const Voice& v) const {
 
     bool ringMsb = ringMsbFor(v);
 
-    uint16_t raw = v.waveOutput(syncReset, ringMsb);
+    uint16_t raw = v.waveOutput(syncReset, ringMsb, chipModel());
 
     // Apply envelope (multiply 12-bit waveform × 8-bit envelope → scale to float).
     float sample = ((float)raw / 2048.0f) - 1.0f; // 12-bit centred: 0..4095 → -1..+1
