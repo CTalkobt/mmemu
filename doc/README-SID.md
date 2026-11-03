@@ -209,6 +209,35 @@ Saved 50-frame 480x400 GIF (40 ms emulated per frame) to song.gif
 
 ---
 
+### 2.7 Playing .sid files (PSID/RSID)
+
+CLI `sid load <file.sid> [subtune]` and MCP `load_sid` (`file`, optional `subtune`) load a tune into a C64 and install a play driver, as a SID player does. Running the machine then plays it; `recordaudio <file.wav> <ms>` (MCP `record_audio`) captures it.
+
+```
+> sid load Commando.sid 1
+PSID v2: Commando by Rob Hubbard (1985 Elite)
+Songs: 11, playing subtune 1
+Load: $5000-$5F9F, Init: $5F80, Play: $5012
+Timing: 50 Hz (one PAL frame), SID 6581
+Play driver installed at $0334; run the machine to play. ('recordaudio' captures it.)
+> recordaudio commando.wav 60000
+```
+
+How the driver (`src/libdebug/main/sid_file.cpp`) plays the tune:
+
+- **Init:** called with the subtune in A. `$01` is set from init's address as sidplayfp does: `$37` below `$A000`, `$36` below `$D000`, `$35` from `$E000`, else `$34`.
+- **Play:** called once per CIA 1 timer A period, with interrupts off.
+  - VBI songs: one PAL frame (19656 cycles, 50 Hz).
+  - CIA-speed songs (the header's speed bit, and RSID): the tune's own timer value, or 60 Hz if init sets none.
+- **No play address:** the tune installs its own interrupt handler, so interrupts are enabled after init and the driver idles.
+- **Placement:** the driver goes in RAM the tune doesn't use: `$0334`, else `$0200`, else the first free 64 bytes from `$C000` or `$1000`.
+
+Before this, the loader called play back to back as fast as the CPU ran, so tunes played far too fast. It also put its loop in zero page (`$0002`), which tunes use.
+
+Checked against sidplayfp for Rob Hubbard's *Commando* and *Monty on the Run*: tempo and pitch match. The frequency balance matches reSID 0.16 within about 1 dB per band; reSIDfp has a little more bass from its transistor-level 6581 filter.
+
+Not supported: data loaded into `$D000-$DFFF`, which the loader writes through the I/O area; RSID tunes that need a complete KERNAL environment; and multi-SID PSIDs, which are played on the first SID only.
+
 ## 3. Register Map
 
 Each voice occupies 7 bytes (voice N at base + N×7):

@@ -29,6 +29,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdebug/main/frame_analyzer.h"
 #include "libdebug/main/gfx_view.h"
 #include "libdebug/main/audio_scope.h"
+#include "libdebug/main/sid_file.h"
 #include "libdevices/main/iaudio_inspect.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "util/stb_image_write.h"
@@ -2381,79 +2382,17 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             std::string subStr;
             if (ss >> subStr) { try { subtune = std::stoi(subStr); } catch (...) {} }
 
+            if (!m_ctx.bus || !m_ctx.cpu) { m_output("No machine created.\n"); return; }
             std::ifstream f(path, std::ios::binary);
             if (!f) { m_output("Error: Cannot open file: " + path + "\n"); return; }
-            f.seekg(0, std::ios::end);
-            size_t fileSize = f.tellg();
-            f.seekg(0);
-            if (fileSize < 0x7C) { m_output("Error: File too small for PSID header.\n"); return; }
-
-            std::vector<uint8_t> raw(fileSize);
-            f.read(reinterpret_cast<char*>(raw.data()), fileSize);
-
-            std::string magic(reinterpret_cast<char*>(raw.data()), 4);
-            if (magic != "PSID" && magic != "RSID") {
-                m_output("Error: Not a PSID/RSID file.\n"); return;
+            std::vector<uint8_t> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            psid::Info info;
+            std::string err;
+            if (!psid::load(raw, subtune, m_ctx.bus, m_ctx.cpu, info, err)) {
+                m_output("Error: " + err + "\n");
+                return;
             }
-
-            auto rd16be = [&](size_t off) -> uint16_t { return (raw[off] << 8) | raw[off+1]; };
-            uint16_t version    = rd16be(0x04);
-            uint16_t dataOffset = rd16be(0x06);
-            uint16_t loadAddr   = rd16be(0x08);
-            uint16_t initAddr   = rd16be(0x0A);
-            uint16_t playAddr   = rd16be(0x0C);
-            uint16_t songs      = rd16be(0x0E);
-            uint16_t startSong  = rd16be(0x10);
-
-            auto extractStr = [&](size_t off) -> std::string {
-                char buf[33]; std::memcpy(buf, &raw[off], 32); buf[32] = '\0'; return buf;
-            };
-            std::string title = extractStr(0x16);
-            std::string author = extractStr(0x36);
-
-            const uint8_t* data = raw.data() + dataOffset;
-            size_t dataLen = fileSize - dataOffset;
-            if (loadAddr == 0 && dataLen >= 2) {
-                loadAddr = data[0] | (data[1] << 8);
-                data += 2; dataLen -= 2;
-            }
-            if (initAddr == 0) initAddr = loadAddr;
-            if (subtune < 1) subtune = startSong;
-            if (subtune < 1) subtune = 1;
-            if (subtune > songs) subtune = songs;
-
-            for (size_t i = 0; i < dataLen; ++i)
-                m_ctx.bus->write8(loadAddr + i, data[i]);
-
-            // Trampoline at $0002: LDA #subtune, JSR init, BRK
-            m_ctx.bus->write8(0x0002, 0xA9);
-            m_ctx.bus->write8(0x0003, (uint8_t)(subtune - 1));
-            m_ctx.bus->write8(0x0004, 0x20);
-            m_ctx.bus->write8(0x0005, initAddr & 0xFF);
-            m_ctx.bus->write8(0x0006, (initAddr >> 8) & 0xFF);
-            m_ctx.bus->write8(0x0007, 0x00);
-
-            m_ctx.cpu->setPc(0x0002);
-            for (int s = 0; s < 1000000; ++s) {
-                if (m_ctx.cpu->pc() == 0x0007) break;
-                m_ctx.cpu->step();
-            }
-
-            // Install play loop if play address exists
-            if (playAddr != 0) {
-                m_ctx.bus->write8(0x0002, 0x20);
-                m_ctx.bus->write8(0x0003, playAddr & 0xFF);
-                m_ctx.bus->write8(0x0004, (playAddr >> 8) & 0xFF);
-                m_ctx.bus->write8(0x0005, 0x4C);
-                m_ctx.bus->write8(0x0006, 0x02);
-                m_ctx.bus->write8(0x0007, 0x00);
-                m_ctx.cpu->setPc(0x0002);
-            }
-
-            m_output(magic + " v" + std::to_string(version) + ": " + title + " by " + author + "\n");
-            m_output("Songs: " + std::to_string(songs) + ", subtune " + std::to_string(subtune) + "\n");
-            m_output("Load: $" + toHex(loadAddr) + " Init: $" + toHex(initAddr) + " Play: $" + toHex(playAddr) + "\n");
-            if (playAddr) m_output("Play loop installed at $0002. Use 'recordaudio' to capture.\n");
+            m_output(psid::describe(info) + " ('recordaudio' captures it.)\n");
         } else {
             m_output(sidSyntax);
         }

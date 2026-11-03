@@ -41,6 +41,7 @@
 #include "libdevices/main/ivideo_inspect.h"
 #include "libdebug/main/gfx_view.h"
 #include "libdebug/main/audio_scope.h"
+#include "libdebug/main/sid_file.h"
 #include "libdebug/main/gif_writer.h"
 #include "libdevices/main/iaudio_inspect.h"
 #include "util/stb_image_write.h"
@@ -1414,10 +1415,10 @@ Json handleDescribe() {
         req.push_back(Json("file"));
         schema.oVal["required"] = req;
         addTool("load_sid",
-                "Load a PSID/RSID (.sid) file into a machine. Parses the header, "
-                "loads the SID data into memory, calls the init routine with the "
-                "selected subtune in the accumulator, and returns song metadata "
-                "(title, author, copyright, play address, number of songs). "
+                "Load a PSID/RSID (.sid) file into a C64 machine and install a play driver, "
+                "as a SID player does: init is called with the subtune, then play once per "
+                "frame (50 Hz) or at the tune's CIA timer rate, with $01 banked for each. "
+                "Returns the song metadata (title, author, release, songs, addresses, timing). "
                 "Use record_audio after loading to capture playback.",
                 schema);
     }
@@ -4096,147 +4097,25 @@ Json handleToolsCall(const Json& params) {
         }
 
     } else if (name == "load_sid") {
-        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(args["machine_id"].sVal);
         std::string filePath = args["file"].sVal;
-        MachineState* ms = getMachine(mid);
+        std::ifstream sidFile(filePath, std::ios::binary);
         if (!ms) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
+        } else if (!sidFile) {
+            textItem.oVal["text"] = Json("Error: Cannot open file: " + filePath);
+            textItem.oVal["isError"] = Json(true);
         } else {
-            // Read the SID file
-            std::ifstream sidFile(filePath, std::ios::binary);
-            if (!sidFile) {
-                textItem.oVal["text"] = Json("Error: Cannot open file: " + filePath);
+            std::vector<uint8_t> raw((std::istreambuf_iterator<char>(sidFile)), std::istreambuf_iterator<char>());
+            int subtune = args.contains("subtune") ? (int)args["subtune"].nVal : 0;
+            psid::Info info;
+            std::string err;
+            if (!psid::load(raw, subtune, ms->bus, ms->cpu, info, err)) {
+                textItem.oVal["text"] = Json("Error: " + err);
                 textItem.oVal["isError"] = Json(true);
             } else {
-                sidFile.seekg(0, std::ios::end);
-                size_t fileSize = sidFile.tellg();
-                sidFile.seekg(0, std::ios::beg);
-
-                if (fileSize < 0x7C) {
-                    textItem.oVal["text"] = Json("Error: File too small for PSID header");
-                    textItem.oVal["isError"] = Json(true);
-                } else {
-                    std::vector<uint8_t> raw(fileSize);
-                    sidFile.read(reinterpret_cast<char*>(raw.data()), fileSize);
-
-                    // Parse PSID/RSID header (big-endian)
-                    auto rd16be = [&](size_t off) -> uint16_t {
-                        return (raw[off] << 8) | raw[off + 1];
-                    };
-
-                    std::string magic(reinterpret_cast<char*>(raw.data()), 4);
-                    if (magic != "PSID" && magic != "RSID") {
-                        textItem.oVal["text"] = Json("Error: Not a PSID/RSID file (magic: " + magic + ")");
-                        textItem.oVal["isError"] = Json(true);
-                    } else {
-                        uint16_t version    = rd16be(0x04);
-                        uint16_t dataOffset = rd16be(0x06);
-                        uint16_t loadAddr   = rd16be(0x08);
-                        uint16_t initAddr   = rd16be(0x0A);
-                        uint16_t playAddr   = rd16be(0x0C);
-                        uint16_t songs      = rd16be(0x0E);
-                        uint16_t startSong  = rd16be(0x10);
-
-                        // Extract strings (null-terminated within 32 bytes)
-                        auto extractStr = [&](size_t off) -> std::string {
-                            char buf[33];
-                            std::memcpy(buf, &raw[off], 32);
-                            buf[32] = '\0';
-                            return std::string(buf);
-                        };
-                        std::string title    = extractStr(0x16);
-                        std::string author   = extractStr(0x36);
-                        std::string released = extractStr(0x56);
-
-                        // If loadAddress is 0, first 2 bytes of data are the load address (LE)
-                        const uint8_t* data = raw.data() + dataOffset;
-                        size_t dataLen = fileSize - dataOffset;
-
-                        if (loadAddr == 0 && dataLen >= 2) {
-                            loadAddr = data[0] | (data[1] << 8);
-                            data += 2;
-                            dataLen -= 2;
-                        }
-
-                        // If initAddress is 0, use loadAddress
-                        if (initAddr == 0) initAddr = loadAddr;
-
-                        // Select subtune
-                        int subtune = args.contains("subtune") ? (int)args["subtune"].nVal : startSong;
-                        if (subtune < 1) subtune = 1;
-                        if (subtune > songs) subtune = songs;
-
-                        // Load data into machine memory
-                        for (size_t i = 0; i < dataLen; ++i) {
-                            ms->bus->write8(loadAddr + i, data[i]);
-                        }
-
-                        // Set up CPU to call init routine:
-                        // A = subtune - 1 (0-based), then JSR initAddr
-                        // Write a small trampoline at $0002:
-                        //   $0002: LDA #subtune   (A9 xx)
-                        //   $0004: JSR initAddr   (20 lo hi)
-                        //   $0007: BRK            (00)
-                        uint8_t saved[6];
-                        for (int i = 0; i < 6; ++i)
-                            saved[i] = ms->bus->peek8(0x0002 + i);
-
-                        ms->bus->write8(0x0002, 0xA9);
-                        ms->bus->write8(0x0003, (uint8_t)(subtune - 1));
-                        ms->bus->write8(0x0004, 0x20);
-                        ms->bus->write8(0x0005, initAddr & 0xFF);
-                        ms->bus->write8(0x0006, (initAddr >> 8) & 0xFF);
-                        ms->bus->write8(0x0007, 0x00); // BRK
-
-                        // Run the init routine
-                        ms->cpu->setPc(0x0002);
-                        int steps = 0;
-                        while (steps < 1000000) {
-                            if (ms->cpu->pc() == 0x0007) break; // Hit BRK after init
-                            if (ms->bus->peek8(ms->cpu->pc()) == 0x00 && ms->cpu->pc() != 0x0002) break;
-                            ms->cpu->step();
-                            ++steps;
-                        }
-
-                        // Restore trampoline bytes
-                        for (int i = 0; i < 6; ++i)
-                            ms->bus->write8(0x0002 + i, saved[i]);
-
-                        // If play address is non-zero, set up for playback:
-                        // Install a simple play loop at $0002:
-                        //   $0002: JSR playAddr  (20 lo hi)
-                        //   $0005: JMP $0002     (4C 02 00)
-                        if (playAddr != 0) {
-                            ms->bus->write8(0x0002, 0x20);
-                            ms->bus->write8(0x0003, playAddr & 0xFF);
-                            ms->bus->write8(0x0004, (playAddr >> 8) & 0xFF);
-                            ms->bus->write8(0x0005, 0x4C);
-                            ms->bus->write8(0x0006, 0x02);
-                            ms->bus->write8(0x0007, 0x00);
-                            ms->cpu->setPc(0x0002);
-                        }
-
-                        std::stringstream ss;
-                        ss << "Loaded " << magic << " v" << version << ": " << title << "\n"
-                           << "Author: " << author << "\n"
-                           << "Released: " << released << "\n"
-                           << "Songs: " << songs << ", playing subtune " << subtune << "\n"
-                           << "Load: $" << toHex(loadAddr, 4)
-                           << ", Init: $" << toHex(initAddr, 4)
-                           << ", Play: $" << toHex(playAddr, 4) << "\n"
-                           << "Data: " << dataLen << " bytes loaded at $"
-                           << toHex(loadAddr, 4) << "-$"
-                           << toHex((uint16_t)(loadAddr + dataLen - 1), 4) << "\n";
-                        if (playAddr != 0) {
-                            ss << "Play loop installed at $0002. Use record_audio to capture.";
-                        } else {
-                            ss << "No play address (CIA timer-driven). "
-                               << "Use run_cpu + record_audio to capture.";
-                        }
-                        textItem.oVal["text"] = Json(ss.str());
-                    }
-                }
+                textItem.oVal["text"] = Json(psid::describe(info) + " Use record_audio to capture it.");
             }
         }
 
