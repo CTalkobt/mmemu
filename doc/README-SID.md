@@ -54,20 +54,22 @@ Not modelled: the 6581's saw combinations pulling the accumulator MSB low, the 8
 
 | Phase | Trigger | Behavior |
 |-------|---------|----------|
-| Attack | Gate 0→1 | Linear ramp from 0 to 255 |
-| Decay | After attack | Linear decay from 255 toward sustain level |
-| Sustain | During decay target | Hold at `SUSTAIN × 17` (0–240) |
-| Release | Gate 1→0 | Linear decay from current level to 0 |
+| Attack | Gate 0→1 | Linear ramp from the current level to 255 |
+| Decay | After attack | Exponential-like decay toward the sustain level |
+| Sustain | Level reaches `SUSTAIN × $11` | Hold |
+| Release | Gate 1→0 | Exponential-like decay to 0 |
 
-Attack/decay/release rates are set via nibbles in the AD and SR registers, spanning from ~2 ms to ~31 s.
+The envelope is clocked every cycle as in reSID (#123). A 15-bit rate counter counts up to the period for the A, D or R nibble (9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532 or 31251 cycles per step: 2 ms to 8 s for a full attack at 1 MHz). Decay and release are slowed further by an exponential counter, whose period changes to 1, 2, 4, 8, 16 and 30 as the level passes $FF, $5D, $36, $1A, $0E and $06. Reaching 0 freezes the counter until the next attack.
+
+The rate counter is never reset. If a new, shorter period is set while the counter is already past it, the counter runs on to its 15-bit wraparound first, a delay of up to ~33 ms (the "ADSR delay bug" that players work around).
 
 ### 2.2 Filter
 
-A Chamberlin state-variable filter processes voices routed to it via `$D417` bits 0–2:
+A state-variable filter, stepped every clock cycle as in reSID 0.16 (#120), processes voices routed to it via `$D417` bits 0–2:
 
 | Parameter | Register | Description |
 |-----------|----------|-------------|
-| Cutoff frequency | `$D415`/`$D416` | 11-bit value; range ~30 Hz – 12 kHz |
+| Cutoff frequency | `$D415`/`$D416` | 11-bit value; measured curve per chip (below) |
 | Resonance | `$D417` bits 7–4 | 4-bit, 0–15 |
 | LP enable | `$D418` bit 4 | Low-pass output mixed in |
 | BP enable | `$D418` bit 5 | Band-pass output mixed in |
@@ -76,9 +78,33 @@ A Chamberlin state-variable filter processes voices routed to it via `$D417` bit
 
 Voices not routed to the filter bypass it and are summed directly into the output.
 
+**Cutoff curve.** The cutoff frequency comes from points measured on real chips (reSID 0.16, Dag Lem), interpolated linearly:
+
+- **6581:** strongly nonlinear. About 220 Hz up to FC $100, rising steeply to 6 kHz at $3FF, then dropping to 4.6 kHz at $400 (the register's top bit switches part of the circuit) and rising to 18 kHz at $7FF.
+- **8580:** close to linear, 0 to 12.5 kHz.
+
+Above 16 kHz the filter is held at 16 kHz, as in reSID, for stability.
+
+**Resonance:** Q = 0.707 + res / 15.
+
+**Saturation (#121).** The filter's integrators can only swing as far as the chip's op-amps. reSID 1.0's op-amp transfer curves, measured on a 6581R4AR and an 8580R5, put that at about 3.73 V from the working point on the 6581, against about 1.5 V for one voice, and 3.51 V against 1.0 V on the 8580. The band-pass and low-pass states are limited softly (linear to 75 %, then bending towards the limit), so loud resonant sounds on the 6581, such as several voices through the band-pass at high resonance, compress and distort. The 8580 has more headroom and rarely clips.
+
 ### 2.3 Volume and Output
 
-Master volume (`$D418` bits 3–0, 0–15) scales the final mono float32 sample. Samples are pushed into an 8192-sample ring buffer at the configured sample rate.
+Each voice's output is (waveform − zero level) × envelope + DC. The mixer sums the unfiltered voices, the selected filter outputs and its own DC offset, and the master volume (`$D418` bits 3–0) multiplies the total.
+
+**DC offsets and volume-register samples (#122).** These are reSID's measured offsets:
+
+| | Waveform zero | Voice DC | Mixer DC |
+|---|---|---|---|
+| 6581 | $380 | $800 × $FF | −($FFF × $FF / 18) |
+| 8580 | $800 | 0 | 0 |
+
+Because the master volume multiplies the DC as well, writing `$D418` changes the output level even when every voice is silent. That is how many tunes play samples: drums, speech and 4-bit "digis". On the 6581 these play as on hardware. On the 8580 they are silent, as they are on a real 8580 without the usual hardware modification. Setting the volume also gives the familiar click.
+
+**External output stage:** as in reSID, the C64's RC filters follow the mixer: a ~16 kHz low-pass and a ~16 Hz high-pass that removes the DC.
+
+**Resampling:** the per-cycle output is averaged over each output sample period. Samples are pushed into an 8192-sample ring buffer at the configured sample rate. Full scale is two voices at full volume.
 
 ### 2.4 Read-Only Registers
 
@@ -86,7 +112,7 @@ Master volume (`$D418` bits 3–0, 0–15) scales the final mono float32 sample.
 |--------|----------|-------------|
 | $19 | POTX | Paddle X (returns $FF — A/D not implemented) |
 | $1A | POTY | Paddle Y (returns $FF) |
-| $1B | OSC3 | Voice 3 phase accumulator MSB |
+| $1B | OSC3 | Upper 8 bits of voice 3's waveform output |
 | $1C | ENV3 | Voice 3 envelope level |
 
 ### 2.5 Audio Output (IAudioOutput Pull Model)
@@ -230,3 +256,6 @@ Shared registers at base + $15:
 - **Clock Default**: 985 248 Hz (PAL); call `setClockHz(1022727)` for NTSC
 - **Sample Rate Default**: 44 100 Hz
 - **Ring Buffer**: 8192 float32 mono samples
+- **Timing (#123)**: oscillators, noise LFSR (shifted when accumulator bit 19 rises), hard sync, envelopes, filter and external filter are all clocked every cycle. The output therefore doesn't depend on how the host splits time into `tick()` calls. Register writes take effect at the cycle the CPU instruction completes. A C64 at max speed runs about 11 times real time with this.
+- **Chip model**: `setFilterVariant(0)` selects the 6581 (default), `1` the 8580. This affects combined waveforms, the cutoff curve, filter headroom and the DC offsets.
+- **Not modelled**: reSID 1.0 / reSIDfp's transistor-level 6581 filter (its exact cutoff-dependent distortion and resonance shape), the 8580's half-cycle OSC3 delay, waveform DAC nonlinearity, and floating-waveform fade-out.
