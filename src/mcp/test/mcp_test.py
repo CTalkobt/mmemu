@@ -637,7 +637,7 @@ def run_tests():
     assert "MCP Test" in text, f"Missing title: {text[:200]}"
     assert "Tester" in text, f"Missing author: {text[:200]}"
     assert "Songs: 2" in text, f"Missing song count: {text[:200]}"
-    assert "Play loop installed" in text, f"Missing play loop: {text[:200]}"
+    assert "Play driver installed" in text, f"Missing play driver: {text[:200]}"
     print("  ✓ load_sid basic OK")
 
     # Load with subtune selection

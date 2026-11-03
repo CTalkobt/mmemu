@@ -311,8 +311,9 @@ void SID6581::synthesize(uint64_t cycles) {
 
     const float extLpK = EXT_W0_LP / (float)m_clockHz;
     const float extHpK = EXT_W0_HP / (float)m_clockHz;
-    // Full scale: two voices at full volume (reSID uses three)
-    const float outScale = 1.0f / (VOICE_RANGE * 2.0f * 15.0f);
+    // Full scale: three voices at full volume, as reSID. (Two clipped loud
+    // tunes such as Rob Hubbard's Commando.)
+    const float outScale = 1.0f / (VOICE_RANGE * 3.0f * 15.0f);
 
     for (uint64_t c = 0; c < cycles; ++c) {
         // 1. Envelopes and oscillators. Hard sync is applied after all three
