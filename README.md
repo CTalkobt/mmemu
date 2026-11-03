@@ -299,3 +299,12 @@ make test     # Build and run the test suite (161+ tests)
 ## 12. Development Standards
 - Adhere to [STYLEGUIDE.md](STYLEGUIDE.md).
 - Track updates in [CHANGELOG.md](CHANGELOG.md).
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
+
+---
+
+## 13. License
+
+mmemu is free software, licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later); see [LICENSE](LICENSE). If you distribute mmemu or a modified version, or run a modified version as a network service (such as the MCP server), you must make its source available under the same licence. Please offer your changes back to the project at https://github.com/CTalkobt/mmemu; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Third-party models and data used by the SID and GTIA emulation are credited in [NOTICE](NOTICE). The ROM images under `roms/` are not covered by this licence.
