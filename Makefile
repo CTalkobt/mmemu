@@ -146,7 +146,6 @@ PLUGIN_VIC4_SRCS = src/plugins/devices/vic4/main/vic4.cpp \
 
 PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
@@ -216,7 +215,6 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/sid_pair/main/sid_pair.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/45gs02/main/cpu45gs02.cpp \
 	src/plugins/45gs02/main/ca45_assembler.cpp \
 	src/plugins/devices/map_mmu/main/map_mmu.cpp \
@@ -352,6 +350,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid6581/test/test_combined_waveforms.cpp \
 	src/plugins/devices/sid6581/test/test_sid_filter.cpp \
 	src/plugins/devices/sid6581/test/test_sid_inspect.cpp \
+	src/plugins/devices/sid6581/test/test_sid_cycle.cpp \
 	src/plugins/devices/sid6581/test/test_soft_clip_distortion.cpp \
 	src/plugins/devices/sid6581/test/test_spectral_analyzer.cpp \
 	tests/src/test_sid_filter_integration.cpp \
@@ -414,7 +413,6 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
 	src/plugins/devices/sid6581/main/combined_waveforms.o \
-	src/plugins/devices/sid6581/main/filter_curve.o \
 	src/plugins/devices/sid6581/main/spectral_analyzer.o \
 	src/plugins/devices/sid6581/main/sid_validation_suite.o \
 	src/plugins/devices/sid_pair/main/sid_pair.o \

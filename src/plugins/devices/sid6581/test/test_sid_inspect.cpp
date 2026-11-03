@@ -123,7 +123,9 @@ TEST_CASE(sid_inspect_scope_voice3_off_and_wrap) {
     for (int i = 0; i < cap; ++i) peak = std::max(peak, std::fabs(all[i]));
     ASSERT(peak > 0.8f);              // the scope shows voice 3...
     ASSERT(insp->scopeSamples(0, 3, all.data(), cap) == cap);
-    for (int i = 0; i < cap; ++i) ASSERT(all[i] == 0.0f);   // ...but it is not heard
+    // ...but it is not heard. (The output is not exactly 0: setting the volume
+    // steps the 6581's DC level, which the output high-pass drains in ~10 ms.)
+    for (int i = 0; i < cap; ++i) ASSERT(std::fabs(all[i]) < 1e-3f);
 
     sid.reset();
     ASSERT(insp->scopeSamples(0, 2, all.data(), 10) == 0);
