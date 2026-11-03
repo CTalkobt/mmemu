@@ -131,6 +131,14 @@ struct MachineDescriptor {
     /** Run unpaced; used by machines without getWarp/setWarp. */
     bool                        maxSpeed = true;
 
+    /**
+     * Problems found while building the machine that the user should see
+     * (e.g. no MEGA65 SD card image), one sentence each (#172). They are
+     * also logged; the GUI shows them in a notice bar and MCP create_machine
+     * adds them to its reply.
+     */
+    std::vector<std::string>    warnings;
+
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine
     std::vector<std::string> symbolFiles;

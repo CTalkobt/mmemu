@@ -1228,6 +1228,15 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         if (!machine_speed::applyStartSpeed(*m_machine, g_startSpeed, speedErr))
             SetStatusText("--speed " + g_startSpeed + ": " + speedErr);
     }
+    {
+        // Setup problems the machine reported, e.g. no MEGA65 SD card image (#172)
+        wxString notice;
+        for (const auto& w : m_machine->warnings) {
+            if (!notice.empty()) notice += "\n";
+            notice += wxString::FromUTF8(w);
+        }
+        m_dock->showNotice(notice);
+    }
     m_cpu = m_machine->cpus[0].cpu;
     m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
     if (m_disasm) {

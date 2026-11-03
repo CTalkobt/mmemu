@@ -8,6 +8,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libcore/main/core_registry.h"
 #include "cpu45gs02.h"
+#include "plugins/devices/sdcard/main/sdcard.h"
 #include "plugins/devices/f018b_dma/main/f018b_dma.h"
 #include "plugins/devices/map_mmu/main/c64_bank_controller.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
@@ -806,5 +807,24 @@ TEST_CASE(mega65_device_cycles_follow_phi_clock) {
     auto fast = runCycles(7000);                       // 3.5 CPU cycles per phi cycle
     ASSERT(fast.second * 35 >= fast.first * 10 - 35);
     ASSERT(fast.second * 35 <= fast.first * 10 + 35);
+    delete desc;
+}
+
+// #172: the missing SD card warning is recorded on the machine (for the GUI
+// notice bar and MCP), exactly when no image was mounted.
+TEST_CASE(mega65_sd_card_warning_recorded) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    SdCardDevice* sd = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (IOHandler* h : handlers)
+        if ((sd = dynamic_cast<SdCardDevice*>(h))) break;
+    ASSERT(sd != nullptr);
+    bool warned = false;
+    for (const auto& w : desc->warnings)
+        if (w.find("No SD card image found") != std::string::npos) warned = true;
+    ASSERT_EQ(warned, !sd->isMounted());
     delete desc;
 }

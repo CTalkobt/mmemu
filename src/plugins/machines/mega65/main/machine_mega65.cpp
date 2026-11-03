@@ -759,7 +759,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
             }
         }
         if (!hyperLoaded) {
-            m65Log()->warn("HYPPO (HICKUP.M65) not found, falling back to the ROM reset vector; run 'importmega65' to install it");
+            const char* msg = "HYPPO (HICKUP.M65) not found, falling back to the ROM reset vector; "
+                              "run 'importmega65' to install it.";
+            m65Log()->warn("{}", msg);
+            desc->warnings.push_back(msg);
         }
 
         if (hyperLoaded) {
@@ -833,9 +836,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
             m65Log()->debug("Mounted SD card image: {}", sdPath);
         } else {
-            m65Log()->warn("No SD card image found (searched sdcard.paths in machines/mega65.json, e.g. "
-                           "~/.local/share/xemu-lgb/mega65/mega65.img). HYPPO loads MEGA65.ROM from the SD card, so "
-                           "the boot will stop at HYPPO's ROM selection menu instead of reaching BASIC 65.");
+            const char* msg = "No SD card image found (searched sdcard.paths in machines/mega65.json, e.g. "
+                              "~/.local/share/xemu-lgb/mega65/mega65.img). HYPPO loads MEGA65.ROM from the SD card, so "
+                              "the boot will stop at HYPPO's ROM selection menu instead of reaching BASIC 65.";
+            m65Log()->warn("{}", msg);
+            desc->warnings.push_back(msg);
         }
     }
 
