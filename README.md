@@ -276,6 +276,7 @@ The **45GS02 test suite** uses **ca45**, a cross-assembler for the 45GS02 CPU:
 - **Project**: [github.com/CTalkobt/m65compiler](https://github.com/CTalkobt/m65compiler) (includes ca45 binary and source)
 - **Usage**: Test programs are written in `.s` format and assembled with `ca45 test.s -o test.prg`
 - **Test Validation**: The `tests/45gs02/validate.py` script assembles `.s` files and cross-validates output against both **mmsim** and **xmega65** emulators.
+- **Dot-assembly** (`.MAP`, `.LDA [$6C],Z` in the CLI, MCP's line assembly): the 45GS02 plugin assembles single lines in-process with **libca45**, ca45's assembler as a C++ library (m65compiler #117). The build uses it when it finds `include/ca45/ca45.hpp` and `libca45.a` under `CA45_DIR` — a built m65compiler checkout (`make libca45`, `lib45/libca45.a`) or an install prefix (`lib/libca45.a`); the default is `../m65compiler`, then `/usr/local`. Without it, dot-assembly falls back to the 6502 assembler (no 45GS02-only instructions).
 
 ---
 
