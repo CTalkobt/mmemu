@@ -270,6 +270,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // -----------------------------------------------------------------------
     uint8_t* romBuf = new uint8_t[128 * 1024];
     std::memset(romBuf, 0xFF, 128 * 1024);
+    bool romFileLoaded = false;
     {
         // Find mega65.rom from JSON config or fallback paths
         json romPaths = json::array({"roms/mega65/mega65.rom"});
@@ -279,9 +280,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
                     romPaths = r["paths"];
             }
         }
-        std::string romPath = findFile(romPaths, "roms/mega65/mega65.rom");
+        // Optional with HYPPO and an SD card: HYPPO loads MEGA65.ROM itself.
+        std::string romPath = findFile(romPaths);
         if (!romPath.empty())
-            romLoad(romPath.c_str(), romBuf, 128 * 1024);
+            romFileLoaded = romLoad(romPath.c_str(), romBuf, 128 * 1024);
     }
     for (uint32_t i = 0; i < 128 * 1024; i++)
         physBus->write8(0x020000 + i, romBuf[i]);
@@ -431,16 +433,17 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* bankCtrl = new C64BankController(physBus);
     bankCtrl->setMapMmu(mmu);
 
-    // MEGA65 ROM is a flat 128KB image mapped to physical $020000-$03FFFF.
-    // C64-compatible regions mirror the standard C64 memory map within it:
-    //   CPU $A000-$BFFF (BASIC)  = phys $02A000 = file offset $A000
-    //   CPU $D000-$DFFF (Char)   = phys $02D000 = file offset $D000
-    //   CPU $E000-$FFFF (KERNAL) = phys $02E000 = file offset $E000
-    bankCtrl->setFullRom(romBuf, 128 * 1024);
-    bankCtrl->setBasicRom (romBuf + 0xA000, 8192);
-    // KERNAL region $E000-$FFFF reads from fullRom; don't use separate kernalRom buffer
-    // (the full ROM contains all vectors including those at file offset 0x1FFFC-0x1FFFF)
-    bankCtrl->setCharRom  (romBuf + 0xD000, 4096);
+    // The ROM lives in RAM at physical $020000-$03FFFF, where HYPPO loads
+    // MEGA65.ROM from the SD card. ROM banking ($01, $D030) and the character
+    // set read that RAM, not the host's ROM file, so the machine runs the ROM
+    // HYPPO loaded:
+    //   CPU $A000-$BFFF (BASIC)  = phys $02A000
+    //   CPU $D000-$DFFF (Char)   = phys $02D000
+    //   CPU $E000-$FFFF (KERNAL) = phys $02E000
+    uint8_t* romRam = ram + 0x020000;
+    bankCtrl->setFullRom(romRam, 128 * 1024);
+    bankCtrl->setBasicRom (romRam + 0xA000, 8192);
+    bankCtrl->setCharRom  (romRam + 0xD000, 4096);
 
     // -----------------------------------------------------------------------
     // Create I/O Devices
@@ -495,7 +498,14 @@ MachineDescriptor* Mega65MachineFactory::create() {
     audio->setSampleRate(44100);        // Default 44.1 kHz
     audio->setClockHz(40000000);        // MEGA65 40 MHz clock
     vic4->setDmaBus(physBus);
-    vic4->setCharRom(romBuf + 0xD000, 4096);
+    // The VIC-IV draws characters from the character WOM at $FF7E000, which
+    // HYPPO fills (CHARROM.M65, then the ROM's $2D000). Seed it from the
+    // host ROM file for the no-HYPPO fallback.
+    uint8_t* charWom = new uint8_t[4096];
+    std::memcpy(charWom, romBuf + 0xD000, 4096);
+    physBus->addRegion(0x0FF7E000, 4096, charWom, true);
+    desc->deleters.push_back([charWom]() { delete[] charWom; });
+    vic4->setCharRom(charWom, 4096);
 
     // Share colour RAM between VIC4 and Mega65IoStub.
     // Colour RAM: 32KB buffer shared between IOStub ($D800 CPU access),
@@ -941,11 +951,13 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Reset callback: reset all I/O devices, then CPU.
     // Load reset vectors from ROM ($FFFA, $FFFC, $FFFE) per MEGA65 specification.
     // If HYPPO is loaded, it enters hypervisor mode; otherwise start at C65 KERNAL.
-    desc->onReset = [physBus, romBuf](MachineDescriptor& d) {
+    desc->onReset = [physBus, romBuf, romFileLoaded](MachineDescriptor& d) {
         // Hard reset: restore the ROM image at $20000-$3FFFF (the previous run
-        // may have changed it), as xemu does before re-entering HYPPO.
-        for (uint32_t i = 0; i < 128 * 1024; i++)
-            physBus->write8(0x020000 + i, romBuf[i]);
+        // may have changed it), as xemu does before re-entering HYPPO. Without
+        // a host ROM file, HYPPO reloads it from the SD card.
+        if (romFileLoaded)
+            for (uint32_t i = 0; i < 128 * 1024; i++)
+                physBus->write8(0x020000 + i, romBuf[i]);
         if (d.ioRegistry) d.ioRegistry->resetAll();
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();

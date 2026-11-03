@@ -13,6 +13,7 @@
 #include "plugins/devices/map_mmu/main/c64_bank_controller.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
 #include <cstring>
+#include <cstdio>
 #include <vector>
 
 static void ensureMega65Registered() {
@@ -826,5 +827,55 @@ TEST_CASE(mega65_sd_card_warning_recorded) {
     for (const auto& w : desc->warnings)
         if (w.find("No SD card image found") != std::string::npos) warned = true;
     ASSERT_EQ(warned, !sd->isMounted());
+    delete desc;
+}
+
+// ROM banking ($01 / $D030) and the CPU's view of $E000-$FFFF read the ROM
+// from RAM at physical $20000-$3FFFF, where HYPPO loads MEGA65.ROM, not from
+// the host's ROM file.
+TEST_CASE(mega65_rom_banking_reads_physical_rom_ram) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* phys = desc->buses[0].bus;
+    auto* mmu = dynamic_cast<MapMmu*>(desc->cpus[0].dataBus);
+    ASSERT(mmu != nullptr);
+    mmu->clearMapState();
+    phys->write8(0x2E010, 0xAB);          // KERNAL ($01 HIRAM: CPU $E010)
+    phys->write8(0x2A020, 0xCD);          // BASIC ($01 HIRAM+LORAM: CPU $A020)
+    ASSERT_EQ((int)desc->cpus[0].dataBus->peek8(0xE010), 0xAB);
+    ASSERT_EQ((int)desc->cpus[0].dataBus->peek8(0xA020), 0xCD);
+    delete desc;
+}
+
+// Full boot through HYPPO to BASIC 65's READY, with no host traps (KERNAL
+// HLE is not part of the test binary): HYPPO loads MEGA65.ROM from the SD
+// card and the ROM's autoboot finds no disk in the F011 drive. Needs
+// HICKUP.M65 and an SD card image (see machines/mega65.json); passes
+// trivially without them.
+TEST_CASE(mega65_hyppo_boot_to_ready) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    if (!desc->warnings.empty()) {
+        printf("  (skipped: %s)\n", desc->warnings[0].c_str());
+        delete desc;
+        return;
+    }
+    if (desc->onReset) desc->onReset(*desc);
+    auto* phys = desc->buses[0].bus;
+    const uint8_t ready[] = { 0x12, 0x05, 0x01, 0x04, 0x19, 0x2E };   // "READY." screen codes
+    bool found = false;
+    for (long s = 0; s < 10000000 && !found; s++) {
+        desc->schedulerStep(*desc);
+        if (s % 100000 == 0) {
+            for (uint32_t a = 0x0800; a < 0x1000 && !found; a++) {
+                bool m = true;
+                for (int k = 0; k < 6 && m; k++) m = phys->peek8(a + k) == ready[k];
+                found = m;
+            }
+        }
+    }
+    ASSERT(found);
     delete desc;
 }

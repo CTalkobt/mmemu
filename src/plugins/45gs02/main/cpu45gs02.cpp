@@ -489,10 +489,13 @@ int MOS45GS02::step() {
         uint16_t zpAddr = getZp();
         uint32_t ptr;
         if (is32BitInd) {
-            ptr = (uint32_t)read8_phys(translate(zpAddr)) |
-                  ((uint32_t)read8_phys(translate(zpAddr + 1)) << 8) |
-                  ((uint32_t)read8_phys(translate(zpAddr + 2)) << 16) |
-                  ((uint32_t)read8_phys(translate(zpAddr + 3)) << 24);
+            // The pointer is in the base page as the CPU sees it (MAP, and the
+            // hypervisor's base page $BF in hypervisor RAM); only the target
+            // address is a flat 28-bit one.
+            ptr = (uint32_t)read8(zpAddr) |
+                  ((uint32_t)read8(zpAddr + 1) << 8) |
+                  ((uint32_t)read8(zpAddr + 2) << 16) |
+                  ((uint32_t)read8(zpAddr + 3) << 24);
             ptr &= 0x0FFFFFFF; // 28-bit
             m_state.cycles += 4;
         } else {
