@@ -84,10 +84,13 @@ TEST_CASE(pokey_serial_output) {
     ASSERT(k.irq.m_level);                         // idle: "transmission done"
     k.w(POKEY::STIMER, 0);                         // sync the bit clock for the timing below
     k.w(POKEY::SEROUT, 0x31);
-    ASSERT_EQ((int)(k.r(POKEY::IRQST) & POKEY::IRQ_SEROUT), 0);   // buffer free at once
+    const int bit = 2 * (0x28 + 7);                // two channel 4 underflows a bit
+    // The byte enters the shift register at the next bit, then the buffer is free
+    ASSERT_EQ((int)(k.r(POKEY::IRQST) & POKEY::IRQ_SEROUT), POKEY::IRQ_SEROUT);
+    k.p.tick(bit);
+    ASSERT_EQ((int)(k.r(POKEY::IRQST) & POKEY::IRQ_SEROUT), 0);
     k.w(POKEY::IRQEN, POKEY::IRQ_SERDONE);         // acknowledge
     k.w(POKEY::SEROUT, 0x52);                      // into the holding buffer
-    const int bit = 2 * (0x28 + 7);                // two channel 4 underflows a bit
     k.p.tick(10 * bit - 1);
     ASSERT(sent.empty());
     k.p.tick(2);

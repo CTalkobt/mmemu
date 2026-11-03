@@ -131,3 +131,40 @@ TEST_CASE(atari_keys_by_name) {
     ASSERT_EQ((int)(consol & GTIA::CONSOL_START), 0);
     m->onKey("f4", false);
 }
+
+// SIO and .xex loading: the generated boot disk is read over the serial bus
+// by the OS (its own disk boot) and the 6502 loader on it; INITAD and RUNAD.
+TEST_CASE(atari_boots_xex_over_sio) {
+    std::vector<uint8_t> xex = {
+        0xFF, 0xFF,
+        0x00, 0x20, 0x0A, 0x20,                           // $2000-$200A: main
+        0xA9, 0x34, 0x8D, 0xC6, 0x02,                     //   LDA #$34  STA COLOR2 ($2C6)
+        0xEE, 0x81, 0x06,                                 //   INC $0681
+        0x4C, 0x08, 0x20,                                 //   JMP *
+        0x00, 0x21, 0x05, 0x21,                           // $2100-$2105: init
+        0xA9, 0x55, 0x8D, 0x80, 0x06, 0x60,               //   LDA #$55  STA $0680  RTS
+        0xE2, 0x02, 0xE3, 0x02, 0x00, 0x21,               // INITAD = $2100
+        0xFF, 0xFF,                                       // (a repeated header is allowed)
+        0xE0, 0x02, 0xE1, 0x02, 0x00, 0x20,               // RUNAD = $2000
+    };
+    for (auto model : {atari::Model::Atari800XL, atari::Model::Atari800}) {
+        Machine m(atari::create(model));
+        ASSERT(m != nullptr);
+        std::string err;
+        ASSERT(atari::bootExecutable(m.get(), xex, "test.xex", err));
+        IBus* b = bus(*m);
+        bool ran = false;
+        for (int i = 0; i < 100 && !ran; ++i) {           // up to 10 s
+            runCycles(*m, atari::CLOCK_HZ / 10);
+            ran = b->peek8(0x0681) == 1;
+        }
+        ASSERT(ran);
+        ASSERT_EQ((int)b->peek8(0x0680), 0x55);           // INIT ran first
+        ASSERT_EQ((int)b->peek8(0x02C6), 0x34);
+    }
+
+    std::vector<uint8_t> atr;
+    std::string err;
+    ASSERT(!atari::bootExecutable(nullptr, {0x12, 0x34, 0, 0, 0, 0}, "x", err));
+    ASSERT(err.find("Not an Atari executable") != std::string::npos);
+}

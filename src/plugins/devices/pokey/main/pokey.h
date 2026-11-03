@@ -139,6 +139,7 @@ private:
     bool     m_txBufFull = false;
     uint8_t  m_txBuf = 0;
     bool     m_txHalf = false;   // a bit is two channel 4 underflows
+    bool     m_txLoading = false; // a byte waits for the next bit to enter the shift register
     std::function<void(uint8_t)> m_serialOut;
 
     // Audio

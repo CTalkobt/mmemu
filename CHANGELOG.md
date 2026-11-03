@@ -60,6 +60,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
     - Timer IRQs, keyboard (KBCODE, SKSTAT, BREAK) and RANDOM.
     - A serial transmitter at channel 4's rate, so the OS's disk boot times out properly instead of being faked.
     - Both POKEY and ANTIC previously treated `tick()`'s cycle count as absolute.
+  - **Loading software:** `.atr` disk images and `.xex`/`.com` executables load through `load`, the GUI's Load Image and MCP, and boot with BASIC off:
+    - **SIO bus:** drives D1:-D4: answer the OS's command frames (read, write, status) through POKEY at 19,200 baud.
+    - **Executables:** an executable boots from a generated disk whose 6502 boot loader handles INITAD and RUNAD.
+    - **POKEY fix:** a SEROUT byte now enters the shift register at the next bit, not at once. Raising "output needed" immediately ran the OS's interrupt handler before its send routine stored the checksum, so every command frame had a wrong checksum.
   - **6502 decimal mode:** ADC and SBC ignored the D flag on every 6502 machine. They now follow NMOS decimal mode, per Bruce Clark's documentation. Atari BASIC, which does its arithmetic in BCD, printed `2+3*4` as `>`.
   - **Recordings:** `recordaudio` and MCP `record_audio` use the machine's clock (they assumed a PAL C64's).
   - **Removed:** the old Atari boot tests, which used a machine factory that didn't exist.

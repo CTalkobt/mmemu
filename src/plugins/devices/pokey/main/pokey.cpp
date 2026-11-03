@@ -46,11 +46,14 @@ bool POKEY::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             break;
         case SEROUT:
             if (!m_txBusy) {
+                // Idle: the byte moves into the shift register at the next bit
+                // boundary, and only then is "output needed" raised (the OS
+                // stores its checksum after this write, before that IRQ)
                 m_txBusy = true;
-                m_txShift = val;
-                m_txBits = 10;
+                m_txLoading = true;
+                m_txBuf = val;
+                m_txBufFull = true;
                 m_txHalf = false;
-                raiseIrq(IRQ_SEROUT);   // straight into the shift register: buffer empty again
             } else {
                 m_txBuf = val;
                 m_txBufFull = true;
@@ -84,7 +87,7 @@ void POKEY::reset() {
     m_kbcode = 0xFF;
     m_skstat = 0xFF;
     m_serin = 0xFF;
-    m_txBusy = m_txBufFull = m_txHalf = false;
+    m_txBusy = m_txBufFull = m_txHalf = m_txLoading = false;
     m_txBits = 0;
     m_sampleFrac = 0;
     m_sampleSum = 0.0;
@@ -144,6 +147,14 @@ void POKEY::serialBit() {
     if (!m_txBusy) return;
     m_txHalf = !m_txHalf;
     if (m_txHalf) return;                  // two channel 4 underflows a bit
+    if (m_txLoading) {                     // the first byte reaches the shift register
+        m_txLoading = false;
+        m_txShift = m_txBuf;
+        m_txBufFull = false;
+        m_txBits = 10;
+        raiseIrq(IRQ_SEROUT);
+        return;
+    }
     if (--m_txBits > 0) return;
     if (m_serialOut) m_serialOut(m_txShift);
     if (m_txBufFull) {

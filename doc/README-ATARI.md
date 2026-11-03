@@ -61,9 +61,37 @@ On reset, port B's lines float high, so the OS is on and BASIC off. The OS then 
   - Letters are typed as caps-lock capitals.
 - **Joysticks:** `onJoystick` maps them to PIA port A (sticks 0 and 1) and the GTIA triggers.
 
+## Loading software
+
+`load <file>` in the CLI, the GUI's Load Image, and MCP loads it into drive 1 and boots. The machine is reset with OPTION held for the first 3 seconds, so on the XL/XE BASIC is off, as most software expects.
+
+- **`.atr`:** a disk image with 128- or 256-byte sectors.
+- **`.xex` / `.com`:** an executable. It is put on a generated boot disk. A 187-byte 6502 loader in the disk's three boot sectors (at `$0700`) reads the file through the OS's `DSKINV`:
+  - It loads each segment, pointing INITAD (`$2E2`) at an RTS before each and calling it after.
+  - At the end it jumps to RUNAD (`$2E0`).
+  - Its variables are at `$087A-$087F` rather than in zero page, which INIT routines may use.
+  - It reads sectors through `$0600`.
+
+### The serial bus (SIO)
+
+Disk drives D1:-D4: (devices `$31-$34`) sit on POKEY's serial lines (`src/plugins/machines/atari/main/atari_sio.cpp`):
+
+- **Command frames:** the drive collects the bytes the computer sends while the PIA holds CB2 (the command line) low. It answers once the line goes high, if the checksum is right and the drive holds a disk.
+- **Responses:** ACK, COMPLETE and data come back through POKEY's serial input at 19,200 baud (940 cycles a byte).
+- **Commands:**
+
+  | Command | Response |
+  |---|---|
+  | `R` (read sector) | the sector's data |
+  | `S` (status) | density and FDC status |
+  | `W` / `P` (write) | written to the image in memory |
+  | others | `N` |
+
+With no disk in a drive, nothing answers, and the OS's boot attempt times out as on real hardware.
+
 ## Not yet supported
 
-- SIO devices: disk drives, `.atr` and `.xex` loading, and the cassette.
+- Saving written disks back to their files, the cassette, and other SIO devices (printer, R:).
 - Cartridges other than the 800's BASIC.
 - PAL machines.
 - The 400 and 1200XL.

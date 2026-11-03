@@ -1,4 +1,5 @@
 #include "machine_atari.h"
+#include "atari_sio.h"
 #include "libcore/main/machine_desc.h"
 #include "libmem/main/ibus.h"
 #include "libdebug/main/execution_observer.h"
@@ -331,6 +332,13 @@ public:
     }
     IPortDevice* getPort(int) override { return nullptr; }
 
+    /** Hold a console key for `cycles`, then release it (booting with OPTION). */
+    void holdConsoleKey(uint8_t bit, uint64_t cycles) {
+        m_gtia->setConsoleKey(bit, true);
+        m_holdBit = bit;
+        m_holdCycles = cycles;
+    }
+
     /**
      * Typing: each key held 2 frames, then 2 frames up (about 15 keys a
      * second). The OS ignores the same key code again until its debounce
@@ -339,6 +347,10 @@ public:
      * (BASIC tokenising a line is slower than typing).
      */
     void tick(uint64_t cycles) override {
+        if (m_holdCycles) {
+            if (m_holdCycles <= cycles) { m_gtia->setConsoleKey(m_holdBit, false); m_holdCycles = 0; }
+            else m_holdCycles -= cycles;
+        }
         if (m_queue.empty() && !m_typing) return;
         constexpr uint64_t FRAME = 114 * 262;
         m_typeCycles += cycles;
@@ -389,6 +401,8 @@ private:
     std::map<std::string, bool> m_held;
     bool m_shift = false, m_ctrl = false;
     std::deque<KeyDef> m_queue;
+    uint8_t m_holdBit = 0;
+    uint64_t m_holdCycles = 0;
     int m_typing = 0;            // 0 idle, 1 key down, 2 key up (gap), 3 longer gap
     uint8_t m_lastCode = 0xFF;
     bool m_typedShift = false;
@@ -453,6 +467,11 @@ MachineDescriptor* create(Model model, std::string* err) {
         pia->setPortBDevice(banking);
     }
 
+    // The serial bus: POKEY's serial lines, the PIA's CB2 as the command line
+    auto* sio = new AtariSio(pokey);
+    pokey->setSerialOut([sio](uint8_t b) { sio->serialOut(b); });
+    pia->setCB2Line(sio->commandLine());
+
     // Interrupts: POKEY and the PIA share IRQ; ANTIC drives NMI
     auto* irq = new SharedIrqManager(cpu);
     desc->deleters.push_back([irq]() { delete irq; });
@@ -474,6 +493,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     io->registerOwnedHandler(gtia);
     io->registerOwnedHandler(pia);
     io->registerOwnedHandler(keyboard);
+    io->registerOwnedHandler(sio);
 
     desc->onKey = [keyboard](const std::string& name, bool down) { return keyboard->key(name, down); };
     desc->onJoystick = [stick, gtia](int port, uint8_t bits) {
@@ -507,6 +527,33 @@ MachineDescriptor* create(Model model, std::string* err) {
 
     desc->onReset(*desc);
     return desc;
+}
+
+namespace {
+template <class T> T* findHandler(MachineDescriptor* m) {
+    if (!m || !m->ioRegistry) return nullptr;
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    for (auto* h : hs) if (auto* t = dynamic_cast<T*>(h)) return t;
+    return nullptr;
+}
+}  // namespace
+
+bool bootDisk(MachineDescriptor* m, std::vector<uint8_t> atr, const std::string& label, std::string& err) {
+    auto* sio = findHandler<AtariSio>(m);
+    auto* kbd = findHandler<AtariKeyboard>(m);
+    if (!sio || !kbd || !m->onReset) { err = "Not an Atari 8-bit machine."; return false; }
+    if (!sio->mount(0, std::move(atr), label, err)) return false;
+    m->onReset(*m);
+    kbd->holdConsoleKey(GTIA::CONSOL_OPTION, CLOCK_HZ * 3);   // the OS reads it early in the cold start
+    return true;
+}
+
+bool bootExecutable(MachineDescriptor* m, const std::vector<uint8_t>& xex,
+                    const std::string& label, std::string& err) {
+    std::vector<uint8_t> atr;
+    if (!xexToAtr(xex, atr, err)) return false;
+    return bootDisk(m, std::move(atr), label, err);
 }
 
 }  // namespace atari
