@@ -1,5 +1,6 @@
 #include "machine_atari.h"
 #include "atari_sio.h"
+#include "atari_cart.h"
 #include "libcore/main/machine_desc.h"
 #include "libmem/main/ibus.h"
 #include "libdebug/main/execution_observer.h"
@@ -18,6 +19,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 
@@ -47,7 +49,10 @@ private:
  * at $D800 (floating point) and $E000. XL/XE: 64 KB RAM under the OS
  * ($C000-$CFFF, $D800-$FFFF), BASIC ($A000) and the self-test ROM ($5000),
  * switched by PIA port B bits 0, 1 and 7. $D000-$D7FF: GTIA, POKEY, PIA and
- * ANTIC, each mirrored through its page.
+ * ANTIC, each mirrored through its page; $D500-$D5FF the cartridge's
+ * control lines. A cartridge in the slot covers $8000-$9FFF and
+ * $A000-$BFFF while it enables them (over BASIC: on the 800 it takes
+ * BASIC's place, on the XL/XE it overrides the built-in one).
  */
 class AtariBus : public IBus {
 public:
@@ -62,6 +67,11 @@ public:
         m_gtia = gtia; m_pokey = pokey; m_pia = pia; m_antic = antic;
     }
 
+    /** The cartridge (nullptr: the slot is empty); `onChange` after a bank switch. */
+    void setCartridge(Cartridge* cart) { m_cart = cart; resetBanking(); }
+    Cartridge* cartridge() const { return m_cart; }
+    void setCartChanged(std::function<void()> fn) { m_cartChanged = std::move(fn); }
+
     /** XL/XE banking from PIA port B's output. */
     void setPortB(uint8_t v) {
         if (!m_xl) return;
@@ -71,7 +81,7 @@ public:
     }
     void resetBanking() {
         if (m_xl) setPortB(0xFF);           // PIA reset: inputs, pulled high
-        else { m_osOn = true; m_basicOn = !m_basic.empty(); m_selfTestOn = false; }
+        else { m_osOn = true; m_basicOn = !m_basic.empty() && !m_cart; m_selfTestOn = false; }
     }
     bool basicOn() const { return m_basicOn; }
     bool osOn() const { return m_osOn; }
@@ -90,7 +100,9 @@ public:
     void write8(uint32_t addr, uint8_t val) override {
         addr &= 0xFFFF;
         uint8_t before = m_ram[addr];
-        if (addr >= 0xD000 && addr < 0xD800) {
+        if (addr >= 0xD500 && addr < 0xD600) {
+            if (m_cart) { m_cart->writeCctl((uint16_t)addr, val); if (m_cartChanged) m_cartChanged(); }
+        } else if (addr >= 0xD000 && addr < 0xD800) {
             IOHandler* h = nullptr;
             uint32_t a = ioAddr(addr, h);
             if (h) h->ioWrite(this, a, val);
@@ -101,14 +113,22 @@ public:
     }
 
     // Snapshots: RAM and banking
-    size_t stateSize() const override { return sizeof(m_ram) + 3; }
+    // Snapshots: RAM, banking and the cartridge's bank
+    size_t stateSize() const override { return sizeof(m_ram) + 7; }
     void saveState(uint8_t* buf) const override {
         std::memcpy(buf, m_ram, sizeof(m_ram));
-        buf[sizeof(m_ram)] = m_osOn; buf[sizeof(m_ram) + 1] = m_basicOn; buf[sizeof(m_ram) + 2] = m_selfTestOn;
+        uint8_t* p = buf + sizeof(m_ram);
+        p[0] = m_osOn; p[1] = m_basicOn; p[2] = m_selfTestOn;
+        int32_t cs = m_cart ? m_cart->state() : 0;
+        std::memcpy(p + 3, &cs, 4);
     }
     void loadState(const uint8_t* buf) override {
         std::memcpy(m_ram, buf, sizeof(m_ram));
-        m_osOn = buf[sizeof(m_ram)]; m_basicOn = buf[sizeof(m_ram) + 1]; m_selfTestOn = buf[sizeof(m_ram) + 2];
+        const uint8_t* p = buf + sizeof(m_ram);
+        m_osOn = p[0]; m_basicOn = p[1]; m_selfTestOn = p[2];
+        int32_t cs;
+        std::memcpy(&cs, p + 3, 4);
+        if (m_cart) { m_cart->setState(cs); if (m_cartChanged) m_cartChanged(); }
     }
     int  writeCount() const override { return 0; }
     void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
@@ -132,6 +152,8 @@ private:
     }
 
     bool writable(uint32_t addr) const {
+        if (m_cart && addr >= 0x8000 && addr < 0xC000 &&
+            (addr < 0xA000 ? m_cart->rd4() : m_cart->rd5())) return false;
         if (m_xl) {
             if (m_osOn && ((addr >= 0xC000 && addr < 0xD000) || addr >= 0xD800)) return false;
             if (m_basicOn && addr >= 0xA000 && addr < 0xC000) return false;
@@ -144,6 +166,15 @@ private:
     }
 
     uint8_t read(uint32_t addr, bool peek) {
+        if (addr >= 0xD500 && addr < 0xD600) {
+            if (!m_cart || peek) return 0xFF;
+            uint8_t v = m_cart->readCctl((uint16_t)addr);
+            if (m_cartChanged) m_cartChanged();
+            return v;
+        }
+        if (m_cart && addr >= 0x8000 && addr < 0xC000 &&
+            (addr < 0xA000 ? m_cart->rd4() : m_cart->rd5()))
+            return m_cart->read((uint16_t)addr);
         if (addr >= 0xD000 && addr < 0xD800) {
             IOHandler* h = nullptr;
             uint32_t a = ioAddr(addr, h);
@@ -173,6 +204,8 @@ private:
     std::vector<uint8_t> m_os, m_basic;
     uint8_t m_ram[65536];
     bool m_osOn = true, m_basicOn = false, m_selfTestOn = false;
+    Cartridge* m_cart = nullptr;
+    std::function<void()> m_cartChanged;
     IOHandler *m_gtia = nullptr, *m_pokey = nullptr, *m_pia = nullptr, *m_antic = nullptr;
 };
 
@@ -282,8 +315,10 @@ bool charKey(char c, KeyDef& out) {
  */
 class AtariKeyboard : public IOHandler, public IKeyboardMatrix {
 public:
-    AtariKeyboard(POKEY* pokey, GTIA* gtia, Antic* antic, IBus* bus, bool xl, std::function<void()> resetFn)
-        : m_pokey(pokey), m_gtia(gtia), m_antic(antic), m_bus(bus), m_xl(xl), m_reset(std::move(resetFn)) {}
+    AtariKeyboard(POKEY* pokey, GTIA* gtia, Antic* antic, IBus* bus, bool xl, uint64_t frameCycles,
+                  std::function<void()> resetFn)
+        : m_pokey(pokey), m_gtia(gtia), m_antic(antic), m_bus(bus), m_xl(xl), m_frame(frameCycles),
+          m_reset(std::move(resetFn)) {}
 
     const char* name() const override { return "Keyboard"; }
     uint32_t baseAddr() const override { return 0; }
@@ -352,9 +387,8 @@ public:
             else m_holdCycles -= cycles;
         }
         if (m_queue.empty() && !m_typing) return;
-        constexpr uint64_t FRAME = 114 * 262;
         m_typeCycles += cycles;
-        if (m_typeCycles < 2 * FRAME) return;
+        if (m_typeCycles < 2 * m_frame) return;
         m_typeCycles = 0;
         if (m_typing == 1) {                   // release
             m_pokey->keyUp();
@@ -397,6 +431,7 @@ private:
     Antic* m_antic;
     IBus* m_bus;
     bool m_xl;
+    uint64_t m_frame;            // cycles a frame
     std::function<void()> m_reset;
     std::map<std::string, bool> m_held;
     bool m_shift = false, m_ctrl = false;
@@ -407,6 +442,28 @@ private:
     uint8_t m_lastCode = 0xFF;
     bool m_typedShift = false;
     uint64_t m_typeCycles = 0;
+};
+
+/**
+ * Owns the cartridge in the slot (an I/O handler so the machine finds and
+ * deletes it; it has no registers of its own: $D5xx goes through the bus).
+ */
+class CartridgeSlot : public IOHandler {
+public:
+    const char* name() const override { return "Cartridge"; }
+    uint32_t baseAddr() const override { return 0; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override {}
+    void tick(uint64_t) override {}
+
+    void insert(std::unique_ptr<Cartridge> c, const std::string& label) { m_cart = std::move(c); m_label = label; }
+    Cartridge* cartridge() const { return m_cart.get(); }
+    const std::string& label() const { return m_label; }
+private:
+    std::unique_ptr<Cartridge> m_cart;
+    std::string m_label;
 };
 
 bool loadRom(const std::string& rel, size_t size, std::vector<uint8_t>& out, std::string* err) {
@@ -423,7 +480,7 @@ bool loadRom(const std::string& rel, size_t size, std::vector<uint8_t>& out, std
 
 }  // namespace
 
-MachineDescriptor* create(Model model, std::string* err) {
+MachineDescriptor* create(Model model, std::string* err, bool pal) {
     const bool xl = model != Model::Atari800;
     std::vector<uint8_t> os, basic;
     if (!loadRom(xl ? "roms/atari/osxl.bin" : "roms/atari/osb.bin", xl ? 16384 : 10240, os, err)) return nullptr;
@@ -435,7 +492,10 @@ MachineDescriptor* create(Model model, std::string* err) {
         case Model::Atari800XL: desc->machineId = "atari800xl"; desc->displayName = "Atari 800XL"; break;
         case Model::Atari65XE:  desc->machineId = "atari65xe";  desc->displayName = "Atari 65XE"; break;
     }
+    if (pal) { desc->machineId += "-pal"; desc->displayName += " (PAL)"; }
     desc->licenseClass = "proprietary";
+    const uint32_t clockHz = pal ? CLOCK_HZ_PAL : CLOCK_HZ;
+    const uint64_t frameCycles = (uint64_t)Antic::CYCLES_PER_LINE * (pal ? Antic::LINES_PAL : Antic::LINES_NTSC);
 
     auto* bus = new AtariBus(xl, std::move(os), std::move(basic));
     desc->buses.push_back({"system", bus});   // the descriptor deletes its buses and CPUs
@@ -454,7 +514,9 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* pia   = new PIA6520("PIA", 0xD300);
     antic->setDmaBus(bus);
     antic->setGtia(gtia);
-    pokey->setClockHz(CLOCK_HZ);
+    antic->setPal(pal);
+    gtia->setPal(pal);
+    pokey->setClockHz(clockHz);
     bus->setDevices(gtia, pokey, pia, antic);
 
     auto* stick = new JoystickPort();
@@ -466,6 +528,15 @@ MachineDescriptor* create(Model model, std::string* err) {
         desc->deleters.push_back([banking]() { delete banking; });
         pia->setPortBDevice(banking);
     }
+
+    // The cartridge slot. On the XL/XE TRIG3 reads the cartridge's RD5
+    // line (the OS checks it every vertical blank and stops if it changes
+    // unexpectedly); on the 800 it is joystick 3's trigger.
+    auto* cart = new CartridgeSlot();   // registered below: the registry deletes it
+    auto cartChanged = [gtia, bus, xl]() {
+        if (xl) gtia->setTrigger(3, !(bus->cartridge() && bus->cartridge()->rd5()));
+    };
+    bus->setCartChanged(cartChanged);
 
     // The serial bus: POKEY's serial lines, the PIA's CB2 as the command line
     auto* sio = new AtariSio(pokey);
@@ -483,7 +554,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     antic->setNmiLine(nmi);
 
     MachineDescriptor* self = desc;
-    auto* keyboard = new AtariKeyboard(pokey, gtia, antic, bus, xl, [self]() {
+    auto* keyboard = new AtariKeyboard(pokey, gtia, antic, bus, xl, frameCycles, [self]() {
         if (self->onReset) self->onReset(*self);
     });
 
@@ -494,6 +565,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     io->registerOwnedHandler(pia);
     io->registerOwnedHandler(keyboard);
     io->registerOwnedHandler(sio);
+    io->registerOwnedHandler(cart);
 
     desc->onKey = [keyboard](const std::string& name, bool down) { return keyboard->key(name, down); };
     desc->onJoystick = [stick, gtia](int port, uint8_t bits) {
@@ -502,10 +574,12 @@ MachineDescriptor* create(Model model, std::string* err) {
         gtia->setTrigger(port, !(bits & 0x10));
     };
 
-    desc->onReset = [bus, banking, io, cpu](MachineDescriptor&) {
+    desc->onReset = [bus, banking, io, cpu, cart, cartChanged](MachineDescriptor&) {
         io->resetAll();
+        if (cart->cartridge()) cart->cartridge()->reset();
         if (banking) banking->reset();
         bus->resetBanking();
+        cartChanged();
         cpu->reset();
     };
 
@@ -522,7 +596,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     };
 
     // Real time (#169): pace ANTIC's cycle count, which includes the CPU's waits
-    desc->clockHz = CLOCK_HZ;
+    desc->clockHz = clockHz;
     desc->deviceCycles = [antic]() { return antic->totalCycles(); };
 
     desc->onReset(*desc);
@@ -537,15 +611,21 @@ template <class T> T* findHandler(MachineDescriptor* m) {
     for (auto* h : hs) if (auto* t = dynamic_cast<T*>(h)) return t;
     return nullptr;
 }
+
+AtariBus* atariBus(MachineDescriptor* m) {
+    return m && !m->buses.empty() ? dynamic_cast<AtariBus*>(m->buses[0].bus) : nullptr;
+}
 }  // namespace
 
-bool bootDisk(MachineDescriptor* m, std::vector<uint8_t> atr, const std::string& label, std::string& err) {
+bool bootDisk(MachineDescriptor* m, std::vector<uint8_t> atr, const std::string& label, std::string& err,
+              const std::string& path) {
     auto* sio = findHandler<AtariSio>(m);
     auto* kbd = findHandler<AtariKeyboard>(m);
     if (!sio || !kbd || !m->onReset) { err = "Not an Atari 8-bit machine."; return false; }
-    if (!sio->mount(0, std::move(atr), label, err)) return false;
+    if (!sio->mount(0, std::move(atr), label, err, path)) return false;
     m->onReset(*m);
-    kbd->holdConsoleKey(GTIA::CONSOL_OPTION, CLOCK_HZ * 3);   // the OS reads it early in the cold start
+    // The OS reads OPTION early in the cold start: held, the XL/XE boot with BASIC off
+    kbd->holdConsoleKey(GTIA::CONSOL_OPTION, (uint64_t)m->clockHz * 3);
     return true;
 }
 
@@ -554,6 +634,34 @@ bool bootExecutable(MachineDescriptor* m, const std::vector<uint8_t>& xex,
     std::vector<uint8_t> atr;
     if (!xexToAtr(xex, atr, err)) return false;
     return bootDisk(m, std::move(atr), label, err);
+}
+
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
+                     const std::string& label, std::string& err) {
+    auto* slot = findHandler<CartridgeSlot>(m);
+    auto* bus = atariBus(m);
+    if (!slot || !bus || !m->onReset) { err = "Not an Atari 8-bit machine."; return false; }
+    auto cart = std::make_unique<Cartridge>();
+    if (!cart->load(image, err)) return false;
+    slot->insert(std::move(cart), label);
+    bus->setCartridge(slot->cartridge());
+    m->onReset(*m);   // the OS finds cartridges at power-on
+    return true;
+}
+
+void removeCartridge(MachineDescriptor* m) {
+    auto* slot = findHandler<CartridgeSlot>(m);
+    auto* bus = atariBus(m);
+    if (!slot || !bus) return;
+    bus->setCartridge(nullptr);
+    slot->insert(nullptr, "");
+    if (m->onReset) m->onReset(*m);
+}
+
+std::string cartridgeInfo(MachineDescriptor* m) {
+    auto* slot = findHandler<CartridgeSlot>(m);
+    if (!slot || !slot->cartridge()) return "";
+    return slot->label() + " (" + slot->cartridge()->typeName() + ")";
 }
 
 }  // namespace atari

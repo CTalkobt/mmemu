@@ -40,6 +40,44 @@ const uint32_t GTIA::s_palette[256] = {
     0xFF76730B, 0xFF86821B, 0xFF97942D, 0xFFA8A53E, 0xFFB9B650, 0xFFCDC963, 0xFFE1DD78, 0xFFF8F48F
 };
 
+// PAL palette: atari800's PAL model (src/colours_pal.c: the PAL GTIA's
+// measured per-hue delays, even and odd lines averaged, GTIA delay 23.2
+// degrees), with the same standard preset and conversion as the NTSC table.
+const uint32_t GTIA::s_palettePal[256] = {
+    0xFF040404, 0xFF0F0F0F, 0xFF1B1B1B, 0xFF272727, 0xFF333333, 0xFF414141, 0xFF4F4F4F, 0xFF5E5E5E,
+    0xFF686868, 0xFF787878, 0xFF898989, 0xFF9A9A9A, 0xFFABABAB, 0xFFBFBFBF, 0xFFD3D3D3, 0xFFEAEAEA,
+    0xFF2C0100, 0xFF380800, 0xFF431300, 0xFF4F2000, 0xFF5B2C00, 0xFF693A01, 0xFF77480B, 0xFF855619,
+    0xFF906124, 0xFF9F7134, 0xFFB08246, 0xFFC29357, 0xFFD3A468, 0xFFE6B87C, 0xFFFACC90, 0xFFFFE3A7,
+    0xFF380000, 0xFF430100, 0xFF4F0700, 0xFF5B1305, 0xFF671F10, 0xFF742D1E, 0xFF833C2D, 0xFF914A3B,
+    0xFF9B5446, 0xFFAB6456, 0xFFBC7667, 0xFFCD8778, 0xFFDE988A, 0xFFF1AB9D, 0xFFFFC0B1, 0xFFFFD7C8,
+    0xFF390000, 0xFF450002, 0xFF50040A, 0xFF5C0F17, 0xFF681B23, 0xFF762931, 0xFF84373F, 0xFF92464E,
+    0xFF9D5058, 0xFFAC6068, 0xFFBD7179, 0xFFCE838A, 0xFFE0949C, 0xFFF3A7AF, 0xFFFFBBC3, 0xFFFFD2DA,
+    0xFF350024, 0xFF400030, 0xFF4C003B, 0xFF580747, 0xFF641353, 0xFF712161, 0xFF80306F, 0xFF8E3E7E,
+    0xFF984988, 0xFFA85998, 0xFFB96AA9, 0xFFCA7BBA, 0xFFDB8DCB, 0xFFEFA0DF, 0xFFFFB4F3, 0xFFFFCBFF,
+    0xFF2A0044, 0xFF350050, 0xFF41005B, 0xFF4D0767, 0xFF591373, 0xFF662181, 0xFF752F8F, 0xFF833E9D,
+    0xFF8D48A7, 0xFF9D58B7, 0xFFAE6AC8, 0xFFBF7BD9, 0xFFD08CEA, 0xFFE4A0FD, 0xFFF8B4FF, 0xFFFFCBFF,
+    0xFF18005A, 0xFF240065, 0xFF2F0270, 0xFF3C0B7C, 0xFF481888, 0xFF552696, 0xFF6434A4, 0xFF7243B2,
+    0xFF7C4DBC, 0xFF8C5DCC, 0xFF9D6EDD, 0xFFAE80EE, 0xFFC091FF, 0xFFD3A4FF, 0xFFE7B8FF, 0xFFFECFFF,
+    0xFF00015A, 0xFF000965, 0xFF061470, 0xFF12217C, 0xFF1E2D88, 0xFF2C3B96, 0xFF3B49A4, 0xFF4957B2,
+    0xFF5462BC, 0xFF6372CC, 0xFF7583DD, 0xFF8694EE, 0xFF97A5FF, 0xFFABB9FF, 0xFFBFCDFF, 0xFFD6E4FF,
+    0xFF000A44, 0xFF001650, 0xFF00225B, 0xFF032E67, 0xFF0D3A73, 0xFF1B4881, 0xFF29568F, 0xFF38649D,
+    0xFF426FA7, 0xFF527FB7, 0xFF6490C8, 0xFF75A1D9, 0xFF86B2EA, 0xFF9AC5FD, 0xFFAED9FF, 0xFFC5F0FF,
+    0xFF001624, 0xFF002230, 0xFF002D3B, 0xFF003A47, 0xFF034653, 0xFF0F5361, 0xFF1E626F, 0xFF2D707E,
+    0xFF377A88, 0xFF478A98, 0xFF599BA9, 0xFF6AADBA, 0xFF7BBECB, 0xFF8FD1DF, 0xFFA3E5F3, 0xFFBAFCFF,
+    0xFF002200, 0xFF002E02, 0xFF00390A, 0xFF004517, 0xFF015123, 0xFF0B5F31, 0xFF1A6D3F, 0xFF287C4E,
+    0xFF338658, 0xFF439668, 0xFF54A779, 0xFF66B88A, 0xFF77C99C, 0xFF8ADCAF, 0xFF9FF0C3, 0xFFB6FFDA,
+    0xFF002600, 0xFF003100, 0xFF003C00, 0xFF024900, 0xFF0A5500, 0xFF196201, 0xFF27710B, 0xFF367F19,
+    0xFF408924, 0xFF509934, 0xFF61AA46, 0xFF73BB57, 0xFF84CC68, 0xFF97E07C, 0xFFACF490, 0xFFC3FFA7,
+    0xFF002100, 0xFF002C00, 0xFF053800, 0xFF114400, 0xFF1D5000, 0xFF2B5D00, 0xFF396C00, 0xFF487A04,
+    0xFF52840D, 0xFF62941D, 0xFF74A52F, 0xFF85B640, 0xFF96C852, 0xFFA9DB65, 0xFFBEEF7A, 0xFFD5FF91,
+    0xFF041700, 0xFF0F2200, 0xFF1B2E00, 0xFF273A00, 0xFF334600, 0xFF415400, 0xFF4F6200, 0xFF5E7100,
+    0xFF687B06, 0xFF788B15, 0xFF899C27, 0xFF9AAD38, 0xFFABBE4A, 0xFFBFD25E, 0xFFD3E672, 0xFFEAFC89,
+    0xFF1A0A00, 0xFF251600, 0xFF312100, 0xFF3D2D00, 0xFF493A00, 0xFF574700, 0xFF655600, 0xFF736404,
+    0xFF7E6E0D, 0xFF8D7E1D, 0xFF9F8F2F, 0xFFB0A140, 0xFFC1B252, 0xFFD4C565, 0xFFE8D97A, 0xFFFFF091,
+    0xFF2C0100, 0xFF380800, 0xFF431300, 0xFF4F2000, 0xFF5B2C00, 0xFF693A01, 0xFF77480B, 0xFF855619,
+    0xFF906124, 0xFF9F7134, 0xFFB08246, 0xFFC29357, 0xFFD3A468, 0xFFE6B87C, 0xFFFACC90, 0xFFFFE3A7
+};
+
 bool GTIA::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
     (void)bus;
     uint32_t offset = addr & 0x001F;
@@ -99,13 +137,17 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
     if (m_regs[GRACTL] & 0x04)
         for (int i = 0; i < 4; ++i) if (m_trig[i]) m_trigLatched[i] = true;
 
+    const uint32_t* palette = m_isPal ? s_palettePal : s_palette;
     const uint8_t prior = m_regs[PRIOR];
     const bool fifthPlayer = prior & 0x10;       // missiles take PF3's colour
+    const bool multicolour = prior & 0x20;       // overlapping P0+P1, P2+P3 OR their colours
+    const int gtiaMode = prior >> 6;             // 1: GRAPHICS 9, 2: 10, 3: 11
     // Priority: the lowest set bit of PRIOR 0-3 (0 behaves as 1)
     int pmode = (prior & 1) ? 1 : (prior & 2) ? 2 : (prior & 4) ? 4 : (prior & 8) ? 8 : 1;
 
     // Players' and missiles' coverage per colour clock
-    uint8_t pl[LINE_PIXELS / 2] = {}, ms[LINE_PIXELS / 2] = {};
+    constexpr int CLOCKS = LINE_PIXELS / 2;
+    uint8_t pl[CLOCKS] = {}, ms[CLOCKS] = {};
     for (int p = 0; p < 4; ++p) {
         uint8_t data = m_regs[GRAFP0 + p];
         if (!data) continue;
@@ -115,7 +157,7 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
             if (!(data & (0x80 >> b))) continue;
             for (int k = 0; k < w; ++k) {
                 int x = x0 + b * w + k;
-                if (x >= 0 && x < LINE_PIXELS / 2) pl[x] |= (uint8_t)(1 << p);
+                if (x >= 0 && x < CLOCKS) pl[x] |= (uint8_t)(1 << p);
             }
         }
     }
@@ -128,13 +170,39 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
             if (!(bits & (2 >> b))) continue;
             for (int k = 0; k < w; ++k) {
                 int x = x0 + b * w + k;
-                if (x >= 0 && x < LINE_PIXELS / 2) ms[x] |= (uint8_t)(1 << m);
+                if (x >= 0 && x < CLOCKS) ms[x] |= (uint8_t)(1 << m);
             }
         }
     }
 
-    auto colour = [&](uint8_t reg) { return s_palette[reg & 0xFE]; };
+    // GTIA modes: ANTIC's two bits a colour clock, paired into a 4-bit pixel
+    // two colour clocks wide; mode 10's pairs start a colour clock later
+    // (after atari800's draw_an_gtia9/10/11)
+    uint8_t nibble[CLOCKS] = {};
+    if (gtiaMode) {
+        uint8_t bits[CLOCKS];
+        for (int cc = 0; cc < CLOCKS; ++cc) {
+            uint8_t a = pf[cc * 2], b = pf[cc * 2 + 1];
+            if (a & PF_HIRES_MODE) {
+                bits[cc] = (uint8_t)(((a & PF_HIRES) ? 2 : 0) | ((b & PF_HIRES) ? 1 : 0));
+            } else {
+                uint8_t c = a & 0x0F;
+                bits[cc] = c == PF_BK ? 0 : c == PF_0 ? 1 : c == PF_1 ? 2 : 3;
+            }
+        }
+        for (int cc = 0; cc < CLOCKS; ++cc) {
+            int first = gtiaMode == 2 ? ((cc & 1) ? cc - 1 : cc - 2) : (cc & ~1);
+            nibble[cc] = (first >= 0 && first + 1 < CLOCKS)
+                       ? (uint8_t)((bits[first] << 2) | bits[first + 1]) : 0;
+        }
+    }
+
+    auto colour = [&](uint8_t reg) { return palette[reg & 0xFE]; };
     const uint8_t pf1Lum = m_regs[COLPF1] & 0x0E;
+    const uint8_t colbk = m_regs[COLBK] & 0xFE;
+    static const uint8_t GTIA10_CLASS[16] = {
+        PF_BK, PF_BK, PF_BK, PF_BK, PF_0, PF_1, PF_2, PF_3,
+        PF_BK, PF_BK, PF_BK, PF_BK, PF_0, PF_1, PF_2, PF_3 };
 
     for (int px = 0; px < LINE_PIXELS; ++px) {
         int cc = px >> 1;
@@ -142,14 +210,30 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
         uint8_t cls = raw & 0x0F;
         bool hiresLit = raw & PF_HIRES;
         uint8_t players = pl[cc], missiles = ms[cc];
+        uint8_t pseudo = 0;   // GTIA 10: pixel values 0-3 are drawn as players 0-3
+        const bool inWindow = raw & PF_WINDOW;
+        const uint8_t nib = nibble[cc];
+
+        if (gtiaMode == 2) {
+            cls = inWindow ? GTIA10_CLASS[nib] : (uint8_t)PF_BK;
+            if (inWindow && nib < 4) pseudo = (uint8_t)(1 << nib);
+            hiresLit = false;
+        } else if (gtiaMode) {
+            cls = PF_BK;      // modes 9 and 11 have no playfield colours (or collisions)
+            hiresLit = false;
+        }
 
         // Collisions, once per colour clock (hires lines: lit pixels count as PF2)
         if (!(px & 1) && (players | missiles)) {
             uint8_t pfBit = 0;
-            for (int h = 0; h < 2; ++h) {
-                uint8_t r = pf[px + h], c = r & 0x0F;
-                if (r & PF_HIRES_MODE) { if (r & PF_HIRES) pfBit |= 4; }
-                else if (c >= PF_0 && c <= PF_3) pfBit |= (uint8_t)(1 << (c - 1));
+            if (gtiaMode == 2) {
+                if (cls >= PF_0 && cls <= PF_3) pfBit = (uint8_t)(1 << (cls - 1));
+            } else if (!gtiaMode) {
+                for (int h = 0; h < 2; ++h) {
+                    uint8_t r = pf[px + h], c = r & 0x0F;
+                    if (r & PF_HIRES_MODE) { if (r & PF_HIRES) pfBit |= 4; }
+                    else if (c >= PF_0 && c <= PF_3) pfBit |= (uint8_t)(1 << (c - 1));
+                }
             }
             for (int m = 0; m < 4; ++m) if (missiles & (1 << m)) {
                 m_collisions[M0PF + m] |= pfBit;
@@ -162,8 +246,9 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
         }
 
         // Missiles as a fifth player draw as PF3; otherwise in their player's colour
-        if (fifthPlayer && missiles) { cls = PF_3; hiresLit = false; missiles = 0; }
-        uint8_t objs = players | missiles;
+        bool fifth = fifthPlayer && missiles;
+        if (fifth) { cls = PF_3; hiresLit = false; missiles = 0; }
+        uint8_t objs = players | missiles | pseudo;
 
         // Resolve the topmost object
         uint32_t c;
@@ -178,8 +263,18 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
         }
         if (topPlayer >= 0 && !pfFront) {
             uint8_t col = m_regs[COLPM0 + topPlayer];
+            if (multicolour && (topPlayer == 0 || topPlayer == 2) && (objs & (2 << topPlayer)))
+                col |= m_regs[COLPM0 + topPlayer + 1];
             if (hiresLit) col = (uint8_t)((col & 0xF0) | pf1Lum);   // hires luminance shows through
             c = colour(col);
+        } else if (gtiaMode == 1 || gtiaMode == 3) {
+            // 9: 16 luminances of COLBK's hue; 11: 16 hues at COLBK's luminance
+            // (0 is COLBK's hue at luminance 0). The fifth player tints with PF3.
+            uint8_t base = fifth ? (uint8_t)(m_regs[COLPF3] & 0xFE) : colbk;
+            uint8_t n = inWindow ? nib : 0;
+            uint8_t idx = gtiaMode == 1 ? (uint8_t)(base | n)
+                                        : n ? (uint8_t)(base | (n << 4)) : (uint8_t)(base & 0xF0);
+            c = palette[idx];
         } else {
             switch (cls) {
                 case PF_0: c = colour(m_regs[COLPF0]); break;
@@ -194,6 +289,6 @@ void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
     }
 }
 
-uint32_t GTIA::getARGB(uint8_t index) {
-    return s_palette[index];
+uint32_t GTIA::getARGB(uint8_t index, bool pal) {
+    return pal ? s_palettePal[index] : s_palette[index];
 }

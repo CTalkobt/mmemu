@@ -1,10 +1,11 @@
 # Atari 8-bit computers (`atari800`, `atari800xl`, `atari65xe`)
 
-The Atari 800 and the 800XL/65XE (#10), with NTSC timing: a 1.79 MHz 6502, ANTIC, GTIA, POKEY and a 6520 PIA. The machine plugin is `src/plugins/machines/atari/` (`mmemu-plugin-atari.so`).
+The Atari 800 and the 800XL/65XE (#10), NTSC or PAL: a 6502 at 1.79 MHz (PAL 1.77 MHz), ANTIC, GTIA, POKEY and a 6520 PIA. The machine plugin is `src/plugins/machines/atari/` (`mmemu-plugin-atari.so`).
 
 ```
 mmemu-gui -m atari800xl        # boots to BASIC's READY in about 4 s (the disk boot times out)
 mmemu-cli -m atari800 --speed max
+mmemu-cli -m atari800xl-pal
 ```
 
 ## Models
@@ -15,17 +16,21 @@ mmemu-cli -m atari800 --speed max
 | `atari800xl` | 64 KB | XL OS (`roms/atari/osxl.bin`, 16 KB) | built in, banked by PIA port B |
 | `atari65xe` | 64 KB | XL OS | built in |
 
+Each has a PAL twin: `atari800-pal`, `atari800xl-pal`, `atari65xe-pal`. PAL runs 312 lines a frame (50 Hz) at 1,773,447 Hz, GTIA's PAL register reads PAL (the OS sets `PALNTS`, `$62`, to 1), and colours come from a PAL palette generated with atari800's PAL model (`src/colours_pal.c`).
+
 ## Memory map
 
 | Address | 800 | 800XL / 65XE |
 |---|---|---|
 | `$0000-$9FFF` | RAM | RAM (`$5000-$57FF`: the self-test ROM when port B bit 7 is 0) |
-| `$A000-$BFFF` | BASIC cartridge | BASIC when port B bit 1 is 0, else RAM |
+| `$8000-$9FFF` | RAM, or a cartridge's RD4 window | same |
+| `$A000-$BFFF` | BASIC, or the cartridge in the slot | a cartridge's RD5 window; else BASIC when port B bit 1 is 0, else RAM |
 | `$C000-$CFFF` | nothing (`$FF`) | OS ROM when port B bit 0 is 1, else RAM |
 | `$D000-$D0FF` | GTIA (mirrored every 32 bytes) | same |
 | `$D200-$D2FF` | POKEY (every 16) | same |
 | `$D300-$D3FF` | PIA: PORTA, PORTB, PACTL, PBCTL (every 4) | same |
 | `$D400-$D4FF` | ANTIC (every 16) | same |
+| `$D500-$D5FF` | cartridge control (bank switching) | same |
 | `$D800-$FFFF` | OS-B: floating point at `$D800`, OS at `$E000` | OS ROM when port B bit 0 is 1, else RAM |
 
 On reset, port B's lines float high, so the OS is on and BASIC off. The OS then turns BASIC on unless OPTION is held.
@@ -72,6 +77,15 @@ On reset, port B's lines float high, so the OS is on and BASIC off. The OS then 
   - Its variables are at `$087A-$087F` rather than in zero page, which INIT routines may use.
   - It reads sectors through `$0600`.
 
+### Cartridges
+
+`cart <file>` in the CLI, the GUI's Attach Cartridge and MCP `attach_cartridge` insert a cartridge and cold-start; `eject` takes it out (`src/plugins/machines/atari/main/atari_cart.cpp`).
+
+- **Files:** `.car` (a 16-byte `CART` header with the type number, as atari800 and Altirra write it) or a raw `.rom` of 8 KB (standard 8 KB) or 16 KB (standard 16 KB).
+- **Types:** standard 8 and 16 KB; OSS 034M, 043M, M091 and 8 KB; Williams 32/64 KB; Express, Diamond and SpartaDOS X 64 KB; SpartaDOS X 128 KB; DB 32 KB; XEGS and switchable XEGS 32 KB to 1 MB; MegaCart 16 KB to 2 MB; Atarimax 128 KB and 1 MB (old and new); Phoenix 8 KB and Blizzard 16 KB. Bank switching follows atari800's `cartridge.c`.
+- **Mapping:** a cartridge replaces the 800's BASIC and overrides the XL/XE's built-in BASIC while it drives RD5.
+- **TRIG3:** on the XL/XE it reads the cartridge's RD5 line (1 while a cartridge is mapped at `$A000`). The OS checks it every vertical blank.
+
 ### The serial bus (SIO)
 
 Disk drives D1:-D4: (devices `$31-$34`) sit on POKEY's serial lines (`src/plugins/machines/atari/main/atari_sio.cpp`):
@@ -84,16 +98,27 @@ Disk drives D1:-D4: (devices `$31-$34`) sit on POKEY's serial lines (`src/plugin
   |---|---|
   | `R` (read sector) | the sector's data |
   | `S` (status) | density and FDC status |
-  | `W` / `P` (write) | written to the image in memory |
+  | `W` / `P` (write) | written to the image, and to its file |
   | others | `N` |
 
 With no disk in a drive, nothing answers, and the OS's boot attempt times out as on real hardware.
 
+- **Mounting:** `load` puts a disk in D1: and boots it. CLI `disk mount <1-4> <file.atr>` (and `disk eject <n>`) changes disks without a reset; the GUI's Drive Status pane lists D1:-D4: with the last sector used.
+- **Saving:** a disk from a file is written through: each sector written goes into the `.atr` at once. If the file cannot be opened for writing, the drive is write-protected (status bit 3) and writes end in an error. The generated `.xex` boot disk has no file; its writes stay in memory.
+
+## Graphics
+
+- **GTIA modes** (PRIOR bits 6-7: BASIC's GRAPHICS 9, 10 and 11) work on any ANTIC mode: ANTIC's two bits a colour clock pair up into a 4-bit pixel two colour clocks wide.
+  - 9: 16 luminances of COLBK's hue.
+  - 10: nine colour registers (values 0-3 are COLPM0-3, 4-7 COLPF0-3, 8 COLBK). Its pixels start a colour clock later than 9 and 11, as on the chip.
+  - 11: 16 hues at COLBK's luminance (0 is black of that hue).
+- **VDELAY:** a player or missile whose bit is set ignores DMA on even scan lines.
+- **Multicolour players** (PRIOR bit 5): where players 0 and 1 (or 2 and 3) overlap, their colours are ORed.
+
 ## Not yet supported
 
-- Saving written disks back to their files, the cassette, and other SIO devices (printer, R:).
-- Cartridges other than the 800's BASIC.
-- PAL machines.
+- The cassette and other SIO devices (printer, R:); disk formatting.
+- Cartridge types not listed above, and the 800's right slot.
 - The 400 and 1200XL.
-- GTIA modes and VDELAY.
+- Mid-line register changes: each line is drawn at cycle 104 with the registers as they are then.
 - The console speaker (key click).
