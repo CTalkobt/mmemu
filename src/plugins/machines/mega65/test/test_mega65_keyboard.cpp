@@ -104,7 +104,7 @@ TEST_CASE(mega65_keyboard_type_text_uses_key_sink) {
 TEST_CASE(mega65_keyboard_matches_c64_matrix) {
     // C64 matrix: [port A line][port B bit]
     static const char* kMatrix[8][8] = {
-        {"DEL", "RETURN", "LEFT", "F7", "F1", "F3", "F5", "UP"},
+        {"DEL", "RETURN", "RIGHT", "F7", "F1", "F3", "F5", "DOWN"},
         {"3", "W", "A", "4", "Z", "S", "E", "LSHIFT"},
         {"5", "R", "D", "6", "C", "F", "T", "X"},
         {"7", "Y", "G", "8", "B", "H", "U", "V"},
@@ -127,4 +127,25 @@ TEST_CASE(mega65_keyboard_matches_c64_matrix) {
             kbd.pressKeyByName(kMatrix[line][bit], false);
         }
     }
+}
+
+// Cursor LEFT and UP are Shift + CRSR RIGHT / CRSR DOWN in the C64 matrix
+// (they moved right and down in GO64 mode before).
+TEST_CASE(mega65_keyboard_cursor_left_up_are_shifted) {
+    KbdMega65 kbd;
+    IPortDevice* colPort = kbd.getPort(0);
+    IPortDevice* rowPort = kbd.getPort(1);
+    auto read = [&](int line) { colPort->writePort((uint8_t)~(1 << line)); return (int)rowPort->readPort(); };
+    ASSERT(kbd.pressKeyByName("LEFT", true));
+    ASSERT_EQ(read(0), 0xFB);   // CRSR RIGHT (line 0, bit 2)
+    ASSERT_EQ(read(1), 0x7F);   // LSHIFT (line 1, bit 7)
+    kbd.pressKeyByName("LEFT", false);
+    ASSERT(kbd.pressKeyByName("UP", true));
+    ASSERT_EQ(read(0), 0x7F);   // CRSR DOWN (line 0, bit 7)
+    ASSERT_EQ(read(1), 0x7F);
+    kbd.pressKeyByName("UP", false);
+    ASSERT(kbd.pressKeyByName("RIGHT", true));
+    ASSERT_EQ(read(0), 0xFB);
+    ASSERT_EQ(read(1), 0xFF);   // no shift
+    kbd.pressKeyByName("RIGHT", false);
 }
