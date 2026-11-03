@@ -1,0 +1,49 @@
+mmemu - Multi-Machine Emulator
+https://github.com/CTalkobt/mmemu
+
+Copyright (C) the mmemu contributors.
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. See LICENSE.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License
+for more details.
+
+-------------------------------------------------------------------------------
+Third-party work used in mmemu
+-------------------------------------------------------------------------------
+
+SID emulation (src/plugins/devices/sid6581/) is based on models and measured
+data from these projects, licensed under the GNU General Public License,
+version 2 or later (compatible with AGPL-3.0-or-later):
+
+  reSID (Dag Lem)
+    https://github.com/libsidplayfp/resid
+    - per-cycle voice, envelope and filter structure (reSID 0.16)
+    - envelope rate and exponential counter tables
+    - measured 6581/8580 filter cutoff curves
+    - 6581 DC offsets and the C64 external output filter
+    - op-amp output ranges from the measured transfer curves (reSID 1.0)
+
+  reSIDfp / libsidplayfp (Antti Lankila, Leandro Nini)
+    https://github.com/libsidplayfp/libresidfp
+    https://github.com/libsidplayfp/combined-waveforms
+    - combined-waveform pulldown model and its fitted parameters
+    - real-chip OSC3 samplings (from Trurl, ltx128, reFX-Mike; sampling
+      program by Dag Lem), a small extract of which is used in a unit test
+
+The GTIA palette (src/plugins/devices/gtia/) is generated from the palette
+model of atari800 (https://atari800.github.io/), GPL-2.0-or-later.
+
+-------------------------------------------------------------------------------
+ROM images
+-------------------------------------------------------------------------------
+
+The ROM images under roms/ (*.bin: Commodore 64, VIC-20 and PET BASIC,
+KERNAL, editor and character ROMs; Atari 8-bit OS, BASIC and character ROMs)
+are NOT part of mmemu and are NOT licensed under the AGPL. They remain the
+property of their respective copyright holders.
