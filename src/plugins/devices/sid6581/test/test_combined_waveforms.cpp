@@ -1,106 +1,128 @@
 #include "../main/combined_waveforms.h"
 #include "test_harness.h"
 
+using Chip = CombinedWaveformTable::Chip;
+
+// ===========================================================================
+// Issue #119: combined waveforms (pulldown model fitted to real chips)
+// ===========================================================================
+
+/** One waveform: the plain waveform; none selected: 0. */
 TEST_CASE(combined_waveforms_single_waveform_returns_base) {
-    uint32_t phase = 0x800000;  // 50% through cycle
-    uint16_t pulseWidth = 0x800;  // 50% duty cycle
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t tri_only = CombinedWaveformTable::getCombinedOutput(phase, 0x10, pulseWidth, lfsr, ringMsb);
-    ASSERT(tri_only > 0);
-
-    uint16_t saw_only = CombinedWaveformTable::getCombinedOutput(phase, 0x20, pulseWidth, lfsr, ringMsb);
-    ASSERT(saw_only > 0);
-
-    // At phase 0x800000, phase >> 12 = 0x800 which equals pulseWidth, so pulse output is 0x0FFF
-    uint16_t pulse_only = CombinedWaveformTable::getCombinedOutput(phase, 0x40, pulseWidth, lfsr, ringMsb);
-    ASSERT(pulse_only == 0x0FFF);
-
-    uint16_t none = CombinedWaveformTable::getCombinedOutput(phase, 0x00, pulseWidth, lfsr, ringMsb);
-    ASSERT(none == 0);
+    for (uint32_t phase : {0x000000u, 0x345678u, 0x800000u, 0xABCDEFu}) {
+        uint16_t tri, saw, pls, nse;
+        CombinedWaveformTable::getWaveformComponents(phase, 0x800, 0x5A5A5A, false, tri, saw, pls, nse);
+        for (Chip chip : {Chip::MOS6581, Chip::MOS8580}) {
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(phase, 0x10, 0x800, 0x5A5A5A, false, chip), tri);
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(phase, 0x20, 0x800, 0x5A5A5A, false, chip), saw);
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(phase, 0x40, 0x800, 0x5A5A5A, false, chip), pls);
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(phase, 0x80, 0x800, 0x5A5A5A, false, chip), nse);
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(phase, 0x00, 0x800, 0x5A5A5A, false, chip), 0);
+        }
+    }
 }
 
-TEST_CASE(combined_waveforms_triangle_pulse) {
-    uint32_t phase = 0x400000;
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t combined = CombinedWaveformTable::getCombinedOutput(phase, 0x50, pulseWidth, lfsr, ringMsb);
-    ASSERT(combined > 0);
-    ASSERT(combined < 0x0FFF);
+/** Triangle: the folded ramp with the LSB grounded; noise: LFSR bits 20,18,14,11,9,5,2,0. */
+TEST_CASE(combined_waveforms_base_waveform_bits) {
+    ASSERT_EQ(CombinedWaveformTable::triangle(0x123000, false), 0x246);
+    ASSERT_EQ(CombinedWaveformTable::triangle(0xFED000, false), (0xFED ^ 0xFFF) << 1);
+    ASSERT_EQ(CombinedWaveformTable::triangle(0xFED000, false) & 1, 0);
+    ASSERT_EQ(CombinedWaveformTable::noise(1u << 2), 1 << 5);   // was read from bit 3
+    for (int b : {20, 18, 14, 11, 9, 5, 2, 0}) {
+        uint16_t out = CombinedWaveformTable::noise(1u << b);
+        ASSERT_EQ(CombinedWaveformTable::noiseWriteback(out), 1u << b);
+    }
 }
 
-TEST_CASE(combined_waveforms_sawtooth_pulse) {
-    uint32_t phase = 0x400000;
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t combined = CombinedWaveformTable::getCombinedOutput(phase, 0x60, pulseWidth, lfsr, ringMsb);
-    ASSERT(combined > 0);
-    ASSERT(combined < 0x0FFF);
+/** Combining only pulls bits down: every output is a subset of the plain AND. */
+TEST_CASE(combined_waveforms_subset_of_and) {
+    for (uint8_t sel : {0x30, 0x50, 0x60, 0x70, 0xC0, 0xD0}) {
+        for (Chip chip : {Chip::MOS6581, Chip::MOS8580}) {
+            for (uint32_t j = 0; j < 4096; j += 7) {
+                uint32_t phase = j << 12;
+                uint16_t tri, saw, pls, nse;
+                CombinedWaveformTable::getWaveformComponents(phase, 0x400, 0x7FFFFF, false, tri, saw, pls, nse);
+                uint16_t a = 0xFFF;
+                if ((sel & 0x30) == 0x30) a &= saw & (saw << 1);
+                else if (sel & 0x10) a &= tri;
+                else if (sel & 0x20) a &= saw;
+                if (sel & 0x40) a &= pls;
+                if (sel & 0x80) a &= nse;
+                uint16_t out = CombinedWaveformTable::getCombinedOutput(phase, sel, 0x400, 0x7FFFFF, false, chip);
+                ASSERT_EQ(out & ~a & 0xFFF, 0);
+            }
+        }
+    }
 }
 
-TEST_CASE(combined_waveforms_triangle_sawtooth) {
-    uint32_t phase = 0x400000;
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t combined = CombinedWaveformTable::getCombinedOutput(phase, 0x30, pulseWidth, lfsr, ringMsb);
-    ASSERT(combined > 0);
-    ASSERT(combined < 0x0FFF);
+/** Pulse acts as a gate: while it is low, pulse combinations output 0. */
+TEST_CASE(combined_waveforms_pulse_low_is_silent) {
+    for (uint8_t sel : {0x50, 0x60, 0x70})
+        for (uint32_t j = 0; j < 0x800; j += 13)    // below PW 0x800: pulse low
+            ASSERT_EQ(CombinedWaveformTable::getCombinedOutput(j << 12, sel, 0x800, 0, false), 0);
 }
 
-TEST_CASE(combined_waveforms_all_three) {
-    uint32_t phase = 0x400000;
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
+// OSC3 samplings of a real 6581 R3 0486S (Trurl, via
+// https://github.com/libsidplayfp/combined-waveforms), pulse high: the value at
+// oscillator step k * 64 + 32 for k = 0..63, for $30, $50, $60 and $70.
+static const uint8_t REAL_6581[4][64] = {
+    {   // $30
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xE0, 0xE0, 0xF8,
+    }, {   // $50
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0,
+    0xFB, 0xF2, 0xEA, 0xC0, 0xDA, 0x80, 0x80, 0x00, 0xBB, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x7B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    }, {   // $60
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x80,
+    0x00, 0x00, 0x00, 0x80, 0x00, 0x80, 0x80, 0x80, 0x00, 0x80, 0x80, 0xC0, 0x80, 0xC0, 0xC0, 0xF8,
+    }, {   // $70
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xC0,
+    },
+};
 
-    uint16_t combined = CombinedWaveformTable::getCombinedOutput(phase, 0x70, pulseWidth, lfsr, ringMsb);
-    ASSERT(combined > 0);
-    ASSERT(combined < 0x0FFF);
+/**
+ * The 6581 model matches real-chip samplings closely; the plain AND does not.
+ * (Over all 4096 steps the model mispredicts 124-1030 of 32768 bits per
+ * combination, as reSIDfp reports; the AND 8665-14650.)
+ */
+TEST_CASE(combined_waveforms_match_real_6581) {
+    const uint8_t sels[4] = {0x30, 0x50, 0x60, 0x70};
+    for (int w = 0; w < 4; ++w) {
+        int wrongModel = 0, wrongAnd = 0;
+        for (int k = 0; k < 64; ++k) {
+            uint32_t phase = (uint32_t)(k * 64 + 32) << 12;
+            int model = CombinedWaveformTable::getCombinedOutput(phase, sels[w], 0, 0, false) >> 4;
+            uint16_t tri, saw, pls, nse;
+            CombinedWaveformTable::getWaveformComponents(phase, 0, 0, false, tri, saw, pls, nse);
+            uint16_t a = (sels[w] & 0x10 ? tri : 0xFFF) & (sels[w] & 0x20 ? saw : 0xFFF);
+            for (int b = 0; b < 8; ++b) {
+                wrongModel += ((model ^ REAL_6581[w][k]) >> b) & 1;
+                wrongAnd   += (((a >> 4) ^ REAL_6581[w][k]) >> b) & 1;
+            }
+        }
+        // of 512 bits: model 2-17 (pulse+saw worst, as over the full sweep), AND 131-236
+        ASSERT(wrongModel <= 20);
+        ASSERT(wrongAnd >= 100);
+    }
 }
 
-TEST_CASE(combined_waveforms_phase_sweep) {
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t out1 = CombinedWaveformTable::getCombinedOutput(0x000000, 0x50, pulseWidth, lfsr, ringMsb);
-    uint16_t out2 = CombinedWaveformTable::getCombinedOutput(0x400000, 0x50, pulseWidth, lfsr, ringMsb);
-    uint16_t out3 = CombinedWaveformTable::getCombinedOutput(0x800000, 0x50, pulseWidth, lfsr, ringMsb);
-    uint16_t out4 = CombinedWaveformTable::getCombinedOutput(0xC00000, 0x50, pulseWidth, lfsr, ringMsb);
-
-    bool hasVariation = (out1 != out2) || (out2 != out3) || (out3 != out4);
-    ASSERT(hasVariation);
-}
-
-TEST_CASE(combined_waveforms_noise_approximation) {
-    uint32_t phase = 0x400000;
-    uint16_t pulseWidth = 0x800;
-    uint32_t lfsr = 0x7FFFFF;
-    bool ringMsb = false;
-
-    uint16_t noise_tri = CombinedWaveformTable::getCombinedOutput(phase, 0x90, pulseWidth, lfsr, ringMsb);
-    uint16_t noise_saw = CombinedWaveformTable::getCombinedOutput(phase, 0xA0, pulseWidth, lfsr, ringMsb);
-
-    ASSERT((noise_tri >= 0 && noise_saw >= 0));
-}
-
-TEST_CASE(combined_waveforms_consistent_output) {
-    uint32_t phase = 0x555555;
-    uint16_t pulseWidth = 0xAAA;
-    uint32_t lfsr = 0x12345;
-    bool ringMsb = true;
-
-    uint16_t out1 = CombinedWaveformTable::getCombinedOutput(phase, 0x50, pulseWidth, lfsr, ringMsb);
-    uint16_t out2 = CombinedWaveformTable::getCombinedOutput(phase, 0x50, pulseWidth, lfsr, ringMsb);
-
-    ASSERT(out1 == out2);
+/** The 6581 and 8580 differ, e.g. pulse+saw near the top of the ramp. */
+TEST_CASE(combined_waveforms_chip_models_differ) {
+    int differ = 0;
+    for (uint32_t j = 0xC00; j < 0x1000; ++j)
+        if (CombinedWaveformTable::getCombinedOutput(j << 12, 0x60, 0, 0, false, Chip::MOS6581) !=
+            CombinedWaveformTable::getCombinedOutput(j << 12, 0x60, 0, 0, false, Chip::MOS8580))
+            ++differ;
+    ASSERT(differ > 100);
 }
 
 // ===========================================================================
@@ -162,4 +184,29 @@ TEST_CASE(sid_osc3_reads_waveform_output) {
     uint32_t p = 0x1000u * 3000;
     ASSERT_EQ((int)f.osc3(), (int)((((~p) >> 11) & 0xFFF) >> 4));
     ASSERT((int)f.osc3() != (int)((p >> 16) & 0xFF));
+}
+
+/**
+ * Noise combined with pulse while the pulse is low outputs 0, and the writeback
+ * clears the LFSR bits feeding the output as it shifts: the noise locks up and
+ * stays silent when switched back to noise alone (#119, as in reSID).
+ */
+TEST_CASE(sid_noise_writeback_locks_up_lfsr) {
+    SidVoiceFixture f;
+    f.freq(2, 0x8000);                  // LFSR shifts every 16 cycles (bit 19 rising)
+    f.w(2 * 7 + 2, 0xFF); f.w(2 * 7 + 3, 0x0F);   // PW $FFF: pulse low
+    f.ctrl(2, 0xC0);                    // noise + pulse
+    for (int i = 0; i < 2000; ++i) f.sid.tick(8);
+    f.ctrl(2, 0x80);                    // noise alone
+    int nonZero = 0;
+    for (int i = 0; i < 500; ++i) { f.sid.tick(8); if (f.osc3()) ++nonZero; }
+    ASSERT_EQ(nonZero, 0);
+
+    // Noise alone keeps running
+    SidVoiceFixture g;
+    g.freq(2, 0x8000);
+    g.ctrl(2, 0x80);
+    int changes = 0; uint8_t last = g.osc3();
+    for (int i = 0; i < 500; ++i) { g.sid.tick(8); if (g.osc3() != last) ++changes; last = g.osc3(); }
+    ASSERT(changes > 50);
 }

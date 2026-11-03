@@ -19,22 +19,27 @@ Each of the three voices contains:
 **Oscillator:**
 - 24-bit phase accumulator advancing by the FREQ register value each clock cycle
 - Frequency in Hz = `FREQ × clockHz / 16777216`
-- Four waveforms (any combination active, outputs ANDed):
+- Four waveforms (any combination; see Combined Waveforms):
 
 | Waveform | CR Bit | Description |
 |----------|--------|-------------|
-| Triangle | `CR_TRI` (bit 4) | Folded from phase accumulator |
+| Triangle | `CR_TRI` (bit 4) | Folded from phase accumulator (LSB grounded) |
 | Sawtooth | `CR_SAW` (bit 5) | Direct MSBs of phase accumulator |
 | Pulse | `CR_PULSE` (bit 6) | High when `phase > PW` (12-bit pulse width) |
-| Noise | `CR_NOISE` (bit 7) | 23-bit LFSR (taps 22,17); clocked on bit-19 rising edge |
+| Noise | `CR_NOISE` (bit 7) | 23-bit LFSR (taps 22,17); clocked on bit-19 rising edge; output bits 11-4 = LFSR bits 20,18,14,11,9,5,2,0 |
 
-**Combined Waveforms:**
-When multiple waveforms are selected simultaneously, the real 6581 produces complex harmonic patterns through analog bit-mixing in the DAC stage. This is NOT a simple AND operation.
-- Physical mechanism: open-collector NMOS transistor architecture with asymmetric driving strength
-- Output amplitude: typically 30-40% lower than AND operation
-- Tonal characteristics: triangle+pulse produces bell-like tones; sawtooth+pulse produces hollow/nasal tones; triangle+sawtooth produces warm tones
-- Implementation: empirically-derived lookup tables based on real hardware measurements (reSIDfp model)
-- Chip variants: 6581 exhibits more bit-mixing effects than 8580 due to circuit layout differences
+**Combined Waveforms (#119):**
+With several waveforms selected, each 0 output bit of a selected waveform grounds that line (an AND). When pulse, or saw and triangle together, are selected, the lines are also interconnected, so a grounded bit pulls neighbouring bits down too. The result is quieter than the AND and has its own timbre. With saw and triangle together the triangle's XOR is disabled, so the raw value is the saw ANDed with itself shifted left one bit.
+
+mmsim uses the combined-waveform pulldown model by Antti Lankila and Leandro Nini (reSIDfp), with parameters fitted to samplings of real chips ([combined-waveforms](https://github.com/libsidplayfp/combined-waveforms)): 6581 R3 0486S and 8580 R5 1088. `CombinedWaveformTable` evaluates it once into 4096-entry tables for saw+triangle, pulse+triangle, pulse+saw, pulse+saw+triangle and pulse+noise. Pulse acts as a gate (combinations output 0 while it is low), and combinations with noise use the same model as without.
+
+Against those chips' OSC3 samplings (all 4096 oscillator steps, 8 bits), the model mispredicts 124-1030 of 32768 bits per combination on the 6581 and 127-554 on the 8580, against 8665-14650 for a plain AND.
+
+The chip model follows `setFilterVariant()` (0 = 6581, the default; 1 = 8580).
+
+With noise combined with another waveform, a 0 output bit also clears the LFSR bit feeding it as the register shifts (noise writeback), so the noise dies away and stays silent ("noise lockup") until TEST reloads the LFSR.
+
+Not modelled: the 6581's saw combinations pulling the accumulator MSB low, the 8580's half-cycle delay of the triangle/saw output on OSC3, and the fading of the waveform output when no waveform is selected.
 
 **Control bits:**
 
