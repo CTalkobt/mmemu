@@ -2777,8 +2777,10 @@ Json handleToolsCall(const Json& params) {
                 ". Valid types: " + (validList.empty() ? "(none)" : validList));
             textItem.oVal["isError"] = Json(true);
         } else {
-            textItem.oVal["text"] = Json("Created instance \"" + instanceId +
-                "\" of machine: " + std::string(ms->machine->displayName));
+            std::string text = "Created instance \"" + instanceId +
+                "\" of machine: " + std::string(ms->machine->displayName);
+            for (const auto& w : ms->machine->warnings) text += "\nWarning: " + w;   // #172
+            textItem.oVal["text"] = Json(text);
         }
     } else if (name == "destroy_machine") {
         std::string mid = args["machine_id"].sVal;

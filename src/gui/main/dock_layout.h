@@ -2,6 +2,8 @@
 
 #include <wx/wx.h>
 #include <wx/aui/aui.h>
+#include <wx/infobar.h>
+#include <wx/generic/infobar.h>
 #include <functional>
 #include <map>
 #include <string>
@@ -44,6 +46,12 @@ public:
      * hidden). nullptr shows the "no machine loaded" placeholder.
      */
     void setCenter(wxWindow* window);
+
+    /**
+     * Show a dismissable warning bar above the centre window (e.g. a missing
+     * MEGA65 SD card image, #172); an empty message hides it.
+     */
+    void showNotice(const wxString& message);
 
     /**
      * Register a pane. It starts closed (hidden) unless restore() or
@@ -103,6 +111,14 @@ private:
     wxAuiNotebook* m_bottom = nullptr;
     wxAuiNotebook* m_side   = nullptr;
     wxWindow*      m_center = nullptr;
+    wxPanel*       m_centerHost = nullptr;     // AUI centre pane: notice bar above the centre window
+    wxBoxSizer*    m_centerSizer = nullptr;
+    // Generic bar: the native GTK one sizes itself before its label wraps and
+    // cuts long messages off, so the message is wrapped here to the width.
+    wxInfoBarGeneric* m_notice = nullptr;
+    wxString       m_noticeText;
+    int            m_noticeWidth = 0;
+    void wrapNotice();
     wxWindow*      m_placeholder = nullptr;   // centre when no machine screen exists
     wxString       m_defaultPerspective;       // dock sizes before any saved layout
     std::vector<Pane> m_panes;
