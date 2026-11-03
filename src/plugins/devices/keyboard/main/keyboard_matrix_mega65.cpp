@@ -8,7 +8,7 @@ KbdMega65::KbdMega65()
 
     // MEGA65 Key Mapping (8x8 Matrix)
     // Based on C65 / Mega65 specifications.
-    // row 0: DEL, RETURN, LEFT, F7, F1, F3, F5, UP
+    // row 0: DEL, RETURN, CRSR RIGHT, F7, F1, F3, F5, CRSR DOWN
     // row 1: 3, W, A, 4, Z, S, E, SHIFT_L
     // row 2: 5, R, D, 6, C, F, T, X
     // row 3: 7, Y, G, 8, B, H, U, V
@@ -22,12 +22,14 @@ KbdMega65::KbdMega65()
     // e.g. 'A' = {1, 2}: $DC00 = $FD reads $DC01 bit 2 low.
     m_keyMap["DEL"]       = {0, 0}; m_keyMap["BACKSPACE"] = {0, 0};
     m_keyMap["RETURN"]    = {0, 1}; m_keyMap["ENTER"]     = {0, 1};
-    m_keyMap["LEFT"]      = {0, 2}; m_keyMap["RIGHT"]     = {0, 2}; // C64 uses same for both with shift
+    // CRSR RIGHT and CRSR DOWN; LEFT and UP are these with Shift (below), as
+    // the MEGA65 presents its cursor keys to C64-mode software
+    m_keyMap["RIGHT"]     = {0, 2};
     m_keyMap["F7"]        = {0, 3}; m_keyMap["F8"]        = {0, 3};
     m_keyMap["F1"]        = {0, 4}; m_keyMap["F2"]        = {0, 4};
     m_keyMap["F3"]        = {0, 5}; m_keyMap["F4"]        = {0, 5};
     m_keyMap["F5"]        = {0, 6}; m_keyMap["F6"]        = {0, 6};
-    m_keyMap["UP"]        = {0, 7}; m_keyMap["DOWN"]      = {0, 7};
+    m_keyMap["DOWN"]      = {0, 7};
 
     m_keyMap["3"]         = {1, 0}; m_keyMap["W"]         = {1, 1};
     m_keyMap["A"]         = {1, 2}; m_keyMap["4"]         = {1, 3};
@@ -151,8 +153,8 @@ bool KbdMega65::pressKeyByName(const std::string& keyName, bool down) {
     if (name == "[") return pressCombo({"LSHIFT", ":"}, down);
     if (name == "]") return pressCombo({"LSHIFT", ";"}, down);
     if (name == "CLR") return pressCombo({"LSHIFT", "HOME"}, down);
-    if (name == "DOWN") return pressCombo({"LSHIFT", "UP"}, down);
-    if (name == "RIGHT") return pressCombo({"LSHIFT", "LEFT"}, down);
+    if (name == "UP") return pressCombo({"LSHIFT", "DOWN"}, down);
+    if (name == "LEFT") return pressCombo({"LSHIFT", "RIGHT"}, down);
 
     return false;
 }

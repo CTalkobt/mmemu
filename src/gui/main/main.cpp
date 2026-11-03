@@ -333,7 +333,10 @@ private:
     static int unshiftedUsKey(int code) {
         static const char shifted[] = "!@#$%^&*()_+\":?<>{}";
         static const char base[]    = "1234567890-=';/,.[]";
-        if (const char* p = std::strchr(shifted, code); p && code)
+        // ASCII only: strchr() truncates to char, so WXK_RIGHT (316) would
+        // match '<' and type ',' (and WXK_LEFT ':' -> ';')
+        if (code <= 0 || code >= 128) return code;
+        if (const char* p = std::strchr(shifted, code))
             return base[p - shifted];
         return code;
     }
