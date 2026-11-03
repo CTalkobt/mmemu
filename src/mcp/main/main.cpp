@@ -4301,14 +4301,13 @@ Json handleToolsCall(const Json& params) {
                 if (cyclesPerBatch < 100) cyclesPerBatch = 100;
 
                 while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
-                    // Run CPU for a batch
-                    for (int c = 0; c < cyclesPerBatch; ++c) {
-                        if (ms->machine && ms->machine->schedulerStep) {
-                            ms->machine->schedulerStep(*ms->machine);
-                        } else {
-                            ms->cpu->step();
-                        }
-                        ++cyclesRun;
+                    // Run a batch of clock cycles (not instructions: those are
+                    // 3-5x as many cycles and overflowed the chip's sample
+                    // buffer, dropping samples)
+                    for (int64_t batchEnd = cyclesRun + cyclesPerBatch; cyclesRun < batchEnd; ) {
+                        int c = (ms->machine && ms->machine->schedulerStep)
+                                    ? ms->machine->schedulerStep(*ms->machine) : ms->cpu->step();
+                        cyclesRun += c > 0 ? c : 1;
                     }
 
                     // Pull available audio samples

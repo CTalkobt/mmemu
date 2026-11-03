@@ -2871,13 +2871,13 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (cyclesPerBatch < 100) cyclesPerBatch = 100;
 
         while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
-            for (int c = 0; c < cyclesPerBatch; ++c) {
-                if (m_ctx.machine->schedulerStep) {
-                    m_ctx.machine->schedulerStep(*m_ctx.machine);
-                } else {
-                    m_ctx.cpu->step();
-                }
-                ++cyclesRun;
+            // Count clock cycles, not instructions: a batch of instructions is
+            // 3-5x as many cycles and overflowed the chip's sample buffer,
+            // which drops samples (audible skips)
+            for (int64_t batchEnd = cyclesRun + cyclesPerBatch; cyclesRun < batchEnd; ) {
+                int c = m_ctx.machine->schedulerStep ? m_ctx.machine->schedulerStep(*m_ctx.machine)
+                                                     : m_ctx.cpu->step();
+                cyclesRun += c > 0 ? c : 1;
             }
             int pulled = audioDev->pullSamples(pullBuf, 4096);
             for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i)

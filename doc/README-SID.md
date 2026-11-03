@@ -104,7 +104,7 @@ Because the master volume multiplies the DC as well, writing `$D418` changes the
 
 **External output stage:** as in reSID, the C64's RC filters follow the mixer: a ~16 kHz low-pass and a ~16 Hz high-pass that removes the DC.
 
-**Resampling:** the per-cycle output is averaged over each output sample period. Samples are pushed into an 8192-sample ring buffer at the configured sample rate. Full scale is two voices at full volume.
+**Resampling:** the per-cycle output is averaged over each output sample period. Samples are pushed into an 8192-sample ring buffer at the configured sample rate. Full scale is three voices at full volume, as in reSID.
 
 ### 2.4 Read-Only Registers
 
