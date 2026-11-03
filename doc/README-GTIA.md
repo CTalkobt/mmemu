@@ -11,23 +11,37 @@ GTIA is the secondary video chip in the Atari 8-bit family. It receives digital 
 
 ## 2. Functionality
 
-### 2.1 Color Generation
-- **Palette**: Implements the standard 256-color Atari palette (16 hues x 16 luminances).
-- **RGBA Mapping**: Provides `GTIA::getRGBA(index)` for easy conversion to host-side color formats.
+### 2.1 Colour generation
 
-### 2.2 Player-Missile Graphics (PMG)
-- **Positioning**: Supports horizontal positioning for 4 players and 4 missiles ($D000–$D007).
-- **Size Control**: Supports size control (1x, 2x, 4x width) for players and missiles ($D008–$D00C).
-- **Graphics Data**: Registers for direct graphics data injection ($D00D–$D011).
+The NTSC palette (`getARGB`) has 256 entries: hue in bits 4-7, luminance in bits 0-3. It is generated with atari800's palette model (#160). Colour registers ignore bit 0 of the luminance.
 
-### 2.3 Collision Detection
-- **Hardware Latches**: 16 read-only registers ($D000–$D00F) record collisions between players, missiles, and playfield.
-- **HITCLR**: Writing to $D01E clears all collision latches.
+### 2.2 Scanline composition
 
-### 2.4 Console Switches
-- **CONSOL ($D01F)**: Reads the state of Start, Select, and Option buttons (active low).
+`renderLine(pf, out)` takes ANTIC's playfield classes for one line (384 pixels, colour clocks 32-223) and draws the players and missiles over them:
 
----
+- **Players:** 8 bits from GRAFP0-3 (from DMA or the CPU), placed at HPOSP0-3. SIZEP sets 1, 2 or 4 colour clocks per bit.
+- **Missiles:** 2 bits each from GRAFM, placed at HPOSM0-3, with the sizes in SIZEM. Each uses its player's colour. With PRIOR bit 4 (fifth player), missiles take PF3's colour.
+- **Priority (PRIOR bits 0-3):** players over playfield (1), P0-1 over playfield over P2-3 (2), playfield over players (4), PF0-1 over players over PF2-3 (8). 0 behaves as 1.
+- **High-resolution pixels (modes 2, 3, F):** PF2's hue with PF1's luminance. The luminance also shows through a player in front.
+
+### 2.3 Collision detection
+
+Each colour clock, GTIA checks overlaps and updates the collision registers:
+
+- Missiles against the playfield (M0PF-M3PF) and against players (M0PL-M3PL).
+- Players against the playfield (P0PF-P3PF) and against other players (P0PL-P3PL).
+
+On high-resolution lines, only lit pixels collide, as PF2. HITCLR clears the registers.
+
+### 2.4 Console keys and triggers
+
+- **CONSOL bits 0-2:** START, SELECT and OPTION, active low (`setConsoleKey`).
+- **TRIG0-3:** joystick buttons (`setTrigger`). GRACTL bit 2 latches presses.
+- **PAL register:** `$0F` on NTSC.
+
+### 2.5 Not modelled
+
+GTIA modes (PRIOR bits 6-7), multicolour players (PRIOR bit 5), VDELAY, and the console speaker.
 
 ## 3. Register Map ($D000–$D01F)
 

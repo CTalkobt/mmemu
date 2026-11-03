@@ -4168,7 +4168,8 @@ Json handleToolsCall(const Json& params) {
 
                 // Calculate CPU cycles to run
                 // Approximate: 1 MHz CPU = 1000 cycles/ms
-                uint32_t clockHz = 985248; // PAL C64 default
+                // The machine's clock (#169), e.g. 1.79 MHz on an Atari; else a PAL C64
+                uint32_t clockHz = (ms->machine && ms->machine->clockHz > 0) ? (uint32_t)ms->machine->clockHz : 985248;
                 int64_t totalCycles = (int64_t)clockHz * durationMs / 1000;
 
                 // Run CPU in batches, pulling audio periodically

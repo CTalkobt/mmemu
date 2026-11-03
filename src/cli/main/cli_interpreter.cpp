@@ -2800,7 +2800,8 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         std::vector<float> recorded;
         recorded.reserve(totalSamples);
 
-        uint32_t clockHz = 985248;
+        // The machine's clock (#169), e.g. 1.79 MHz on an Atari; else a PAL C64
+        uint32_t clockHz = m_ctx.machine->clockHz > 0 ? (uint32_t)m_ctx.machine->clockHz : 985248;
         int64_t totalCycles = (int64_t)clockHz * durationMs / 1000;
         float pullBuf[4096];
         int64_t cyclesRun = 0;

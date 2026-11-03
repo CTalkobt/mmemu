@@ -346,6 +346,25 @@ uint16_t MOS6502::addrINDBPY(bool& pageCrossed) {
 // Opcode Implementations
 int MOS6502::opADC(uint16_t addr) {
     uint8_t m = read(addr);
+    if (m_state.p & FLAG_D) {
+        // NMOS decimal mode (Bruce Clark, "Decimal Mode in NMOS 6500 series"):
+        // Z from the binary sum; N and V from the sum before the high-nibble
+        // adjustment; C after it
+        int c = m_state.p & FLAG_C;
+        int a = m_state.a;
+        uint8_t bin = (uint8_t)(a + m + c);
+        int lo = (a & 0x0F) + (m & 0x0F) + c;
+        if (lo >= 0x0A) lo = ((lo + 0x06) & 0x0F) + 0x10;
+        int s = (a & 0xF0) + (m & 0xF0) + lo;
+        m_state.p &= ~(FLAG_C | FLAG_V | FLAG_Z | FLAG_N);
+        if (s & 0x80) m_state.p |= FLAG_N;
+        if (~(a ^ m) & (a ^ s) & 0x80) m_state.p |= FLAG_V;
+        if (s >= 0xA0) s += 0x60;
+        if (s >= 0x100) m_state.p |= FLAG_C;
+        if (bin == 0) m_state.p |= FLAG_Z;
+        m_state.a = (uint8_t)s;
+        return 0;
+    }
     uint16_t sum = (uint16_t)m_state.a + (uint16_t)m + (uint16_t)(m_state.p & FLAG_C);
     m_state.p &= ~(FLAG_C | FLAG_V | FLAG_Z | FLAG_N);
     if (sum > 0xFF) m_state.p |= FLAG_C;
@@ -656,13 +675,25 @@ int MOS6502::opRTS(uint16_t addr) {
 }
 
 int MOS6502::opSBC(uint16_t addr) {
-    uint8_t m = read(addr) ^ 0xFF;
-    uint16_t sum = (uint16_t)m_state.a + (uint16_t)m + (uint16_t)(m_state.p & FLAG_C);
+    uint8_t raw = read(addr);
+    uint8_t m = raw ^ 0xFF;
+    int carryIn = m_state.p & FLAG_C;
+    uint8_t a = m_state.a;
+    uint16_t sum = (uint16_t)a + (uint16_t)m + (uint16_t)carryIn;
     m_state.p &= ~(FLAG_C | FLAG_V | FLAG_Z | FLAG_N);
     if (sum > 0xFF) m_state.p |= FLAG_C;
-    if (~((uint16_t)m_state.a ^ (uint16_t)m) & ((uint16_t)m_state.a ^ sum) & 0x0080) m_state.p |= FLAG_V;
+    if (~((uint16_t)a ^ (uint16_t)m) & ((uint16_t)a ^ sum) & 0x0080) m_state.p |= FLAG_V;
     m_state.a = (uint8_t)sum;
     updateNZ(m_state.a);
+    if (m_state.p & FLAG_D) {
+        // NMOS decimal mode (Bruce Clark): flags as in binary (above), the
+        // result BCD-adjusted per nibble
+        int lo = (a & 0x0F) - (raw & 0x0F) + carryIn - 1;
+        if (lo < 0) lo = ((lo - 0x06) & 0x0F) - 0x10;
+        int r = (a & 0xF0) - (raw & 0xF0) + lo;
+        if (r < 0) r -= 0x60;
+        m_state.a = (uint8_t)r;
+    }
     return 0;
 }
 

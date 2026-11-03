@@ -41,38 +41,41 @@ const uint32_t GTIA::s_palette[256] = {
 };
 
 bool GTIA::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
+    (void)bus;
     uint32_t offset = addr & 0x001F;
     if (offset < 0x10) {
-        *val = m_collisions[offset];
+        *val = m_collisions[offset] & 0x0F;
         return true;
     }
     switch (offset) {
-        case TRIG0:
-        case TRIG1:
-        case TRIG2:
-        case TRIG3:
-            *val = 0x01; // Not pressed (simplified)
+        case TRIG0: case TRIG1: case TRIG2: case TRIG3: {
+            int n = (int)offset - TRIG0;
+            // 1 = released; with GRACTL bit 2 a press is latched until the bit is cleared
+            *val = (m_trig[n] || m_trigLatched[n]) ? 0x00 : 0x01;
             return true;
+        }
         case PAL:
-            *val = m_isPal ? 0x01 : 0x0F; // 0x01=PAL, 0x0F=NTSC (some sources say bit 3-1 are 1s)
+            *val = m_isPal ? 0x01 : 0x0F;   // bits 1-3: 0 PAL, 1 NTSC
             return true;
         case CONSOL:
-            *val = m_consoleSwitches;
+            *val = m_consoleSwitches & 0x07;
             return true;
         default:
-            *val = 0x00;
+            *val = 0x0F;                    // unused reads: high nibble floats low
             return true;
     }
 }
 
 bool GTIA::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
+    (void)bus;
     uint32_t offset = addr & 0x001F;
     m_regs[offset] = val;
 
     if (offset == HITCLR) {
         std::memset(m_collisions, 0, sizeof(m_collisions));
+    } else if (offset == GRACTL && !(val & 0x04)) {
+        for (bool& t : m_trigLatched) t = false;
     }
-    
     return true;
 }
 
@@ -80,10 +83,115 @@ void GTIA::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
     std::memset(m_collisions, 0, sizeof(m_collisions));
     m_consoleSwitches = 0x07;
+    for (int i = 0; i < 4; ++i) m_trig[i] = m_trigLatched[i] = false;
 }
 
 void GTIA::tick(uint64_t cycles) {
-    // Collision logic and PMG state updates would happen here during a scanline.
+    (void)cycles;   // all work happens per scanline in renderLine()
+}
+
+namespace {
+// Width in colour clocks of one bit of a player or missile, by size code
+inline int bitWidth(int code) { return code == 1 ? 2 : code == 3 ? 4 : 1; }
+}  // namespace
+
+void GTIA::renderLine(const uint8_t* pf, uint32_t* out) {
+    if (m_regs[GRACTL] & 0x04)
+        for (int i = 0; i < 4; ++i) if (m_trig[i]) m_trigLatched[i] = true;
+
+    const uint8_t prior = m_regs[PRIOR];
+    const bool fifthPlayer = prior & 0x10;       // missiles take PF3's colour
+    // Priority: the lowest set bit of PRIOR 0-3 (0 behaves as 1)
+    int pmode = (prior & 1) ? 1 : (prior & 2) ? 2 : (prior & 4) ? 4 : (prior & 8) ? 8 : 1;
+
+    // Players' and missiles' coverage per colour clock
+    uint8_t pl[LINE_PIXELS / 2] = {}, ms[LINE_PIXELS / 2] = {};
+    for (int p = 0; p < 4; ++p) {
+        uint8_t data = m_regs[GRAFP0 + p];
+        if (!data) continue;
+        int w = bitWidth(m_regs[SIZEP0 + p] & 3);
+        int x0 = m_regs[HPOSP0 + p] - FIRST_COLOUR_CLOCK;
+        for (int b = 0; b < 8; ++b) {
+            if (!(data & (0x80 >> b))) continue;
+            for (int k = 0; k < w; ++k) {
+                int x = x0 + b * w + k;
+                if (x >= 0 && x < LINE_PIXELS / 2) pl[x] |= (uint8_t)(1 << p);
+            }
+        }
+    }
+    for (int m = 0; m < 4; ++m) {
+        uint8_t bits = (m_regs[GRAFM] >> (m * 2)) & 3;
+        if (!bits) continue;
+        int w = bitWidth((m_regs[SIZEM] >> (m * 2)) & 3);
+        int x0 = m_regs[HPOSM0 + m] - FIRST_COLOUR_CLOCK;
+        for (int b = 0; b < 2; ++b) {
+            if (!(bits & (2 >> b))) continue;
+            for (int k = 0; k < w; ++k) {
+                int x = x0 + b * w + k;
+                if (x >= 0 && x < LINE_PIXELS / 2) ms[x] |= (uint8_t)(1 << m);
+            }
+        }
+    }
+
+    auto colour = [&](uint8_t reg) { return s_palette[reg & 0xFE]; };
+    const uint8_t pf1Lum = m_regs[COLPF1] & 0x0E;
+
+    for (int px = 0; px < LINE_PIXELS; ++px) {
+        int cc = px >> 1;
+        uint8_t raw = pf[px];
+        uint8_t cls = raw & 0x0F;
+        bool hiresLit = raw & PF_HIRES;
+        uint8_t players = pl[cc], missiles = ms[cc];
+
+        // Collisions, once per colour clock (hires lines: lit pixels count as PF2)
+        if (!(px & 1) && (players | missiles)) {
+            uint8_t pfBit = 0;
+            for (int h = 0; h < 2; ++h) {
+                uint8_t r = pf[px + h], c = r & 0x0F;
+                if (r & PF_HIRES_MODE) { if (r & PF_HIRES) pfBit |= 4; }
+                else if (c >= PF_0 && c <= PF_3) pfBit |= (uint8_t)(1 << (c - 1));
+            }
+            for (int m = 0; m < 4; ++m) if (missiles & (1 << m)) {
+                m_collisions[M0PF + m] |= pfBit;
+                m_collisions[M0PL + m] |= players;
+            }
+            for (int p = 0; p < 4; ++p) if (players & (1 << p)) {
+                m_collisions[P0PF + p] |= pfBit;
+                m_collisions[P0PL + p] |= players & (uint8_t)~(1 << p);
+            }
+        }
+
+        // Missiles as a fifth player draw as PF3; otherwise in their player's colour
+        if (fifthPlayer && missiles) { cls = PF_3; hiresLit = false; missiles = 0; }
+        uint8_t objs = players | missiles;
+
+        // Resolve the topmost object
+        uint32_t c;
+        int topPlayer = -1;
+        for (int p = 0; p < 4; ++p) if (objs & (1 << p)) { topPlayer = p; break; }
+        bool pfFront;   // the playfield class beats the players
+        switch (pmode) {
+            case 2:  pfFront = topPlayer >= 2 && cls != PF_BK; break;   // P0-1 > PF > P2-3
+            case 4:  pfFront = cls != PF_BK; break;                     // PF > P
+            case 8:  pfFront = cls == PF_0 || cls == PF_1; break;       // PF0-1 > P > PF2-3
+            default: pfFront = false; break;                            // P > PF
+        }
+        if (topPlayer >= 0 && !pfFront) {
+            uint8_t col = m_regs[COLPM0 + topPlayer];
+            if (hiresLit) col = (uint8_t)((col & 0xF0) | pf1Lum);   // hires luminance shows through
+            c = colour(col);
+        } else {
+            switch (cls) {
+                case PF_0: c = colour(m_regs[COLPF0]); break;
+                case PF_1: c = colour(m_regs[COLPF1]); break;
+                case PF_2: c = hiresLit ? colour((uint8_t)((m_regs[COLPF2] & 0xF0) | pf1Lum))
+                                        : colour(m_regs[COLPF2]); break;
+                case PF_3: c = colour(m_regs[COLPF3]); break;
+                default:   c = colour(m_regs[COLBK]); break;
+            }
+        }
+        out[px] = c;
+    }
 }
 
 uint32_t GTIA::getARGB(uint8_t index) {

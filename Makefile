@@ -218,6 +218,15 @@ PLUGIN_MAP_MMU_SRCS = src/plugins/devices/map_mmu/main/map_mmu.cpp \
 PLUGIN_SID_PAIR_SRCS = src/plugins/devices/sid_pair/main/sid_pair.cpp \
 	src/plugins/devices/sid_pair/main/plugin_init.cpp
 
+PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
+	src/plugins/machines/atari/main/plugin_init.cpp \
+	src/plugins/machines/atari/main/atari_sio.cpp \
+	src/plugins/devices/antic/main/antic.cpp \
+	src/plugins/devices/gtia/main/gtia.cpp \
+	src/plugins/devices/pokey/main/pokey.cpp \
+	src/plugins/devices/pia6520/main/pia6520.cpp \
+	src/plugins/6502/main/cpu6502.cpp
+
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
 	src/plugins/devices/cia6526/main/cia6526.cpp \
@@ -342,6 +351,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/antic/test/test_antic.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
+	src/plugins/machines/atari/test/test_atari_machine.cpp \
 	src/plugins/devices/cia6526/test/test_cia6526.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/test/test_iec_d64.cpp \
@@ -404,8 +414,6 @@ PLUGIN_VICEIMPORTER_TEST_SRCS = src/plugins/viceImporter/test/test_vice_importer
 PLUGIN_MEGA65IMPORTER_TEST_SRCS = src/plugins/mega65Importer/test/test_mega65_importer.cpp
 PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 	src/plugins/devices/vic2/test/test_c64_boot_screen.cpp
-PLUGIN_ANTIC_TEST_SRCS = src/plugins/devices/antic/test/test_atari_boot.cpp \
-	src/plugins/devices/antic/test/test_atari_debug.cpp
 
 
 
@@ -451,6 +459,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/antic/main/antic.o \
 	src/plugins/devices/gtia/main/gtia.o \
 	src/plugins/devices/pokey/main/pokey.o \
+	src/plugins/machines/atari/main/machine_atari.o \
+	src/plugins/machines/atari/main/atari_sio.o \
 	src/plugins/devices/virtual_iec/main/virtual_iec.o \
 	src/plugins/devices/f018b_dma/main/f018b_dma.o \
 	src/plugins/devices/audio_dma/main/audio_dma.o \
@@ -544,6 +554,7 @@ PLUGIN_AUDIODMA_OBJS = $(PLUGIN_AUDIODMA_SRCS:.cpp=.o)
 PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
 PLUGIN_SID_PAIR_OBJS = $(PLUGIN_SID_PAIR_SRCS:.cpp=.o)
 PLUGIN_MEGA65_OBJS = $(PLUGIN_MEGA65_SRCS:.cpp=.o)
+PLUGIN_ATARI_OBJS = $(PLUGIN_ATARI_SRCS:.cpp=.o)
 PLUGIN_EXIT_TRAP_OBJS = $(PLUGIN_EXIT_TRAP_SRCS:.cpp=.o)
 PLUGIN_MEGA65_MATH_OBJS = $(PLUGIN_MEGA65_MATH_SRCS:.cpp=.o)
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
@@ -590,6 +601,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-audio-dma.so \
 	$(LIBDIR)/mmemu-plugin-map-mmu.so \
 	$(LIBDIR)/mmemu-plugin-mega65.so \
+	$(LIBDIR)/mmemu-plugin-atari.so \
 	$(LIBDIR)/mmemu-plugin-exit-trap.so \
 	$(LIBDIR)/mmemu-plugin-mega65-math.so \
 	$(LIBDIR)/mmemu-plugin-sid-pair.so \
@@ -726,6 +738,9 @@ $(LIBDIR)/mmemu-plugin-map-mmu.so: $(PLUGIN_MAP_MMU_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS) $(CA45_LIBS)
+
+$(LIBDIR)/mmemu-plugin-atari.so: $(PLUGIN_ATARI_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
