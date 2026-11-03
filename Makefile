@@ -76,7 +76,7 @@ LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp s
 	src/libcore/main/path_util.cpp src/libcore/main/sim_config.cpp \
 	src/libcore/main/machine_speed.cpp
 LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_registry.cpp \
-                    src/libdevices/main/ivideo_output.cpp \
+                    src/libdevices/main/ivideo_output.cpp src/libdevices/main/iaudio_inspect.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
                     src/libdevices/main/ieee488.cpp
 LIBPROJECT_SRCS   = src/libproject/main/project.cpp src/libproject/main/make_runner.cpp \
@@ -87,7 +87,7 @@ LIBTOOLCHAIN_SRCS = src/libtoolchain/main/symbol_table.cpp src/libtoolchain/main
 	src/libtoolchain/main/debug_metadata.cpp src/libtoolchain/main/libtoolchain.cpp \
 	src/libtoolchain/main/basic_tokenizer.cpp src/libtoolchain/main/gfx_decode.cpp
 LIBDEBUG_SRCS     = src/libdebug/main/breakpoint_list.cpp src/libdebug/main/debug_context.cpp \
-	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp \
+	src/libdebug/main/source_stepper.cpp src/libdebug/main/gfx_view.cpp src/libdebug/main/audio_scope.cpp src/libdebug/main/gif_writer.cpp src/libdebug/main/sid_file.cpp \
 	src/libdebug/main/trace_buffer.cpp src/libdebug/main/libdebug.cpp \
 	src/libdebug/main/expression_evaluator.cpp src/libdebug/main/debug_helpers.cpp \
 	src/libdebug/main/source_location_formatter.cpp src/libdebug/main/frame_analyzer.cpp \
@@ -159,7 +159,6 @@ PLUGIN_VIC4_SRCS = src/plugins/devices/vic4/main/vic4.cpp \
 
 PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
@@ -229,7 +228,6 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/sid_pair/main/sid_pair.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/filter_curve.cpp \
 	src/plugins/45gs02/main/cpu45gs02.cpp \
 	src/plugins/45gs02/main/ca45_assembler.cpp \
 	src/plugins/devices/map_mmu/main/map_mmu.cpp \
@@ -256,6 +254,7 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/dock_layout.cpp \
 	src/gui/main/source_pane.cpp \
 	src/gui/main/graphics_pane.cpp \
+	src/gui/main/sid_scope_pane.cpp \
 	src/gui/main/machine_selector.cpp \
 	src/gui/main/register_pane.cpp \
 	src/gui/main/memory_pane.cpp \
@@ -313,12 +312,15 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libmem/test/test_sparse_memory_bus.cpp \
 	src/libcore/test/test_libcore.cpp \
 	src/libcore/test/test_registry.cpp \
+	src/libcore/test/test_machine_speed.cpp \
 	src/libcore/test/test_json_machine_loader.cpp \
 	src/libcore/test/test_machine_boot.cpp \
 	src/libdevices/test/test_devices.cpp \
 	src/libdevices/test/test_ieee488.cpp \
 	src/libdebug/test/test_debug.cpp \
 	src/libdebug/test/test_trace_buffer.cpp \
+	src/libdebug/test/test_gif_writer.cpp \
+	src/libdebug/test/test_sid_file.cpp \
 	src/libdebug/test/test_expression_evaluator.cpp \
 	src/libdebug/test/test_persistence.cpp \
 	src/libtoolchain/test/test_toolchain.cpp \
@@ -361,6 +363,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid_pair/test/test_sid_pair.cpp \
 	src/plugins/devices/sid6581/test/test_combined_waveforms.cpp \
 	src/plugins/devices/sid6581/test/test_sid_filter.cpp \
+	src/plugins/devices/sid6581/test/test_sid_inspect.cpp \
+	src/plugins/devices/sid6581/test/test_sid_cycle.cpp \
 	src/plugins/devices/sid6581/test/test_soft_clip_distortion.cpp \
 	src/plugins/devices/sid6581/test/test_spectral_analyzer.cpp \
 	tests/src/test_sid_filter_integration.cpp \
@@ -425,7 +429,6 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
 	src/plugins/devices/sid6581/main/combined_waveforms.o \
-	src/plugins/devices/sid6581/main/filter_curve.o \
 	src/plugins/devices/sid6581/main/spectral_analyzer.o \
 	src/plugins/devices/sid6581/main/sid_validation_suite.o \
 	src/plugins/devices/sid_pair/main/sid_pair.o \

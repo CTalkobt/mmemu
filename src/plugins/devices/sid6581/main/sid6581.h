@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "combined_waveforms.h"
 #include <cstdint>
 #include <string>
@@ -11,26 +12,25 @@
  *
  * Used as the audio chip in the Commodore 64 ($D400–$D41C).
  *
- * Implements:
+ * Implements (clocked every cycle, after reSID 0.16; #123):
  *   - Three voices, each with:
  *       24-bit phase accumulator (advances by FREQ register each clock cycle)
  *       Four waveforms: Triangle, Sawtooth, Pulse (variable duty cycle), Noise
- *         (23-bit maximal-length LFSR, taps at 22 and 17; clocked on phase bit-19 rise)
- *       Combined waveforms: complex harmonic patterns via analog bit-mixing lookup tables
- *         (empirically-derived reSIDfp model; replaces incorrect AND operation)
- *       ADSR envelope generator (8-bit level, linear A, linear D/R approximation)
- *       Gate (0→1 triggers attack; 1→0 triggers release)
- *       Hard sync: voice N oscillator reset by voice N-1's phase overflow
- *       Ring modulation: triangle output XOR'd with MSB of voice N-1's oscillator
- *       Test bit: freezes oscillator, loads LFSR with all-1s
- *   - Multi-mode Chamberlin state-variable filter:
- *       11-bit cutoff frequency register, 4-bit resonance
- *       Filter routing: each voice individually routed to filter ($D417 bits 0-2)
- *       Mode: LP/BP/HP individually selectable ($D418 bits 4-6)
- *       Voice-3-disconnect ($D418 bit 7)
- *   - Volume register ($D418 bits 0-3, 0–15)
- *   - Read-only registers: OSC3 (phase accumulator MSB), ENV3 (envelope level)
+ *         (23-bit LFSR, taps 22 and 17, shifted when accumulator bit 19 rises)
+ *       Combined waveforms: pulldown model fitted to real chips (#119), with
+ *         noise writeback (noise lockup)
+ *       ADSR envelope: rate counter + exponential counter, ADSR delay bug
+ *       Hard sync and ring modulation from the previous voice
+ *       Test bit: holds the oscillator at 0, reloads the LFSR
+ *   - State-variable filter (#120): measured 6581/8580 cutoff curves,
+ *       Q = 0.707 + res/15, integrators limited by the op-amps' measured
+ *       output swing (#121); LP/BP/HP mix, per-voice routing, voice 3 off
+ *   - Mixer with the 6581's DC offsets, scaled by the master volume, so
+ *       $D418 writes alone play samples (#122); C64 output RC filters
+ *   - Read-only registers: OSC3 (voice 3 waveform output), ENV3 (envelope level)
  *   - Paddle X/Y ($D419/$D41A) return 0xFF (A/D not implemented)
+ *
+ * The per-cycle output is averaged down to the sample rate.
  *
  * IAudioOutput pull model:
  *   tick() synthesises samples into an internal 8192-sample ring buffer.
@@ -42,8 +42,11 @@
  *   sid->setClockHz(985248); // PAL; NTSC = 1022727
  *   ioRegistry->registerHandler(sid);
  *   audioOutput->start(sid);
+ *
+ * IAudioInspect (#30): per-voice state and a scope history of each voice
+ * (waveform x envelope, before the filter) and of the mixed output.
  */
-class SID6581 : public IOHandler, public IAudioOutput {
+class SID6581 : public IOHandler, public IAudioOutput, public IAudioInspect {
 public:
     SID6581() : m_name("SID"), m_baseAddr(0xD400) { SID6581::reset(); }
     SID6581(const std::string& name, uint32_t baseAddr);
@@ -75,6 +78,18 @@ public:
 
     int nativeSampleRate() const override { return m_sampleRate; }
     int pullSamples(float* buffer, int maxSamples) override;
+
+    // -----------------------------------------------------------------------
+    // IAudioInspect interface (#30): one chip, 3 voices + output channel
+    // -----------------------------------------------------------------------
+
+    std::string chipName(int chip) const override;
+    int  voiceCount(int /*chip*/) const override { return 3; }
+    bool voiceInfo(int chip, int voice, VoiceInfo& out) const override;
+    int  scopeSampleRate() const override { return m_sampleRate; }
+    int  scopeCapacity() const override { return SCOPE_LEN; }
+    int  scopeSamples(int chip, int channel, float* out, int n) const override;
+    uint64_t scopeTotal(int /*chip*/) const override { return m_scopeTotal; }
 
     // -----------------------------------------------------------------------
     // Register offsets (relative to base address)
@@ -120,85 +135,87 @@ public:
 
 private:
     // -----------------------------------------------------------------------
-    // Per-voice state
+    // Per-voice state (clocked every cycle, #123)
     // -----------------------------------------------------------------------
     struct Voice {
         // Oscillator
-        uint32_t phase    = 0;       // 24-bit phase accumulator (stored in 32-bit)
+        uint32_t phase    = 0;        // 24-bit phase accumulator
         uint32_t lfsr     = 0x7FFFFF; // 23-bit noise LFSR
-        uint32_t prevBit19 = 0;      // tracks bit-19 state for LFSR clocking
+        bool     msbRose  = false;    // accumulator MSB went 0 -> 1 this cycle (hard sync)
 
-        // Envelope
-        enum class Env { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE } envPhase = Env::IDLE;
-        uint8_t  envLevel = 0;       // 0–255
-        uint64_t envAccum = 0;       // cycle accumulator for envelope timing
+        // Envelope generator (reSID model: rate counter, exponential counter)
+        enum class Env { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE };   // for inspection
+        enum class EnvState : uint8_t { ATTACK, DECAY_SUSTAIN, RELEASE };
+        EnvState envState  = EnvState::RELEASE;
+        uint8_t  envLevel  = 0;       // envelope counter 0-255
+        uint16_t rateCounter = 0;     // 15-bit, never reset (ADSR delay bug)
+        uint16_t ratePeriod  = 9;
+        uint8_t  expCounter  = 0;
+        uint8_t  expPeriod   = 1;
+        bool     holdZero    = true;  // counter frozen at 0 until the next attack
 
-        // Register mirrors (updated from the raw register array)
+        // Register mirrors
         uint16_t freq  = 0;
         uint16_t pw    = 0;   // 12-bit pulse width
         uint8_t  cr    = 0;   // control
         uint8_t  ad    = 0;   // attack/decay nibbles
         uint8_t  sr    = 0;   // sustain/release nibbles
 
-        bool prevGate  = false;
+        Env envPhase() const;
+        void clockEnvelope();
 
-        // Waveform output: returns 12-bit value (0–4095)
-        // Multiple active waveforms are ANDed.
-        uint16_t waveOutput(bool syncReset, bool ringMsb) const;
-        // Noise output bits {20,18,14,11,9,5,3,0} of LFSR → 12-bit value
+        // Waveform output: 12-bit value (0–4095); combined waveforms follow
+        // the 6581 or 8580 model (CombinedWaveformTable, #119).
+        uint16_t waveOutput(bool syncReset, bool ringMsb, CombinedWaveformTable::Chip chip) const;
+        // Noise output bits {20,18,14,11,9,5,2,0} of LFSR → 12-bit value
         uint16_t noiseOutput() const;
     };
 
-    // -----------------------------------------------------------------------
-    // Filter state (Chamberlin state-variable with nonlinearity modeling)
-    // -----------------------------------------------------------------------
-    struct Filter {
-        float lp = 0.0f;          // low-pass memory
-        float bp = 0.0f;          // band-pass memory
-        bool  isHardware6581 = true;  // 6581 vs 8580 variant (affects distortion)
-
-        // Process one sample with soft-clipping distortion.
-        // Parameters:
-        //   in:        input sample
-        //   f:         filter coefficient (2*sin(pi*fc/sr))
-        //   q:         resonance factor (1/Q, higher = more resonance)
-        //   mode:      output mode selection (MV_LP/BP/HP bits)
-        //   resMask:   4-bit resonance nibble (0-15) for saturation calculation
-        // Returns: filtered/mixed output sample
-        float process(float in, float f, float q, uint8_t mode, uint8_t resMask);
-    };
-
+    void    writeVoiceReg(Voice& v, int reg, uint8_t val);
     void    synthesize(uint64_t cycles);
-    void    tickVoice(Voice& v, uint64_t cycles, uint32_t clockHz);   // LFSR + envelope
-    float   voiceOutput(const Voice& v) const;
     bool    ringMsbFor(const Voice& v) const;   // source MSB if v's RING bit is set
+    CombinedWaveformTable::Chip chipModel() const {
+        return m_filterVariant == 0 ? CombinedWaveformTable::Chip::MOS6581
+                                    : CombinedWaveformTable::Chip::MOS8580;
+    }
     void    pushSample(float s);
-
-    // Envelope rates: cycles per envelope-level step at the configured clock.
-    static uint32_t atkCycles(uint8_t nibble, uint32_t clockHz);
-    static uint32_t decRelCycles(uint8_t nibble, uint32_t clockHz);
+    void    updateFilterCoeffs();
 
     std::string  m_name;
     uint32_t     m_baseAddr;
 
     uint8_t      m_regs[32];     // raw register storage (32-byte aligned)
     Voice        m_voices[3];
-    Filter       m_filter;
 
     uint32_t     m_clockHz   = 985248;  // PAL default
     int          m_sampleRate = 44100;
     int          m_filterVariant = 0;   // Chip variant (0=6581, 1=8580)
 
-    // Cached filter coefficients (see synthesize()) and the inputs they came from
+    // Filter (#120/#121): state-variable filter clocked every cycle, in
+    // voice units (one voice's full swing = VOICE_RANGE). States hold the AC
+    // part; the voices' DC through the filter is added analytically.
+    float        m_vhp = 0.0f, m_vbp = 0.0f, m_vlp = 0.0f;
+    float        m_w0dt = 0.0f;         // 2*pi*f0*dt for the current cutoff
+    float        m_invQ = 1.0f;         // 1/Q
+    float        m_filterLo = 0.0f, m_filterHi = 0.0f;   // op-amp headroom (#121)
     bool         m_coeffValid = false;
-    float        m_coeffF = 0.0f, m_coeffQ = 0.0f;
-    uint16_t     m_coeffCutoff = 0;
-    uint8_t      m_coeffRes = 0;
-    int          m_coeffVariant = 0;
-    int          m_coeffSampleRate = 0;
 
-    // Fractional sample accumulator (same approach as VIC-I)
+    // External output stage (C64 RC filters, as reSID): low-pass ~16 kHz,
+    // high-pass ~16 Hz; removes the DC the mixer adds.
+    float        m_extLp = 0.0f, m_extHp = 0.0f;
+
+    // Resampling: box average of the per-cycle output over each sample period
     uint64_t     m_sampleFrac = 0;
+    double       m_sampleSum  = 0.0;
+    uint32_t     m_sampleCycles = 0;
+
+    // Scope history for IAudioInspect: voices 0-2 and the output (channel 3),
+    // one entry per output sample.
+    static constexpr int SCOPE_LEN = 4096;   // power of two
+    float   m_scope[4][SCOPE_LEN] = {};
+    int     m_scopePos   = 0;   // next write index
+    int     m_scopeCount = 0;   // valid entries (<= SCOPE_LEN)
+    uint64_t m_scopeTotal = 0;  // entries since reset
 
     // Ring buffer for pullSamples()
     static constexpr int AUDIO_BUF = 8192;

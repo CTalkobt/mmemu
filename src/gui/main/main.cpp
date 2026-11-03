@@ -46,6 +46,7 @@
 #include "dock_layout.h"
 #include "source_pane.h"
 #include "graphics_pane.h"
+#include "sid_scope_pane.h"
 #include "libproject/main/project.h"
 #include "libproject/main/make_runner.h"
 #include "libproject/main/diagnostics.h"
@@ -112,6 +113,9 @@ private:
     void OnSpeed(wxCommandEvent& event);
     wxMenu*     m_controlMenu = nullptr;
     wxMenuItem* m_speedMenuItem = nullptr;   // owned by us while removed from the menu
+    wxMenu*     m_speedMenu = nullptr;       // its submenu, rebuilt for each machine
+    machine_speed::RealTimePacer m_pacer;    // keeps Run at real time (#169)
+    void rebuildSpeedMenu();
     size_t      m_speedMenuPos = 0;
     bool        m_speedMenuShown = false;
     void OnSpeedUpdateUI(wxUpdateUIEvent& event);
@@ -177,6 +181,7 @@ private:
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     SourcePane*     m_sourcePane = nullptr;
     GraphicsPane*   m_graphicsPane = nullptr;
+    SidScopePane*   m_sidScopePane = nullptr;
 
     // Makefile project (#148)
     std::unique_ptr<project::Config> m_project;
@@ -484,11 +489,15 @@ static const wxCmdLineEntryDesc g_cmdLineDesc[] =
     { wxCMD_LINE_SWITCH, "v", "verbose", "Enable debug logging", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "trace", "Enable trace logging (very verbose)", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, nullptr, "run", "Auto-start the loaded program", wxCMD_LINE_VAL_NONE, wxCMD_LINE_PARAM_OPTIONAL },
+    { wxCMD_LINE_OPTION, nullptr, "speed", "Speed for loaded machines: real (default), max or a MEGA65 clock in MHz", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_OPTION, "p", "project", "Open a Makefile project directory", wxCMD_LINE_VAL_STRING, wxCMD_LINE_PARAM_OPTIONAL },
     { wxCMD_LINE_SWITCH, "h", "help",    "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_SWITCH, "?", "",        "Show this help", wxCMD_LINE_VAL_NONE, wxCMD_LINE_OPTION_HELP },
     { wxCMD_LINE_NONE, nullptr, nullptr, nullptr, wxCMD_LINE_VAL_NONE, 0 }
 };
+
+// Speed applied to each machine the GUI loads (#169); --speed overrides
+static std::string g_startSpeed = "real";
 
 class MmemuApp : public wxApp {
 public:
@@ -503,6 +512,8 @@ public:
         parser.Found("project", &m_startProject);
         parser.Found("type", &m_startType);
         m_autoRun = parser.Found("run");
+        wxString speed;
+        if (parser.Found("speed", &speed)) g_startSpeed = speed.utf8_string();
         m_trace = parser.Found("trace");
         m_verbose = parser.Found("verbose");
         return true;
@@ -611,19 +622,14 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_RESET, "Reset\tCtrl-R");
     m_resetToMonitorItem = menuControl->Append(ID_RESET_TO_MONITOR, "Reset to Monitor");
     m_resetToMonitorItem->Enable(false);  // Hidden until MEGA65 is loaded
-    // Speed: CPU clock, or max = warp (devices advance one cycle per CPU cycle).
-    // Enabled and checked by UPDATE_UI from the machine's current speed.
-    auto* menuSpeed = new wxMenu;
-    menuSpeed->AppendRadioItem(ID_SPEED_1,   "1 MHz");
-    menuSpeed->AppendRadioItem(ID_SPEED_2,   "2 MHz");
-    menuSpeed->AppendRadioItem(ID_SPEED_3_5, "3.5 MHz");
-    menuSpeed->AppendRadioItem(ID_SPEED_40,  "40.5 MHz");
-    menuSpeed->AppendRadioItem(ID_SPEED_MAX, "Max (unbounded)");
-    // Only shown for machines with a speed model (MEGA65): inserted/removed on machine load
+    // Speed: real time (a CPU clock on the MEGA65), or max = unpaced (#169).
+    // Items are rebuilt per machine (rebuildSpeedMenu); checked by UPDATE_UI.
+    m_speedMenu = new wxMenu;
+    // Only shown for machines with a speed setting: inserted/removed on machine load
     m_controlMenu = menuControl;
     m_speedMenuPos = menuControl->GetMenuItemCount();
-    m_speedMenuItem = menuControl->AppendSubMenu(menuSpeed, "Speed",
-        "CPU clock with real-time devices, or Max: devices advance one cycle per CPU cycle");
+    m_speedMenuItem = menuControl->AppendSubMenu(m_speedMenu, "Speed",
+        "Run at real time (or at a CPU clock with real-time devices), or Max: as fast as possible");
     menuControl->Remove(m_speedMenuItem);
     menuControl->AppendSeparator();
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
@@ -727,6 +733,7 @@ MmemuFrame::MmemuFrame()
     m_mega65StatusPane = new Mega65StatusPane(host);
     m_sourcePane = new SourcePane(host);
     m_graphicsPane = new GraphicsPane(host);
+    m_sidScopePane = new SidScopePane(host);
     m_graphicsPane->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
     m_graphicsPane->SetMemoryCallback([this](uint32_t addr) {
         if (auto* mp = activeMemPane()) mp->SetAddress(addr);
@@ -765,6 +772,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
     m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
     m_dock->addPane("graphics",    "Graphics",         m_graphicsPane,         Area::Side,   false);
+    m_dock->addPane("sidscope",    "SID Scope",        m_sidScopePane,         Area::Side,   false);
     m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
     m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
     m_dock->setAvailable("mega65", false);   // until a MEGA65 is loaded
@@ -1215,6 +1223,20 @@ void MmemuFrame::loadMachineById(const std::string& id) {
 
     if (m_machine != md) delete m_machine;
     m_machine = md;
+    {
+        std::string speedErr;   // #169: start at real time
+        if (!machine_speed::applyStartSpeed(*m_machine, g_startSpeed, speedErr))
+            SetStatusText("--speed " + g_startSpeed + ": " + speedErr);
+    }
+    {
+        // Setup problems the machine reported, e.g. no MEGA65 SD card image (#172)
+        wxString notice;
+        for (const auto& w : m_machine->warnings) {
+            if (!notice.empty()) notice += "\n";
+            notice += wxString::FromUTF8(w);
+        }
+        m_dock->showNotice(notice);
+    }
     m_cpu = m_machine->cpus[0].cpu;
     m_bus = m_machine->cpus[0].dataBus ? m_machine->cpus[0].dataBus : m_machine->buses[0].bus;
     if (m_disasm) {
@@ -1255,6 +1277,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_deviceInfoPane->setMachine(m_machine);
     m_regWatchPane->setMachine(m_machine);
     m_graphicsPane->SetMachine(m_machine, m_bus, m_dbg);
+    m_sidScopePane->SetMachine(m_machine);
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
     m_sourcePane->SetDebugContext(m_dbg);
@@ -1271,9 +1294,10 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     }
 
 
-    // Control > Speed: only for machines with a CPU speed model (MEGA65)
+    // Control > Speed: only for machines with a speed setting
     if (m_controlMenu && m_speedMenuItem) {
-        bool want = machine_speed::supported(*m_machine);
+        bool want = machine_speed::controllable(*m_machine);
+        rebuildSpeedMenu();
         if (want && !m_speedMenuShown) m_controlMenu->Insert(m_speedMenuPos, m_speedMenuItem);
         if (!want && m_speedMenuShown) m_controlMenu->Remove(m_speedMenuItem);
         m_speedMenuShown = want;
@@ -1622,6 +1646,7 @@ void MmemuFrame::OnRun(wxCommandEvent& event) {
     if (m_sourcePane) m_sourcePane->ClearExecutionLine();
     if (m_autoDebugLayout) switchLayout(false);
     m_running = true;
+    m_pacer.reset();
     SetStatusText("Running...");
 }
 
@@ -1646,12 +1671,36 @@ void MmemuFrame::OnReset(wxCommandEvent& event) {
 
 static const char* speedValueFor(int id) {
     switch (id) {
-        case ID_SPEED_1:   return "1";
-        case ID_SPEED_2:   return "2";
-        case ID_SPEED_3_5: return "3.5";
-        case ID_SPEED_40:  return "40.5";
-        default:           return "max";
+        case ID_SPEED_1:    return "1";
+        case ID_SPEED_2:    return "2";
+        case ID_SPEED_3_5:  return "3.5";
+        case ID_SPEED_40:   return "40.5";
+        case ID_SPEED_REAL: return "real";
+        default:            return "max";
     }
+}
+
+// MEGA65: its CPU clocks (each real time) and Max (warp). Other paceable
+// machines: Real time and Max.
+void MmemuFrame::rebuildSpeedMenu() {
+    if (!m_speedMenu) return;
+    while (m_speedMenu->GetMenuItemCount() > 0)
+        m_speedMenu->Destroy(m_speedMenu->FindItemByPosition(0));
+    if (!m_machine) return;
+    static const struct { int id; const char* label; } kClocks[] = {
+        { ID_SPEED_1, "1 MHz" }, { ID_SPEED_2, "2 MHz" },
+        { ID_SPEED_3_5, "3.5 MHz" }, { ID_SPEED_40, "40.5 MHz" },
+    };
+    if (machine_speed::supported(*m_machine)) {
+        for (const auto& c : kClocks)
+            for (double v : m_machine->cpuSpeeds)
+                if (machine_speed::formatMHz(v) == speedValueFor(c.id))
+                    m_speedMenu->AppendRadioItem(c.id, c.label);
+    } else if (machine_speed::paceable(*m_machine)) {
+        m_speedMenu->AppendRadioItem(ID_SPEED_REAL, "Real time");
+    }
+    if (machine_speed::controllable(*m_machine))
+        m_speedMenu->AppendRadioItem(ID_SPEED_MAX, "Max (unbounded)");
 }
 
 void MmemuFrame::OnSpeed(wxCommandEvent& event) {
@@ -1669,19 +1718,21 @@ void MmemuFrame::OnSpeed(wxCommandEvent& event) {
 }
 
 void MmemuFrame::OnSpeedUpdateUI(wxUpdateUIEvent& event) {
-    if (!m_machine || !machine_speed::supported(*m_machine)) {
+    if (!m_machine || !machine_speed::controllable(*m_machine)) {
         event.Enable(false);
         return;
     }
+    // Only items rebuildSpeedMenu() offered for this machine exist
     const std::string value = speedValueFor(event.GetId());
-    bool offered = value == "max";
-    for (double v : m_machine->cpuSpeeds)
-        if (machine_speed::formatMHz(v) == value) offered = true;
-    event.Enable(offered);
+    event.Enable(true);
     // Checked item follows the machine, including speed changes made by software
-    double mhz = m_machine->cpuSpeedMHz();
-    bool current = m_machine->getWarp() ? value == "max"
-                                        : (value != "max" && machine_speed::formatMHz(mhz) == value);
+    bool current;
+    if (machine_speed::atMax(*m_machine))
+        current = value == "max";
+    else if (machine_speed::supported(*m_machine))
+        current = value != "max" && machine_speed::formatMHz(m_machine->cpuSpeedMHz()) == value;
+    else
+        current = value == "real";
     if (current) event.Check(true);
 }
 
@@ -2178,14 +2229,16 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
 void MmemuFrame::OnTimer(wxTimerEvent& event) {
     (void)event;
     if (m_running && m_machine && m_machine->schedulerStep) {
-        // Run flat out for most of the timer period, then return so wx can
-        // process input and the panes refresh (~30 Hz). No wxYield() inside the
-        // slice: input waits at most one slice, and yielding every few steps
-        // costs far more than the emulation. The clock is checked every 1024
-        // steps (about 1 ms of emulation).
+        // Run for most of the timer period, then return so wx can process
+        // input and the panes refresh (~30 Hz). No wxYield() inside the slice:
+        // input waits at most one slice, and yielding every few steps costs far
+        // more than the emulation. The clock is checked every 256 steps
+        // (well under 1 ms of emulation). At real time (#169) the slice also
+        // ends once emulated time catches up with the wall clock; Max runs
+        // flat out.
         int iters = 0;
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kRunSliceMs);
-        while (true) {
+        while (!m_pacer.ahead(*m_machine, std::chrono::steady_clock::now())) {
             m_machine->schedulerStep(*m_machine);
             ++iters;
             if (m_dbg && m_dbg->isPaused()) {
@@ -2203,8 +2256,10 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
                 updateSourceView();
                 break;
             }
-            if ((iters & 1023) == 0 && std::chrono::steady_clock::now() >= deadline)
-                break;
+            if ((iters & 255) == 0) {
+                auto now = std::chrono::steady_clock::now();
+                if (now >= deadline || m_pacer.ahead(*m_machine, now)) break;
+            }
         }
     }
 
@@ -2226,6 +2281,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_sourcePane->RefreshBreakpointMarkers();   // only redraws if breakpoints changed
         if (m_graphicsPane)
             m_graphicsPane->RefreshValues();            // no-op unless shown; throttled while live
+        if (m_sidScopePane)
+            m_sidScopePane->RefreshValues(m_cpu->cycles());   // no-op unless shown and the machine ran
         if (isPaused) {
             if (m_stackPane && m_stackPane->IsShownOnScreen())
                 m_stackPane->RefreshValues();

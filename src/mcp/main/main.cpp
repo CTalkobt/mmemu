@@ -12,6 +12,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <set>
 #include <unordered_map>
 
@@ -39,6 +40,10 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "libdebug/main/gfx_view.h"
+#include "libdebug/main/audio_scope.h"
+#include "libdebug/main/sid_file.h"
+#include "libdebug/main/gif_writer.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "util/stb_image_write.h"
 #include "libdevices/main/io_registry.h"
 #include "imap_controller.h"
@@ -318,15 +323,17 @@ Json handleDescribe() {
         Json spProps(Json::OBJ);
         spProps.oVal["machine_id"] = midProp;
         Json spdProp(Json::OBJ); spdProp.oVal["type"] = Json("string");
-        spdProp.oVal["description"] = Json("CPU clock in MHz (\"1\", \"2\", \"3.5\", \"40\" = 40.5) or \"max\" "
-                                           "for unbounded speed (warp). Omit to only report the current speed.");
+        spdProp.oVal["description"] = Json("MEGA65: CPU clock in MHz (\"1\", \"2\", \"3.5\", \"40\" = 40.5); any paced "
+                                           "machine: \"real\" (real time) or \"max\" (unbounded; warp on the MEGA65). "
+                                           "Omit to only report the current speed.");
         spProps.oVal["speed"] = spdProp;
         spSchema.oVal["properties"] = spProps;
         Json spReq(Json::ARR); spReq.push_back(Json("machine_id"));
         spSchema.oVal["required"] = spReq;
         addTool("set_speed",
-                "MEGA65 only: get or set the CPU speed (1/2/3.5/40.5 MHz). "
-                "\"max\" runs unbounded (warp); a clock in MHz selects it the way software would.",
+                "Get or set the speed setting: real time or max for C64/VIC-20/PET, plus the CPU "
+                "clock (1/2/3.5/40.5 MHz) on the MEGA65, selected the way software would. The GUI "
+                "and CLI `run` pace to real time unless max; the MCP server always runs unpaced.",
                 spSchema);
     }
 
@@ -485,6 +492,28 @@ Json handleDescribe() {
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
         addTool("render_graphics", "Decode sprites or characters from memory (C64/MEGA65 formats) as ASCII art or a PNG sheet.", schema);
+    }
+
+    {
+        Json schema(Json::OBJ);
+        schema.oVal["type"] = Json("object");
+        Json props(Json::OBJ);
+        props.oVal["machine_id"] = midProp;
+        auto prop = [](const char* type, const char* desc) {
+            Json p(Json::OBJ); p.oVal["type"] = Json(type); p.oVal["description"] = Json(desc); return p;
+        };
+        props.oVal["chip"] = prop("number", "Sound chip index (default 0; the MEGA65 has SID1 = 0 and SID2 = 1)");
+        props.oVal["timebase_ms"] = prop("number", "Time across each trace in ms, 1-80 (default 20)");
+        props.oVal["trigger"] = prop("string", "rising (default: each trace starts at a rising zero crossing) or free (latest samples)");
+        props.oVal["path"] = prop("string", "Write the scope image here: .png, or .gif (required for frames > 1). Without it, only the voice state is returned.");
+        props.oVal["frames"] = prop("number", "Number of frames, 1-300 (default 1). More than 1 runs the machine between frames and writes an animated GIF.");
+        props.oVal["frame_ms"] = prop("number", "Emulated ms between frames, 5-1000 (default 40); also the GIF frame delay");
+        props.oVal["width"] = prop("number", "Image width in pixels, 160-1600 (default 480)");
+        props.oVal["row_height"] = prop("number", "Height of each voice/output row in pixels, 40-400 (default 100)");
+        schema.oVal["properties"] = props;
+        Json req(Json::ARR); req.push_back(Json("machine_id"));
+        schema.oVal["required"] = req;
+        addTool("sid_scope", "SID oscilloscope: each voice's waveform and the mixed output, with frequency, note, pulse width, ADSR and envelope state. Returns the voice state as text and optionally writes a PNG or an animated GIF captured while the machine runs.", schema);
     }
 
     Json smSchema(Json::OBJ);
@@ -1386,10 +1415,10 @@ Json handleDescribe() {
         req.push_back(Json("file"));
         schema.oVal["required"] = req;
         addTool("load_sid",
-                "Load a PSID/RSID (.sid) file into a machine. Parses the header, "
-                "loads the SID data into memory, calls the init routine with the "
-                "selected subtune in the accumulator, and returns song metadata "
-                "(title, author, copyright, play address, number of songs). "
+                "Load a PSID/RSID (.sid) file into a C64 machine and install a play driver, "
+                "as a SID player does: init is called with the subtune, then play once per "
+                "frame (50 Hz) or at the tune's CIA timer rate, with $01 banked for each. "
+                "Returns the song metadata (title, author, release, songs, addresses, timing). "
                 "Use record_audio after loading to capture playback.",
                 schema);
     }
@@ -1938,6 +1967,55 @@ Json handleToolsCall(const Json& params) {
                 if (!out.empty()) textItem.oVal["text"] = Json(out);
             }
         }
+    } else if (name == "sid_scope") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        auto fail = [&](const std::string& msg) {
+            textItem.oVal["text"] = Json("Error: " + msg);
+            textItem.oVal["isError"] = Json(true);
+        };
+        auto num = [&](const char* key, int def, int lo, int hi) {
+            return args.contains(key) ? std::max(lo, std::min(hi, (int)args[key].nVal)) : def;
+        };
+        std::vector<scope::ChipRef> chips = ms ? scope::listChips(ms->machine) : std::vector<scope::ChipRef>{};
+        int chipNo = args.contains("chip") ? (int)args["chip"].nVal : 0;
+        std::string path = args.contains("path") ? args["path"].sVal : "";
+        std::string trig = args.contains("trigger") ? args["trigger"].sVal : "rising";
+        int frames = num("frames", 1, 1, 300);
+        int frameMs = num("frame_ms", 40, 5, 1000);
+        bool isGif = false;
+        bool pathOk = path.empty() || scope::snapshotPathOk(path, isGif);
+        if (!ms) fail("Invalid machine ID");
+        else if (chips.empty()) fail("This machine has no sound chip with a scope");
+        else if (chipNo < 0 || chipNo >= (int)chips.size()) fail("chip must be 0-" + std::to_string(chips.size() - 1));
+        else if (trig != "rising" && trig != "free") fail("trigger must be rising or free");
+        else if (!pathOk) fail("path must end in .png or .gif");
+        else if (frames > 1 && !isGif) fail("frames > 1 needs a .gif path");
+        else {
+            const scope::ChipRef& chip = chips[chipNo];
+            scope::RenderOptions opt;
+            opt.timebaseMs = num("timebase_ms", 20, 1, 80);
+            opt.triggered = trig == "rising";
+            opt.width = num("width", 480, 160, 1600);
+            opt.rowHeight = num("row_height", 100, 40, 400);
+
+            scope::Capture cap;
+            if (!path.empty()) {
+                ms->dbg->resume();
+                cap = scope::capture(chip, opt, frames, frameMs, [ms]() {
+                    if (ms->machine && ms->machine->schedulerStep) ms->machine->schedulerStep(*ms->machine);
+                    else ms->cpu->step();
+                    return !ms->dbg->isPaused();
+                });
+            }
+            std::string out = chip.insp->chipName(chip.chip) + ", " + std::to_string(opt.timebaseMs) + " ms, " +
+                              (opt.triggered ? "triggered" : "free run") + "\n" +
+                              scope::voiceSummary(chip.insp, chip.chip);
+            if (!cap.stopNote.empty()) out += cap.stopNote + "\n";
+            std::string err, saved;
+            if (path.empty()) textItem.oVal["text"] = Json(out);
+            else if (scope::writeCapture(path, cap, err, saved)) textItem.oVal["text"] = Json(out + saved);
+            else fail(err);
+        }
     } else if (name == "search_memory") {
         std::string mid = args["machine_id"].sVal;
         std::string pattern = args["pattern"].sVal;
@@ -2458,7 +2536,7 @@ Json handleToolsCall(const Json& params) {
         if (!ms) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
-        } else if (!machine_speed::supported(*ms->machine)) {
+        } else if (!machine_speed::controllable(*ms->machine)) {
             textItem.oVal["text"] = Json("Error: This machine has no CPU speed model");
             textItem.oVal["isError"] = Json(true);
         } else {
@@ -2700,8 +2778,10 @@ Json handleToolsCall(const Json& params) {
                 ". Valid types: " + (validList.empty() ? "(none)" : validList));
             textItem.oVal["isError"] = Json(true);
         } else {
-            textItem.oVal["text"] = Json("Created instance \"" + instanceId +
-                "\" of machine: " + std::string(ms->machine->displayName));
+            std::string text = "Created instance \"" + instanceId +
+                "\" of machine: " + std::string(ms->machine->displayName);
+            for (const auto& w : ms->machine->warnings) text += "\nWarning: " + w;   // #172
+            textItem.oVal["text"] = Json(text);
         }
     } else if (name == "destroy_machine") {
         std::string mid = args["machine_id"].sVal;
@@ -4017,147 +4097,25 @@ Json handleToolsCall(const Json& params) {
         }
 
     } else if (name == "load_sid") {
-        std::string mid = args["machine_id"].sVal;
+        MachineState* ms = getMachine(args["machine_id"].sVal);
         std::string filePath = args["file"].sVal;
-        MachineState* ms = getMachine(mid);
+        std::ifstream sidFile(filePath, std::ios::binary);
         if (!ms) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
+        } else if (!sidFile) {
+            textItem.oVal["text"] = Json("Error: Cannot open file: " + filePath);
+            textItem.oVal["isError"] = Json(true);
         } else {
-            // Read the SID file
-            std::ifstream sidFile(filePath, std::ios::binary);
-            if (!sidFile) {
-                textItem.oVal["text"] = Json("Error: Cannot open file: " + filePath);
+            std::vector<uint8_t> raw((std::istreambuf_iterator<char>(sidFile)), std::istreambuf_iterator<char>());
+            int subtune = args.contains("subtune") ? (int)args["subtune"].nVal : 0;
+            psid::Info info;
+            std::string err;
+            if (!psid::load(raw, subtune, ms->bus, ms->cpu, info, err)) {
+                textItem.oVal["text"] = Json("Error: " + err);
                 textItem.oVal["isError"] = Json(true);
             } else {
-                sidFile.seekg(0, std::ios::end);
-                size_t fileSize = sidFile.tellg();
-                sidFile.seekg(0, std::ios::beg);
-
-                if (fileSize < 0x7C) {
-                    textItem.oVal["text"] = Json("Error: File too small for PSID header");
-                    textItem.oVal["isError"] = Json(true);
-                } else {
-                    std::vector<uint8_t> raw(fileSize);
-                    sidFile.read(reinterpret_cast<char*>(raw.data()), fileSize);
-
-                    // Parse PSID/RSID header (big-endian)
-                    auto rd16be = [&](size_t off) -> uint16_t {
-                        return (raw[off] << 8) | raw[off + 1];
-                    };
-
-                    std::string magic(reinterpret_cast<char*>(raw.data()), 4);
-                    if (magic != "PSID" && magic != "RSID") {
-                        textItem.oVal["text"] = Json("Error: Not a PSID/RSID file (magic: " + magic + ")");
-                        textItem.oVal["isError"] = Json(true);
-                    } else {
-                        uint16_t version    = rd16be(0x04);
-                        uint16_t dataOffset = rd16be(0x06);
-                        uint16_t loadAddr   = rd16be(0x08);
-                        uint16_t initAddr   = rd16be(0x0A);
-                        uint16_t playAddr   = rd16be(0x0C);
-                        uint16_t songs      = rd16be(0x0E);
-                        uint16_t startSong  = rd16be(0x10);
-
-                        // Extract strings (null-terminated within 32 bytes)
-                        auto extractStr = [&](size_t off) -> std::string {
-                            char buf[33];
-                            std::memcpy(buf, &raw[off], 32);
-                            buf[32] = '\0';
-                            return std::string(buf);
-                        };
-                        std::string title    = extractStr(0x16);
-                        std::string author   = extractStr(0x36);
-                        std::string released = extractStr(0x56);
-
-                        // If loadAddress is 0, first 2 bytes of data are the load address (LE)
-                        const uint8_t* data = raw.data() + dataOffset;
-                        size_t dataLen = fileSize - dataOffset;
-
-                        if (loadAddr == 0 && dataLen >= 2) {
-                            loadAddr = data[0] | (data[1] << 8);
-                            data += 2;
-                            dataLen -= 2;
-                        }
-
-                        // If initAddress is 0, use loadAddress
-                        if (initAddr == 0) initAddr = loadAddr;
-
-                        // Select subtune
-                        int subtune = args.contains("subtune") ? (int)args["subtune"].nVal : startSong;
-                        if (subtune < 1) subtune = 1;
-                        if (subtune > songs) subtune = songs;
-
-                        // Load data into machine memory
-                        for (size_t i = 0; i < dataLen; ++i) {
-                            ms->bus->write8(loadAddr + i, data[i]);
-                        }
-
-                        // Set up CPU to call init routine:
-                        // A = subtune - 1 (0-based), then JSR initAddr
-                        // Write a small trampoline at $0002:
-                        //   $0002: LDA #subtune   (A9 xx)
-                        //   $0004: JSR initAddr   (20 lo hi)
-                        //   $0007: BRK            (00)
-                        uint8_t saved[6];
-                        for (int i = 0; i < 6; ++i)
-                            saved[i] = ms->bus->peek8(0x0002 + i);
-
-                        ms->bus->write8(0x0002, 0xA9);
-                        ms->bus->write8(0x0003, (uint8_t)(subtune - 1));
-                        ms->bus->write8(0x0004, 0x20);
-                        ms->bus->write8(0x0005, initAddr & 0xFF);
-                        ms->bus->write8(0x0006, (initAddr >> 8) & 0xFF);
-                        ms->bus->write8(0x0007, 0x00); // BRK
-
-                        // Run the init routine
-                        ms->cpu->setPc(0x0002);
-                        int steps = 0;
-                        while (steps < 1000000) {
-                            if (ms->cpu->pc() == 0x0007) break; // Hit BRK after init
-                            if (ms->bus->peek8(ms->cpu->pc()) == 0x00 && ms->cpu->pc() != 0x0002) break;
-                            ms->cpu->step();
-                            ++steps;
-                        }
-
-                        // Restore trampoline bytes
-                        for (int i = 0; i < 6; ++i)
-                            ms->bus->write8(0x0002 + i, saved[i]);
-
-                        // If play address is non-zero, set up for playback:
-                        // Install a simple play loop at $0002:
-                        //   $0002: JSR playAddr  (20 lo hi)
-                        //   $0005: JMP $0002     (4C 02 00)
-                        if (playAddr != 0) {
-                            ms->bus->write8(0x0002, 0x20);
-                            ms->bus->write8(0x0003, playAddr & 0xFF);
-                            ms->bus->write8(0x0004, (playAddr >> 8) & 0xFF);
-                            ms->bus->write8(0x0005, 0x4C);
-                            ms->bus->write8(0x0006, 0x02);
-                            ms->bus->write8(0x0007, 0x00);
-                            ms->cpu->setPc(0x0002);
-                        }
-
-                        std::stringstream ss;
-                        ss << "Loaded " << magic << " v" << version << ": " << title << "\n"
-                           << "Author: " << author << "\n"
-                           << "Released: " << released << "\n"
-                           << "Songs: " << songs << ", playing subtune " << subtune << "\n"
-                           << "Load: $" << toHex(loadAddr, 4)
-                           << ", Init: $" << toHex(initAddr, 4)
-                           << ", Play: $" << toHex(playAddr, 4) << "\n"
-                           << "Data: " << dataLen << " bytes loaded at $"
-                           << toHex(loadAddr, 4) << "-$"
-                           << toHex((uint16_t)(loadAddr + dataLen - 1), 4) << "\n";
-                        if (playAddr != 0) {
-                            ss << "Play loop installed at $0002. Use record_audio to capture.";
-                        } else {
-                            ss << "No play address (CIA timer-driven). "
-                               << "Use run_cpu + record_audio to capture.";
-                        }
-                        textItem.oVal["text"] = Json(ss.str());
-                    }
-                }
+                textItem.oVal["text"] = Json(psid::describe(info) + " Use record_audio to capture it.");
             }
         }
 
@@ -4222,14 +4180,13 @@ Json handleToolsCall(const Json& params) {
                 if (cyclesPerBatch < 100) cyclesPerBatch = 100;
 
                 while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
-                    // Run CPU for a batch
-                    for (int c = 0; c < cyclesPerBatch; ++c) {
-                        if (ms->machine && ms->machine->schedulerStep) {
-                            ms->machine->schedulerStep(*ms->machine);
-                        } else {
-                            ms->cpu->step();
-                        }
-                        ++cyclesRun;
+                    // Run a batch of clock cycles (not instructions: those are
+                    // 3-5x as many cycles and overflowed the chip's sample
+                    // buffer, dropping samples)
+                    for (int64_t batchEnd = cyclesRun + cyclesPerBatch; cyclesRun < batchEnd; ) {
+                        int c = (ms->machine && ms->machine->schedulerStep)
+                                    ? ms->machine->schedulerStep(*ms->machine) : ms->cpu->step();
+                        cyclesRun += c > 0 ? c : 1;
                     }
 
                     // Pull available audio samples

@@ -23,6 +23,7 @@ struct CliContext {
     uint32_t lastLoadAddr = 0;
     bool quit = false;
     std::string assemblerOverride;  // Set by "config assembler <name>"
+    std::string startSpeed;         // applied to each created machine ("real", "max", MHz; "" = leave as created)
 };
 
 class CliInterpreter {

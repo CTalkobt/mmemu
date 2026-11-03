@@ -211,6 +211,12 @@ TEST_CASE(soft_clip_preserves_low_amplitude) {
     sid.ioWrite(nullptr, 0xD418, 0x0F);  // LP mode, max volume
     sid.ioWrite(nullptr, 0xD404, 0x51);
 
+    // Let the click of setting the volume (a 6581 DC step, drained by the
+    // output high-pass in ~10 ms) settle before measuring
+    for (int i = 0; i < 150; i++)
+        sid.tick(1000);
+    float drain[8192];
+    sid.pullSamples(drain, 8192);
     for (int i = 0; i < 50; i++)
         sid.tick(1000);
 

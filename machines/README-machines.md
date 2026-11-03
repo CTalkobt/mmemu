@@ -29,6 +29,7 @@ This document defines the JSON schema used to describe and reconstruct the vario
 | `id` | string | Unique registry key for the machine (e.g., `"c64"`, `"vic20"`) |
 | `displayName` | string | Human-readable name (e.g., `"Commodore 64"`) |
 | `licenseClass` | string | `"proprietary"` or `"open"` |
+| `clockHz` | number | (Optional) Device clock in Hz (e.g. `985248` for a PAL C64). The GUI and CLI start machines at real time and pace them at this rate (`--speed max` or `speed max` runs unpaced; #169); machines created elsewhere, e.g. in tests or the MCP server, start unpaced. Omit for a machine that is never paced. |
 | `bus` | BusSpec | Primary system memory bus configuration |
 | `cpu` | CpuSpec | CPU core type and bus wiring |
 | `devices` | DeviceSpec[] | Array of I/O devices to instantiate and register |

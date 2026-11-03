@@ -5,6 +5,7 @@
       "id": "c64",
       "displayName": "Commodore 64",
       "licenseClass": "proprietary",
+      "clockHz": 985248,
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16 },
       "cpu": { "type": "6510", "dataBus": "system", "codeBus": "system" },
       "devices": [

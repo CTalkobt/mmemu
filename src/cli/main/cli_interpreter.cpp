@@ -28,11 +28,16 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdebug/main/source_location_formatter.h"
 #include "libdebug/main/frame_analyzer.h"
 #include "libdebug/main/gfx_view.h"
+#include "libdebug/main/audio_scope.h"
+#include "libdebug/main/sid_file.h"
+#include "libdevices/main/iaudio_inspect.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "util/stb_image_write.h"
 #include "imap_controller.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
+#include <chrono>
+#include <thread>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -41,6 +46,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include <set>
 #include <map>
 #include <unordered_map>
+#include <cctype>
 #include <cstring>
 #include "libdevices/main/device_info.h"
 
@@ -291,6 +297,11 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 }
                 m_ctx.machine = md;
                 m_ctx.cpu = md->cpus[0].cpu;
+                {
+                    std::string speedErr;   // #169: the CLI starts machines at real time
+                    if (!machine_speed::applyStartSpeed(*md, m_ctx.startSpeed, speedErr))
+                        m_output("Warning: --speed " + m_ctx.startSpeed + ": " + speedErr + "\n");
+                }
                 // Use CPU data bus if available, otherwise fallback to machine bus
                 m_ctx.bus = m_ctx.cpu->getDataBus() ? m_ctx.cpu->getDataBus() : md->buses[0].bus;
                 
@@ -616,7 +627,18 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         int steps = 0;
         const int STATUS_INTERVAL = 100000; // Report status every 100k steps
         int nextStatusAt = STATUS_INTERVAL;
+        // Real time (#169): sleep whenever emulated time gets ahead of the wall
+        // clock, unless the machine runs at max (`speed max`).
+        machine_speed::RealTimePacer pacer;
         while (!m_ctx.dbg->isPaused() && !g_interrupted) {
+            if (m_ctx.machine && (steps & 255) == 0) {
+                auto now = machine_speed::RealTimePacer::Clock::now();
+                if (pacer.ahead(*m_ctx.machine, now)) {
+                    auto wait = pacer.waitTime(machine_speed::deviceCycles(*m_ctx.machine), now);
+                    std::this_thread::sleep_for(std::min<decltype(wait)>(wait, std::chrono::milliseconds(5)));
+                    continue;   // re-check (and Ctrl-C) before stepping on
+                }
+            }
             if (m_ctx.machine && m_ctx.machine->schedulerStep) {
                 m_ctx.machine->schedulerStep(*m_ctx.machine);
             } else {
@@ -2294,88 +2316,85 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "sid") {
         if (!m_ctx.cpu || !m_ctx.bus) { m_output("No machine created.\n"); return; }
         std::string sub;
-        if (ss >> sub && sub == "load") {
+        ss >> sub;
+        const char* sidSyntax =
+            "Syntax: sid load <path> [subtune]\n"
+            "        sid voices [chip]\n"
+            "        sid scope <file.png|file.gif> [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]\n";
+        if (sub == "voices" || sub == "scope") {
+            std::vector<scope::ChipRef> chips = scope::listChips(m_ctx.machine);
+            if (chips.empty()) { m_output("This machine has no sound chip with a scope.\n"); return; }
+            std::string path;
+            if (sub == "scope" && !(ss >> path)) { m_output(sidSyntax); return; }
+            bool isGif = false;
+            if (sub == "scope" && !scope::snapshotPathOk(path, isGif)) { m_output("The file must end in .png or .gif.\n"); return; }
+
+            // Options: "chip N" etc.; "sid voices 1" is short for chip 1
+            int chipNo = 0, frames = 1, frameMs = 40;
+            scope::RenderOptions opt;
+            std::string key;
+            while (ss >> key) {
+                if (key == "free") { opt.triggered = false; continue; }
+                int val = 0;
+                bool bare = sub == "voices" && !key.empty() && std::isdigit((unsigned char)key[0]);
+                if (bare) val = std::atoi(key.c_str());
+                else {
+                    std::string v;
+                    if (!(ss >> v) || v.empty() || !std::isdigit((unsigned char)v[0])) {
+                        m_output("Expected a number after '" + key + "'.\n" + sidSyntax); return;
+                    }
+                    val = std::atoi(v.c_str());
+                }
+                if (bare || key == "chip")   chipNo = val;
+                else if (key == "frames")    frames = std::max(1, std::min(300, val));
+                else if (key == "ms")        frameMs = std::max(5, std::min(1000, val));
+                else if (key == "timebase")  opt.timebaseMs = std::max(1, std::min(80, val));
+                else if (key == "width")     opt.width = std::max(160, std::min(1600, val));
+                else if (key == "height")    opt.rowHeight = std::max(40, std::min(400, val));
+                else { m_output("Unknown option '" + key + "'.\n" + sidSyntax); return; }
+            }
+            if (chipNo < 0 || chipNo >= (int)chips.size()) {
+                m_output("Chip must be 0-" + std::to_string(chips.size() - 1) + ".\n"); return;
+            }
+            if (frames > 1 && !isGif) { m_output("Several frames need a .gif file.\n"); return; }
+            const scope::ChipRef& chip = chips[chipNo];
+            if (sub == "voices") {
+                m_output(chip.insp->chipName(chip.chip) + "\n" + scope::voiceSummary(chip.insp, chip.chip));
+                return;
+            }
+            if (m_ctx.dbg) m_ctx.dbg->resume();
+            scope::Capture cap = scope::capture(chip, opt, frames, frameMs, [this]() {
+                if (m_ctx.machine && m_ctx.machine->schedulerStep) m_ctx.machine->schedulerStep(*m_ctx.machine);
+                else m_ctx.cpu->step();
+                if (g_interrupted) return false;
+                return !(m_ctx.dbg && m_ctx.dbg->isPaused());
+            });
+            if (g_interrupted) g_interrupted = 0;
+            m_output(chip.insp->chipName(chip.chip) + "\n" + scope::voiceSummary(chip.insp, chip.chip));
+            if (!cap.stopNote.empty()) m_output(cap.stopNote + "\n");
+            std::string err, saved;
+            if (scope::writeCapture(path, cap, err, saved)) m_output(saved + "\n");
+            else m_output("Error: " + err + "\n");
+        } else if (sub == "load") {
             std::string path;
             if (!(ss >> path)) { m_output("Syntax: sid load <path> [subtune]\n"); return; }
             int subtune = -1;
             std::string subStr;
             if (ss >> subStr) { try { subtune = std::stoi(subStr); } catch (...) {} }
 
+            if (!m_ctx.bus || !m_ctx.cpu) { m_output("No machine created.\n"); return; }
             std::ifstream f(path, std::ios::binary);
             if (!f) { m_output("Error: Cannot open file: " + path + "\n"); return; }
-            f.seekg(0, std::ios::end);
-            size_t fileSize = f.tellg();
-            f.seekg(0);
-            if (fileSize < 0x7C) { m_output("Error: File too small for PSID header.\n"); return; }
-
-            std::vector<uint8_t> raw(fileSize);
-            f.read(reinterpret_cast<char*>(raw.data()), fileSize);
-
-            std::string magic(reinterpret_cast<char*>(raw.data()), 4);
-            if (magic != "PSID" && magic != "RSID") {
-                m_output("Error: Not a PSID/RSID file.\n"); return;
+            std::vector<uint8_t> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            psid::Info info;
+            std::string err;
+            if (!psid::load(raw, subtune, m_ctx.bus, m_ctx.cpu, info, err)) {
+                m_output("Error: " + err + "\n");
+                return;
             }
-
-            auto rd16be = [&](size_t off) -> uint16_t { return (raw[off] << 8) | raw[off+1]; };
-            uint16_t version    = rd16be(0x04);
-            uint16_t dataOffset = rd16be(0x06);
-            uint16_t loadAddr   = rd16be(0x08);
-            uint16_t initAddr   = rd16be(0x0A);
-            uint16_t playAddr   = rd16be(0x0C);
-            uint16_t songs      = rd16be(0x0E);
-            uint16_t startSong  = rd16be(0x10);
-
-            auto extractStr = [&](size_t off) -> std::string {
-                char buf[33]; std::memcpy(buf, &raw[off], 32); buf[32] = '\0'; return buf;
-            };
-            std::string title = extractStr(0x16);
-            std::string author = extractStr(0x36);
-
-            const uint8_t* data = raw.data() + dataOffset;
-            size_t dataLen = fileSize - dataOffset;
-            if (loadAddr == 0 && dataLen >= 2) {
-                loadAddr = data[0] | (data[1] << 8);
-                data += 2; dataLen -= 2;
-            }
-            if (initAddr == 0) initAddr = loadAddr;
-            if (subtune < 1) subtune = startSong;
-            if (subtune < 1) subtune = 1;
-            if (subtune > songs) subtune = songs;
-
-            for (size_t i = 0; i < dataLen; ++i)
-                m_ctx.bus->write8(loadAddr + i, data[i]);
-
-            // Trampoline at $0002: LDA #subtune, JSR init, BRK
-            m_ctx.bus->write8(0x0002, 0xA9);
-            m_ctx.bus->write8(0x0003, (uint8_t)(subtune - 1));
-            m_ctx.bus->write8(0x0004, 0x20);
-            m_ctx.bus->write8(0x0005, initAddr & 0xFF);
-            m_ctx.bus->write8(0x0006, (initAddr >> 8) & 0xFF);
-            m_ctx.bus->write8(0x0007, 0x00);
-
-            m_ctx.cpu->setPc(0x0002);
-            for (int s = 0; s < 1000000; ++s) {
-                if (m_ctx.cpu->pc() == 0x0007) break;
-                m_ctx.cpu->step();
-            }
-
-            // Install play loop if play address exists
-            if (playAddr != 0) {
-                m_ctx.bus->write8(0x0002, 0x20);
-                m_ctx.bus->write8(0x0003, playAddr & 0xFF);
-                m_ctx.bus->write8(0x0004, (playAddr >> 8) & 0xFF);
-                m_ctx.bus->write8(0x0005, 0x4C);
-                m_ctx.bus->write8(0x0006, 0x02);
-                m_ctx.bus->write8(0x0007, 0x00);
-                m_ctx.cpu->setPc(0x0002);
-            }
-
-            m_output(magic + " v" + std::to_string(version) + ": " + title + " by " + author + "\n");
-            m_output("Songs: " + std::to_string(songs) + ", subtune " + std::to_string(subtune) + "\n");
-            m_output("Load: $" + toHex(loadAddr) + " Init: $" + toHex(initAddr) + " Play: $" + toHex(playAddr) + "\n");
-            if (playAddr) m_output("Play loop installed at $0002. Use 'recordaudio' to capture.\n");
+            m_output(psid::describe(info) + " ('recordaudio' captures it.)\n");
         } else {
-            m_output("Syntax: sid load <path> [subtune]\n");
+            m_output(sidSyntax);
         }
     } else if (cmd == "map") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
@@ -2440,7 +2459,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "speed") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
-        if (!machine_speed::supported(m)) { m_output(machine_speed::describe(m) + "\n"); return; }
+        if (!machine_speed::controllable(m)) { m_output(machine_speed::describe(m) + "\n"); return; }
         std::string arg, error;
         double requested = 0;
         if (ss >> arg) {
@@ -2791,13 +2810,13 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (cyclesPerBatch < 100) cyclesPerBatch = 100;
 
         while (cyclesRun < totalCycles && (int)recorded.size() < totalSamples) {
-            for (int c = 0; c < cyclesPerBatch; ++c) {
-                if (m_ctx.machine->schedulerStep) {
-                    m_ctx.machine->schedulerStep(*m_ctx.machine);
-                } else {
-                    m_ctx.cpu->step();
-                }
-                ++cyclesRun;
+            // Count clock cycles, not instructions: a batch of instructions is
+            // 3-5x as many cycles and overflowed the chip's sample buffer,
+            // which drops samples (audible skips)
+            for (int64_t batchEnd = cyclesRun + cyclesPerBatch; cyclesRun < batchEnd; ) {
+                int c = m_ctx.machine->schedulerStep ? m_ctx.machine->schedulerStep(*m_ctx.machine)
+                                                     : m_ctx.cpu->step();
+                cyclesRun += c > 0 ? c : 1;
             }
             int pulled = audioDev->pullSamples(pullBuf, 4096);
             for (int i = 0; i < pulled && (int)recorded.size() < totalSamples; ++i)
@@ -3190,6 +3209,9 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape stoprecord     - Release Record button\n"
                  "  tape save <path>    - Write captured buffer to .tap file\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
+                 "  sid voices [chip]   - Show each SID voice: waveform, frequency/note, PW, ADSR, envelope\n"
+                 "  sid scope <file>    - Save the SID oscilloscope as .png, or .gif with 'frames N'\n"
+                 "                        [frames N] [ms N] [timebase N] [free] [chip N] [width N] [height N]\n"
                  "  sym load <path>     - Load symbol table from file\n"
                  "\nExample workflow:\n"
                  "  create c64\n"
@@ -3280,7 +3302,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  project new <t> <dir> - Create a project from a template and open it\n"
                  "  srcmap load <map> [src] - Load a ca45 --source-map file for source-level debugging\n"
                  "  srcmap list|clear   - Show or clear loaded source mappings\n"
-                 "  speed [MHz|max]     - MEGA65: show/set CPU speed: 1, 2, 3.5, 40 (40.5) MHz, or max (unbounded)\n"
+                 "  speed [real|max|MHz] - show/set speed: real time or max (unpaced) for `run`;\n"
+                 "                        MEGA65 also 1, 2, 3.5, 40 (40.5) MHz (each real time)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"

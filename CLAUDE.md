@@ -382,7 +382,7 @@ for (const auto& [name, result] : results) {
 | CA45 assembler | `src/plugins/45gs02/main/ca45_assembler.cpp` |
 | Hypervisor regs | `src/plugins/devices/hypervisor/main/hypervisor_regs.cpp` |
 | MEGA65 machine | `src/plugins/machines/mega65/main/machine_mega65.cpp` |
-| MCP server | `src/mcp/main/main.cpp` (63 tools: assembler, snapshots, diff_file, analyze_routine, generate_tests, record_audio, load_sid, reverse_step, render_graphics) |
+| MCP server | `src/mcp/main/main.cpp` (91 tools: assembler, snapshots, diff_file, analyze_routine, generate_tests, record_audio, load_sid, reverse_step, render_graphics, sid_scope) |
 | Disk image parsers | `src/plugins/cbm-loader/main/cbm_sector_disk.cpp` (D64/D71/D80/D81/D82 base) |
 | GDB server | `src/cli/main/gdb_server.cpp` (RSP protocol, `--gdb-port` CLI flag) |
 | Hardware test bridge | `src/cli/main/hardware_test_bridge.cpp` (Serial/TCP backends for MEGA65) |

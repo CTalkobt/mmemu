@@ -111,6 +111,8 @@ int main(int argc, char *argv[]) {
                       << "  -i, --mount <path>        Mount a disk/tape/program image\n"
                       << "  -t, --type <text>         Type text into the machine\n"
                       << "  --run                     Auto-start the loaded program\n"
+                      << "  --speed <real|max|MHz>    Speed for created machines (default real: real time;\n"
+                      << "                            max runs unpaced, e.g. for tests)\n"
                       << "  --tokenize <in.bas> <out.prg> [--dialect basic2|basic65] [--start <addr>]\n"
                       << "                            Tokenise a BASIC text file to a PRG and exit\n"
                       << "  --gdb-port <port>         Start GDB RSP server on <port>\n"
@@ -134,6 +136,9 @@ int main(int argc, char *argv[]) {
     }
 
     CliContext ctx;
+    ctx.startSpeed = "real";   // #169: run at real time unless --speed says otherwise
+    for (int i = 1; i + 1 < argc; ++i)
+        if (std::string(argv[i]) == "--speed") ctx.startSpeed = argv[i + 1];
     CliInterpreter interpreter(ctx, [](const std::string& out) {
         std::cout << out;
         std::cout.flush();
@@ -154,6 +159,8 @@ int main(int argc, char *argv[]) {
             interpreter.processLine("type " + std::string(argv[++i]));
         } else if (arg == "--run") {
             autoRun = true;
+        } else if (arg == "--speed" && i + 1 < argc) {
+            ++i;   // read before -m above
         } else if (arg == "--gdb-port" && i + 1 < argc) {
             gdbPort = std::stoi(argv[++i]);
         } else if (arg == "--serial-monitor-port" && i + 1 < argc) {

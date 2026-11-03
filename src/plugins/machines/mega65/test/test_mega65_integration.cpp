@@ -8,6 +8,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libcore/main/core_registry.h"
 #include "cpu45gs02.h"
+#include "plugins/devices/sdcard/main/sdcard.h"
 #include "plugins/devices/f018b_dma/main/f018b_dma.h"
 #include "plugins/devices/map_mmu/main/c64_bank_controller.h"
 #include "plugins/devices/map_mmu/main/key_register.h"
@@ -769,10 +770,61 @@ TEST_CASE(mega65_cli_speed_command) {
     ASSERT(run("speed 1").find("Speed: 1 MHz") != std::string::npos);  // clears force_fast
     ASSERT(!bank->forceFast());
 
-    ASSERT(run("speed 7").find("Syntax: speed [1|2|3.5|40.5|max]") != std::string::npos);
+    ASSERT(run("speed 7").find("Syntax: speed [1|2|3.5|40.5|real|max]") != std::string::npos);
     ASSERT_EQ(desc->cpuSpeedMHz(), 1.0);                               // unchanged
 
     ASSERT(run("speed max").find("Speed: max") != std::string::npos);
     ASSERT(desc->getWarp());
+
+    // "real" leaves warp at the current clock (#169)
+    ASSERT(run("speed real").find("Speed: 1 MHz, real time") != std::string::npos);
+    ASSERT(!desc->getWarp());
+    delete desc;
+}
+
+// Real-time pacing (#169): the MEGA65 paces its ~1 MHz phi clock, which
+// deviceCycles() counts: one per CPU cycle at 1 MHz or in warp, fewer at 3.5 MHz.
+TEST_CASE(mega65_device_cycles_follow_phi_clock) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* cpu = static_cast<MOS45GS02*>(desc->cpus[0].cpu);
+    if (cpu->isHypervisor()) cpu->exitHypervisor();
+    ASSERT_EQ(desc->clockHz, 985248.0);
+    ASSERT(desc->deviceCycles);
+
+    // Count the cycles schedulerStep() reports (CPU steps plus DMA/badline stalls)
+    auto runCycles = [&](uint64_t n) {
+        uint64_t total = 0, phi0 = desc->deviceCycles();
+        while (total < n) total += (uint64_t)desc->schedulerStep(*desc);
+        return std::make_pair(total, desc->deviceCycles() - phi0);
+    };
+    auto warp = runCycles(7000);                       // warp (default): phi = CPU cycles
+    ASSERT_EQ(warp.second, warp.first);
+
+    ASSERT(desc->setCpuSpeedMHz(3.5));
+    desc->setWarp(false);
+    auto fast = runCycles(7000);                       // 3.5 CPU cycles per phi cycle
+    ASSERT(fast.second * 35 >= fast.first * 10 - 35);
+    ASSERT(fast.second * 35 <= fast.first * 10 + 35);
+    delete desc;
+}
+
+// #172: the missing SD card warning is recorded on the machine (for the GUI
+// notice bar and MCP), exactly when no image was mounted.
+TEST_CASE(mega65_sd_card_warning_recorded) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    SdCardDevice* sd = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (IOHandler* h : handlers)
+        if ((sd = dynamic_cast<SdCardDevice*>(h))) break;
+    ASSERT(sd != nullptr);
+    bool warned = false;
+    for (const auto& w : desc->warnings)
+        if (w.find("No SD card image found") != std::string::npos) warned = true;
+    ASSERT_EQ(warned, !sd->isMounted());
     delete desc;
 }

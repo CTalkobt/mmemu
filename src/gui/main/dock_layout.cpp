@@ -1,5 +1,6 @@
 #include "dock_layout.h"
 #include <wx/config.h>
+#include <wx/textwrapper.h>
 #include <algorithm>
 #include <sstream>
 
@@ -50,7 +51,20 @@ DockLayout::DockLayout(wxFrame* frame) : m_frame(frame) {
                               .BestSize(460, -1).MinSize(200, -1).CaptionVisible(false)
                               .CloseButton(false).Hide());
 
-    auto* placeholder = new wxPanel(frame);
+    // The AUI centre pane is a host panel: an optional notice bar above
+    // whichever window setCenter() shows (machine screen or placeholder).
+    m_centerHost = new wxPanel(frame);
+    m_centerSizer = new wxBoxSizer(wxVERTICAL);
+    m_notice = new wxInfoBarGeneric(m_centerHost);
+    m_centerHost->Bind(wxEVT_SIZE, [this](wxSizeEvent& e) {
+        e.Skip();
+        if (!m_noticeText.empty() && m_notice->IsShown()) m_centerHost->CallAfter([this]() { wrapNotice(); });
+    });
+    m_centerSizer->Add(m_notice, 0, wxEXPAND);
+    m_centerHost->SetSizer(m_centerSizer);
+    m_aui.AddPane(m_centerHost, wxAuiPaneInfo().Name("center").CenterPane());
+
+    auto* placeholder = new wxPanel(m_centerHost);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->AddStretchSpacer();
     sizer->Add(new wxStaticText(placeholder, wxID_ANY, "No machine loaded - File > Load Machine (Ctrl-L)"),
@@ -86,14 +100,39 @@ void DockLayout::setCenter(wxWindow* window) {
     if (!window) window = m_placeholder;
     if (window == m_center) return;
     if (m_center) {
-        m_aui.DetachPane(m_center);
+        m_centerSizer->Detach(m_center);
         m_center->Hide();
     }
-    if (window->GetParent() != m_frame) window->Reparent(m_frame);
-    m_aui.AddPane(window, wxAuiPaneInfo().Name("center").CenterPane());
+    if (window->GetParent() != m_centerHost) window->Reparent(m_centerHost);
+    m_centerSizer->Add(window, 1, wxEXPAND);
     window->Show();
     m_center = window;
-    m_aui.Update();
+    m_centerHost->Layout();
+}
+
+void DockLayout::showNotice(const wxString& message) {
+    m_noticeText = message;
+    m_noticeWidth = 0;
+    if (message.empty()) { m_notice->Dismiss(); m_centerHost->Layout(); return; }
+    wrapNotice();
+    // The bar re-wraps its label to its own width, which is tiny until it has
+    // been shown and laid out: set the text again once it has its real size.
+    m_centerHost->CallAfter([this]() { m_noticeWidth = 0; wrapNotice(); });
+}
+
+void DockLayout::wrapNotice() {
+    // Room for the text: the bar less its icon, Close button and margins
+    int width = std::max(200, m_centerHost->GetClientSize().x - 160);
+    if (width == m_noticeWidth) return;
+    m_noticeWidth = width;
+    struct Wrapper : wxTextWrapper {
+        wxString text;
+        void OnOutputLine(const wxString& line) override { text += line; }
+        void OnNewLine() override { text += "\n"; }
+    } wrapper;
+    wrapper.Wrap(m_notice, m_noticeText, width);
+    m_notice->ShowMessage(wrapper.text, wxICON_WARNING);
+    m_centerHost->Layout();
 }
 
 DockLayout::Pane* DockLayout::find(const std::string& id) {

@@ -759,7 +759,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
             }
         }
         if (!hyperLoaded) {
-            m65Log()->warn("HYPPO (HICKUP.M65) not found, falling back to the ROM reset vector; run 'importmega65' to install it");
+            const char* msg = "HYPPO (HICKUP.M65) not found, falling back to the ROM reset vector; "
+                              "run 'importmega65' to install it.";
+            m65Log()->warn("{}", msg);
+            desc->warnings.push_back(msg);
         }
 
         if (hyperLoaded) {
@@ -833,9 +836,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
         if (!sdPath.empty() && sdcard->mountImage(sdPath)) {
             m65Log()->debug("Mounted SD card image: {}", sdPath);
         } else {
-            m65Log()->warn("No SD card image found (searched sdcard.paths in machines/mega65.json, e.g. "
-                           "~/.local/share/xemu-lgb/mega65/mega65.img). HYPPO loads MEGA65.ROM from the SD card, so "
-                           "the boot will stop at HYPPO's ROM selection menu instead of reaching BASIC 65.");
+            const char* msg = "No SD card image found (searched sdcard.paths in machines/mega65.json, e.g. "
+                              "~/.local/share/xemu-lgb/mega65/mega65.img). HYPPO loads MEGA65.ROM from the SD card, so "
+                              "the boot will stop at HYPPO's ROM selection menu instead of reaching BASIC 65.";
+            m65Log()->warn("{}", msg);
+            desc->warnings.push_back(msg);
         }
     }
 
@@ -852,7 +857,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // VIC-IV, SIDs, CIAs and keyboard keep the ~1 MHz phi clock. Warp (the
     // default) keeps the old behaviour of one device cycle per CPU cycle.
     // Ratios are CPU cycles per phi cycle, in half units: 1, 2, 3.5, 40.5 MHz.
-    struct SpeedState { bool warp = true; uint64_t phiAcc = 0; };
+    // phiTotal counts the phi cycles devices have seen, for real-time pacing (#169).
+    struct SpeedState { bool warp = true; uint64_t phiAcc = 0; uint64_t phiTotal = 0; };
     auto speed = std::make_shared<SpeedState>();
     static const int kHalfRatioBySelect[8] = {
         4,   // 000: 2 MHz
@@ -876,6 +882,9 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->setWarp = [speed](bool on) { speed->warp = on; speed->phiAcc = 0; };
     desc->cpuSpeedMHz = [halfRatio]() { return halfRatio() / 2.0; };
     desc->cpuSpeeds = { 1.0, 2.0, 3.5, 40.5 };
+    // Real time (#169): pace the ~1 MHz phi clock the devices run on. Warp (max) is unpaced.
+    desc->clockHz = 985248;
+    desc->deviceCycles = [speed]() { return speed->phiTotal; };
     desc->setCpuSpeedMHz = [vic4, bankCtrl](double mhz) {
         // Speed select bits as gs4510.vhdl decodes them (see kHalfRatioBySelect)
         int sel;
@@ -894,10 +903,15 @@ MachineDescriptor* Mega65MachineFactory::create() {
         // cycles, phi-clocked ones by the phi cycles that elapsed at this speed.
         auto advance = [&](uint64_t cycles, int ratio) {
             if (!d.ioRegistry) return;
-            if (speed->warp || ratio == 2) { d.ioRegistry->tickAll(cycles); return; }
+            if (speed->warp || ratio == 2) {
+                speed->phiTotal += cycles;
+                d.ioRegistry->tickAll(cycles);
+                return;
+            }
             speed->phiAcc += cycles * 2;
             uint64_t phi = speed->phiAcc / ratio;
             speed->phiAcc %= ratio;
+            speed->phiTotal += phi;
             d.ioRegistry->tickAll(cycles, phi);
         };
         int ratio = speed->warp ? 2 : halfRatio();

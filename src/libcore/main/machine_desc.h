@@ -116,6 +116,29 @@ struct MachineDescriptor {
     /** CPU clocks setCpuSpeedMHz() accepts, slowest first. */
     std::vector<double>       cpuSpeeds;
 
+    /**
+     * Real-time pacing (#169). clockHz is the device (phi) clock in Hz; 0
+     * means the machine is never paced. Front ends that pace (GUI, CLI `run`)
+     * keep deviceCycles() in step with the wall clock unless the machine runs
+     * at max speed (warp on, or maxSpeed for machines without getWarp).
+     * Machines are created at max speed, so tests and the MCP server run
+     * flat out; the GUI and CLI select real time when they create one
+     * (`--speed` overrides).
+     */
+    double                      clockHz = 0;
+    /** Device cycles elapsed; unset = the main CPU's cycle count. */
+    std::function<uint64_t()>   deviceCycles;
+    /** Run unpaced; used by machines without getWarp/setWarp. */
+    bool                        maxSpeed = true;
+
+    /**
+     * Problems found while building the machine that the user should see
+     * (e.g. no MEGA65 SD card image), one sentence each (#172). They are
+     * also logged; the GUI shows them in a notice bar and MCP create_machine
+     * adds them to its reply.
+     */
+    std::vector<std::string>    warnings;
+
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine
     std::vector<std::string> symbolFiles;

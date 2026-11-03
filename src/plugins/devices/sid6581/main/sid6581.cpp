@@ -1,107 +1,96 @@
 #include "sid6581.h"
-#include "filter_curve.h"
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
 
 // ---------------------------------------------------------------------------
-// Soft-clipping distortion for high-resonance filtering
+// Constants
 // ---------------------------------------------------------------------------
+// The synthesis follows reSID 0.16 (Dag Lem): every clock cycle the
+// oscillators, noise LFSR, envelope generators and filter are clocked (#123),
+// and the per-cycle output is averaged down to the audio sample rate. Voice
+// and filter levels are in reSID's units (20-bit voice output >> 7), as floats.
 
-/**
- * Simplified soft-clipping function using tanh-like approximation.
- * More efficient than full tanh() call; provides smooth saturation.
- *
- * Input: x in range [-threshold..+threshold]
- * Output: soft-clipped value in range ~[-1..+1]
- *
- * Approximation: tanh(x) ≈ x / (1 + |x|) for low CPU cost.
- * This is computationally cheaper than std::tanh() and works well
- * for distortion in audio processing.
- */
-static inline float softClip(float x, float threshold) {
-    if (threshold <= 0.0f) return x;  // no clipping
+namespace {
 
-    // Normalize by threshold
-    float normalized = x / threshold;
+// Envelope rate counter periods (cycles per step) for the 4-bit A/D/R values
+const uint16_t RATE_PERIOD[16] = {
+    9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532, 31251
+};
 
-    // Apply soft-clip using economical approximation
-    // Avoids the full tanh which costs ~50 cycles; this costs ~10
-    if (normalized >  1.5f) return  threshold;  // hard limit at high distortion
-    if (normalized < -1.5f) return -threshold;
+// One voice's full swing: 12-bit waveform x 8-bit envelope, >> 7
+constexpr float VOICE_RANGE = 4095.0f * 255.0f / 128.0f;
 
-    // Smooth saturation in [-1.5..+1.5]: uses rational approximation
-    // tanh(x) ≈ x * (27.0 + x*x) / (27.0 + 9.0*x*x)
-    float x2 = normalized * normalized;
-    float numerator = normalized * (27.0f + x2);
-    float denominator = 27.0f + 9.0f * x2;
-    return (numerator / denominator) * threshold;
-}
+// MOS 6581 DC offsets (reSID, measured): the waveform DAC's "zero" is 0x380,
+// not 0x800, the envelope DAC adds 0x800 * 0xFF, and the mixer has its own
+// offset. The master volume multiplies the DC too, which is why writing $D418
+// alone makes sound (volume-register "digis", #122). The 8580 has none.
+constexpr float WAVE_ZERO_6581 = 0x380;
+constexpr float VOICE_DC_6581  = 0x800 * 0xFF / 128.0f;
+constexpr float MIXER_DC_6581  = -(0xFFF * 0xFF / 18) / 128.0f;
 
-/**
- * Calculate saturation threshold based on resonance.
- * High resonance (Q > 1) causes analog circuitry to clip.
- *
- * Resonance parameter: 0-15 (from $D417 bits 4-7)
- * Q value: roughly 0.22 (Q_min) to 2.0 (Q_max)
- *
- * Saturation threshold is inversely related to Q:
- * - Low Q (0-7): threshold ≈ 1.5-2.0 (little clipping)
- * - High Q (8-15): threshold ≈ 0.2-0.8 (heavy clipping, adds harmonics)
- *
- * For the 6581, the analog filter can saturate quite aggressively.
- * For the 8580, the distortion is smoother and less pronounced.
- */
-static inline float calculateSaturationThreshold(uint8_t resMask, bool is6581) {
-    // resMask: 0-15 (4-bit resonance control)
-    // Higher resMask = higher Q = more saturation
+// Filter cutoff (Hz) against the 11-bit FC register, measured on real chips
+// (reSID 0.16 f0_points, Dag Lem). The 6581 curve is strongly nonlinear and
+// drops at $400; the 8580 is close to linear. Linear interpolation between
+// the points.
+struct FcPoint { int fc; float hz; };
+const FcPoint FC_6581[] = {
+    {    0,   220 }, {  128,   230 }, {  256,   250 }, {  384,   300 }, {  512,   420 },
+    {  640,   780 }, {  768,  1600 }, {  832,  2300 }, {  896,  3200 }, {  960,  4300 },
+    {  992,  5000 }, { 1008,  5400 }, { 1016,  5700 }, { 1023,  6000 },
+    { 1024,  4600 }, { 1032,  4800 }, { 1056,  5300 }, { 1088,  6000 }, { 1120,  6600 },
+    { 1152,  7200 }, { 1280,  9500 }, { 1408, 12000 }, { 1536, 14500 }, { 1664, 16000 },
+    { 1792, 17100 }, { 1920, 17700 }, { 2047, 18000 },
+};
+const FcPoint FC_8580[] = {
+    {    0,     0 }, {  128,   800 }, {  256,  1600 }, {  384,  2500 }, {  512,  3300 },
+    {  640,  4100 }, {  768,  4800 }, {  896,  5600 }, { 1024,  6500 }, { 1152,  7500 },
+    { 1280,  8400 }, { 1408,  9200 }, { 1536,  9800 }, { 1664, 10500 }, { 1792, 11000 },
+    { 1920, 11700 }, { 2047, 12500 },
+};
 
-    if (resMask < 4) return 2.5f;  // Q < 0.5: almost no distortion
-
-    // Q-dependent curve: distortion increases sharply with resonance
-    float q_factor = 0.22f + (float)resMask / 15.0f * 1.78f;  // Q in [0.22..2.0]
-
-    // Threshold inversely proportional to Q (higher Q → lower threshold → more clipping)
-    float threshold = 2.0f / q_factor;
-
-    // 6581 has more pronounced distortion due to analog limitations
-    if (is6581) {
-        threshold *= 0.8f;  // ~20% more aggressive clipping
-    } else {
-        threshold *= 1.1f;  // 8580: smoother, less extreme distortion
+template <size_t N>
+float cutoffHz(const FcPoint (&pts)[N], int fc) {
+    for (size_t i = 1; i < N; ++i) {
+        if (fc <= pts[i].fc) {
+            const FcPoint& a = pts[i - 1];
+            const FcPoint& b = pts[i];
+            if (b.fc == a.fc) return b.hz;
+            return a.hz + (b.hz - a.hz) * (float)(fc - a.fc) / (float)(b.fc - a.fc);
+        }
     }
-
-    // Clamp to reasonable range [0.15..2.5]
-    return std::max(0.15f, std::min(2.5f, threshold));
+    return pts[N - 1].hz;
 }
+
+// Op-amp headroom of the filter integrators (#121), from reSID 1.0's op-amp
+// transfer curves measured on a 6581R4AR and an 8580R5: 6581 outputs swing
+// 0.81-10.31 V around a 4.54 V working point with one voice spanning ~1.5 V;
+// the 8580 1.30-8.91 V around ~4.81 V with ~1.0 V per voice. The smaller side
+// gives the limit in voice ranges: 3.73 / 1.5 and 3.51 / 1.0.
+constexpr float HEADROOM_6581 = 3.73f / 1.5f;
+constexpr float HEADROOM_8580 = 3.51f / 1.0f;
+
+// Soft limit: linear up to `knee`, then bending smoothly towards `limit`.
+inline float saturate(float x, float knee, float limit) {
+    float a = std::fabs(x);
+    if (a <= knee) return x;
+    float span = limit - knee;
+    float y = knee + span * std::tanh((a - knee) / span);
+    return x < 0 ? -y : y;
+}
+
+// External output stage of the C64 (reSID): 10k/1000pF low-pass (w0 = 1e5
+// rad/s, ~16 kHz) and 10k/10uF high-pass (w0 = 100 rad/s, ~16 Hz).
+constexpr float EXT_W0_LP = 100000.0f;
+constexpr float EXT_W0_HP = 100.0f;
+
+}  // namespace
 
 SID6581::SID6581(const std::string& name, uint32_t baseAddr)
     : m_name(name), m_baseAddr(baseAddr)
 {
     SID6581::reset();
-}
-
-// ---------------------------------------------------------------------------
-// ADSR rate tables
-// ---------------------------------------------------------------------------
-// Cycles per +1 envelope step at 1 MHz (standard SID documented values).
-// Scale to the configured clock in atkCycles()/decRelCycles().
-static constexpr uint32_t s_atkBase[16] = {
-    9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19531, 31250
-};
-// Decay/Release take 3× as many cycles per step as attack.
-static constexpr uint32_t s_drBase[16] = {
-    27, 96, 189, 285, 447, 660, 801, 939, 1176, 2931, 5862, 9378, 11721, 35160, 58593, 93750
-};
-
-uint32_t SID6581::atkCycles(uint8_t nibble, uint32_t clockHz) {
-    // s_atkBase is calibrated for 1 MHz; scale to actual clock.
-    uint64_t v = (uint64_t)s_atkBase[nibble & 0x0F] * clockHz / 1000000u;
-    return v ? (uint32_t)v : 1;
-}
-uint32_t SID6581::decRelCycles(uint8_t nibble, uint32_t clockHz) {
-    uint64_t v = (uint64_t)s_drBase[nibble & 0x0F] * clockHz / 1000000u;
-    return v ? (uint32_t)v : 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,25 +100,21 @@ uint32_t SID6581::decRelCycles(uint8_t nibble, uint32_t clockHz) {
 void SID6581::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
     for (auto& v : m_voices) {
-        v.phase     = 0;
-        v.lfsr      = 0x7FFFFF;
-        v.prevBit19 = 0;
-        v.envPhase  = Voice::Env::IDLE;
-        v.envLevel  = 0;
-        v.envAccum  = 0;
-        v.freq  = 0;
-        v.pw    = 0;
-        v.cr    = 0;
-        v.ad    = 0;
-        v.sr    = 0;
-        v.prevGate  = false;
+        v = Voice();
+        v.ratePeriod = RATE_PERIOD[0];
     }
-    m_filter.lp = 0.0f;
-    m_filter.bp = 0.0f;
+    m_vhp = m_vbp = m_vlp = 0.0f;
+    m_extLp = m_extHp = 0.0f;
+    m_coeffValid = false;
     m_sampleFrac    = 0;
+    m_sampleSum     = 0.0;
+    m_sampleCycles  = 0;
     m_audioBufRead  = 0;
     m_audioBufWrite = 0;
     m_audioBufCount = 0;
+    m_scopePos   = 0;
+    m_scopeCount = 0;
+    m_scopeTotal = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +133,7 @@ bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case OSC3:
             // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
             // folded triangle, pulse, noise etc., not the raw accumulator.
-            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2])) >> 4);
+            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2]), chipModel()) >> 4);
             break;
         case ENV3:
             *val = m_voices[2].envLevel;
@@ -165,6 +150,7 @@ bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     return true;
 }
 
+
 // ---------------------------------------------------------------------------
 // IOHandler: ioWrite
 // ---------------------------------------------------------------------------
@@ -176,37 +162,47 @@ bool SID6581::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if (reg > 0x18) return true; // $D419–$D41F are read-only or unused
 
     m_regs[reg] = val;
-
-    // Update voice mirrors from raw registers.
-    for (int i = 0; i < 3; ++i) {
-        int base = i * 7;
-        Voice& v = m_voices[i];
-        v.freq = (uint16_t)m_regs[base + 0] | ((uint16_t)m_regs[base + 1] << 8);
-        v.pw   = (uint16_t)m_regs[base + 2] | ((uint16_t)(m_regs[base + 3] & 0x0F) << 8);
-        v.cr   = m_regs[base + 4];
-        v.ad   = m_regs[base + 5];
-        v.sr   = m_regs[base + 6];
-
-        // Envelope gate transitions.
-        bool gate = (v.cr & CR_GATE) != 0;
-        if (gate && !v.prevGate) {
-            // Rising gate: restart attack from current level.
-            v.envPhase = Voice::Env::ATTACK;
-            v.envAccum = 0;
-        } else if (!gate && v.prevGate) {
-            // Falling gate: start release.
-            v.envPhase = Voice::Env::RELEASE;
-            v.envAccum = 0;
-        }
-        v.prevGate = gate;
-
-        // Test bit: freeze oscillator, load LFSR with all-1s.
-        if (v.cr & CR_TEST) {
-            v.phase = 0;
-            v.lfsr  = 0x7FFFFF;
-        }
-    }
+    if (reg < 21) writeVoiceReg(m_voices[reg / 7], reg % 7, val);
+    else m_coeffValid = false;   // cutoff or resonance may have changed
     return true;
+}
+
+void SID6581::writeVoiceReg(Voice& v, int reg, uint8_t val) {
+    switch (reg) {
+        case 0: v.freq = (uint16_t)((v.freq & 0xFF00) | val); break;
+        case 1: v.freq = (uint16_t)((v.freq & 0x00FF) | (val << 8)); break;
+        case 2: v.pw   = (uint16_t)((v.pw & 0x0F00) | val); break;
+        case 3: v.pw   = (uint16_t)((v.pw & 0x00FF) | ((val & 0x0F) << 8)); break;
+        case 4: {
+            bool gate = (val & CR_GATE) != 0, wasGate = (v.cr & CR_GATE) != 0;
+            if (gate && !wasGate) {
+                // Attack. The rate counter is not reset: the first step comes
+                // when it next reaches the period (the "ADSR delay bug").
+                v.envState = Voice::EnvState::ATTACK;
+                v.ratePeriod = RATE_PERIOD[v.ad >> 4];
+                v.holdZero = false;
+            } else if (!gate && wasGate) {
+                v.envState = Voice::EnvState::RELEASE;
+                v.ratePeriod = RATE_PERIOD[v.sr & 0x0F];
+            }
+            // Test bit: oscillator held at 0, LFSR reloaded
+            if (val & CR_TEST) {
+                v.phase = 0;
+                v.lfsr  = 0x7FFFFF;
+            }
+            v.cr = val;
+            break;
+        }
+        case 5:
+            v.ad = val;
+            if (v.envState == Voice::EnvState::ATTACK)             v.ratePeriod = RATE_PERIOD[val >> 4];
+            else if (v.envState == Voice::EnvState::DECAY_SUSTAIN) v.ratePeriod = RATE_PERIOD[val & 0x0F];
+            break;
+        case 6:
+            v.sr = val;
+            if (v.envState == Voice::EnvState::RELEASE) v.ratePeriod = RATE_PERIOD[val & 0x0F];
+            break;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -218,239 +214,205 @@ void SID6581::tick(uint64_t cycles) {
 }
 
 // ---------------------------------------------------------------------------
-// Synthesis
+// Envelope generator (reSID 0.16)
 // ---------------------------------------------------------------------------
+
+void SID6581::Voice::clockEnvelope() {
+    // 15-bit rate counter compared with the period; it is never reset by a
+    // gate change, so a smaller new period can mean a wait of up to 2^15
+    // cycles for the wraparound (ADSR delay bug).
+    if (++rateCounter & 0x8000) rateCounter = (uint16_t)((rateCounter + 1) & 0x7FFF);
+    if (rateCounter != ratePeriod) return;
+    rateCounter = 0;
+
+    // Decay and release are slowed further by the exponential counter
+    if (envState != EnvState::ATTACK && ++expCounter != expPeriod) return;
+    expCounter = 0;
+    if (holdZero) return;
+
+    switch (envState) {
+        case EnvState::ATTACK:
+            ++envLevel;
+            if (envLevel == 0xFF) {
+                envState = EnvState::DECAY_SUSTAIN;
+                ratePeriod = RATE_PERIOD[ad & 0x0F];
+            }
+            break;
+        case EnvState::DECAY_SUSTAIN:
+            // Sustain level: both nibbles of the counter compared with S
+            if (envLevel != (uint8_t)((sr >> 4) * 0x11)) --envLevel;
+            break;
+        case EnvState::RELEASE:
+            --envLevel;
+            break;
+    }
+
+    // Piecewise-linear approximation of an exponential decay
+    switch (envLevel) {
+        case 0xFF: expPeriod = 1;  break;
+        case 0x5D: expPeriod = 2;  break;
+        case 0x36: expPeriod = 4;  break;
+        case 0x1A: expPeriod = 8;  break;
+        case 0x0E: expPeriod = 16; break;
+        case 0x06: expPeriod = 30; break;
+        case 0x00: expPeriod = 1; holdZero = true; break;
+        default: break;
+    }
+}
+
+SID6581::Voice::Env SID6581::Voice::envPhase() const {
+    switch (envState) {
+        case EnvState::ATTACK: return Env::ATTACK;
+        case EnvState::DECAY_SUSTAIN:
+            return envLevel == (uint8_t)((sr >> 4) * 0x11) ? Env::SUSTAIN : Env::DECAY;
+        default:
+            return envLevel == 0 ? Env::IDLE : Env::RELEASE;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Synthesis: every cycle (#123)
+// ---------------------------------------------------------------------------
+
+void SID6581::updateFilterCoeffs() {
+    int fc = (m_regs[FC_LO] & 0x07) | (m_regs[FC_HI] << 3);
+    int res = m_regs[RES_FILT] >> 4;
+    bool is6581 = m_filterVariant == 0;
+    float hz = is6581 ? cutoffHz(FC_6581, fc) : cutoffHz(FC_8580, fc);
+    hz = std::min(hz, 16000.0f);                        // reSID's single-cycle ceiling
+    m_w0dt = 2.0f * 3.14159265f * hz / (float)m_clockHz;
+    m_invQ = 1.0f / (0.707f + (float)res / 15.0f);       // Q 0.707 .. 1.707
+    float limit = (is6581 ? HEADROOM_6581 : HEADROOM_8580) * VOICE_RANGE;
+    m_filterLo = 0.75f * limit;                          // knee
+    m_filterHi = limit;
+    m_coeffValid = true;
+}
 
 void SID6581::synthesize(uint64_t cycles) {
-    // Voice N is synced / ring-modulated by voice N-1, wrapping (v0←v2,
-    // v1←v0, v2←v1).
-    //
-    // 1. Oscillators. As in reSID, all three accumulators advance first and
-    //    hard sync is applied afterwards from the sync sources' MSB rising
-    //    edges, so the result does not depend on the order voices are updated.
-    //    riseAt[i] = cycle (1..cycles) of voice i's last MSB rising edge in
-    //    this tick, 0 if none.
-    uint64_t riseAt[3] = {0, 0, 0};
-    bool anyRise = false;
-    if (m_voices[0].freq | m_voices[1].freq | m_voices[2].freq) {   // all silent: nothing moves
+    if (!m_coeffValid) updateFilterCoeffs();
+
+    const bool is6581 = m_filterVariant == 0;
+    const auto chip = chipModel();
+    const float waveZero = is6581 ? WAVE_ZERO_6581 : 2048.0f;
+    const float voiceDc  = is6581 ? VOICE_DC_6581 : 0.0f;
+    const float mixerDc  = is6581 ? MIXER_DC_6581 : 0.0f;
+
+    const uint8_t filt    = m_regs[RES_FILT] & 0x07;
+    const uint8_t modeVol = m_regs[MODE_VOL];
+    const float   vol     = (float)(modeVol & 0x0F);
+    const bool    v3off   = (modeVol & MV_3OFF) && !(filt & 0x04);
+
+    // DC of the filtered voices: the filter's steady state passes it
+    // inverted on the low-pass output only (Vlp = -Vi), so it is added there
+    // rather than run through the integrators.
+    float filtDc = 0.0f;
+    for (int i = 0; i < 3; ++i)
+        if (filt & (1 << i)) filtDc += voiceDc;
+
+    const float extLpK = EXT_W0_LP / (float)m_clockHz;
+    const float extHpK = EXT_W0_HP / (float)m_clockHz;
+    // Full scale: three voices at full volume, as reSID. (Two clipped loud
+    // tunes such as Rob Hubbard's Commando.)
+    const float outScale = 1.0f / (VOICE_RANGE * 3.0f * 15.0f);
+
+    for (uint64_t c = 0; c < cycles; ++c) {
+        // 1. Envelopes and oscillators. Hard sync is applied after all three
+        //    accumulators have advanced, from the sources' MSB rising edges.
+        for (Voice& v : m_voices) {
+            v.clockEnvelope();
+            if (v.cr & CR_TEST) { v.msbRose = false; continue; }
+            uint32_t old = v.phase;
+            v.phase = (old + v.freq) & 0xFFFFFF;
+            v.msbRose = !(old & 0x800000) && (v.phase & 0x800000);
+            // Noise LFSR: shifted when accumulator bit 19 goes high
+            if (!(old & 0x080000) && (v.phase & 0x080000)) {
+                uint32_t bit = ((v.lfsr >> 22) ^ (v.lfsr >> 17)) & 1u;
+                v.lfsr = ((v.lfsr << 1) | bit) & 0x7FFFFF;
+                // Noise with another waveform: 0 output bits pull the LFSR
+                // bits feeding them low (noise writeback, #119)
+                if ((v.cr & CR_NOISE) && (v.cr & 0x70)) {
+                    uint16_t out = v.waveOutput(false, ringMsbFor(v), chip);
+                    v.lfsr &= ~CombinedWaveformTable::NOISE_TAPS | CombinedWaveformTable::noiseWriteback(out);
+                }
+            }
+        }
         for (int i = 0; i < 3; ++i) {
             Voice& v = m_voices[i];
-            if ((v.cr & CR_TEST) || v.freq == 0) continue;   // test bit freezes the oscillator
-            uint64_t f = v.freq, p0 = v.phase, end = p0 + f * cycles;
-            if (end >= 0x800000) {
-                // Last crossing of 0x800000 + k * 2^24 (bit 23 going 0 -> 1)
-                uint64_t c = 0x800000 + (((end - 0x800000) >> 24) << 24);
-                if (c > p0) { riseAt[i] = (c - p0 + f - 1) / f; anyRise = true; }
-            }
-            v.phase = (uint32_t)(end & 0xFFFFFF);
+            const Voice& src = m_voices[(i + 2) % 3];
+            const Voice& srcSrc = m_voices[(i + 1) % 3];
+            // No sync when the source is itself being synced in this cycle (reSID)
+            if ((v.cr & CR_SYNC) && src.msbRose && !((src.cr & CR_SYNC) && srcSrc.msbRose))
+                v.phase = 0;
         }
-    }
-    for (int i = 0; anyRise && i < 3; ++i) {
-        Voice& v = m_voices[i];
-        int src = (i + 2) % 3, srcSrc = (i + 1) % 3;
-        if (!(v.cr & CR_SYNC) || (v.cr & CR_TEST) || !riseAt[src]) continue;
-        // reSID: no sync when the source is itself being synced in that cycle
-        if ((m_voices[src].cr & CR_SYNC) && riseAt[srcSrc] == riseAt[src]) continue;
-        // Reset to 0 at the edge, then run for the rest of the tick
-        v.phase = (uint32_t)(((uint64_t)v.freq * (cycles - riseAt[src])) & 0xFFFFFF);
-    }
 
-    // 2. Noise LFSR and envelopes. A silent idle voice (common: SIDs untouched
-    //    during boot) has no LFSR edge and only its idle envelope accumulator
-    //    changes: skip the call for it.
-    auto lfsrAndEnvelope = [&](Voice& v) {
-        if (v.freq == 0 && !(v.cr & CR_TEST) && v.envPhase == Voice::Env::IDLE &&
-            ((v.phase >> 19) & 1) == v.prevBit19)
-            v.envAccum += cycles;
-        else
-            tickVoice(v, cycles, m_clockHz);
-    };
-    lfsrAndEnvelope(m_voices[0]);
-    lfsrAndEnvelope(m_voices[1]);
-    lfsrAndEnvelope(m_voices[2]);
-
-    // Determine how many output samples this tick spans. Most ticks are one
-    // CPU instruction and produce none, so return before any filter maths.
-    m_sampleFrac += (uint64_t)cycles * (uint32_t)m_sampleRate;
-    uint32_t newSamples = (uint32_t)(m_sampleFrac / m_clockHz);
-    m_sampleFrac %= m_clockHz;
-    if (newSamples == 0) return;
-
-    uint16_t cutoff = (uint16_t)(m_regs[FC_LO] & 0x07) | ((uint16_t)m_regs[FC_HI] << 3);
-    uint8_t resMask = (m_regs[RES_FILT] >> 4) & 0x0F;
-    uint8_t modeVol = m_regs[MODE_VOL];
-    float vol = (float)(modeVol & 0x0F) / 15.0f;
-
-    // Configure filter with current chip variant
-    m_filter.isHardware6581 = (m_filterVariant == 0);  // 0 = 6581, 1 = 8580
-
-    // Filter coefficients depend only on cutoff, resonance, variant and sample
-    // rate: recompute them only when one of those changes.
-    if (!m_coeffValid || cutoff != m_coeffCutoff || resMask != m_coeffRes ||
-        m_filterVariant != m_coeffVariant || m_sampleRate != m_coeffSampleRate) {
-        // Map 0–2047 to ~30–12000 Hz (approximately logarithmic).
-        float fcHz = 30.0f * std::pow(400.0f, (float)cutoff / 2047.0f);
-        // Chamberlin filter coefficient: f = 2*sin(pi*fc/sr)  (keep small for stability)
-        float f = 2.0f * std::sin(3.14159265f * fcHz / (float)m_sampleRate);
-        f = std::min(f, 0.95f);
-        // Resonance: Q from RES nibble (0=low, 15=high).
-        float q = 1.0f / (0.5f + (float)resMask / 15.0f * 3.5f); // Q range ~0.22–2.0
-
-        // Apply nonlinear filter curve modeling (6581 vs 8580 variants)
-        // The real SID filter exhibits nonlinearity due to component tolerances,
-        // transistor gain variation, and op-amp limitations. This adjusts the
-        // cutoff frequency coefficient and resonance multiplier based on empirical
-        // measurements from real hardware (via reSIDfp reverse-engineering).
-        FilterCurve::Variant filterVariant = (m_filterVariant == 0)
-            ? FilterCurve::Variant::SID_6581
-            : FilterCurve::Variant::SID_8580;
-        FilterCurve::FilterCoeffs curved = FilterCurve::applyNonlinearity(
-            f, q, cutoff, resMask, filterVariant);
-        m_coeffF = curved.f;
-        m_coeffQ = curved.q;
-        m_coeffCutoff = cutoff;
-        m_coeffRes = resMask;
-        m_coeffVariant = m_filterVariant;
-        m_coeffSampleRate = m_sampleRate;
-        m_coeffValid = true;
-    }
-    const float f = m_coeffF;
-    const float q = m_coeffQ;
-
-    for (uint32_t s = 0; s < newSamples; ++s) {
-        float mix = 0.0f;
-
+        // 2. Voice outputs: (waveform - zero) x envelope + DC
+        float vi = 0.0f, vnf = 0.0f;
+        float voice[3];   // for the scope: each voice's swing, -1..1
         for (int i = 0; i < 3; ++i) {
-            // Voice 3 can be disconnected from audio output (used as LFO/modulator).
-            if (i == 2 && (modeVol & MV_3OFF)) continue;
-
-            float vout = voiceOutput(m_voices[i]);
-            bool filtered = (m_regs[RES_FILT] >> i) & 1;
-
-            if (filtered) {
-                // Pass voice to filter with soft-clipping distortion
-                vout = m_filter.process(vout, f, q, modeVol, resMask);
-            } else {
-                // Un-filtered voices bypass LP/BP but still pass through HP path.
-                // Real SID: un-filtered voices are summed directly to output.
-            }
-            mix += vout;
+            Voice& v = m_voices[i];
+            uint16_t wave = v.waveOutput(false, ringMsbFor(v), chip);
+            // 6581: with saw in a combination, a low output top bit pulls the
+            // accumulator MSB low (reSIDfp)
+            if (is6581 && (v.cr & CR_SAW) && (v.cr & 0xD0) && !(wave & 0x800))
+                v.phase &= 0x7FFFFF;
+            float ac = ((float)wave - waveZero) * (float)v.envLevel / 128.0f;
+            voice[i] = ((float)wave - 2048.0f) / 2048.0f * (float)v.envLevel / 255.0f;
+            if (filt & (1 << i))           vi += ac;
+            else if (!(i == 2 && v3off))   vnf += ac + voiceDc;
         }
 
-        // Clamp and scale by master volume.
-        mix = std::max(-1.0f, std::min(1.0f, mix / 3.0f)) * vol;
-        pushSample(mix);
-    }
-}
+        // 3. Filter (#120): state-variable filter, one step per cycle, the
+        //    integrators limited by the op-amps' output swing (#121)
+        m_vbp -= m_w0dt * m_vhp;
+        m_vlp -= m_w0dt * m_vbp;
+        m_vbp = saturate(m_vbp, m_filterLo, m_filterHi);
+        m_vlp = saturate(m_vlp, m_filterLo, m_filterHi);
+        m_vhp = m_vbp * m_invQ - m_vlp - vi;
+        float vf = 0.0f;
+        if (modeVol & MV_LP) vf += m_vlp - filtDc;
+        if (modeVol & MV_BP) vf += m_vbp;
+        if (modeVol & MV_HP) vf += m_vhp;
 
-// ---------------------------------------------------------------------------
-// Per-voice oscillator and envelope advance
-// ---------------------------------------------------------------------------
+        // 4. Mixer and master volume (which also scales the DC: digis, #122),
+        //    then the external RC filters
+        float mix = (vnf + vf + mixerDc) * vol;
+        m_extLp += extLpK * (mix - m_extLp);
+        m_extHp += extHpK * (m_extLp - m_extHp);
+        float out = (m_extLp - m_extHp) * outScale;
 
-void SID6581::tickVoice(Voice& v, uint64_t cycles, uint32_t clockHz) {
-    // The oscillator phase (and hard sync) is advanced in synthesize()
-    if (v.cr & CR_TEST) return; // test bit freezes oscillator
-
-    // Noise LFSR: clocked on rising edge of phase bit 19.
-    uint32_t bit19 = (v.phase >> 19) & 1;
-    if (bit19 && !v.prevBit19) {
-        // Step LFSR: feedback from bits 22 and 17 (0-indexed).
-        uint32_t newBit = ((v.lfsr >> 22) ^ (v.lfsr >> 17)) & 1u;
-        v.lfsr = ((v.lfsr << 1) | newBit) & 0x7FFFFFu;
-    }
-    v.prevBit19 = bit19;
-
-    // ---------------------------------------------------------------------------
-    // Envelope generator
-    // ---------------------------------------------------------------------------
-    if (cycles == 0) return;
-
-    v.envAccum += cycles;
-
-    switch (v.envPhase) {
-        case Voice::Env::IDLE:
-            break;
-
-        case Voice::Env::ATTACK: {
-            uint32_t rate = atkCycles((v.ad >> 4) & 0x0F, clockHz);
-            while (v.envAccum >= rate && v.envPhase == Voice::Env::ATTACK) {
-                v.envAccum -= rate;
-                if (v.envLevel < 255) {
-                    ++v.envLevel;
-                } else {
-                    v.envPhase = Voice::Env::DECAY;
-                    v.envAccum = 0;
-                }
-            }
-            break;
-        }
-
-        case Voice::Env::DECAY: {
-            uint8_t  sustain = (v.sr >> 4) & 0x0F;
-            uint8_t  sustLvl = (uint8_t)((sustain << 4) | sustain); // 4-bit → 8-bit
-            uint32_t rate    = decRelCycles(v.ad & 0x0F, clockHz);
-            while (v.envAccum >= rate && v.envPhase == Voice::Env::DECAY) {
-                v.envAccum -= rate;
-                if (v.envLevel > sustLvl) {
-                    --v.envLevel;
-                } else {
-                    v.envLevel = sustLvl;
-                    v.envPhase = Voice::Env::SUSTAIN;
-                }
-            }
-            break;
-        }
-
-        case Voice::Env::SUSTAIN:
-            // Hold at sustain level; envelope re-checked on gate change.
-            v.envAccum = 0;
-            break;
-
-        case Voice::Env::RELEASE: {
-            uint32_t rate = decRelCycles(v.sr & 0x0F, clockHz);
-            while (v.envAccum >= rate && v.envPhase == Voice::Env::RELEASE) {
-                v.envAccum -= rate;
-                if (v.envLevel > 0) {
-                    --v.envLevel;
-                } else {
-                    v.envPhase = Voice::Env::IDLE;
-                }
-            }
-            break;
+        // 5. Resample: average the cycles of each output sample
+        m_sampleSum += out;
+        ++m_sampleCycles;
+        m_sampleFrac += (uint32_t)m_sampleRate;
+        if (m_sampleFrac >= m_clockHz) {
+            m_sampleFrac -= m_clockHz;
+            float s = (float)(m_sampleSum / m_sampleCycles);
+            m_sampleSum = 0.0;
+            m_sampleCycles = 0;
+            s = std::max(-1.0f, std::min(1.0f, s));
+            for (int i = 0; i < 3; ++i) m_scope[i][m_scopePos] = voice[i];
+            m_scope[3][m_scopePos] = s;
+            m_scopePos = (m_scopePos + 1) & (SCOPE_LEN - 1);
+            if (m_scopeCount < SCOPE_LEN) ++m_scopeCount;
+            ++m_scopeTotal;
+            pushSample(s);
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Waveform output — Voice struct methods
+// Waveform output
 // ---------------------------------------------------------------------------
 
 uint16_t SID6581::Voice::noiseOutput() const {
-    // Build 12-bit noise from LFSR bits {20,18,14,11,9,5,3,0}.
-    return (uint16_t)(
-        (((lfsr >> 20) & 1) << 11) |
-        (((lfsr >> 18) & 1) << 10) |
-        (((lfsr >> 14) & 1) <<  9) |
-        (((lfsr >> 11) & 1) <<  8) |
-        (((lfsr >>  9) & 1) <<  7) |
-        (((lfsr >>  5) & 1) <<  6) |
-        (((lfsr >>  3) & 1) <<  5) |
-        (((lfsr >>  0) & 1) <<  4)
-    );
+    return CombinedWaveformTable::noise(lfsr);
 }
 
-uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb) const {
-    // Effective phase: hard sync resets to 0 (affects waveform output).
+uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb,
+                                    CombinedWaveformTable::Chip chip) const {
     uint32_t p = syncReset ? 0 : phase;
-
-    // Combined waveforms: use empirically-derived lookup tables instead of AND operation.
-    // Real 6581 hardware uses open-collector NMOS DAC with asymmetric driving strength,
-    // producing complex harmonic patterns (30-40% amplitude reduction vs AND operation).
-    // Table data derived from reSIDfp reverse-engineered measurements.
-    uint8_t  wavSel = cr & 0xF0u;
-    uint16_t out    = CombinedWaveformTable::getCombinedOutput(p, wavSel, pw, lfsr, ringMsb);
-
-    return out;
+    // Combined waveforms use the pulldown model fitted to real chips (#119)
+    return CombinedWaveformTable::getCombinedOutput(p, cr & 0xF0u, pw, lfsr, ringMsb, chip);
 }
 
 bool SID6581::ringMsbFor(const Voice& v) const {
@@ -459,76 +421,6 @@ bool SID6581::ringMsbFor(const Voice& v) const {
     if (!(v.cr & CR_RING)) return false;
     int srcIdx = (int)(&v - m_voices + 2) % 3;
     return (m_voices[srcIdx].phase & 0x800000u) != 0u;
-}
-
-float SID6581::voiceOutput(const Voice& v) const {
-    // Ring / sync source is the previous voice (wiring: v0←v2, v1←v0, v2←v1).
-    bool syncReset = false; // sync already applied in synthesize()
-
-    bool ringMsb = ringMsbFor(v);
-
-    uint16_t raw = v.waveOutput(syncReset, ringMsb);
-
-    // Apply envelope (multiply 12-bit waveform × 8-bit envelope → scale to float).
-    float sample = ((float)raw / 2048.0f) - 1.0f; // 12-bit centred: 0..4095 → -1..+1
-    sample *= (float)v.envLevel / 255.0f;
-    return sample;
-}
-
-// ---------------------------------------------------------------------------
-// Filter (Chamberlin state-variable with soft-clipping distortion)
-// ---------------------------------------------------------------------------
-
-float SID6581::Filter::process(float in, float f, float q, uint8_t mode, uint8_t resMask) {
-    // Chamberlin SVF: one step per sample.
-    // This is the state-variable filter architecture used in the real 6581.
-    // The three filter sections (lowpass, bandpass, highpass) interact through
-    // the coefficient f (cutoff) and q (resonance feedback).
-    //
-    // Circuit equations (continuous approximation):
-    //   lp_new = lp + f * bp
-    //   hp_new = in - lp_new - q * bp
-    //   bp_new = f * hp_new + bp
-    float lp_new = lp + f * bp;
-    float hp_new = in - lp_new - q * bp;
-    float bp_new = f * hp_new + bp;
-
-    // Soft-clipping distortion for high-resonance saturation
-    // =====================================================
-    // The 6581's analog filter can saturate at high Q values, adding harmonic
-    // content that's characteristic of the chip's "warm" and "dirty" sound.
-    //
-    // The feedback term (q * bp) accumulates energy in the filter at high
-    // resonance, and the analog summing nodes cannot reproduce signals beyond
-    // their saturation limits. This creates soft nonlinearity.
-    //
-    // We apply soft-clipping to the band-pass state (bp_new) since:
-    //   1. It carries the resonance feedback and is most prone to saturation
-    //   2. Clipping here adds harmonics that feed into future samples
-    //   3. The distortion is smooth (soft-clip) not harsh (hard-clip)
-    //
-    // This approach preserves audio quality at low resonance while adding
-    // characteristic warmth when the filter is pushed hard.
-
-    float saturation_threshold = calculateSaturationThreshold(resMask, isHardware6581);
-
-    // Apply soft-clipping to the band-pass output
-    // The clipped value is fed back into the next sample via state update.
-    // This is where analog nonlinearity creates the SID's harmonic richness.
-    bp_new = softClip(bp_new, saturation_threshold);
-
-    // Update stored state for next sample
-    lp = lp_new;
-    bp = bp_new;
-
-    // Output stage: mix the three sections (LP/BP/HP) according to mode bits.
-    // Each section can be independently routed to the output.
-    float out = 0.0f;
-    if (mode & MV_LP) out += lp;
-    if (mode & MV_BP) out += bp;   // Note: bp is now soft-clipped
-    if (mode & MV_HP) out += hp_new;
-
-    return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -582,7 +474,7 @@ void SID6581::getDeviceInfo(DeviceInfo& out) const {
 
     for (int i = 0; i < 3; ++i) {
         const char* ph = "UNKNOWN";
-        switch (m_voices[i].envPhase) {
+        switch (m_voices[i].envPhase()) {
             case Voice::Env::IDLE: ph = "IDLE"; break;
             case Voice::Env::ATTACK: ph = "ATTACK"; break;
             case Voice::Env::DECAY: ph = "DECAY"; break;
@@ -598,4 +490,47 @@ void SID6581::getDeviceInfo(DeviceInfo& out) const {
     out.state.push_back({"Filter Cutoff", std::to_string(fc)});
     out.state.push_back({"Filter Res", std::to_string(m_regs[RES_FILT] >> 4)});
     out.state.push_back({"Main Volume", std::to_string(m_regs[MODE_VOL] & 0x0F)});
+}
+
+// ---------------------------------------------------------------------------
+// IAudioInspect (#30)
+// ---------------------------------------------------------------------------
+
+std::string SID6581::chipName(int /*chip*/) const {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%s $%04X", m_name.c_str(), (unsigned)m_baseAddr);
+    return buf;
+}
+
+bool SID6581::voiceInfo(int chip, int voice, VoiceInfo& out) const {
+    if (chip != 0 || voice < 0 || voice > 2) return false;
+    const Voice& v = m_voices[voice];
+    out.freq       = v.freq;
+    out.freqHz     = (double)v.freq * (double)m_clockHz / 16777216.0;
+    out.pulseWidth = v.pw & 0x0FFF;
+    out.control    = v.cr;
+    out.attack     = v.ad >> 4;
+    out.decay      = v.ad & 0x0F;
+    out.sustain    = v.sr >> 4;
+    out.release    = v.sr & 0x0F;
+    switch (v.envPhase()) {
+        case Voice::Env::IDLE:    out.envPhase = EnvPhase::Idle;    break;
+        case Voice::Env::ATTACK:  out.envPhase = EnvPhase::Attack;  break;
+        case Voice::Env::DECAY:   out.envPhase = EnvPhase::Decay;   break;
+        case Voice::Env::SUSTAIN: out.envPhase = EnvPhase::Sustain; break;
+        case Voice::Env::RELEASE: out.envPhase = EnvPhase::Release; break;
+    }
+    out.envLevel = v.envLevel;
+    out.filtered = (m_regs[RES_FILT] >> voice) & 1;
+    out.muted    = voice == 2 && (m_regs[MODE_VOL] & MV_3OFF);
+    return true;
+}
+
+int SID6581::scopeSamples(int chip, int channel, float* out, int n) const {
+    if (chip != 0 || channel < 0 || channel > 3 || n <= 0 || !out) return 0;
+    if (n > m_scopeCount) n = m_scopeCount;
+    int start = (m_scopePos - n) & (SCOPE_LEN - 1);
+    for (int i = 0; i < n; ++i)
+        out[i] = m_scope[channel][(start + i) & (SCOPE_LEN - 1)];
+    return n;
 }
