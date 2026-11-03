@@ -97,7 +97,7 @@
 
       "fdcDefaults": {
         "$D082": { "value": "0x00", "description": "F011 Status A — not busy" },
-        "$D083": { "value": "0x08", "description": "F011 Status B — disk inserted" }
+        "$D083": { "value": "0x00", "description": "F011 Status B — no disk (the F011 is a stub)" }
       },
 
       "flashDefaults": {

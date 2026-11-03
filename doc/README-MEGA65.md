@@ -68,7 +68,19 @@ The MEGA65 includes a privileged hypervisor mode implemented in the 45GS02 CPU:
 - **Virtualisation control registers** ($D640-$D67F): in hypervisor mode, these provide read/write access to saved CPU state.
 - Writing `$D67F` exits hypervisor mode and restores user-mode state.
 
-The machine factory searches for `HICKUP.M65` in `roms/mega65/`, the current directory, and `~/.local/share/xemu-lgb/mega65/`. If not found, the machine falls back to the standard C64 reset vector.
+The machine factory searches for `HICKUP.M65` in the `hyppo` paths of `machines/mega65.json` (`roms/mega65/`, the current directory, `~/.local/share/mmsim/`); `importmega65` extracts it from an installed xemu. If not found, the machine falls back to the standard C64 reset vector.
+
+#### What booting to `READY.` needs
+
+The boot follows the hardware: reset traps to HYPPO at `$8100`; HYPPO mounts the SD card, loads `CHARROM.M65` into the character WOM (`$FF7E000`) and `MEGA65.ROM` into `$20000-$3FFFF`, and leaves through `$D67F` to the ROM's reset vector. The emulator does not patch HYPPO or the ROM, and nothing depends on addresses inside them. You need:
+
+- **`HICKUP.M65`** (above).
+- **An SD card image** with `MEGA65.ROM` on it: the `sdcard` paths in `machines/mega65.json`, e.g. xemu's `~/.local/share/xemu-lgb/mega65/mega65.img`. Without one, HYPPO stops at its ROM menu.
+- **The repository's `machines/` directory**: `machines/mega65.json` and the `roms/` paths are looked up relative to the current directory first, then `~/.local/share/mmsim/` and `/usr/local/share/mmsim/`. Run from elsewhere and an old copy there may be used; plugins likewise come from `./lib` first, then `~/.local/lib/mmsim/plugins`.
+
+A host ROM file (`mega65rom` paths, e.g. `roms/mega65/MEGA65.ROM`) is optional: it is preloaded at `$20000` for the no-HYPPO fallback, and HYPPO replaces it with the SD card's copy. ROM banking (`$01`, `$D030`) and the C64-mode character ROM read the RAM at `$20000-$3FFFF`; the VIC-IV draws characters from the character WOM.
+
+The F011 floppy controller is a stub that reports no disk (`$D083` bit 3 = 0), so BASIC 65's autoboot and `DIR` end with `74,DRIVE NOT READY`. Disk access from BASIC goes through the CBM KERNAL HLE (`hle on|off|path`), which traps the KERNAL `LOAD`/`SAVE` vectors and serves files from the host directory.
 
 See [README-45GS02.md](README-45GS02.md) for detailed hypervisor register maps.
 

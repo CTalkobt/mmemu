@@ -55,7 +55,7 @@ bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         uint8_t off = addr & 0x1F;
         switch (off) {
             case 0x02: *val = 0x00; return true; // Status A: not busy, no errors
-            case 0x03: *val = 0x08; return true; // Status B: disk inserted
+            case 0x03: *val = 0x00; return true; // Status B: no disk (DSKIN=0)
             default:   *val = 0x00; return true;
         }
     }

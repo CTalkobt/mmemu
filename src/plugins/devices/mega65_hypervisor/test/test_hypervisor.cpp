@@ -6,6 +6,7 @@
 #include "libmem/main/sparse_memory_bus.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <cstring>
+#include <vector>
 
 struct HyperFixture {
     FlatMemoryBus bus{"test", 16};
@@ -398,4 +399,33 @@ TEST_CASE(hypervisor_tab_does_not_exit) {
     f.cpu.step(); f.cpu.step();
     ASSERT(f.cpu.isHypervisor());
     ASSERT_EQ((int)f.cpu.regRead(4), 0x00);
+}
+
+// NOP; STA [zp],Z in hypervisor mode: the 32-bit pointer is read from the
+// hypervisor's base page ($BF, hypervisor RAM), not from physical $0BFxx.
+// HYPPO loads MEGA65.ROM into $0020000 with this loop (dos_readfileintomemory).
+TEST_CASE(gs02_flat_store_pointer_from_hypervisor_base_page) {
+    SparseMemoryBus phys("phys", 28);
+    std::vector<uint8_t> ram(0x40000, 0);
+    phys.addRegion(0, (uint32_t)ram.size(), ram.data(), true);
+    MapMmu mmu("mmu", &phys);
+    std::vector<uint8_t> hyper(16384, 0);
+    MOS45GS02 cpu;
+    cpu.setDataBus(&mmu);
+    cpu.setCodeBus(&mmu);
+    cpu.setMapMmu(&mmu);
+    cpu.setHypervisorRom(hyper.data(), (uint32_t)hyper.size());
+    mmu.setHypervisorOverlay([&cpu]() { return cpu.isHypervisor(); }, cpu.hyperRam(), 0x8000, 16384);
+    cpu.reset();                       // enters the hypervisor at $8100, B = $BF
+    ASSERT(cpu.isHypervisor());
+
+    uint8_t* h = cpu.hyperRam();
+    const uint8_t code[] = { 0xA3, 0x05, 0xA9, 0x5A, 0xEA, 0x92, 0x18 };  // LDZ #5; LDA #$5A; STA [$18],Z
+    std::memcpy(h + 0x100, code, sizeof code);
+    h[0x3F18] = 0x00; h[0x3F19] = 0x00; h[0x3F1A] = 0x02; h[0x3F1B] = 0x00;  // $BF18 -> $0020000
+    ram[0x0BF18] = 0x00; ram[0x0BF19] = 0x10; ram[0x0BF1A] = 0x00; ram[0x0BF1B] = 0x00;  // decoy at phys $0BF18
+
+    for (int i = 0; i < 3; i++) cpu.step();
+    ASSERT_EQ((int)ram[0x20005], 0x5A);
+    ASSERT_EQ((int)ram[0x01005], 0x00);
 }
