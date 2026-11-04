@@ -7,6 +7,13 @@ mmemu-gui -m x16
 mmemu-cli -m x16 --speed max
 ```
 
+## References
+
+- [x16-emulator](https://github.com/X16Community/x16-emulator): the behaviour mmsim follows.
+- [x16-rom](https://github.com/X16Community/x16-rom): KERNAL, BASIC and DOS source and releases.
+- [x16-docs](https://github.com/X16Community/x16-docs): the Programmer's Reference Guide (memory map, VERA, YM2151, KERNAL API).
+- [x16-user-guide](https://github.com/X16Community/x16-user-guide): the User's Guide (setup, keyboard and screen, BASIC graphics and sound, with examples to type in).
+
 ## ROM
 
 `roms/x16/rom.bin`: the `rom.bin` of an [x16-rom release](https://github.com/X16Community/x16-rom/releases) (developed against R49 "Pyrite"), 16 KB banks, up to 512 KB. It is not in the repository (`.gitignore`); the release's `.sym` files can go next to it.
