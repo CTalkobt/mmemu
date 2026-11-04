@@ -43,6 +43,8 @@ std::string wxKeyToVic20Name(int code) {
         case '[':                  return "bracket_left";
         case ']':                  return "bracket_right";
         case '\'':                 return "squote";     // PET dedicated ' key
+        case '\\':                 return "backslash";  // X16 (PC keyboard)
+        case '`':                  return "grave";
         // Numpad — map to same matrix positions as main keys
         case WXK_NUMPAD0:          return "0";
         case WXK_NUMPAD1:          return "1";
