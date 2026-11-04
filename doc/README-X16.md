@@ -21,7 +21,7 @@ mmemu-cli -m x16 --speed max
 | `$9F00-$9F0F` | VIA1: PA0/PA1 I2C (SMC, RTC), PA2-PA7 NES controllers; PB IEC serial bus |
 | `$9F10-$9F1F` | VIA2 (user port, nothing attached) |
 | `$9F20-$9F3F` | VERA |
-| `$9F40-$9F5F` | YM2151 (not emulated yet: the status register reads 0, never busy; 3 wait states) |
+| `$9F40-$9F5F` | YM2151: even addresses select the register, odd ones write data and read status (3 wait states) |
 | `$9FA0-$9FFF` | slow I/O expansion (3 wait states; open bus `$9F`) |
 | `$A000-$BFFF` | banked RAM: 64 banks of 8 KB (512 KB); banks above read open bus |
 | `$C000-$FFFF` | banked ROM: banks 0-31 from `rom.bin` |
@@ -48,10 +48,15 @@ mmemu-cli -m x16 --speed max
 
 Where the port departs from the emulator (integer scan timing, a repeatable VRAM fill at reset, 17-bit address wrap, peeks that return what a read would) is commented in `vera.cpp`.
 
+## YM2151
+
+`src/plugins/devices/ym2151/` wraps [ymfm](https://github.com/aaronsgiles/ymfm)'s OPM (vendored in `src/third_party/ymfm`, BSD-3-Clause), with x16-emulator's glue (`ymglue.cpp`): 3.579545 MHz, one sample per 64 chip clocks (55,930 Hz), the busy flag and timers counted in those clocks, writes while busy dropped, timer interrupts on the shared IRQ line. VERA mixes it into its output as the X16 does — `(psg + pcm) * 2 + ym` through VERA's limiter — resampling it linearly to 48,828 Hz. BASIC's `FMINIT`, `FMNOTE`, `FMPLAY`... play (`FMNOTE 0,$4A` gives 440 Hz).
+
 ## Tests
 
 - `x16_boots_to_ready_and_runs_basic` boots R49 to READY and runs a typed `PRINT 6*7` (skipped without `roms/x16/rom.bin`).
 - `test_x16_i2c.cpp`: the I2C bus bit-banged through a real VIA as the KERNAL does it: SMC keyboard buffer and version, RTC time, ticking and NVRAM.
+- `test_ym2151.cpp`: the busy flag, a keyed-on voice producing sound, timer A raising the IRQ line.
 - `test_vera.cpp`: VERA registers, address ports, palette, text layer, sprites, collisions, LINE/VSYNC interrupts, peeks, PSG, PCM and FX.
 
 ## Keyboard
@@ -60,6 +65,5 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 
 ## Not yet emulated
 
-- YM2151 FM sound (`FMPLAY` and friends are silent).
 - SD card (VERA SPI) and IEC devices, so no `LOAD`/`SAVE` yet; mouse; NES/SNES controllers.
 - The 65C02 assembler is the NMOS one (no CMOS mnemonics).

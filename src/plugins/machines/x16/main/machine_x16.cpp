@@ -14,6 +14,7 @@
 #include "plugins/6502/main/cpu65c02.h"
 #include "plugins/devices/via6522/main/via6522.h"
 #include "plugins/devices/vera/main/vera.h"
+#include "plugins/devices/ym2151/main/ym2151.h"
 #include "util/path_util.h"
 #include "util/logging.h"
 #include <cctype>
@@ -42,7 +43,9 @@ public:
         m_bram.assign(RAM_BANKS * RAM_BANK_SIZE, 0);
         std::memset(m_ram, 0, sizeof(m_ram));
     }
-    void setDevices(IOHandler* via1, IOHandler* via2, IOHandler* vera) { m_via1 = via1; m_via2 = via2; m_vera = vera; }
+    void setDevices(IOHandler* via1, IOHandler* via2, IOHandler* vera, IOHandler* ym) {
+        m_via1 = via1; m_via2 = via2; m_vera = vera; m_ym = ym;
+    }
 
     // The bank latches: written with $00/$01 (which are also RAM: reads
     // return the RAM byte). An interrupt's vector fetch (the 65C02's VPB pin)
@@ -78,7 +81,7 @@ public:
             if (addr < 0x9F10) m_via1->ioWrite(this, addr, val);
             else if (addr < 0x9F20) m_via2->ioWrite(this, addr, val);
             else if (addr < 0x9F40) m_vera->ioWrite(this, addr, val);
-            else if (addr < 0x9F60) { m_wait += 3; if (!(addr & 1)) m_ymAddr = val; }   // YM2151 (not emulated)
+            else if (addr < 0x9F60) { m_wait += 3; m_ym->ioWrite(this, addr, val); }   // YM2151 (slow I/O)
         } else if (addr < 0xC000) {
             if (ramBank() < RAM_BANKS) m_bram[ramBank() * RAM_BANK_SIZE + (addr - 0xA000)] = val;
         }                                             // ROM: writes ignored
@@ -107,15 +110,13 @@ private:
         if (addr < 0xA000) {
             if (!peek && addr >= 0x9FA0) m_wait += 3;
             uint8_t v = 0x9F;                         // open bus
-            IOHandler* h = addr < 0x9F10 ? m_via1 : addr < 0x9F20 ? m_via2 : addr < 0x9F40 ? m_vera : nullptr;
+            if (addr >= 0x9F40 && addr < 0x9F60 && !peek) m_wait += 3;   // YM2151: slow I/O
+            IOHandler* h = addr < 0x9F10 ? m_via1 : addr < 0x9F20 ? m_via2 : addr < 0x9F40 ? m_vera
+                         : addr < 0x9F60 ? m_ym : nullptr;
             if (h) {
                 if (peek) h->ioPeek(this, addr, &v);
                 else      h->ioRead(this, addr, &v);
                 return v;
-            }
-            if (addr < 0x9F60) {                      // YM2151: status (never busy)
-                if (!peek) m_wait += 3;
-                return (addr & 1) ? 0x00 : 0x9F;
             }
             return 0x9F;
         }
@@ -133,7 +134,7 @@ private:
     IOHandler* m_via1 = nullptr;
     IOHandler* m_via2 = nullptr;
     IOHandler* m_vera = nullptr;
-    uint8_t m_ymAddr = 0;
+    IOHandler* m_ym = nullptr;
     uint8_t m_ramBank = 0, m_romBank = 0;
     int m_wait = 0;
 };
@@ -320,14 +321,24 @@ MachineDescriptor* create(std::string* err) {
     desc->deleters.push_back([portB]() { delete portB; });
     via1->setPortBDevice(portB);
     auto* keyboard = new X16Keyboard(i2c->smc);
-    bus->setDevices(via1, via2, vera);
+    auto* ym = new Ym2151(0x9F40, 0x1F);
+    ym->setClockHz(CPU_HZ);
+    bus->setDevices(via1, via2, vera, ym);
+    // VERA mixes the YM2151 into its output: (psg + pcm) * 2 + ym
+    vera->setExternalAudio([ym](int32_t& l, int32_t& r) {
+        int32_t yl, yr;
+        ym->nextSample(Vera::AUDIO_RATE, yl, yr);
+        l += yl;
+        r += yr;
+    });
 
-    // IRQ: VIA1, VIA2 and VERA share the line (the YM2151's is not emulated)
+    // IRQ: VIA1, VIA2, VERA and the YM2151 share the line
     auto* irq = new SharedIrqManager(cpu);
     desc->deleters.push_back([irq]() { delete irq; });
     via1->setIrqLine(irq->createLine());
     via2->setIrqLine(irq->createLine());
     vera->setIrqLine(irq->createLine());
+    ym->setIrqLine(irq->createLine());
 
     MachineDescriptor* self = desc;
     i2c->smc.onReset = [self]() { if (self->onReset) self->onReset(*self); };
@@ -337,6 +348,7 @@ MachineDescriptor* create(std::string* err) {
     io->registerOwnedHandler(vera);
     io->registerOwnedHandler(via1);
     io->registerOwnedHandler(via2);
+    io->registerOwnedHandler(ym);
     io->registerOwnedHandler(i2c);
     io->registerOwnedHandler(keyboard);
 

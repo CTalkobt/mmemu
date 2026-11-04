@@ -8,6 +8,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Commander X16
+- **YM2151 FM sound** (#16): `src/plugins/devices/ym2151/` wraps ymfm's OPM (Aaron Giles, BSD-3-Clause, vendored in `src/third_party/ymfm`) with x16-emulator's glue: busy flag and timers in chip clocks, writes while busy dropped, timer IRQs on the X16's shared line. VERA mixes it into its output as `(psg + pcm) * 2 + ym` (new `Vera::setExternalAudio`), resampled from 55,930 to 48,828 Hz. BASIC's FM commands play: `FMNOTE 0,$4A` gives 440 Hz. Tests: `test_ym2151.cpp`.
 - **Commander X16 machine (`x16`, #16)**: boots the R49 ROM (`roms/x16/rom.bin`, not in the repository) to BASIC's READY in the CLI, GUI and MCP, and runs BASIC including VERA graphics (`SCREEN`, `LINE`) and PSG sound (`PSGNOTE`/`PSGFREQ`). See `doc/README-X16.md`.
   - **Machine** (`src/plugins/machines/x16/`, after x16-emulator's `memory.c`/`via.c`): WDC 65C02 at 8 MHz; RAM, bank registers `$00`/`$01`, 512 KB banked RAM, 32 ROM banks; VIA1 (I2C, NES lines, IEC port) and VIA2; slow-I/O wait states; YM2151 not emulated yet (status reads 0).
   - **I2C** (`x16_i2c.cpp`, after `i2c.c`/`smc.c`/`rtc.c`): the SMC (keyboard buffer, version, reset/NMI requests) and the MCP7940N RTC (BCD time from the host clock, NVRAM), bit-banged through VIA1 port A as open-collector lines.

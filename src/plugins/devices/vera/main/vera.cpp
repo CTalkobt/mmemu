@@ -1429,6 +1429,7 @@ void Vera::renderAudioSample() {
     // full scale), through its limiter
     int32_t mixL = ((int32_t)psgL + pcmL) * 2;
     int32_t mixR = ((int32_t)psgR + pcmR) * 2;
+    if (m_externalAudio) m_externalAudio(mixL, mixR);   // + ym
     uint32_t amp = (uint32_t)std::max(std::abs(mixL), std::abs(mixR));
     if (amp > 32767) {
         uint32_t newAmp = (32767u << 16) / amp;

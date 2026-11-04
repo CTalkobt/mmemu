@@ -26,6 +26,8 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/crtc6545/main -Isrc/plugins/devices/pet_video/main \
 	-Isrc/plugins/devices/pokey/main -Isrc/plugins/devices/datasette/main \
 	-Isrc/plugins/devices/vera/main \
+	-Isrc/plugins/devices/ym2151/main \
+	-Isrc/third_party/ymfm \
 	-Isrc/plugins/devices/keyboard/main \
 	-Isrc/plugins/45gs02/main \
 	-Isrc/plugins/devices/hyper_serial/main \
@@ -237,6 +239,8 @@ PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/6502/main/cpu6502_cmos.cpp
 
 PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
+	src/plugins/devices/ym2151/main/ym2151.cpp \
+	src/third_party/ymfm/ymfm_opm.cpp \
 	src/plugins/machines/x16/main/x16_i2c.cpp \
 	src/plugins/machines/x16/main/plugin_init.cpp \
 	src/plugins/devices/vera/main/vera.cpp \
@@ -362,6 +366,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6502/test/test_cpu_opcode_suites.cpp \
 	src/plugins/machines/x16/test/test_x16_i2c.cpp \
 	src/plugins/machines/x16/test/test_x16_machine.cpp \
+	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
 	src/plugins/6502/test/test_cpu6510_io.cpp \
@@ -448,6 +453,8 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/x16/main/x16_i2c.o \
 	src/plugins/machines/x16/main/machine_x16.o \
+	src/plugins/devices/ym2151/main/ym2151.o \
+	src/third_party/ymfm/ymfm_opm.o \
 	src/plugins/6502/main/cpu6502_cmos.o \
 	src/plugins/6502/main/cpu6510.o \
 	src/plugins/6502/main/disassembler_6502.o \

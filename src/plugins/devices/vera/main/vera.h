@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 // VERA (Versatile Embedded Retro Adapter), the Commander X16's video and
 // audio chip.
@@ -90,6 +91,14 @@ public:
     void setIrqLine(ISignalLine* line) override { m_irqLine = line; m_irqOut = false; updateIrq(); }
     /** Render the partial line before DATA0/DATA1 writes (the emulator's -midline-effects). */
     void setMidlineDataWrites(bool on) { m_midlineDataWrites = on; }
+
+    /**
+     * Another sound source mixed into VERA's output before the limiter, as
+     * the X16 mixes the YM2151 (x16-emulator audio.c: (psg + pcm) * 2 + ym).
+     * Called once per output sample (AUDIO_RATE); adds to left/right
+     * (int16 scale).
+     */
+    void setExternalAudio(std::function<void(int32_t& left, int32_t& right)> fn) { m_externalAudio = std::move(fn); }
 
     // IOHandler
     const char* name()     const override { return m_name.c_str(); }
@@ -304,4 +313,5 @@ private:
     bool    m_spiSs = false, m_spiBusy = false, m_spiAutotx = false;
     uint8_t m_spiSendingByte = 0, m_spiReceivedByte = 0xFF;
     double  m_spiOutcounter = 0.0;
+    std::function<void(int32_t&, int32_t&)> m_externalAudio;
 };
