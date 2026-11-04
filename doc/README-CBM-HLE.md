@@ -25,7 +25,7 @@ The addresses and KERNAL variables are settings, so another KERNAL can be descri
 ## Intercepted Vectors
 
 - `load` (`$FFD5`): loads a file from the host folder. Secondary address 0 loads to X/Y, otherwise to the file's own address; the file's first two bytes are its load address either way.
-- `save` (`$FFD8`): not implemented; reports status 5.
+- `save` (`$FFD8`): writes the file to the host folder: the 2-byte start address, then memory from the start pointer (the zero-page address in A) up to X/Y. As on a CBM drive, an existing file is replaced only with an `@:` (or `@0:`) prefix; otherwise it is left alone, SAVE still returns normally (a real drive reports 63 FILE EXISTS on its command channel only) and a warning is logged. A `0:` drive prefix and a `,P,W` suffix are ignored. No name: KERNAL error 8 (MISSING FILE NAME); a host write failure: error 5.
 - Units below 8 (tape, printers) and units an emulated drive answers (an I/O device's `getDiskStatus`, e.g. the C64's virtual IEC drive 8 or the MEGA65's F011 units 8/9) are left to the KERNAL.
 
 ## Configuration at run time

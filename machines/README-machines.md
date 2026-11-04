@@ -93,7 +93,7 @@ An intercept is a host-side handler that stands in for a firmware routine or cal
 
 | Type | Plugin | Kind | Settings |
 |---|---|---|---|
-| `cbm.kernal.fileio` | cbm-hle | PC (KERNAL `LOAD`/`SAVE`) | `load`, `save` (addresses, default `$FFD5`/`$FFD8`), `path` (host folder), `zeroPage` {`status`, `fnlen`, `sa`, `fa`, `fnadr`} (default C64/VIC-20: `$90`, `$B7`, `$B9`, `$BA`, `$BB`) |
+| `cbm.kernal.fileio` | cbm-hle | PC (KERNAL `LOAD`/`SAVE`) | `load`, `save` (addresses, default `$FFD5`/`$FFD8`; SAVE writes to the folder, replacing a file only with `@:`), `path` (host folder), `zeroPage` {`status`, `fnlen`, `sa`, `fa`, `fnadr`} (default C64/VIC-20: `$90`, `$B7`, `$B9`, `$BA`, `$BB`) |
 | `mega65.hdos` | mega65 | Call (HYPPO trap `$00`) | `paths` (host folders, the first that exists), `filename` (overrides setname's name) |
 
 ```json
