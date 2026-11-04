@@ -17,6 +17,7 @@
 #include "plugins/devices/vic4/main/vic4.h"
 #include "plugins/devices/mega65_hypervisor/main/hypervisor_regs.h"
 #include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
+#include "libcore/main/intercept.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
 #include "plugins/devices/sdcard/main/f011.h"
 // #include "plugins/devices/mega65_rtc/main/mega65_rtc.h"  // DISABLED (issue #109)
@@ -811,41 +812,30 @@ MachineDescriptor* Mega65MachineFactory::create() {
         io->registerHandler(hyperRegs);
         desc->deleters.push_back([hyperRegs]() { delete hyperRegs; });
 
-        // HDOS trap virtualization — intercept DOS traps for host filesystem access
-        auto* hdos = new HdosHandler();
-        hdos->setPhysBus(physBus);
-
-        // Set HDOS root directory from JSON config or defaults
-        {
-            json hdosPaths = json::array({
-                "roms/mega65/sdcard/",
-                "~/.local/share/xemu-lgb/mega65/hdos/",
-                "."
-            });
-            if (cfg.contains("hdos") && cfg["hdos"].contains("paths"))
-                hdosPaths = cfg["hdos"]["paths"];
-
-            std::string hdosRoot = ".";
-            const char* home = std::getenv("HOME");
-            for (const auto& p : hdosPaths) {
-                std::string path = p.get<std::string>();
-                if (path.size() > 1 && path[0] == '~' && path[1] == '/' && home)
-                    path = std::string(home) + path.substr(1);
-                if (!path.empty() && std::filesystem::is_directory(path)) {
-                    hdosRoot = path;
-                    break;
-                }
-            }
-            hdos->setRootDir(hdosRoot);
-        }
-        desc->deleters.push_back([hdos]() { delete hdos; });
-
-        hyperRegs->setHdosTrapHandler([hdos](uint8_t func, MOS45GS02* cpu) -> bool {
-            return hdos->handleTrap(func, cpu);
+        // Call intercepts (machines/mega65.json "intercepts") see each user-mode trap first
+        hyperRegs->setCallIntercept([desc, cpu45](uint8_t trap, uint8_t function) -> bool {
+            return dispatchCallIntercepts(*desc, *cpu45, trap, function);
         });
     }
 
     desc->cpus.push_back({"main", cpu, mmu, mmu, nullptr, true, 1});
+
+    // Intercepts from machines/mega65.json. Without an "intercepts" key, the
+    // HYPPO DOS calls served from a host folder are the ones the machine has
+    // always virtualised (with the old "hdos.paths" if given); [] means none.
+    {
+        registerHdosIntercept();
+        json ispec = json::object();
+        if (cfg.contains("intercepts")) {
+            ispec["intercepts"] = cfg["intercepts"];
+        } else {
+            json hdosSpec = defaultHdosInterceptSpec();
+            if (cfg.contains("hdos") && cfg["hdos"].contains("paths"))
+                hdosSpec["paths"] = cfg["hdos"]["paths"];
+            ispec["intercepts"] = json::array({hdosSpec});
+        }
+        installIntercepts(*desc, ispec);
+    }
 
     // Auto-mount SD card image — paths from JSON config (#50)
     {

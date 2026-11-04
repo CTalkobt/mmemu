@@ -1,8 +1,10 @@
 #include "hdos_handler.h"
+#include "libcore/main/machine_desc.h"
 #include "plugins/45gs02/main/cpu45gs02.h"
 #include "libmem/main/ibus.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <algorithm>
 #include <filesystem>
 #include <fcntl.h>
@@ -17,8 +19,78 @@ HdosHandler::HdosHandler() {
     m_cwd = ".";
 }
 
+HdosHandler::HdosHandler(const nlohmann::json& e) : HdosHandler() {
+    nlohmann::json paths = nlohmann::json::array();
+    if (e.contains("paths")) paths = e["paths"];
+    else if (e.contains("path")) paths.push_back(e["path"]);
+    const char* home = std::getenv("HOME");
+    std::string root = ".";
+    for (const auto& p : paths) {
+        std::string path = p.get<std::string>();
+        if (path.size() > 1 && path[0] == '~' && path[1] == '/' && home)
+            path = std::string(home) + path.substr(1);
+        if (!path.empty() && fs::is_directory(path)) { root = path; break; }
+    }
+    setRootDir(root);
+    m_overrideName = e.value("filename", std::string());
+}
+
 HdosHandler::~HdosHandler() {
     closeAll();
+}
+
+bool HdosHandler::onCall(MachineDescriptor& m, ICore& core, uint32_t /*trap*/, uint32_t func) {
+    auto* cpu = dynamic_cast<MOS45GS02*>(&core);
+    if (!cpu) return false;
+    if (!m_physBus && !m.buses.empty()) m_physBus = m.buses[0].bus;
+    if (func == 0x2E) {                 // setname: note the name, HYPPO keeps its copy too
+        captureSetname(cpu);
+        return false;
+    }
+    if (func == 0x3A) {                 // set transfer area: page Y
+        m_transferArea = cpu->hyperState().regY << 8;
+        return false;
+    }
+    return handleTrap((uint8_t)func, cpu);
+}
+
+void HdosHandler::captureSetname(MOS45GS02* cpu) {
+    uint8_t page = cpu->hyperState().regY;
+    m_setnameFn.clear();
+    if (page >= 0x80 || page == 0x7F) return;      // HYPPO refuses these too
+    IBus* bus = cpu->getDataBus();                 // the lower 32 KB is still the caller's map
+    if (!bus) return;
+    for (int i = 0; i < 63; i++) {
+        uint8_t ch = bus->peek8(((uint32_t)page << 8) + i);
+        if (ch == 0) break;
+        m_setnameFn += (char)tolower(ch);
+    }
+}
+
+bool HdosHandler::setOption(const std::string& key, const std::string& value) {
+    if (key == "path")     { setRootDir(value); return true; }
+    if (key == "filename") { m_overrideName = value; for (auto& c : m_overrideName) c = (char)tolower(c); return true; }
+    return false;
+}
+
+std::string HdosHandler::describe() const {
+    std::string d = "HYPPO DOS calls from host folder: " + m_rootDir;
+    if (!m_overrideName.empty()) d += " (filename override: " + m_overrideName + ")";
+    return d;
+}
+
+void registerHdosIntercept() {
+    InterceptRegistry::instance().registerType("mega65.hdos",
+        [](const nlohmann::json& e) -> IIntercept* { return new HdosHandler(e); });
+}
+
+nlohmann::json defaultHdosInterceptSpec() {
+    return nlohmann::json::parse(R"({
+        "type": "mega65.hdos", "name": "hdos", "trap": "$00",
+        "functions": ["$02", "$04", "$06", "$08", "$0C", "$12", "$14", "$16", "$18", "$1A",
+                      "$20", "$22", "$2E", "$34", "$36", "$38", "$3A", "$3C", "$3E"],
+        "paths": ["roms/mega65/sdcard/", "~/.local/share/xemu-lgb/mega65/hdos/", "."]
+    })");
 }
 
 void HdosHandler::setRootDir(const std::string& path) {
@@ -66,9 +138,7 @@ void HdosHandler::setResultRegs(MOS45GS02* cpu, uint8_t a, uint8_t x, uint8_t y,
     auto& h = cpu->hyperState();
     h.regA = a;
     h.regX = x;
-    // Y is at offset 0x02 but hyperState doesn't have regY separate — use regX/regZ
-    // Actually from the hypervisor_regs.cpp, offset 0x02 is Y. But hyperState struct
-    // may not have regY. Let's set via the D640 registers directly if we have the bus.
+    h.regY = y;
     h.regZ = z;
     if (carry) h.pflags |= 0x01;
     else       h.pflags &= ~0x01;
@@ -134,7 +204,7 @@ bool HdosHandler::handleTrap(uint8_t func, MOS45GS02* cpu) {
             virtCloseAll(cpu);
             return true;
 
-        case 0x2E >> 1: // $2E: setname — let HYPPO handle, capture in onHyppoLeave
+        case 0x2E >> 1: // $2E: setname — HYPPO handles it; onCall noted the name
             return false;
 
         case 0x34 >> 1: // $34: findfile
@@ -149,7 +219,7 @@ bool HdosHandler::handleTrap(uint8_t func, MOS45GS02* cpu) {
             setResult(cpu, m_lastError, true);
             return true;
 
-        case 0x3A >> 1: // $3A: set transfer area — let HYPPO handle, capture in onHyppoLeave
+        case 0x3A >> 1: // $3A: set transfer area — HYPPO handles it; onCall noted the page
             return false;
 
         case 0x3C >> 1: // $3C: cdrootdir
@@ -162,32 +232,6 @@ bool HdosHandler::handleTrap(uint8_t func, MOS45GS02* cpu) {
 
         default:
             return false; // Not virtualized — let HYPPO handle
-    }
-}
-
-void HdosHandler::onHyppoLeave(uint8_t func, MOS45GS02* cpu) {
-    auto& h = cpu->hyperState();
-    bool carry = (h.pflags & 0x01) != 0;
-
-    if (func == 0x2E && carry) {
-        // setname succeeded — capture the filename from HYPPO
-        // The input Y register contained filename buffer address (high byte)
-        (void)h.regY; // Y register contains address high byte, but we read from HYPPO buffer
-        // For now, read from the setname buffer that HYPPO stores
-        if (m_physBus) {
-            // HYPPO copies filename to its internal buffer; we read from user space
-            // HYPPO stores the current filename at $FFF0100 (hypervisor space).
-            m_setnameFn.clear();
-            for (int i = 0; i < 63; i++) {
-                uint8_t ch = m_physBus->peek8(0xFFF0100 + i); // Hypervisor filename buffer
-                if (ch == 0 || ch < 0x20 || ch >= 0x7F) break;
-                m_setnameFn += (char)tolower(ch);
-            }
-        }
-    }
-    if (func == 0x3A && carry) {
-        // Set transfer area — Y register has high byte of address
-        m_transferArea = h.regY << 8; // Y register contains address high byte
     }
 }
 
@@ -210,13 +254,13 @@ void HdosHandler::virtSelectDrive(MOS45GS02* cpu) {
 }
 
 void HdosHandler::virtFindFile(MOS45GS02* cpu) {
-    if (m_setnameFn.empty()) {
+    if (requestedName().empty()) {
         setResult(cpu, HDOSERR_FILE_NOT_FOUND, false);
         m_lastError = HDOSERR_FILE_NOT_FOUND;
         return;
     }
 
-    std::string fullPath = m_cwd + m_setnameFn;
+    std::string fullPath = m_cwd + requestedName();
 
     // Try case-insensitive match
     if (!fs::exists(fullPath)) {
@@ -227,7 +271,7 @@ void HdosHandler::virtFindFile(MOS45GS02* cpu) {
                 std::string name = entry.path().filename().string();
                 std::string nameLower = name;
                 std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
-                if (nameLower == m_setnameFn) {
+                if (nameLower == requestedName()) {
                     fullPath = entry.path().string();
                     found = true;
                     break;
@@ -356,12 +400,13 @@ void HdosHandler::virtReadDir(MOS45GS02* cpu) {
     }
 
     // Write directory entry to transfer area in memory
-    if (m_physBus && m_transferArea) {
+    IBus* user = cpu->getDataBus();          // the transfer area is in the caller's lower 32 KB
+    if (user && m_transferArea) {
         // HDOS directory entry format (simplified):
         // Offset 0-63: filename (null-terminated)
         std::string name = entry->d_name;
         for (int i = 0; i < 64; i++) {
-            m_physBus->write8(m_transferArea + i, (i < (int)name.size()) ? name[i] : 0);
+            user->write8(m_transferArea + i, (i < (int)name.size()) ? name[i] : 0);
         }
         // Get file size
         std::string fullPath = m_descriptors[descIdx].basePath + name;
@@ -369,12 +414,12 @@ void HdosHandler::virtReadDir(MOS45GS02* cpu) {
         uint32_t fsize = 0;
         if (::stat(fullPath.c_str(), &st) == 0) fsize = st.st_size;
         // Offset 64-67: file size (32-bit LE)
-        m_physBus->write8(m_transferArea + 64, fsize & 0xFF);
-        m_physBus->write8(m_transferArea + 65, (fsize >> 8) & 0xFF);
-        m_physBus->write8(m_transferArea + 66, (fsize >> 16) & 0xFF);
-        m_physBus->write8(m_transferArea + 67, (fsize >> 24) & 0xFF);
+        user->write8(m_transferArea + 64, fsize & 0xFF);
+        user->write8(m_transferArea + 65, (fsize >> 8) & 0xFF);
+        user->write8(m_transferArea + 66, (fsize >> 16) & 0xFF);
+        user->write8(m_transferArea + 67, (fsize >> 24) & 0xFF);
         // Offset 68: file type (0=file, 0x10=dir)
-        m_physBus->write8(m_transferArea + 68, (entry->d_type == DT_DIR) ? 0x10 : 0x00);
+        user->write8(m_transferArea + 68, (entry->d_type == DT_DIR) ? 0x10 : 0x00);
     }
 
     setResult(cpu, 0, true);
@@ -405,14 +450,14 @@ void HdosHandler::virtCloseAll(MOS45GS02* cpu) {
 }
 
 void HdosHandler::virtLoadFile(MOS45GS02* cpu, uint32_t addrBase) {
-    if (m_setnameFn.empty()) {
+    if (requestedName().empty()) {
         setResult(cpu, HDOSERR_FILE_NOT_FOUND, false);
         m_lastError = HDOSERR_FILE_NOT_FOUND;
         return;
     }
 
     // Find the file (case-insensitive)
-    std::string fullPath = m_cwd + m_setnameFn;
+    std::string fullPath = m_cwd + requestedName();
     if (!fs::exists(fullPath)) {
         bool found = false;
         try {
@@ -420,7 +465,7 @@ void HdosHandler::virtLoadFile(MOS45GS02* cpu, uint32_t addrBase) {
                 std::string name = entry.path().filename().string();
                 std::string nameLower = name;
                 std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
-                if (nameLower == m_setnameFn) {
+                if (nameLower == requestedName()) {
                     fullPath = entry.path().string();
                     found = true;
                     break;
@@ -466,13 +511,13 @@ void HdosHandler::virtLoadFile(MOS45GS02* cpu, uint32_t addrBase) {
 }
 
 void HdosHandler::virtCd(MOS45GS02* cpu) {
-    if (m_setnameFn.empty()) {
+    if (requestedName().empty()) {
         setResult(cpu, HDOSERR_FILE_NOT_FOUND, false);
         m_lastError = HDOSERR_FILE_NOT_FOUND;
         return;
     }
 
-    std::string target = m_cwd + m_setnameFn;
+    std::string target = m_cwd + requestedName();
     if (!target.empty() && target.back() != '/') target += '/';
 
     if (fs::is_directory(target)) {

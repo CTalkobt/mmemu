@@ -11,6 +11,7 @@
 #include "libdevices/main/device_registry.h"
 #include "libcore/main/image_loader.h"
 #include "libdebug/main/observer_registry.h"
+#include "libcore/main/intercept.h"
 
 namespace fs = std::filesystem;
 
@@ -193,6 +194,7 @@ void PluginLoader::unloadAll() {
     ToolchainRegistry::instance().clear();
     ImageLoaderRegistry::instance().clear();
     ObserverRegistry::instance().clear();
+    InterceptRegistry::instance().clear();
 
     for (auto& p : m_plugins) {
         dlclose(p.handle);

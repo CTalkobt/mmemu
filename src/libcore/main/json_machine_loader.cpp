@@ -4,6 +4,7 @@
 #include "libcore/main/machines/machine_registry.h"
 #include "libcore/main/core_registry.h"
 #include "libcore/main/rom_loader.h"
+#include "libcore/main/intercept.h"
 #include "libmem/main/memory_bus.h"
 #include "libmem/main/sparse_memory_bus.h"
 #include "libdevices/main/io_registry.h"
@@ -768,6 +769,14 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();
     };
+
+    // -----------------------------------------------------------------------
+    // Step 10 — intercepts from the machine and its ROM entries
+    // -----------------------------------------------------------------------
+    installIntercepts(*desc, spec, [&romByLabel](const std::string& label) -> const uint8_t* {
+        auto it = romByLabel.find(label);
+        return it == romByLabel.end() ? nullptr : it->second.first;
+    });
 
     return desc;
 }

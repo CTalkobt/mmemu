@@ -74,7 +74,7 @@ LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp s
 	src/libcore/main/machines/machine_registry.cpp src/libcore/main/libcore.cpp \
 	src/libcore/main/image_loader.cpp src/libcore/main/json_machine_loader.cpp \
 	src/libcore/main/path_util.cpp src/libcore/main/sim_config.cpp \
-	src/libcore/main/machine_speed.cpp
+	src/libcore/main/machine_speed.cpp src/libcore/main/intercept.cpp
 LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_registry.cpp \
                     src/libdevices/main/ivideo_output.cpp src/libdevices/main/iaudio_inspect.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
@@ -324,6 +324,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libcore/test/test_libcore.cpp \
 	src/libcore/test/test_registry.cpp \
 	src/libcore/test/test_machine_speed.cpp \
+	src/libcore/test/test_intercept.cpp \
 	src/libcore/test/test_json_machine_loader.cpp \
 	src/libcore/test/test_machine_boot.cpp \
 	src/libdevices/test/test_devices.cpp \

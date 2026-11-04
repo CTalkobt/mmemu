@@ -1,4 +1,5 @@
 #include "kernal_hle.h"
+#include <cstdio>
 #include "include/util/logging.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_handler.h"
@@ -52,64 +53,70 @@ static void simulateRts(ICore* cpu, IBus* bus) {
     cpu->setPc(retAddr);
 }
 
-KernalHLE::KernalHLE() : m_enabled(true), m_hostPath(".") {
-    // Standard KERNAL jump table vectors (fixed for all CBM machines)
-    m_machineVectors["c64"]   = { 0xFFD5, 0xFFD8 };
-    m_machineVectors["vic20"] = { 0xFFD5, 0xFFD8 };
-    m_machineVectors["pet2001"] = { 0xFFD5, 0xFFD8 };
-    m_machineVectors["pet4032"] = { 0xFFD5, 0xFFD8 };
-    m_machineVectors["pet8032"] = { 0xFFD5, 0xFFD8 };
+KernalHLE::KernalHLE(const nlohmann::json& e) {
+    if (e.contains("load")) m_load = interceptAddr(e["load"]);
+    if (e.contains("save")) m_save = interceptAddr(e["save"]);
+    m_hostPath = e.value("path", std::string("."));
+    if (e.contains("zeroPage")) {
+        const auto& z = e["zeroPage"];
+        if (z.contains("status")) m_zp.status = (uint16_t)interceptAddr(z["status"]);
+        if (z.contains("fnlen"))  m_zp.fnlen  = (uint16_t)interceptAddr(z["fnlen"]);
+        if (z.contains("sa"))     m_zp.sa     = (uint16_t)interceptAddr(z["sa"]);
+        if (z.contains("fa"))     m_zp.fa     = (uint16_t)interceptAddr(z["fa"]);
+        if (z.contains("fnadr"))  m_zp.fnadr  = (uint16_t)interceptAddr(z["fnadr"]);
+    }
 }
 
-bool KernalHLE::onStep(ICore* cpu, IBus* bus, const DisasmEntry& entry) {
-    if (!m_enabled) return true;
+bool KernalHLE::setOption(const std::string& key, const std::string& value) {
+    if (key == "path") { m_hostPath = value; return true; }
+    return false;
+}
 
-    // Check if we are at a known vector
-    if (entry.addr == 0xFFD5 || entry.addr == 0xFFD8) {
-        uint8_t device = getDevice(cpu, bus);
-        LogRegistry::instance().getLogger("hle")->debug("vector ${:04X}, device {}", entry.addr, device);
+std::string KernalHLE::describe() const {
+    char buf[96];
+    snprintf(buf, sizeof buf, "KERNAL LOAD $%04X / SAVE $%04X from host folder: ", m_load, m_save);
+    return buf + m_hostPath;
+}
 
-        // If we have machine context, check if a physical device is handling this unit
-        if (m_currentMachine && m_currentMachine->ioRegistry) {
-            std::vector<IOHandler*> handlers;
-            m_currentMachine->ioRegistry->enumerate(handlers);
-            for (auto* h : handlers) {
-                int t, s;
-                bool led;
-                if (h->getDiskStatus(device, t, s, led)) {
-                    // A physical device (e.g. VirtualIEC) is handling this unit.
-                    LogRegistry::instance().getLogger("hle")->debug("device {} handled by {}, passing to KERNAL",
-                                                                    device, h->name());
-                    return true;
-                }
+bool KernalHLE::onExecute(MachineDescriptor& m, ICore& cpu, IBus& bus, uint32_t pc) {
+    return handle(cpu, bus, pc, &m);
+}
+
+bool KernalHLE::handle(ICore& cpu, IBus& bus, uint32_t pc, MachineDescriptor* m) {
+    if (pc != m_load && pc != m_save) return false;
+    uint8_t device = getDevice(&bus);
+    LogRegistry::instance().getLogger("hle")->debug("vector ${:04X}, device {}", pc, device);
+
+    // Units below 8 (tape, printers...) and units an emulated drive answers
+    // are left to the KERNAL
+    if (device < 8) return false;
+    if (m && m->ioRegistry) {
+        std::vector<IOHandler*> handlers;
+        m->ioRegistry->enumerate(handlers);
+        for (auto* h : handlers) {
+            int t, s;
+            bool led;
+            if (h->getDiskStatus(device, t, s, led)) {
+                LogRegistry::instance().getLogger("hle")->debug("device {} handled by {}, passing to KERNAL",
+                                                                device, h->name());
+                return false;
             }
         }
-
-        if (entry.addr == 0xFFD5) {
-            handleLoad(cpu, bus);
-        } else {
-            handleSave(cpu, bus);
-        }
-        return false; // Intercepted
     }
 
+    if (pc == m_load) handleLoad(&cpu, &bus);
+    else              handleSave(&cpu, &bus);
     return true;
 }
 
-void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
-    uint8_t device = getDevice(cpu, bus);
-    // We only intercept if it's a disk device (8-11) or if enabled for all?
-    // For now, let's say we intercept if it's 8-31.
-    if (device < 8) {
-        // Let KERNAL handle it (e.g. tape)
-        // Wait, if I return true from onStep it would continue.
-        // But I've already returned false and called handleLoad.
-        // I should have checked device in onStep if I wanted to skip.
-        // Let's refine onStep.
-    }
+void registerKernalHleIntercept() {
+    InterceptRegistry::instance().registerType("cbm.kernal.fileio",
+        [](const nlohmann::json& e) -> IIntercept* { return new KernalHLE(e); });
+}
 
-    uint8_t sa = getSecondaryAddress(cpu, bus);
-    std::string filename = getFilename(cpu, bus);
+void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
+    uint8_t sa = getSecondaryAddress(bus);
+    std::string filename = getFilename(bus);
     
     // Determine load address
     uint32_t loadAddr;
@@ -142,11 +149,10 @@ void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
         return;
     }
 
-    size_t startOffset = 0;
-    if (sa != 0) {
-        loadAddr = data[0] | (data[1] << 8);
-        startOffset = 2;
-    }
+    // The first two bytes are the file's load address: used with a non-zero
+    // secondary address, skipped either way (SA 0 loads to X/Y)
+    size_t startOffset = 2;
+    if (sa != 0) loadAddr = data[0] | (data[1] << 8);
 
     // Inject data
     for (size_t i = startOffset; i < data.size(); ++i) {
@@ -170,17 +176,17 @@ void KernalHLE::handleSave(ICore* cpu, IBus* bus) {
     simulateRts(cpu, bus);
 }
 
-uint8_t KernalHLE::getDevice(ICore* cpu, IBus* bus) {
-    return bus->read8(0xBA);
+uint8_t KernalHLE::getDevice(IBus* bus) {
+    return bus->read8(m_zp.fa);
 }
 
-uint8_t KernalHLE::getSecondaryAddress(ICore* cpu, IBus* bus) {
-    return bus->read8(0xB9);
+uint8_t KernalHLE::getSecondaryAddress(IBus* bus) {
+    return bus->read8(m_zp.sa);
 }
 
-std::string KernalHLE::getFilename(ICore* cpu, IBus* bus) {
-    uint8_t len = bus->read8(0xB7);
-    uint16_t ptr = bus->read8(0xBB) | (bus->read8(0xBC) << 8);
+std::string KernalHLE::getFilename(IBus* bus) {
+    uint8_t len = bus->read8(m_zp.fnlen);
+    uint16_t ptr = bus->read8(m_zp.fnadr) | (bus->read8(m_zp.fnadr + 1) << 8);
     std::string name;
     for (int i = 0; i < len; ++i) {
         name += (char)bus->read8(ptr + i);
@@ -189,7 +195,7 @@ std::string KernalHLE::getFilename(ICore* cpu, IBus* bus) {
 }
 
 void KernalHLE::setStatus(IBus* bus, uint8_t status) {
-    bus->write8(0x90, status);
+    bus->write8(m_zp.status, status);
 }
 
 void KernalHLE::setCarry(ICore* cpu, bool set) {

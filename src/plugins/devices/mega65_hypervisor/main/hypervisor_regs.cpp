@@ -2,27 +2,6 @@
 
 HypervisorRegs::HypervisorRegs(MOS45GS02* cpu) : m_cpu(cpu) {}
 
-bool HypervisorRegs::handleDosTrap() {
-    if (!m_hdosTrap) return false;
-
-    // The A register contains the function code (func = A & 0x7E)
-    uint8_t funcCode = m_cpu->regRead(0) & 0x7E; // A register, mask to even
-
-    // Enter hypervisor to save user state
-    m_cpu->enterHypervisor(0x8000);
-
-    // Try to virtualize the function
-    if (m_hdosTrap(funcCode, m_cpu)) {
-        // Virtualized — exit hypervisor with the handler's register values
-        m_cpu->exitHypervisor();
-        return true;
-    }
-
-    // Not virtualized — hypervisor is entered, HYPPO's trap handler at $8000 runs.
-    // Return true because enterHypervisor already happened.
-    return true;
-}
-
 bool HypervisorRegs::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if ((addr & ~(uint32_t)0x3F) != 0xD640) return false;
     uint8_t off = addr & 0x3F;
@@ -85,14 +64,15 @@ bool HypervisorRegs::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             }
         }
 
-        // SYSCALL number = offset (0-63), entry point = $8000 + off*4
-        // Trap 0 (DOS): try HDOS virtualization first
-        if (off == 0x00 && handleDosTrap()) {
-            return true;  // Virtualized — hypervisor entered and exited
-        }
-
+        // SYSCALL number = offset (0-63), entry point = $8000 + off*4.
+        // Enter the hypervisor (saving the caller's state), then let the
+        // machine's call intercepts service it before HYPPO runs.
+        uint8_t a = (uint8_t)m_cpu->regRead(0);
+        uint8_t function = off == 0x00 ? (uint8_t)(a & 0x7E) : a;
         uint16_t trapAddr = 0x8000 + (uint16_t)off * 4;
         m_cpu->enterHypervisor(trapAddr);
+        if (m_callIntercept && m_callIntercept(off, function))
+            m_cpu->exitHypervisor();
         return true;
     }
 

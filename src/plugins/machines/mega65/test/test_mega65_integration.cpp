@@ -969,3 +969,18 @@ TEST_CASE(mega65_dload_from_host_d81) {
     unlink(d81.c_str());
     delete desc;
 }
+
+#include "libcore/main/intercept.h"
+// machines/mega65.json installs the HYPPO DOS call intercept ("mega65.hdos")
+TEST_CASE(mega65_installs_hdos_intercept_from_config) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    IIntercept* h = findIntercept(*desc, "hdos");
+    ASSERT(h != nullptr);
+    ASSERT_EQ(h->type(), std::string("mega65.hdos"));
+    ASSERT(h->enabled());
+    auto* c = dynamic_cast<ICallIntercept*>(h);
+    ASSERT(c && c->selects(0x00, 0x34) && c->selects(0x00, 0x2E) && !c->selects(0x00, 0x00));
+    delete desc;
+}

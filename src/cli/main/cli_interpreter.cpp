@@ -34,6 +34,7 @@ volatile sig_atomic_t g_interrupted = 0;
 #include "libdevices/main/ivideo_inspect.h"
 #include "util/stb_image_write.h"
 #include "imap_controller.h"
+#include "libcore/main/intercept.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include <iostream>
 #include <chrono>
@@ -2456,6 +2457,62 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Syntax: srcmap load <map> [source] | srcmap list | srcmap clear\n");
         }
+    } else if (cmd == "intercept" || cmd == "intercepts") {
+        // Intercepts installed from the machine's configuration (machines/*.json)
+        std::string sub;
+        ss >> sub;
+        if (sub == "types") {
+            for (const auto& t : InterceptRegistry::instance().types()) m_output("  " + t + "\n");
+            return;
+        }
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& m = *m_ctx.machine;
+        if (sub.empty() || sub == "list") {
+            if (m.intercepts.empty()) {
+                m_output("No intercepts installed: the machine's configuration lists none (\"intercepts\").\n");
+                return;
+            }
+            for (IIntercept* i : m.intercepts)
+                m_output("  " + i->name() + " [" + i->type() + "] " + (i->enabled() ? "on " : "off") +
+                         "  " + i->describe() + "\n");
+            return;
+        }
+        std::string name;
+        ss >> name;
+        IIntercept* i = name.empty() ? nullptr : findIntercept(m, name);
+        if (sub == "on" || sub == "off" || sub == "set") {
+            if (!i) { m_output("No intercept '" + name + "' on this machine (try `intercept list`).\n"); return; }
+            if (sub == "set") {
+                std::string key, value;
+                ss >> key;
+                std::getline(ss, value);
+                if (!value.empty() && value[0] == ' ') value = value.substr(1);
+                if (key.empty()) { m_output("Syntax: intercept set <name> <setting> <value>\n"); return; }
+                if (!i->setOption(key, value)) { m_output("'" + i->name() + "' has no setting '" + key + "'.\n"); return; }
+            } else {
+                i->setEnabled(sub == "on");
+            }
+            m_output("  " + i->name() + " [" + i->type() + "] " + (i->enabled() ? "on " : "off") + "  " + i->describe() + "\n");
+            return;
+        }
+        m_output("Syntax: intercept [list] | intercept on|off <name> | intercept set <name> <setting> <value> | intercept types\n");
+    } else if (cmd == "hle") {
+        // Shortcut for the KERNAL file I/O intercept(s) of this machine
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        std::string sub, arg;
+        ss >> sub;
+        std::getline(ss, arg);
+        if (!arg.empty() && arg[0] == ' ') arg = arg.substr(1);
+        int n = 0;
+        for (IIntercept* i : m_ctx.machine->intercepts) {
+            if (i->type() != "cbm.kernal.fileio") continue;
+            if (sub == "on" || sub == "off") i->setEnabled(sub == "on");
+            else if (sub == "path" && !arg.empty()) i->setOption("path", arg);
+            else if (!sub.empty()) { m_output("Usage: hle on|off|path <path>\n"); return; }
+            m_output("  " + i->name() + " " + (i->enabled() ? "on " : "off") + "  " + i->describe() + "\n");
+            n++;
+        }
+        if (!n) m_output("This machine has no KERNAL file I/O intercept (its configuration lists none).\n");
     } else if (cmd == "speed") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& m = *m_ctx.machine;
@@ -3306,6 +3363,9 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  speed [real|max|MHz] - show/set speed: real time or max (unpaced) for `run`;\n"
                  "                        MEGA65 also 1, 2, 3.5, 40 (40.5) MHz (each real time)\n"
                  "  warp [on|off]       - CPU speed model: on = fast (default), off = real-time device clock\n"
+                 "  intercept [list]    - Intercepts installed by the machine's configuration\n"
+                 "  intercept on|off <name> / set <name> <setting> <value> / types\n"
+                 "  hle on|off|path <p> - The KERNAL LOAD/SAVE host-folder intercept (CBM machines)\n"
                  "  analyze routine <addr> - Analyze routine flow and targets\n"
                  "  quit, q             - Exit the program\n"
                  "\nAll address values can be expressions with symbols and math.\n"

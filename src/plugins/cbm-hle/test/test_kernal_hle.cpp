@@ -41,13 +41,8 @@ TEST_CASE(kernal_hle_load) {
     bus.write8(0x01FE, 0x00); // Return address lo
     bus.write8(0x01FF, 0x10); // Return address hi ($1000)
     
-    // Trigger HLE at $FFD5
-    DisasmEntry entry;
-    entry.addr = 0xFFD5;
-    entry.mnemonic = "JSR";
-    
-    bool cont = hle.onStep(&cpu, &bus, entry);
-    ASSERT(cont == false); // Should have intercepted
+    // Run the LOAD intercept at $FFD5
+    ASSERT(hle.handle(cpu, bus, 0xFFD5));
     
     // Verify data injected at $2000
     ASSERT(bus.read8(0x2000) == 0xAD);
@@ -68,4 +63,43 @@ TEST_CASE(kernal_hle_load) {
     
     // Cleanup
     fs::remove(filename);
+}
+
+// Secondary address 0 loads to X/Y and still skips the file's load address
+TEST_CASE(kernal_hle_load_sa0_skips_header) {
+    MOS6502 cpu;
+    FlatMemoryBus bus("system", 16);
+    cpu.setDataBus(&bus);
+    KernalHLE hle;
+    hle.setHostPath(".");
+    std::string filename = "test_sa0.prg";
+    {
+        std::ofstream f(filename, std::ios::binary);
+        uint8_t bytes[] = { 0x01, 0x08, 0x11, 0x22, 0x33 };
+        f.write((char*)bytes, sizeof bytes);
+    }
+    bus.write8(0xBA, 9);
+    bus.write8(0xB9, 0);
+    bus.write8(0xB7, filename.length());
+    bus.write8(0xBB, 0x00);
+    bus.write8(0xBC, 0x02);
+    for (size_t i = 0; i < filename.length(); ++i) bus.write8(0x0200 + i, filename[i]);
+    cpu.regWriteByName("X", 0x00);
+    cpu.regWriteByName("Y", 0x30);
+    cpu.regWriteByName("SP", 0xFD);
+    ASSERT(hle.handle(cpu, bus, 0xFFD5));
+    ASSERT_EQ((int)bus.read8(0x3000), 0x11);
+    ASSERT_EQ((int)bus.read8(0x3002), 0x33);
+    ASSERT_EQ((int)cpu.regReadByName("X"), 0x03);
+    fs::remove(filename);
+}
+
+// Units below 8 (tape) are left to the KERNAL
+TEST_CASE(kernal_hle_leaves_tape_to_kernal) {
+    MOS6502 cpu;
+    FlatMemoryBus bus("system", 16);
+    cpu.setDataBus(&bus);
+    KernalHLE hle;
+    bus.write8(0xBA, 1);
+    ASSERT(!hle.handle(cpu, bus, 0xFFD5));
 }

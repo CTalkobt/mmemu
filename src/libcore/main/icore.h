@@ -48,6 +48,7 @@ struct RegDescriptor {
 };
 
 class ExecutionObserver;
+class PcInterceptHook;
 
 /**
  * Interface for CPU register access.
@@ -148,6 +149,13 @@ public:
     void setObserver(ExecutionObserver* obs) { m_observer = obs; }
     ExecutionObserver* getObserver() const { return m_observer; }
 
+    /**
+     * The machine's PC intercepts (libcore/main/intercept.h), installed from
+     * its configuration. Cores test it before fetching each opcode.
+     */
+    void setPcInterceptHook(PcInterceptHook* hook) { m_pcHook = hook; }
+    PcInterceptHook* getPcInterceptHook() const { return m_pcHook; }
+
     virtual void setLogger(void* handle, void (*logFn)(void*, int, const char*)) {
         m_logger = handle;
         m_logNamed = logFn;
@@ -159,6 +167,7 @@ public:
 
 protected:
     ExecutionObserver* m_observer = nullptr;
+    PcInterceptHook*   m_pcHook = nullptr;
     void*              m_logger = nullptr;
     void               (*m_logNamed)(void*, int, const char*) = nullptr;
 };

@@ -1,6 +1,7 @@
 #include "mmemu_plugin_api.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "machine_mega65.h"
+#include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 
 static const SimPluginHostAPI* g_host = nullptr;
 
@@ -23,6 +24,7 @@ static SimPluginManifest s_manifest = {
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* host) {
     g_host = host;
+    registerHdosIntercept();   // "mega65.hdos" intercept type (machines/mega65.json)
     MachineRegistry::instance().registerMachine("mega65",
         []() -> MachineDescriptor* { return Mega65MachineFactory::create(); },
         "MEGA65");

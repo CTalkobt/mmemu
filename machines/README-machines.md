@@ -41,6 +41,7 @@ This document defines the JSON schema used to describe and reconstruct the vario
 | `joystick` | JoySpec | Joystick port mapping |
 | `ioHook` | IoHookSpec | Custom I/O address mirroring and remapping |
 | `scheduler` | SchedSpec | Execution policy and frame synchronization |
+| `intercepts` | InterceptSpec[] | (Optional) Host-side handlers for firmware routines and calls, see below |
 
 ---
 
@@ -78,6 +79,29 @@ Individual hardware components.
 - `overlayAddr`: Hex string address where the ROM is mapped to the bus, or `null` if not directly mapped.
 - `writable`: (bool) Whether the overlay is writable.
 - `passToDevice`: Array of device names that should receive a pointer to this ROM data.
+- `cpuAddr`: (Optional) CPU address of the ROM's first byte when it is banked in (e.g. `"0xE000"` for a C64 KERNAL passed to the PLA); needed for `intercepts` on a ROM without an `overlayAddr`.
+- `intercepts`: (Optional) InterceptSpec[] that fire only while this ROM is visible at the address (the CPU reads the ROM's bytes there), e.g. not when the C64 KERNAL is banked out.
+
+### InterceptSpec (intercepts)
+An intercept is a host-side handler that stands in for a firmware routine or call. Plugins provide the types; the machine (or one of its ROMs) installs instances. `intercept types` in the CLI lists the types loaded.
+
+- `type`: (required) e.g. `"cbm.kernal.fileio"`, `"mega65.hdos"`.
+- `name`: (optional) name for the CLI (`intercept on|off|set <name> ...`); defaults to the type.
+- `enabled`: (optional, default `true`).
+- Call intercepts (`mega65.hdos`): `trap` and `functions` select the calls served (absent = all).
+- Any other keys are the type's own settings.
+
+| Type | Plugin | Kind | Settings |
+|---|---|---|---|
+| `cbm.kernal.fileio` | cbm-hle | PC (KERNAL `LOAD`/`SAVE`) | `load`, `save` (addresses, default `$FFD5`/`$FFD8`), `path` (host folder), `zeroPage` {`status`, `fnlen`, `sa`, `fa`, `fnadr`} (default C64/VIC-20: `$90`, `$B7`, `$B9`, `$BA`, `$BB`) |
+| `mega65.hdos` | mega65 | Call (HYPPO trap `$00`) | `paths` (host folders, the first that exists), `filename` (overrides setname's name) |
+
+```json
+{ "label": "kernal", "path": "roms/c64/kernal.bin", "size": 8192, "cpuAddr": "0xE000",
+  "intercepts": [ { "type": "cbm.kernal.fileio", "name": "kernal-fileio", "path": "." } ] }
+```
+
+At run time: `intercept [list]`, `intercept on|off <name>`, `intercept set <name> <setting> <value>`; `hle on|off|path <dir>` is a shortcut for `cbm.kernal.fileio`.
 
 ### RamSpec (ramExpansions)
 - `name`: Identifier for the RAM block.

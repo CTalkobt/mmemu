@@ -22,7 +22,12 @@
         { "label": "basic",  "path": "roms/vic20/basic.bin",  "size": 8192,
           "overlayAddr": "0xC000", "writable": false },
         { "label": "kernal", "path": "roms/vic20/kernal.bin", "size": 8192,
-          "overlayAddr": "0xE000", "writable": false }
+          "overlayAddr": "0xE000", "writable": false,
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] }
       ],
       "symbolFiles": [ "roms/vic20/kernal.sym", "roms/vic20/basic.sym" ],
       "ramExpansions": [
@@ -72,7 +77,12 @@
         { "label": "basic",  "path": "roms/vic20/basic.bin",  "size": 8192,
           "overlayAddr": "0xC000", "writable": false },
         { "label": "kernal", "path": "roms/vic20/kernal.bin", "size": 8192,
-          "overlayAddr": "0xE000", "writable": false }
+          "overlayAddr": "0xE000", "writable": false,
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] }
       ],
       "symbolFiles": [ "roms/vic20/kernal.sym", "roms/vic20/basic.sym" ],
       "ramExpansions": [
@@ -122,7 +132,12 @@
         { "label": "basic",  "path": "roms/vic20/basic.bin",  "size": 8192,
           "overlayAddr": "0xC000", "writable": false },
         { "label": "kernal", "path": "roms/vic20/kernal.bin", "size": 8192,
-          "overlayAddr": "0xE000", "writable": false }
+          "overlayAddr": "0xE000", "writable": false,
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] }
       ],
       "symbolFiles": [ "roms/vic20/kernal.sym", "roms/vic20/basic.sym" ],
       "ramExpansions": [
@@ -172,7 +187,12 @@
         { "label": "basic",  "path": "roms/vic20/basic.bin",  "size": 8192,
           "overlayAddr": "0xC000", "writable": false },
         { "label": "kernal", "path": "roms/vic20/kernal.bin", "size": 8192,
-          "overlayAddr": "0xE000", "writable": false }
+          "overlayAddr": "0xE000", "writable": false,
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] }
       ],
       "symbolFiles": [ "roms/vic20/kernal.sym", "roms/vic20/basic.sym" ],
       "ramExpansions": [
@@ -222,7 +242,12 @@
         { "label": "basic",  "path": "roms/vic20/basic.bin",  "size": 8192,
           "overlayAddr": "0xC000", "writable": false },
         { "label": "kernal", "path": "roms/vic20/kernal.bin", "size": 8192,
-          "overlayAddr": "0xE000", "writable": false }
+          "overlayAddr": "0xE000", "writable": false,
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] }
       ],
       "symbolFiles": [ "roms/vic20/kernal.sym", "roms/vic20/basic.sym" ],
       "ramExpansions": [
