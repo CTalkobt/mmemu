@@ -8,10 +8,11 @@
 
 class Assembler6502 : public IAssembler {
 public:
-    Assembler6502();
+    /** `cmos`: the WDC 65C02 instruction set instead of the NMOS one with its illegal opcodes. */
+    explicit Assembler6502(bool cmos = false);
 
-    const char* name() const override { return "Native6502"; }
-    bool isaSupported(const std::string& isa) const override { return isa == "6502"; }
+    const char* name() const override { return m_cmos ? "Native65C02" : "Native6502"; }
+    bool isaSupported(const std::string& isa) const override { return isa == (m_cmos ? "65C02" : "6502"); }
 
     AssemblerResult assemble(const std::string& sourcePath, const std::string& outputPath) override;
     int assembleLine(const std::string& line, uint8_t* buf, int bufsz, uint32_t currentAddr = 0) override;
@@ -26,6 +27,9 @@ private:
     // Mode represented as string for simple parsing logic
     std::map<std::string, std::map<std::string, OpcodeInfo>> m_mnemonics;
 
+    bool m_cmos;
+
     void initTable();
+    void initCmos();
     void add(const std::string& mnem, const std::string& mode, uint8_t op, int sz);
 };

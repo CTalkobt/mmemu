@@ -24,7 +24,7 @@ Plugins that implement the `ICore` interface.
 
 | Plugin File | Description | Documentation |
 |-------------|-------------|---------------|
-| `lib/mmemu-plugin-6502.so` | MOS 6502 (NMOS) with illegal opcode support; also provides MOS 6510. | [README-6502.md](README-6502.md) · [README-6510.md](README-6510.md) |
+| `lib/mmemu-plugin-6502.so` | MOS 6502 (NMOS) with illegal opcode support; also provides MOS 6510 and WDC 65C02. | [README-6502.md](README-6502.md) · [README-6510.md](README-6510.md) |
 | `lib/mmemu-plugin-45gs02.so` | MEGA65 45GS02 CPU: 65CE02 extensions, 28-bit mapping (MAP), 32-bit Quad operations. | [README-45GS02.md](README-45GS02.md) |
 
 ### 1.2 Device Plugins (I/O & Video)
@@ -45,6 +45,7 @@ Plugins that implement the `IOHandler` interface for memory-mapped hardware.
 | `lib/mmemu-plugin-antic.so` | Atari ANTIC DMA engine and display controller. | [README-ANTIC.md](README-ANTIC.md) |
 | `lib/mmemu-plugin-gtia.so` | Atari GTIA color and PMG chip. | [README-GTIA.md](README-GTIA.md) |
 | `lib/mmemu-plugin-pokey.so` | Atari POKEY audio, timers, and keyboard/SIO. | [README-POKEY.md](README-POKEY.md) |
+| `lib/mmemu-plugin-vera.so` | Commander X16 VERA: video (layers, sprites, FX), PSG and PCM audio, SPI. | [README-X16.md](README-X16.md) |
 | `lib/mmemu-plugin-virtual-iec.so` | Commodore IEC Serial Bus (Level 2 virtual device) with .d64 support. | [README-IEC.md](README-IEC.md) |
 | `lib/mmemu-plugin-hyper-serial.so` | HyperSerial debugging logger for MEGA65 / 45GS02 tests. | [README-HYPER-SERIAL.md](README-HYPER-SERIAL.md) |
 | `lib/mmemu-plugin-exit-trap.so` | Minimal exit signaling device for automated test validation. | [README-EXIT-TRAP.md](README-EXIT-TRAP.md) |
@@ -65,6 +66,7 @@ Plugins that implement `MachineDescriptor` factories.
 | `lib/mmemu-plugin-vic20.so` | Commodore VIC-20 (stock and RAM expansions). | [README-VIC20.md](README-VIC20.md) |
 | `lib/mmemu-plugin-c64.so` | Commodore 64 — full chip set and banking. | [README-C64.md](README-C64.md) |
 | `lib/mmemu-plugin-pet.so` | Commodore PET Series (2001, 4032, 8032). | [README-PET.md](README-PET.md) |
+| `lib/mmemu-plugin-x16.so` | Commander X16 (65C02, VERA, VIAs, I2C SMC/RTC, banked RAM/ROM). | [README-X16.md](README-X16.md) |
 
 | Note | The `rawMega65` machine is defined via JSON in `machines/rawMega65.json` and uses the `45gs02` core and `hyper_serial` / `exit_trap` devices. | [README-RAW-MEGA65.md](README-RAW-MEGA65.md) |
 

@@ -1,6 +1,7 @@
 #include "mmemu_plugin_api.h"
 #include "cpu6502.h"
 #include "cpu6510.h"
+#include "cpu65c02.h"
 #include "disassembler_6502.h"
 #include "assembler_6502.h"
 #include "kickassembler.h"
@@ -24,9 +25,19 @@ static ICore* createCore6510() {
 static IDisassembler* createDisasm6502() {
     return new Disassembler6502();
 }
+static ICore* createCore65C02() {
+    return new MOS65C02();
+}
+static IDisassembler* createDisasm65C02() {
+    return new Disassembler6502(nullptr, true);
+}
 
 static IAssembler* createAsm6502() {
     return new Assembler6502();
+}
+
+static IAssembler* createAsm65C02() {
+    return new Assembler6502(true);
 }
 
 static IAssembler* createAsmKick() {
@@ -65,11 +76,13 @@ static MachineDescriptor* createMachineRaw6510() {
 
 static CorePluginInfo s_cores[] = {
     {"6502", "NMOS", "open", createCore6502},
-    {"6510", "NMOS", "open", createCore6510}
+    {"6510", "NMOS", "open", createCore6510},
+    {"65C02", "CMOS", "open", createCore65C02}
 };
 
 static ToolchainPluginInfo s_toolchains[] = {
     {"6502", nullptr, createDisasm6502, createAsm6502},           // ISA default, no name
+    {"65C02", nullptr, createDisasm65C02, createAsm65C02},
     {nullptr, "kickAssembler", nullptr, createAsmKick}            // Name-only registration
 };
 
@@ -85,8 +98,8 @@ static SimPluginManifest s_manifest = {
     "1.0.0",
     nullptr,        // deps
     nullptr,        // supportedMachineIds
-    2, s_cores,
-    2, s_toolchains,
+    sizeof(s_cores) / sizeof(s_cores[0]), s_cores,
+    sizeof(s_toolchains) / sizeof(s_toolchains[0]), s_toolchains,
     0, nullptr,     // devices
     2, s_machines,  // machines
     0, nullptr,     // loaders

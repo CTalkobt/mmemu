@@ -27,12 +27,59 @@ ScreenPane::ScreenPane(wxWindow* parent)
     Bind(wxEVT_SIZE,  &ScreenPane::OnSize,           this);
     m_ratioBtn->Bind(wxEVT_TOGGLEBUTTON,   [this](wxCommandEvent&) { Refresh(); });
     m_captureBtn->Bind(wxEVT_TOGGLEBUTTON, &ScreenPane::OnCaptureToggle, this);
+    for (auto t : {wxEVT_MOTION, wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_RIGHT_DOWN, wxEVT_RIGHT_UP,
+                   wxEVT_MIDDLE_DOWN, wxEVT_MIDDLE_UP, wxEVT_MOUSEWHEEL, wxEVT_LEAVE_WINDOW})
+        Bind(t, &ScreenPane::OnMouse, this);
 }
 
 void ScreenPane::OnCaptureToggle(wxCommandEvent&) {
     bool active = m_captureBtn->GetValue();
     m_captureBtn->SetLabel(active ? "Keyboard Captured \u25cf" : "Capture Keyboard");
     if (m_captureCallback) m_captureCallback(active);
+}
+
+void ScreenPane::SetMouseHandler(std::function<void(int, int, uint8_t, int)> fn) {
+    m_mouseHandler = std::move(fn);
+    m_haveLast = false;
+    m_buttons = 0;
+    m_fracX = m_fracY = 0;
+}
+
+void ScreenPane::OnMouse(wxMouseEvent& ev) {
+    ev.Skip();
+    if (!m_mouseHandler || m_imgRect.IsEmpty()) return;
+    wxPoint pos = ev.GetPosition();
+    bool inside = m_imgRect.Contains(pos);
+    uint8_t buttons = m_buttons;
+    if (ev.LeftDown() && inside) buttons |= 1;
+    if (ev.RightDown() && inside) buttons |= 2;
+    if (ev.MiddleDown() && inside) buttons |= 4;
+    if (ev.LeftUp()) buttons &= ~1;
+    if (ev.RightUp()) buttons &= ~2;
+    if (ev.MiddleUp()) buttons &= ~4;
+    if (ev.Leaving()) { m_haveLast = false; buttons = 0; }
+
+    // Movement over the picture (or while a button is held), in emulated pixels
+    int dx = 0, dy = 0;
+    if ((inside || buttons) && (ev.Dragging() || ev.Moving() || ev.ButtonDown())) {
+        if (m_haveLast) {
+            m_fracX += (pos.x - m_lastPos.x) / m_scale;
+            m_fracY += (pos.y - m_lastPos.y) / m_scale;
+            dx = (int)m_fracX; dy = (int)m_fracY;
+            m_fracX -= dx; m_fracY -= dy;
+        }
+        m_lastPos = pos;
+        m_haveLast = true;
+    }
+    int wheel = 0;
+    if (ev.GetEventType() == wxEVT_MOUSEWHEEL && inside && ev.GetWheelDelta())
+        wheel = ev.GetWheelRotation() / ev.GetWheelDelta();
+
+    if (dx || dy || wheel || buttons != m_buttons) {
+        m_buttons = buttons;
+        m_mouseHandler(dx, dy, buttons, wheel);
+    }
+    if (ev.ButtonDown() && inside) SetFocus();
 }
 
 void ScreenPane::SetCaptureActive(bool active) {
@@ -109,6 +156,9 @@ void ScreenPane::OnPaint(wxPaintEvent&) {
         dstW = fitW;
         dstH = fitH;
     }
+
+    m_imgRect = wxRect(dstX, dstY, dstW, dstH);
+    m_scale = std::max(0.01, (double)dstW / srcW);
 
     wxBitmap bmp(img.Scale(dstW, dstH, wxIMAGE_QUALITY_NEAREST));
     dc.DrawBitmap(bmp, dstX, dstY, false);

@@ -37,3 +37,6 @@ compile_commands.json
 .geminiignore
 roms/mega65
 .ai
+
+# Commander X16 ROM (R49 release image, downloaded; see doc/README-X16.md)
+roms/x16

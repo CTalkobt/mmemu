@@ -104,3 +104,48 @@ TEST_CASE(assembler6502_illegals) {
     ASSERT(sz == 3);
     ASSERT(buf[0] == 0xAF);
 }
+
+#include "plugins/6502/main/disassembler_6502.h"
+#include <cstdio>
+
+// Every 65C02 opcode the disassembler names assembles back to the same bytes
+TEST_CASE(assembler65c02_round_trips_every_opcode) {
+    Assembler6502 assem(true);
+    Disassembler6502 dis(nullptr, true);
+    ASSERT(assem.isaSupported("65C02"));
+    FlatMemoryBus bus("t", 16);
+    int checked = 0;
+    for (int op = 0; op < 256; op++) {
+        const uint32_t pc = 0x1000;
+        bus.write8(pc, (uint8_t)op);
+        bus.write8(pc + 1, 0x12);
+        bus.write8(pc + 2, 0x10);       // BBRn/BBSn: forward branch
+        DisasmEntry e;
+        int len = dis.disasmEntry(&bus, pc, e);
+        if (e.mnemonic == "NOP" && op != 0xEA) continue;   // reserved: multi-byte NOPs
+        std::string line = e.mnemonic + (e.operands.empty() ? "" : " " + e.operands);
+        uint8_t buf[4] = {};
+        int sz = assem.assembleLine(line, buf, sizeof buf, pc);
+        if (sz != len || buf[0] != (uint8_t)op ||
+            (len > 1 && buf[1] != bus.read8(pc + 1)) || (len > 2 && buf[2] != bus.read8(pc + 2))) {
+            printf("    $%02X '%s': assembled %d bytes %02X %02X %02X, expected %d\n",
+                   op, line.c_str(), sz, buf[0], buf[1], buf[2], len);
+            ASSERT(false);
+        }
+        checked++;
+    }
+    ASSERT(checked >= 210);
+}
+
+TEST_CASE(assembler6502_nmos_rejects_cmos) {
+    Assembler6502 nmos;
+    uint8_t buf[4];
+    ASSERT_EQ(nmos.assembleLine("STZ $10", buf, sizeof buf), -1);
+    ASSERT_EQ(nmos.assembleLine("LDA ($10)", buf, sizeof buf), -1);
+    Assembler6502 cmos(true);
+    ASSERT_EQ(cmos.assembleLine("LAX $10", buf, sizeof buf), -1);
+    ASSERT_EQ(cmos.assembleLine("INC", buf, sizeof buf), 1);
+    ASSERT_EQ((int)buf[0], 0x1A);
+    ASSERT_EQ(cmos.assembleLine("BBS7 $FF,$0FFF", buf, sizeof buf, 0x1000), 3);
+    ASSERT_EQ((int)buf[2], 0xFC);
+}

@@ -3,8 +3,9 @@
 #include <iomanip>
 #include <sstream>
 
-Disassembler6502::Disassembler6502(SymbolTable* symbols)
-    : m_symbols(symbols)
+Disassembler6502::Disassembler6502(SymbolTable* symbols, bool cmos)
+    : m_cpu(cmos ? std::unique_ptr<MOS6502>(new MOS65C02()) : std::make_unique<MOS6502>()),
+      m_symbols(symbols)
 {
 }
 
@@ -16,7 +17,7 @@ int Disassembler6502::disasmOne(IBus* bus, uint32_t addr, char* buf, int bufsz) 
 }
 
 int Disassembler6502::disasmEntry(IBus* bus, uint32_t addr, DisasmEntry& entry) {
-    int bytes = m_cpu.disassembleEntry(bus, addr, &entry);
+    int bytes = m_cpu->disassembleEntry(bus, addr, &entry);
     if (m_symbols) {
         resolveSymbols(entry);
     }

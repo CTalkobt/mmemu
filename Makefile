@@ -25,6 +25,9 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/machines/c64/main -Isrc/plugins/devices/pia6520/main \
 	-Isrc/plugins/devices/crtc6545/main -Isrc/plugins/devices/pet_video/main \
 	-Isrc/plugins/devices/pokey/main -Isrc/plugins/devices/datasette/main \
+	-Isrc/plugins/devices/vera/main \
+	-Isrc/plugins/devices/ym2151/main \
+	-Isrc/third_party/ymfm \
 	-Isrc/plugins/devices/keyboard/main \
 	-Isrc/plugins/45gs02/main \
 	-Isrc/plugins/devices/hyper_serial/main \
@@ -103,6 +106,7 @@ PLUGIN_CBMHLE_SRCS = src/plugins/cbm-hle/main/kernal_hle.cpp \
 	src/plugins/cbm-hle/main/plugin_init.cpp
 
 PLUGIN_6502_SRCS = src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp \
 	src/plugins/6502/main/cpu6510.cpp \
 	src/plugins/6502/main/disassembler_6502.cpp \
 	src/plugins/6502/main/assembler_6502.cpp \
@@ -197,6 +201,12 @@ PLUGIN_DATASETTE_SRCS = src/plugins/devices/datasette/main/datasette.cpp \
 PLUGIN_POKEY_SRCS = src/plugins/devices/pokey/main/pokey.cpp \
 	src/plugins/devices/pokey/main/plugin_init.cpp
 
+PLUGIN_VERA_SRCS = src/plugins/devices/vera/main/vera.cpp \
+	src/plugins/devices/vera/main/sdcard_spi.cpp \
+	src/plugins/devices/vera/main/vera_psg.cpp \
+	src/plugins/devices/vera/main/vera_pcm.cpp \
+	src/plugins/devices/vera/main/plugin_init.cpp
+
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
@@ -226,7 +236,22 @@ PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/devices/gtia/main/gtia.cpp \
 	src/plugins/devices/pokey/main/pokey.cpp \
 	src/plugins/devices/pia6520/main/pia6520.cpp \
-	src/plugins/6502/main/cpu6502.cpp
+	src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp
+
+PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
+	src/plugins/devices/vera/main/sdcard_spi.cpp \
+	src/plugins/devices/ym2151/main/ym2151.cpp \
+	src/third_party/ymfm/ymfm_opm.cpp \
+	src/plugins/machines/x16/main/x16_i2c.cpp \
+	src/plugins/machines/x16/main/x16_hostfs.cpp \
+	src/plugins/machines/x16/main/plugin_init.cpp \
+	src/plugins/devices/vera/main/vera.cpp \
+	src/plugins/devices/vera/main/vera_psg.cpp \
+	src/plugins/devices/vera/main/vera_pcm.cpp \
+	src/plugins/devices/via6522/main/via6522.cpp \
+	src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp
 
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
@@ -341,6 +366,11 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libtoolchain/test/test_debug_metadata.cpp \
 	src/libcore/test/test_machine_symbols.cpp \
 	src/plugins/6502/test/test_cpu6502.cpp \
+	src/plugins/6502/test/test_cpu_opcode_suites.cpp \
+	src/plugins/machines/x16/test/test_x16_i2c.cpp \
+	src/plugins/machines/x16/test/test_x16_machine.cpp \
+	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
+	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
 	src/plugins/6502/test/test_cpu6510_io.cpp \
@@ -355,6 +385,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/antic/test/test_antic.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
+	src/plugins/devices/vera/test/test_vera.cpp \
+	src/plugins/devices/vera/test/test_sdcard_spi.cpp \
 	src/plugins/machines/atari/test/test_atari_machine.cpp \
 	src/plugins/devices/cia6526/test/test_cia6526.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec.cpp \
@@ -424,6 +456,12 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 
 # Test-related objects (excluding plugin entry points to avoid multiple mmemuPluginInit definitions)
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
+	src/plugins/machines/x16/main/x16_i2c.o \
+	src/plugins/machines/x16/main/x16_hostfs.o \
+	src/plugins/machines/x16/main/machine_x16.o \
+	src/plugins/devices/ym2151/main/ym2151.o \
+	src/third_party/ymfm/ymfm_opm.o \
+	src/plugins/6502/main/cpu6502_cmos.o \
 	src/plugins/6502/main/cpu6510.o \
 	src/plugins/6502/main/disassembler_6502.o \
 	src/plugins/6502/main/assembler_6502.o \
@@ -464,6 +502,10 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/antic/main/antic.o \
 	src/plugins/devices/gtia/main/gtia.o \
 	src/plugins/devices/pokey/main/pokey.o \
+	src/plugins/devices/vera/main/vera.o \
+	src/plugins/devices/vera/main/vera_psg.o \
+	src/plugins/devices/vera/main/sdcard_spi.o \
+	src/plugins/devices/vera/main/vera_pcm.o \
 	src/plugins/machines/atari/main/machine_atari.o \
 	src/plugins/machines/atari/main/atari_sio.o \
 	src/plugins/machines/atari/main/atari_cart.o \
@@ -555,6 +597,7 @@ PLUGIN_ANTIC_OBJS = $(PLUGIN_ANTIC_SRCS:.cpp=.o)
 PLUGIN_GTIA_OBJS = $(PLUGIN_GTIA_SRCS:.cpp=.o)
 PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
+PLUGIN_VERA_OBJS = $(PLUGIN_VERA_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
 PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_AUDIODMA_OBJS = $(PLUGIN_AUDIODMA_SRCS:.cpp=.o)
@@ -562,6 +605,7 @@ PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
 PLUGIN_SID_PAIR_OBJS = $(PLUGIN_SID_PAIR_SRCS:.cpp=.o)
 PLUGIN_MEGA65_OBJS = $(PLUGIN_MEGA65_SRCS:.cpp=.o)
 PLUGIN_ATARI_OBJS = $(PLUGIN_ATARI_SRCS:.cpp=.o)
+PLUGIN_X16_OBJS = $(PLUGIN_X16_SRCS:.cpp=.o)
 PLUGIN_EXIT_TRAP_OBJS = $(PLUGIN_EXIT_TRAP_SRCS:.cpp=.o)
 PLUGIN_MEGA65_MATH_OBJS = $(PLUGIN_MEGA65_MATH_SRCS:.cpp=.o)
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
@@ -602,6 +646,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-antic.so \
 	$(LIBDIR)/mmemu-plugin-gtia.so \
 	$(LIBDIR)/mmemu-plugin-pokey.so \
+	$(LIBDIR)/mmemu-plugin-vera.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
 	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
@@ -609,6 +654,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-map-mmu.so \
 	$(LIBDIR)/mmemu-plugin-mega65.so \
 	$(LIBDIR)/mmemu-plugin-atari.so \
+	$(LIBDIR)/mmemu-plugin-x16.so \
 	$(LIBDIR)/mmemu-plugin-exit-trap.so \
 	$(LIBDIR)/mmemu-plugin-mega65-math.so \
 	$(LIBDIR)/mmemu-plugin-sid-pair.so \
@@ -731,6 +777,9 @@ $(LIBDIR)/mmemu-plugin-datasette.so: $(PLUGIN_DATASETTE_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-pokey.so: $(PLUGIN_POKEY_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
+$(LIBDIR)/mmemu-plugin-vera.so: $(PLUGIN_VERA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
 $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
@@ -747,6 +796,9 @@ $(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS) $(CA45_LIBS)
 
 $(LIBDIR)/mmemu-plugin-atari.so: $(PLUGIN_ATARI_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-x16.so: $(PLUGIN_X16_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)

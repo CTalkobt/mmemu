@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libcore/main/icore.h"
+#include <functional>
 #include <vector>
 
 /**
@@ -30,6 +31,8 @@ struct CPU6502State {
     uint8_t  nmiLine;
     uint8_t  nmiPrev;
     uint8_t  haltLine;
+    uint8_t  waiting;   // 65C02 WAI: until an interrupt line is asserted
+    uint8_t  stopped;   // 65C02 STP: until reset
 };
 
 /**
@@ -111,7 +114,10 @@ private:
 
     // Opcode execution
     enum class Mode {
-        IMP, ACC, IMM, BP, BPX, BPY, ABS, ABSX, ABSY, IND, BPXIND, INDBPY, REL
+        IMP, ACC, IMM, BP, BPX, BPY, ABS, ABSX, ABSY, IND, BPXIND, INDBPY, REL,
+        BPIND,      // 65C02 (zp)
+        ABSXIND,    // 65C02 JMP (abs,X)
+        BPREL       // 65C02 BBR/BBS: zero page, then a relative branch
     };
     using OpcodeFn = int (MOS6502::*)(uint16_t addr);
     struct Opcode {
@@ -119,8 +125,31 @@ private:
         OpcodeFn    fn;
         Mode        mode;
         int         cycles;
+        bool        penalty = false;   // 65C02: +1 cycle on an indexed page crossing (reads)
     };
     static const Opcode s_opcodes[256];
+    static const Opcode s_opcodes65c02[256];   // cpu6502_cmos.cpp
+
+    const Opcode* m_ops = s_opcodes;    // the variant's table
+    bool     m_cmos = false;            // WDC 65C02 behaviour
+    uint8_t  m_curOp = 0;               // opcode being executed (BBR/BBS/RMB/SMB bit)
+    uint16_t m_branchTarget = 0;        // BPREL: the branch target
+
+public:
+    /**
+     * Called as an interrupt (IRQ, NMI, BRK) is about to fetch its vector:
+     * the 65C02's VPB pin. The Commander X16 uses it to select ROM bank 0.
+     */
+    void setVectorPullHook(std::function<void()> fn) { m_onVectorPull = std::move(fn); }
+
+private:
+    std::function<void()> m_onVectorPull;
+
+protected:
+    /** Switch to the WDC 65C02: its opcode table, decimal flags, BRK/IRQ clear D, no JMP ($xxFF) bug. */
+    void enableCmos() { m_cmos = true; m_ops = s_opcodes65c02; }
+
+private:
 
     // Addressing modes
     uint16_t addrBP();
@@ -132,6 +161,30 @@ private:
     uint16_t addrIND();
     uint16_t addrBPXIND();
     uint16_t addrINDBPY(bool& pageCrossed);
+    bool     pagePenalty(uint8_t op) const;
+    uint16_t addrBPIND();
+    uint16_t addrABSXIND();
+
+    // 65C02 instructions (cpu6502_cmos.cpp)
+    int opBRA(uint16_t addr);
+    int opBBR(uint16_t addr);
+    int opBBS(uint16_t addr);
+    int opRMB(uint16_t addr);
+    int opSMB(uint16_t addr);
+    int opPHX(uint16_t addr);
+    int opPHY(uint16_t addr);
+    int opPLX(uint16_t addr);
+    int opPLY(uint16_t addr);
+    int opSTZ(uint16_t addr);
+    int opTRB(uint16_t addr);
+    int opTSB(uint16_t addr);
+    int opINCA(uint16_t addr);
+    int opDECA(uint16_t addr);
+    int opBITI(uint16_t addr);
+    int opWAI(uint16_t addr);
+    int opSTP(uint16_t addr);
+    int adcDecimalCmos(uint8_t m);
+    int sbcDecimalCmos(uint8_t m);
 
     // Instructions
     int opADC(uint16_t addr);
@@ -211,4 +264,6 @@ private:
     int opSHY(uint16_t addr);
     int opSHX(uint16_t addr);
     int opLAS(uint16_t addr);
+    int opLXA(uint16_t addr);
+    void storeAndHigh(uint16_t addr, uint8_t index, uint8_t value);
 };
