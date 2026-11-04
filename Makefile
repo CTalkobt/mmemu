@@ -329,6 +329,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libcore/test/test_machine_boot.cpp \
 	src/libdevices/test/test_devices.cpp \
 	src/libdevices/test/test_ieee488.cpp \
+	src/libdevices/test/test_io_peek.cpp \
 	src/libdebug/test/test_debug.cpp \
 	src/libdebug/test/test_trace_buffer.cpp \
 	src/libdebug/test/test_gif_writer.cpp \

@@ -100,6 +100,16 @@ public:
     virtual bool ioRead(IBus* bus, uint32_t addr, uint8_t* val) = 0;
 
     /**
+     * Read a register's value WITHOUT side effects, for debugger views, memory
+     * dumps and the "before" value of a write: no flag cleared, no pointer or
+     * queue advanced, no pending work done. The default is ioRead, for devices
+     * whose reads change nothing; a device whose read changes state must
+     * override it.
+     * @return true if the address was handled by this device.
+     */
+    virtual bool ioPeek(IBus* bus, uint32_t addr, uint8_t* val) { return ioRead(bus, addr, val); }
+
+    /**
      * Write to the device at the given address.
      * @return true if the address was handled by this device.
      */

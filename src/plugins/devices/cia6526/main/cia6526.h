@@ -68,6 +68,7 @@ public:
     uint32_t    addrMask() const override { return 0x000F; }  // 16 registers
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t  val) override;
     void reset()  override;
     void tick(uint64_t cycles) override;
@@ -119,6 +120,7 @@ public:
     static constexpr uint8_t ICR_INT = 0x80; // any interrupt active
 
 private:
+    bool readReg(uint32_t addr, uint8_t* val, bool peek);
     void flagTrigger();
     void updateIrq();
     void tickTimerA(uint64_t cycles);

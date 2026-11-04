@@ -101,6 +101,13 @@ void Mega65MathDevice::computeDivide() {
     // DIVBUSY = 0 (bit 7 of $D70F) — already 0 since we compute instantly
 }
 
+bool Mega65MathDevice::ioPeek(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
+    uint32_t off = addr - m_base;
+    if (off >= 256 || off <= 0x0F) return false;
+    *val = m_regs[off];
+    return true;
+}
+
 bool Mega65MathDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     uint32_t off = addr - m_base;
     if (off >= 256) return false;

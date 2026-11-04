@@ -217,6 +217,26 @@ bool F011Fdc::ioRead(IBus*, uint32_t addr, uint8_t* val) {
     return true;
 }
 
+bool F011Fdc::ioPeek(IBus*, uint32_t addr, uint8_t* val) {
+    if (addr < 0xD080 || addr > 0xD09F) return false;
+    const Drive& v = m_drv[m_drive & 1];
+    switch (addr & 0x1F) {
+        case 0x00: *val = m_control; break;
+        case 0x01: *val = m_cmd; break;
+        case 0x02: *val = v.statA; break;
+        case 0x03: *val = v.statB; break;
+        case 0x04: *val = m_track; break;
+        case 0x05: *val = m_sector; break;
+        case 0x06: *val = m_side; break;
+        case 0x07: *val = buffer()[m_ptrCpu ^ m_swapMask]; break;
+        case 0x08: *val = m_clock; break;
+        case 0x09: *val = m_step; break;
+        case 0x0A: *val = 0; break;
+        default:   *val = 0xFF; break;
+    }
+    return true;
+}
+
 bool F011Fdc::ioWrite(IBus*, uint32_t addr, uint8_t val) {
     if (addr < 0xD080 || addr > 0xD09F) return false;
     refreshMedia();

@@ -78,7 +78,12 @@ void CIA6526::reset() {
 // Address decode
 // ---------------------------------------------------------------------------
 
-bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
+bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, false); }
+bool CIA6526::ioPeek(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, true); }
+
+// A register read; `peek` returns the same value without its side effects
+// (ICR clear and IRQ release, TOD latch and release, port device reads).
+bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x0F;
@@ -87,7 +92,7 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             // Output bits from latch; input bits from port device (pins).
             *val = m_pra & m_ddra; // output bits
             if (m_portADevice) {
-                uint8_t pins = m_portADevice->readPort();
+                uint8_t pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
                 *val |= (pins & ~m_ddra); // input bits
             } else {
                 *val |= (~m_ddra & 0xFF); // unconnected pins float high
@@ -97,7 +102,7 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case PRB: {
             *val = m_prb & m_ddrb;
             if (m_portBDevice) {
-                uint8_t pins = m_portBDevice->readPort();
+                uint8_t pins = peek ? m_portBDevice->peekPort() : m_portBDevice->readPort();
                 *val |= (pins & ~m_ddrb);
             } else {
                 *val |= (~m_ddrb & 0xFF);
@@ -117,11 +122,12 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         // releases the latch.
         case TODTEN:
             *val = m_todLatched ? m_latchTen : m_todTen;
-            m_todLatched = false; // latch released
+            if (!peek) m_todLatched = false; // latch released
             break;
         case TODSEC: *val = m_todLatched ? m_latchSec : m_todSec; break;
         case TODMIN: *val = m_todLatched ? m_latchMin : m_todMin; break;
         case TODHR:
+            if (peek) { *val = m_todHr; break; }   // a read latches the live time
             // Freeze latch at this moment.
             m_latchTen = m_todTen;
             m_latchSec = m_todSec;
@@ -137,6 +143,7 @@ bool CIA6526::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             // Read returns pending bits + bit 7 if any; clears all pending bits.
             uint8_t pending = m_icrPending;
             if (pending & m_icrMask) pending |= ICR_INT;
+            if (peek) { *val = pending; break; }
             if (m_icrPending) {
                 ciaLog()->trace("{} ICR read: pending=${:02X} mask=${:02X} -> ${:02X}",
                                 m_name, m_icrPending, m_icrMask, pending);

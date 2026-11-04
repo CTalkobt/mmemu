@@ -132,6 +132,8 @@ public:
     uint32_t    addrMask() const override { return 0x003F; } // 64-byte window
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    /** ioRead without clearing the collision registers ($D01E/$D01F); covers VIC-III/IV too. */
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t  val) override;
     void reset()  override;
     void tick(uint64_t cycles) override;
@@ -213,6 +215,7 @@ public:
     static constexpr uint8_t IRQ_ANY  = 0x80; // set when any enabled IRQ fires
 
 protected:
+    bool m_peeking = false;   // ioPeek in progress: reads change nothing
     // Rendering helpers
     uint32_t palette(uint8_t index) const;
     uint8_t  charRomByte(uint32_t offset) const;

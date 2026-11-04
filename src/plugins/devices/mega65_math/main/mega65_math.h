@@ -38,6 +38,8 @@ public:
 
     void reset() override;
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    /** ioRead without advancing the random number generator ($D7EF). */
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void tick(uint64_t cycles) override;
 

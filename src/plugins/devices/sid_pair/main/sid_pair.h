@@ -37,6 +37,7 @@ public:
     uint32_t    addrMask() const override { return 0x003F; } // 64-byte window
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t  val) override;
     void reset()  override;
     void tick(uint64_t cycles) override;

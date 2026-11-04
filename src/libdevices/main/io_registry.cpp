@@ -44,6 +44,15 @@ bool IORegistry::dispatchRead(IBus* bus, uint32_t addr, uint8_t* val) {
     return false;
 }
 
+bool IORegistry::dispatchPeek(IBus* bus, uint32_t addr, uint8_t* val) {
+    for (auto* handler : m_handlers) {
+        if (handler->ioPeek(bus, addr, val)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool IORegistry::dispatchWrite(IBus* bus, uint32_t addr, uint8_t val) {
     for (auto* handler : m_handlers) {
         if (handler->ioWrite(bus, addr, val)) {

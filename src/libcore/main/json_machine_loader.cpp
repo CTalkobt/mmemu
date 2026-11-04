@@ -483,7 +483,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         if (mirrors.empty()) {
             bus->setIoHooks(
                 [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead (b, a, v); },
-                [io](IBus* b, uint32_t a, uint8_t  v) { return io->dispatchWrite(b, a, v); });
+                [io](IBus* b, uint32_t a, uint8_t  v) { return io->dispatchWrite(b, a, v); },
+                [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchPeek (b, a, v); });
         } else {
             bus->setIoHooks(
                 [io, mirrors](IBus* b, uint32_t a, uint8_t* v) {
@@ -497,6 +498,12 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                         if (a >= mr.from && a <= mr.to)
                             return mr.target->ioWrite(b, mr.targetBase + (a - mr.from), v);
                     return io->dispatchWrite(b, a, v);
+                },
+                [io, mirrors](IBus* b, uint32_t a, uint8_t* v) {
+                    for (const auto& mr : mirrors)
+                        if (a >= mr.from && a <= mr.to)
+                            return mr.target->ioPeek(b, mr.targetBase + (a - mr.from), v);
+                    return io->dispatchPeek(b, a, v);
                 });
         }
 

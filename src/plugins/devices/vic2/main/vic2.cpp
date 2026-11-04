@@ -126,6 +126,14 @@ uint32_t VIC2::charBitmapBase() const {
 // IOHandler: ioRead
 // ---------------------------------------------------------------------------
 
+bool VIC2::ioPeek(IBus* bus, uint32_t addr, uint8_t* val) {
+    // The (virtual) ioRead of this chip or a VIC-III/IV, with read side effects off
+    m_peeking = true;
+    bool handled = ioRead(bus, addr, val);
+    m_peeking = false;
+    return handled;
+}
+
 bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
@@ -151,11 +159,11 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             break;
         case SSCOL:
             *val = m_sprSprColl;
-            m_sprSprColl = 0; // cleared on read
+            if (!m_peeking) m_sprSprColl = 0; // cleared on read
             break;
         case SBCOL:
             *val = m_sprBgColl;
-            m_sprBgColl = 0;
+            if (!m_peeking) m_sprBgColl = 0;
             break;
         // Color registers: only low 4 bits exist; high bits read as 1
         case EXTCOL: case BGCOL0: case BGCOL1: case BGCOL2: case BGCOL3:

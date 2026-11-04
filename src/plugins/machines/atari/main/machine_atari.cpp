@@ -179,9 +179,9 @@ private:
             IOHandler* h = nullptr;
             uint32_t a = ioAddr(addr, h);
             if (!h) return 0xFF;
-            if (peek && h == m_pia) return 0xFF;   // reading the PIA clears its flags
             uint8_t v = 0xFF;
-            h->ioRead(this, a, &v);
+            if (peek) h->ioPeek(this, a, &v);      // no side effects (the PIA clears flags on read)
+            else      h->ioRead(this, a, &v);
             return v;
         }
         if (m_xl) {

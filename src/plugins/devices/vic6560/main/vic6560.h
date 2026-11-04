@@ -34,6 +34,7 @@ public:
     uint32_t addrMask() const override { return 0x000F; } // 16 registers
 
     bool ioRead(IBus* bus, uint32_t addr, uint8_t* val) override;
+    bool ioPeek(IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void reset() override;
     void tick(uint64_t cycles) override;
@@ -47,6 +48,7 @@ public:
     int pullSamples(float* buffer, int maxSamples) override;
 
 private:
+    bool m_peeking = false;   // ioPeek in progress
     uint32_t getVicColor(uint8_t index);
     void     tickAudio(uint64_t cycles);
     void     pushSample(float s);

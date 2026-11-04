@@ -31,6 +31,7 @@ public:
 
     // IPortDevice interface
     uint8_t readPort() override;
+    uint8_t peekPort() override;
     void writePort(uint8_t data) override;
 
     // Set reference to CIA2 port A for reading the computer's outputs
