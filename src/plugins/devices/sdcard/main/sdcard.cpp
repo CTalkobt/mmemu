@@ -16,12 +16,12 @@ SdCardDevice::SdCardDevice(uint32_t base)
     : m_base(base), m_status(0), m_bufferMapped(false),
       m_sdhcMode(true), m_imageSize(0) {
     std::memset(m_regs, 0, sizeof(m_regs));
-    std::memset(m_sectorBuf, 0, sizeof(m_sectorBuf));
+    std::memset(m_diskBuf, 0, sizeof(m_diskBuf));
 }
 
 void SdCardDevice::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
-    std::memset(m_sectorBuf, 0, sizeof(m_sectorBuf));
+    std::memset(m_diskBuf, 0, sizeof(m_diskBuf));
     m_status = SD_ST_SDHC;  // SDHC mode enabled by default
     m_bufferMapped = false;
     m_sdhcMode = true;
@@ -40,6 +40,14 @@ bool SdCardDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     if (offset == 0x00) {
         // Status register
         *val = m_status;
+    } else if (offset == 0x08) {
+        // F011 buffer pointer (disk side), low byte
+        *val = m_fdcStatus ? (uint8_t)(m_fdcStatus() & 0xFF) : 0;
+    } else if (offset == 0x09) {
+        // bit 7 BUFSEL; bit 1 F011 sector read but not yet read by the CPU;
+        // bit 0 F011 buffer pointer bit 8
+        uint16_t f = m_fdcStatus ? m_fdcStatus() : 0;
+        *val = (m_regs[0x09] & 0x80) | ((f >> 8) & 0x01) | ((f >> 8) & 0x02);
     } else {
         *val = m_regs[offset];
     }
@@ -55,6 +63,9 @@ bool SdCardDevice::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     }
 
     if (offset >= 20) return false;
+
+    // Disk image mount flags and start sectors: hypervisor only
+    if (offset >= 0x0A && offset <= 0x13 && !inHypervisor()) return true;
 
     m_regs[offset] = val;
 
@@ -132,10 +143,10 @@ void SdCardDevice::executeCommand(uint8_t cmd) {
             uint32_t sector = m_regs[0x01] | (m_regs[0x02] << 8) |
                               (m_regs[0x03] << 16) | (m_regs[0x04] << 24);
             if (sector == 0) {
-                std::memset(m_sectorBuf, 0, 512);
-                m_sectorBuf[0x71] = 0x01; // Card type: SDHC
+                std::memset(sectorBuffer(), 0, 512);
+                sectorBuffer()[0x71] = 0x01; // Card type: SDHC
             } else {
-                std::memset(m_sectorBuf, 0xFF, 512);
+                std::memset(sectorBuffer(), 0xFF, 512);
             }
             break;
         }
@@ -152,18 +163,18 @@ void SdCardDevice::executeCommand(uint8_t cmd) {
 bool SdCardDevice::readSector(uint32_t sector) {
     if (!m_imageFile.is_open()) {
         // No image mounted — return zeros (emulates empty card)
-        std::memset(m_sectorBuf, 0, 512);
+        std::memset(sectorBuffer(), 0, 512);
         return true;
     }
 
     uint64_t byteOffset = (uint64_t)sector * 512;
     if (byteOffset + 512 > m_imageSize) {
-        std::memset(m_sectorBuf, 0, 512);
+        std::memset(sectorBuffer(), 0, 512);
         return false;
     }
 
     m_imageFile.seekg(byteOffset);
-    m_imageFile.read((char*)m_sectorBuf, 512);
+    m_imageFile.read((char*)sectorBuffer(), 512);
     return m_imageFile.good();
 }
 
@@ -174,7 +185,7 @@ bool SdCardDevice::writeSector(uint32_t sector) {
     if (byteOffset + 512 > m_imageSize) return false;
 
     m_imageFile.seekp(byteOffset);
-    m_imageFile.write((char*)m_sectorBuf, 512);
+    m_imageFile.write((char*)sectorBuffer(), 512);
     m_imageFile.flush();
     return m_imageFile.good();
 }
@@ -183,7 +194,8 @@ bool SdCardDevice::bufferRead(uint32_t addr, uint8_t* val) const {
     if (!m_bufferMapped) { *val = 0xFF; return true; }
     uint32_t off = addr - 0xDE00;
     if (off < 512) {
-        *val = m_sectorBuf[off];
+        bool sd = inHypervisor() || (m_regs[0x09] & 0x80);
+        *val = m_diskBuf[(sd ? 0xE00 : 0xC00) + off];
         return true;
     }
     *val = 0xFF;
@@ -194,7 +206,8 @@ bool SdCardDevice::bufferWrite(uint32_t addr, uint8_t val) {
     if (!m_bufferMapped) return true;
     uint32_t off = addr - 0xDE00;
     if (off < 512) {
-        m_sectorBuf[off] = val;
+        bool sd = inHypervisor() || (m_regs[0x09] & 0x80);
+        m_diskBuf[(sd ? 0xE00 : 0xC00) + off] = val;
     }
     return true;
 }
@@ -202,6 +215,7 @@ bool SdCardDevice::bufferWrite(uint32_t addr, uint8_t val) {
 bool SdCardDevice::mountImage(const std::string& path) {
     unmount();
     m_imageFile.open(path, std::ios::in | std::ios::out | std::ios::binary);
+    m_writable = m_imageFile.is_open();
     if (!m_imageFile.is_open()) {
         // Try read-only
         m_imageFile.open(path, std::ios::in | std::ios::binary);
@@ -214,9 +228,32 @@ bool SdCardDevice::mountImage(const std::string& path) {
     return true;
 }
 
+uint32_t SdCardDevice::mountStartSector(int drive) const {
+    const uint8_t* r = m_regs + (drive ? 0x10 : 0x0C);
+    return (uint32_t)r[0] | ((uint32_t)r[1] << 8) | ((uint32_t)r[2] << 16) | ((uint32_t)r[3] << 24);
+}
+
+bool SdCardDevice::readImage(uint64_t offset, uint8_t* buf, size_t n) {
+    if (!m_imageFile.is_open() || offset + n > m_imageSize) return false;
+    m_imageFile.clear();
+    m_imageFile.seekg(offset);
+    m_imageFile.read((char*)buf, n);
+    return (size_t)m_imageFile.gcount() == n;
+}
+
+bool SdCardDevice::writeImage(uint64_t offset, const uint8_t* buf, size_t n) {
+    if (!m_imageFile.is_open() || !m_writable || offset + n > m_imageSize) return false;
+    m_imageFile.clear();
+    m_imageFile.seekp(offset);
+    m_imageFile.write((const char*)buf, n);
+    m_imageFile.flush();
+    return m_imageFile.good();
+}
+
 void SdCardDevice::unmount() {
     if (m_imageFile.is_open()) m_imageFile.close();
     m_imageSize = 0;
+    m_writable = false;
 }
 
 void SdCardDevice::getDeviceInfo(DeviceInfo& out) const {

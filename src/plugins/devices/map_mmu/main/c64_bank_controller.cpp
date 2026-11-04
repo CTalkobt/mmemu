@@ -50,7 +50,10 @@ void C64BankController::updateOverlays() {
 }
 
 bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
-    // CPU I/O port: $00 (DDR), $01 (port)
+    // CPU I/O port: $00 (DDR), $01 (port), only while block 0 is not MAP'd
+    // (gs4510.vhdl: long_address $0000000/$0000001 and reg_map_low(0)='0').
+    // The C65 DOS maps its own RAM there and keeps a pointer at $00/$01.
+    if (addr <= 0x0001 && isBlockMapped(0)) return false;
     if (addr == 0x0000) {
         *val = m_portDDR;
         return true;
@@ -132,7 +135,8 @@ bool C64BankController::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 }
 
 bool C64BankController::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
-    // CPU I/O port: $00 (DDR), $01 (port)
+    // CPU I/O port: $00 (DDR), $01 (port), only while block 0 is not MAP'd
+    if (addr <= 0x0001 && isBlockMapped(0)) return false;
     if (addr == 0x0000) {
         // gs4510.vhdl: writing $40/$41 to $00 clears/sets force_fast (full CPU
         // speed, "POKE 0,65") instead of changing the DDR

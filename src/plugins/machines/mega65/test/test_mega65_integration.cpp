@@ -879,3 +879,93 @@ TEST_CASE(mega65_hyppo_boot_to_ready) {
     ASSERT(found);
     delete desc;
 }
+
+#include "libdevices/main/ikeyboard_matrix.h"
+#include "plugins/devices/sdcard/main/f011.h"
+#include <unistd.h>
+
+// A minimal D81: header, BAM and one directory entry for "HI", a BASIC
+// program at $2001: 10 PRINT "D81 OK"
+static std::string makeTestD81() {
+    std::vector<uint8_t> d(819200, 0);
+    auto ls = [&](int t, int s) { return d.data() + ((t - 1) * 40 + s) * 256; };
+    uint8_t* h = ls(40, 0);
+    h[0] = 40; h[1] = 3; h[2] = 'D';
+    const char* name = "MMEMU TEST";
+    for (int i = 0; i < 16; i++) h[4 + i] = name[i] && i < (int)strlen(name) ? name[i] : 0xA0;
+    h[0x14] = h[0x15] = 0xA0; h[0x16] = 'M'; h[0x17] = 'T'; h[0x18] = 0xA0; h[0x19] = '3'; h[0x1A] = 'D';
+    for (int b = 0; b < 2; b++) {
+        uint8_t* bam = ls(40, 1 + b);
+        bam[0] = b ? 0 : 40; bam[1] = b ? 0xFF : 2; bam[2] = 'D'; bam[3] = 0xBB;
+        bam[4] = 'M'; bam[5] = 'T'; bam[6] = 0xC0;
+        for (int i = 0; i < 40; i++) {
+            int t = b * 40 + i + 1;
+            uint8_t* e = bam + 16 + i * 6;
+            e[0] = 40; e[1] = e[2] = e[3] = e[4] = e[5] = 0xFF;
+            if (t == 40) { e[0] = 36; e[1] = 0xF0; }        // header, 2 BAM, 1 dir
+            if (t == 1)  { e[0] = 39; e[1] = 0xFE; }        // the file
+        }
+    }
+    uint8_t* dir = ls(40, 3);
+    dir[0] = 0; dir[1] = 0xFF;
+    uint8_t* e = dir + 2;
+    e[0] = 0x82; e[1] = 1; e[2] = 0;
+    for (int i = 0; i < 16; i++) e[3 + i] = i < 2 ? "HI"[i] : 0xA0;
+    e[28] = 1;
+    const uint8_t prg[] = { 0x01, 0x20, 0x10, 0x20, 0x0A, 0x00, 0x99, 0x20, '"', 'D', '8', '1', ' ', 'O', 'K', '"', 0x00, 0x00, 0x00 };
+    uint8_t* f = ls(1, 0);
+    f[0] = 0; f[1] = (uint8_t)(1 + sizeof prg);
+    memcpy(f + 2, prg, sizeof prg);
+    std::string path = "/tmp/mmemu_m65_dload_" + std::to_string(getpid()) + ".d81";
+    FILE* o = fopen(path.c_str(), "wb");
+    fwrite(d.data(), 1, d.size(), o);
+    fclose(o);
+    return path;
+}
+
+static bool screenHas(IBus* phys, const std::vector<uint8_t>& codes) {
+    for (uint32_t a = 0x0800; a < 0x1000; a++) {
+        bool m = true;
+        for (size_t k = 0; k < codes.size() && m; k++) m = phys->peek8(a + (uint32_t)k) == codes[k];
+        if (m) return true;
+    }
+    return false;
+}
+
+// BASIC 65's DLOAD reads a host D81 attached as unit 8 through the F011 and
+// the ROM's own DOS (no KERNAL traps in the test binary). Skipped without
+// HICKUP.M65 and an SD card image.
+TEST_CASE(mega65_dload_from_host_d81) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    if (!desc->warnings.empty()) {
+        printf("  (skipped: %s)\n", desc->warnings[0].c_str());
+        delete desc;
+        return;
+    }
+    if (desc->onReset) desc->onReset(*desc);
+    auto* phys = desc->buses[0].bus;
+    auto run = [&](long n) { for (long s = 0; s < n; s++) desc->schedulerStep(*desc); };
+    run(7000000);
+    ASSERT(screenHas(phys, { 0x12, 0x05, 0x01, 0x04, 0x19, 0x2E }));   // READY.
+
+    std::string d81 = makeTestD81();
+    std::vector<IOHandler*> hs;
+    desc->ioRegistry->enumerate(hs);
+    IKeyboardMatrix* kbd = nullptr;
+    bool mounted = false;
+    for (auto* h : hs) {
+        if (!kbd) kbd = dynamic_cast<IKeyboardMatrix*>(h);
+        if (dynamic_cast<F011Fdc*>(h)) mounted = h->mountDisk(8, d81);
+    }
+    ASSERT(mounted);
+    ASSERT(kbd != nullptr);
+    kbd->enqueueText("DLOAD\"HI\"\n");
+    run(6000000);
+    kbd->enqueueText("RUN\n");
+    run(2000000);
+    ASSERT(screenHas(phys, { 0x04, 0x38, 0x31, 0x20, 0x0F, 0x0B }));   // "D81 OK"
+    unlink(d81.c_str());
+    delete desc;
+}

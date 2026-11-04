@@ -80,7 +80,18 @@ The boot follows the hardware: reset traps to HYPPO at `$8100`; HYPPO mounts the
 
 A host ROM file (`mega65rom` paths, e.g. `roms/mega65/MEGA65.ROM`) is optional: it is preloaded at `$20000` for the no-HYPPO fallback, and HYPPO replaces it with the SD card's copy. ROM banking (`$01`, `$D030`) and the C64-mode character ROM read the RAM at `$20000-$3FFFF`; the VIC-IV draws characters from the character WOM.
 
-The F011 floppy controller is a stub that reports no disk (`$D083` bit 3 = 0), so BASIC 65's autoboot and `DIR` end with `74,DRIVE NOT READY`. Disk access from BASIC goes through the CBM KERNAL HLE (`hle on|off|path`), which traps the KERNAL `LOAD`/`SAVE` vectors and serves files from the host directory.
+### 4.5 Floppy drives (F011)
+
+The F011 controller (`$D080-$D09F`, `src/plugins/devices/sdcard/main/f011.cpp`) runs drives 0 and 1 (units 8 and 9) for BASIC 65's DOS, in MEGA65 and C64 mode. It follows xemu's `f011_core.c`: a command completes at once and moves a whole 512-byte sector between the disk and the sector buffer at `$FFD6C00`.
+
+- **The SD card's D81**: HYPPO mounts `MEGA65.D81` from the SD card at boot, through `$D68B` (bits 0-2 / 3-5: image enabled, present, writable) and the start sector in `$D68C-$D68F` / `$D690-$D693`. These registers can only be changed in the hypervisor. Bit 2 / 5 is set when the image may be written: the VHDL (`sdcardio.vhdl`) returns "not write protected" there, although the book labels it D0WP.
+- **A host `.d81`**: CLI `disk mount 8 <file.d81>` (`disk eject 8`), the GUI's Drive Status pane, or MCP attaches an 800 KB image file to unit 8 or 9; it replaces the SD card's image until ejected, and writes go straight to the file. Swapping disks sets the disk-changed signal, so the DOS rereads the directory.
+- **Disk buffers**: the 4 KB at `$FFD6000` hold the F011 buffer (`+$C00`) and the SD card buffer (`+$E00`). `$DE00` (after SD command `$81`) shows the one `$D689` bit 7 selects, except in the hypervisor, which always sees the SD card buffer.
+- With no disk, `DIR` ends with `74,DRIVE NOT READY`.
+
+Since the F011 answers for units 8 and 9, the CBM KERNAL HLE (`hle`) passes `LOAD`/`SAVE` on those units to the ROM's DOS.
+
+Not emulated: real floppy drives (`$D6A0`), 64 MB MEGA disk images (`$D68B` bits 6-7), D64/D71 image modes, the FDC interrupt, and the delays of a real drive.
 
 See [README-45GS02.md](README-45GS02.md) for detailed hypervisor register maps.
 

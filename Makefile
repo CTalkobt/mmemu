@@ -249,6 +249,7 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/mega65_hypervisor/main/hypervisor_regs.cpp \
 	src/plugins/devices/mega65_hypervisor/main/hdos_handler.cpp \
 	src/plugins/devices/sdcard/main/sdcard.cpp \
+	src/plugins/devices/sdcard/main/f011.cpp \
 	src/plugins/devices/mega65_rtc/main/mega65_rtc.cpp \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.cpp \
 	src/plugins/devices/exit_trap/main/exit_trap.cpp \
@@ -392,6 +393,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/mega65_math/test/test_mega65_math.cpp \
 	src/plugins/devices/mega65_rtc/test/test_mega65_rtc.cpp \
 	src/plugins/devices/mega65_hypervisor/test/test_hypervisor.cpp \
+	src/plugins/devices/sdcard/test/test_f011.cpp \
 	src/plugins/devices/datasette/test/test_datasette.cpp \
 	src/plugins/devices/crtc6545/test/test_crtc6545.cpp \
 	src/libcore/test/test_sim_config.cpp \
@@ -475,6 +477,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/mega65_hypervisor/main/hypervisor_regs.o \
 	src/plugins/devices/mega65_hypervisor/main/hdos_handler.o \
 	src/plugins/devices/sdcard/main/sdcard.o \
+	src/plugins/devices/sdcard/main/f011.o \
 	src/plugins/devices/mega65_rtc/main/mega65_rtc.o \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.o \
 	src/plugins/devices/hyper_serial/main/hyper_serial.o \

@@ -18,6 +18,7 @@
 #include "plugins/devices/mega65_hypervisor/main/hypervisor_regs.h"
 #include "plugins/devices/mega65_hypervisor/main/hdos_handler.h"
 #include "plugins/devices/sdcard/main/sdcard.h"
+#include "plugins/devices/sdcard/main/f011.h"
 // #include "plugins/devices/mega65_rtc/main/mega65_rtc.h"  // DISABLED (issue #109)
 #include "plugins/devices/mega65_io/main/mega65_io_stub.h"
 #include <fstream>
@@ -455,6 +456,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* serial   = new HyperSerialLogger();
     auto* exitTrap = new ExitTrapDevice(0xD6CF);
     auto* sdcard   = new SdCardDevice(0xD680);
+    auto* fdc      = new F011Fdc(sdcard);
+    // The disk buffers (F011 at +$C00, SD card at +$E00) at physical $FFD6000
+    physBus->addRegion(0x0FFD6000, 4096, sdcard->diskBuffer(), true);
+    sdcard->setFdcStatusQuery([fdc]() -> uint16_t {
+        return fdc->fdcPointer() | (((fdc->statusA() & 0x60) == 0x60) ? 0x200 : 0);
+    });
     // NOTE: RTC/NVRAM accessed via I2C on real hardware, not direct memory mapping.
     // Fake RTC at $D710-$D77F was incorrectly colliding with CPU speed control ($D710)
     // and Audio DMA registers ($D711-$D73F). Disabled to fix issue #109.
@@ -554,6 +561,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     io->registerHandler(cia2);
     io->registerHandler(exitTrap);
     io->registerHandler(sdcard);
+    io->registerHandler(fdc);
+    desc->deleters.push_back([fdc]() { delete fdc; });
     // rtc registration disabled (issue #109: RTC accessed via I2C on real hardware)
     io->registerHandler(ioStub);  // Catch-all for $D600-$D6FF and colour RAM $D800-$DBFF
     io->registerHandler(kbd); // For discovery via IKeyboardMatrix interface
@@ -742,6 +751,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     bankCtrl->setHypervisorQuery([cpu45]() -> bool {
         return cpu45->isHypervisor();
     });
+    // SD card: disk image mount registers are hypervisor-only; BUFSEL view
+    sdcard->setHypervisorQuery([cpu45]() -> bool { return cpu45->isHypervisor(); });
 
     uint8_t* hyperRom = nullptr;
     {
