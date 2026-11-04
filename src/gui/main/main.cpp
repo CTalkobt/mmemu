@@ -434,6 +434,8 @@ static void onScreenMachineLoad(void* paneHandle, MachineDescriptor* desc, void*
         }
     }
     pane->SetVideoOutput(vid);
+    if (desc && desc->onMouse) pane->SetMouseHandler(desc->onMouse);
+    else pane->SetMouseHandler(nullptr);
 }
 
 static void refreshScreenPane(void* paneHandle, uint64_t /*cycles*/, void* /*ctx*/) {

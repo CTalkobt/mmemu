@@ -2001,6 +2001,50 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Syntax: key <name> <down|up|1|0>\n");
         }
+    } else if (cmd == "joy") {
+        // joy <port> [button ...]: hold exactly these buttons (none = release all)
+        if (!m_ctx.machine || (!m_ctx.machine->onGamepad && !m_ctx.machine->onJoystick)) {
+            m_output("This machine has no joystick or gamepad input.\n"); return;
+        }
+        int port;
+        if (!(ss >> port)) {
+            m_output("Syntax: joy <port> [up down left right fire a b x y l r select start]\n"); return;
+        }
+        using M = MachineDescriptor;
+        static const std::map<std::string, uint32_t> names = {
+            {"up", M::PAD_UP}, {"down", M::PAD_DOWN}, {"left", M::PAD_LEFT}, {"right", M::PAD_RIGHT},
+            {"fire", M::PAD_B}, {"a", M::PAD_A}, {"b", M::PAD_B}, {"x", M::PAD_X}, {"y", M::PAD_Y},
+            {"l", M::PAD_L}, {"r", M::PAD_R}, {"select", M::PAD_SELECT}, {"start", M::PAD_START},
+        };
+        uint32_t held = 0;
+        for (std::string b; ss >> b;) {
+            std::transform(b.begin(), b.end(), b.begin(), ::tolower);
+            auto it = names.find(b);
+            if (it == names.end()) { m_output("Unknown button: " + b + "\n"); return; }
+            held |= it->second;
+        }
+        if (m_ctx.machine->onGamepad) {
+            if (!m_ctx.machine->onGamepad(port, held)) m_output("No gamepad port " + std::to_string(port) + "\n");
+        } else {
+            // CBM joystick: 5 bits, active low
+            if (held & ~(M::PAD_UP | M::PAD_DOWN | M::PAD_LEFT | M::PAD_RIGHT | M::PAD_B)) {
+                m_output("This machine's joystick has only up, down, left, right and fire.\n"); return;
+            }
+            uint8_t bits = 0x1F;
+            if (held & M::PAD_UP) bits &= ~0x01;
+            if (held & M::PAD_DOWN) bits &= ~0x02;
+            if (held & M::PAD_LEFT) bits &= ~0x04;
+            if (held & M::PAD_RIGHT) bits &= ~0x08;
+            if (held & M::PAD_B) bits &= ~0x10;
+            m_ctx.machine->onJoystick(port, bits);
+        }
+    } else if (cmd == "mouse") {
+        // mouse <dx> <dy> [buttons] [wheel]: move, and hold these buttons (bit 0 left, 1 right, 2 middle)
+        if (!m_ctx.machine || !m_ctx.machine->onMouse) { m_output("This machine has no mouse.\n"); return; }
+        int dx, dy, buttons = 0, wheel = 0;
+        if (!(ss >> dx >> dy)) { m_output("Syntax: mouse <dx> <dy> [buttons] [wheel]\n"); return; }
+        ss >> buttons >> wheel;
+        m_ctx.machine->onMouse(dx, dy, (uint8_t)buttons, wheel);
     } else if (cmd.size() > 5 && cmd.substr(cmd.size() - 5) == ".info") {
         std::string deviceName = cmd.substr(0, cmd.size() - 5);
         if (m_ctx.machine && m_ctx.machine->ioRegistry) {
@@ -3297,6 +3341,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  setpc <addr>        - Set CPU program counter\n"
                  "  .<instr>            - Assemble and execute a single instruction\n"
                  "  key <name> <state>  - Press/release a key (state: 1/0 or down/up)\n"
+                 "  joy <port> [btn..]  - Hold joystick/gamepad buttons (up down left right fire a b x y l r select start; none = release)\n"
+                 "  mouse <dx> <dy> [buttons] [wheel] - Move the mouse; buttons bit 0 left, 1 right, 2 middle\n"
                  "  type <text>         - Type text into the machine (supports \\n)\n"
                  "\nExample debugging session:\n"
                  "  break 2048          (set breakpoint at program start)\n"

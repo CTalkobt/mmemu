@@ -95,6 +95,26 @@ struct MachineDescriptor {
      */
     std::function<void(int port, uint8_t bits)> onJoystick;
 
+    /** Gamepad buttons for onGamepad (1 = pressed). */
+    enum GamepadButton : uint32_t {
+        PAD_UP = 1u << 0, PAD_DOWN = 1u << 1, PAD_LEFT = 1u << 2, PAD_RIGHT = 1u << 3,
+        PAD_A = 1u << 4, PAD_B = 1u << 5, PAD_X = 1u << 6, PAD_Y = 1u << 7,
+        PAD_L = 1u << 8, PAD_R = 1u << 9, PAD_SELECT = 1u << 10, PAD_START = 1u << 11,
+    };
+    /** Gamepad injection hook (machines with SNES-style pads, e.g. the X16).
+     *  @param port     Pad index from 0.
+     *  @param buttons  PAD_* bits held (1 = pressed).
+     *  @return false if the machine has no such port.
+     */
+    std::function<bool(int port, uint32_t buttons)> onGamepad;
+
+    /** Mouse injection hook.
+     *  @param dx, dy   Movement since the last call, in host pixels (y down).
+     *  @param buttons  Bit 0 left, bit 1 right, bit 2 middle (1 = held).
+     *  @param wheel    Wheel steps (positive = away from the user).
+     */
+    std::function<void(int dx, int dy, uint8_t buttons, int wheel)> onMouse;
+
     // Scheduler
     std::function<int(MachineDescriptor&)> schedulerStep;
 

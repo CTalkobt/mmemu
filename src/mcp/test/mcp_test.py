@@ -1091,6 +1091,29 @@ def run_tests():
     finally:
         shutil.rmtree(pdir, ignore_errors=True)
 
+    print("\n--- Joystick and mouse input ---")
+    res = client.call_tool("create_machine", {"machine_type": "vic20"})
+    jid = res["result"]["content"][0]["text"].split('"')[1]
+    item = client.call_tool("set_joystick", {"machine_id": jid, "port": 0, "buttons": ["up", "fire"]})["result"]["content"][0]
+    assert not item.get("isError"), item
+    item = client.call_tool("set_joystick", {"machine_id": jid, "port": 0, "buttons": ["start"]})["result"]["content"][0]
+    assert item.get("isError") and "only up, down" in item["text"], item
+    item = client.call_tool("mouse_input", {"machine_id": jid, "dx": 1, "dy": 1})["result"]["content"][0]
+    assert item.get("isError") and "no mouse" in item["text"], item
+    client.call_tool("destroy_machine", {"machine_id": jid})
+    res = client.call_tool("create_machine", {"machine_type": "x16"})
+    text = res["result"]["content"][0]["text"]
+    if '"' in text:
+        xid = text.split('"')[1]
+        item = client.call_tool("set_joystick", {"machine_id": xid, "port": 0, "buttons": ["a", "start", "l"]})["result"]["content"][0]
+        assert not item.get("isError"), item
+        item = client.call_tool("mouse_input", {"machine_id": xid, "dx": 3, "dy": -2, "buttons": 1})["result"]["content"][0]
+        assert not item.get("isError"), item
+        client.call_tool("destroy_machine", {"machine_id": xid})
+        print("  ✓ set_joystick and mouse_input OK (VIC-20 joystick, X16 pad and mouse)")
+    else:
+        print("  ✓ set_joystick and mouse_input OK (VIC-20; X16 skipped: " + text + ")")
+
     client.close()
     print("\n" + "="*60)
     print("ALL MCP TESTS PASSED")

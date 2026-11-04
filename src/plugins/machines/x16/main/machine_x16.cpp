@@ -255,12 +255,23 @@ public:
     uint32_t addrMask() const override { return 0; }
     bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
-    void reset() override { bus.reset(); smc.reset(); }
-    void tick(uint64_t cycles) override { rtc.step(cycles, CPU_HZ); }
+    void reset() override { bus.reset(); smc.reset(); m_frameAcc = 0; }
+    void tick(uint64_t cycles) override {
+        rtc.step(cycles, CPU_HZ);
+        // The mouse state goes to the SMC once per frame, as x16-emulator does
+        m_frameAcc += cycles;
+        if (m_frameAcc >= CPU_HZ / 60) {
+            m_frameAcc -= CPU_HZ / 60;
+            smc.sendMouseState();
+        }
+    }
 
     Smc smc;
     Rtc rtc;
     I2cBus bus;
+
+private:
+    uint64_t m_frameAcc = 0;
 };
 
 // VIA1 port B: the IEC serial bus (PB3-5 out, PB6/PB7 CLK/DATA in). Nothing
@@ -353,6 +364,44 @@ MachineDescriptor* create(std::string* err) {
     io->registerOwnedHandler(keyboard);
 
     desc->onKey = [keyboard](const std::string& name, bool down) { return keyboard->key(name, down); };
+
+    // SNES pads in the four controller ports (KERNAL joystick 1-4); a port
+    // reads as connected from its first use
+    desc->onGamepad = [portA](int port, uint32_t b) {
+        if (port < 0 || port >= Via1PortA::NUM_PADS) return false;
+        using M = MachineDescriptor;
+        uint16_t p = 0;
+        if (b & M::PAD_UP) p |= Via1PortA::SNES_UP;
+        if (b & M::PAD_DOWN) p |= Via1PortA::SNES_DOWN;
+        if (b & M::PAD_LEFT) p |= Via1PortA::SNES_LEFT;
+        if (b & M::PAD_RIGHT) p |= Via1PortA::SNES_RIGHT;
+        if (b & M::PAD_A) p |= Via1PortA::SNES_A;
+        if (b & M::PAD_B) p |= Via1PortA::SNES_B;
+        if (b & M::PAD_X) p |= Via1PortA::SNES_X;
+        if (b & M::PAD_Y) p |= Via1PortA::SNES_Y;
+        if (b & M::PAD_L) p |= Via1PortA::SNES_L;
+        if (b & M::PAD_R) p |= Via1PortA::SNES_R;
+        if (b & M::PAD_SELECT) p |= Via1PortA::SNES_SELECT;
+        if (b & M::PAD_START) p |= Via1PortA::SNES_START;
+        portA->setPadButtons(port, p);
+        return true;
+    };
+    // A CBM-style joystick (active low: up, down, left, right, fire) as a pad; fire is B
+    desc->onJoystick = [self](int port, uint8_t bits) {
+        using M = MachineDescriptor;
+        uint32_t b = 0;
+        if (!(bits & 0x01)) b |= M::PAD_UP;
+        if (!(bits & 0x02)) b |= M::PAD_DOWN;
+        if (!(bits & 0x04)) b |= M::PAD_LEFT;
+        if (!(bits & 0x08)) b |= M::PAD_RIGHT;
+        if (!(bits & 0x10)) b |= M::PAD_B;
+        self->onGamepad(port, b);
+    };
+    desc->onMouse = [i2c](int dx, int dy, uint8_t buttons, int wheel) {
+        i2c->smc.mouseMove(dx, dy);
+        i2c->smc.mouseButtons(buttons);
+        if (wheel) i2c->smc.mouseWheel(wheel);
+    };
 
     desc->onReset = [bus, io, cpu, i2c, portA](MachineDescriptor&) {
         io->resetAll();

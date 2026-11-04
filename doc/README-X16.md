@@ -75,6 +75,7 @@ Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_di
 
 - `x16_boots_to_ready_and_runs_basic` boots R49 to READY and runs a typed `PRINT 6*7` (skipped without `roms/x16/rom.bin`).
 - `test_x16_i2c.cpp`: the I2C bus bit-banged through a real VIA as the KERNAL does it: SMC keyboard buffer and version, RTC time, ticking and NVRAM.
+- `x16_basic_reads_gamepad_and_mouse` (ROM): `JOY(1)` with pad buttons held, `MX`/`MY`/`MB` after a mouse move; `test_x16_i2c.cpp` also scans the pads as the KERNAL does and reads mouse packets from the SMC.
 - `test_ym2151.cpp`: the busy flag, a keyed-on voice producing sound, timer A raising the IRQ line.
 - `test_sdcard_spi.cpp`: initialisation, a block read and write against an image file, out-of-range reads.
 - `test_vera.cpp`: VERA registers, address ports, palette, text layer, sprites, collisions, LINE/VSYNC interrupts, peeks, PSG, PCM and FX.
@@ -83,6 +84,12 @@ Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_di
 
 Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends PC keys positionally (Shift is a real key), and CLI `key`/`type` and MCP accept the same names (`a`, `return`, `left_shift`, `escape`, `f1`...). Typed text: uppercase letters are unshifted (the X16 starts in the PETSCII upper case / graphics set), lowercase shifted; one key event goes to the SMC whenever its buffer is empty.
 
+## Controllers and mouse
+
+- **SNES pads** (x16-emulator `joystick.c`): four ports on VIA1 port A (latch PA2, clock PA3, data PA7-PA4 for KERNAL joysticks 1-4). The latch loads each pad's 12 buttons and ID bits; each rising clock shifts. A port reads as connected from the first time it is used; an empty port reads all 1s, which the KERNAL reports as not present (`JOY(n)` = -1). Joystick 0 is the KERNAL's keyboard joystick.
+- **Mouse** (x16-emulator `i2c.c`/`smc.c`): the SMC's PS/2 mouse, device ID 3 (4-byte packets with the wheel), registers `$21`, `$22`, `$42`, `$43` and `$20`. Movement and buttons go to the SMC once per frame. `MOUSE 1` shows the pointer; `MX`, `MY`, `MB` read it.
+- Input: CLI `joy <port> [up down left right a b x y l r select start]` (port 0 = KERNAL joystick 1; `fire` = B; no buttons releases them) and `mouse <dx> <dy> [buttons] [wheel]`; MCP `set_joystick` and `mouse_input`; the GUI sends the host mouse while it is over the picture (no host gamepads yet).
+
 ## Not yet emulated
 
-- IEC devices (and the host filesystem as a drive); mouse; NES/SNES controllers.
+- IEC devices (and the host filesystem as a drive); host gamepads in the GUI.

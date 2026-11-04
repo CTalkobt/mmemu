@@ -697,6 +697,41 @@ Json handleDescribe() {
     kSchema.oVal["required"] = kReq;
     addTool("press_key", "Press or release a single key on the machine's virtual keyboard", kSchema);
 
+    {
+        Json gpSchema(Json::OBJ);
+        gpSchema.oVal["type"] = Json("object");
+        Json p(Json::OBJ);
+        p.oVal["machine_id"] = midProp;
+        Json port(Json::OBJ); port.oVal["type"] = Json("integer");
+        port.oVal["description"] = Json("Joystick/gamepad port from 0");
+        p.oVal["port"] = port;
+        Json btn(Json::OBJ); btn.oVal["type"] = Json("array");
+        Json item(Json::OBJ); item.oVal["type"] = Json("string"); btn.oVal["items"] = item;
+        btn.oVal["description"] = Json("Buttons to hold (all others released): up down left right fire a b x y l r select start. "
+                                       "CBM joysticks take only up/down/left/right/fire.");
+        p.oVal["buttons"] = btn;
+        gpSchema.oVal["properties"] = p;
+        Json req(Json::ARR); req.push_back(Json("machine_id")); req.push_back(Json("port")); req.push_back(Json("buttons"));
+        gpSchema.oVal["required"] = req;
+        addTool("set_joystick", "Hold exactly these joystick or gamepad buttons on a port (empty list releases all)", gpSchema);
+
+        Json msSchema(Json::OBJ);
+        msSchema.oVal["type"] = Json("object");
+        Json mp(Json::OBJ);
+        mp.oVal["machine_id"] = midProp;
+        for (const char* k : {"dx", "dy", "buttons", "wheel"}) {
+            Json n(Json::OBJ); n.oVal["type"] = Json("integer"); mp.oVal[k] = n;
+        }
+        mp.oVal["dx"].oVal["description"] = Json("Movement right, in screen pixels");
+        mp.oVal["dy"].oVal["description"] = Json("Movement down, in screen pixels");
+        mp.oVal["buttons"].oVal["description"] = Json("Buttons held: bit 0 left, bit 1 right, bit 2 middle (default 0)");
+        mp.oVal["wheel"].oVal["description"] = Json("Wheel steps, positive away from the user (default 0)");
+        msSchema.oVal["properties"] = mp;
+        Json mreq(Json::ARR); mreq.push_back(Json("machine_id")); mreq.push_back(Json("dx")); mreq.push_back(Json("dy"));
+        msSchema.oVal["required"] = mreq;
+        addTool("mouse_input", "Move the machine's mouse and set its buttons (e.g. the Commander X16's PS/2 mouse)", msSchema);
+    }
+
     Json liSchema(Json::OBJ);
     liSchema.oVal["type"] = Json("object");
     Json liProps(Json::OBJ);
@@ -2461,6 +2496,57 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("Error: Unknown key " + key);
                 textItem.oVal["isError"] = Json(true);
             }
+        }
+    } else if (name == "set_joystick") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        using M = MachineDescriptor;
+        static const std::map<std::string, uint32_t> names = {
+            {"up", M::PAD_UP}, {"down", M::PAD_DOWN}, {"left", M::PAD_LEFT}, {"right", M::PAD_RIGHT},
+            {"fire", M::PAD_B}, {"a", M::PAD_A}, {"b", M::PAD_B}, {"x", M::PAD_X}, {"y", M::PAD_Y},
+            {"l", M::PAD_L}, {"r", M::PAD_R}, {"select", M::PAD_SELECT}, {"start", M::PAD_START},
+        };
+        std::string error;
+        uint32_t held = 0;
+        for (const auto& b : args["buttons"].aVal) {
+            std::string n = b.sVal;
+            std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+            auto it = names.find(n);
+            if (it == names.end()) { error = "Unknown button " + b.sVal; break; }
+            held |= it->second;
+        }
+        int port = (int)args["port"].nVal;
+        if (!ms) error = "Invalid machine ID";
+        else if (error.empty() && ms->machine->onGamepad) {
+            if (!ms->machine->onGamepad(port, held)) error = "No gamepad port " + std::to_string(port);
+        } else if (error.empty() && ms->machine->onJoystick) {
+            if (held & ~(M::PAD_UP | M::PAD_DOWN | M::PAD_LEFT | M::PAD_RIGHT | M::PAD_B)) {
+                error = "This machine's joystick has only up, down, left, right and fire";
+            } else {
+                uint8_t bits = 0x1F;
+                if (held & M::PAD_UP) bits &= ~0x01;
+                if (held & M::PAD_DOWN) bits &= ~0x02;
+                if (held & M::PAD_LEFT) bits &= ~0x04;
+                if (held & M::PAD_RIGHT) bits &= ~0x08;
+                if (held & M::PAD_B) bits &= ~0x10;
+                ms->machine->onJoystick(port, bits);
+            }
+        } else if (error.empty()) error = "Machine has no joystick or gamepad input";
+        if (!error.empty()) {
+            textItem.oVal["text"] = Json("Error: " + error);
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            textItem.oVal["text"] = Json("Port " + std::to_string(port) + " buttons set");
+        }
+    } else if (name == "mouse_input") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        if (!ms || !ms->machine->onMouse) {
+            textItem.oVal["text"] = Json(ms ? "Error: Machine has no mouse" : "Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else {
+            int buttons = args.contains("buttons") ? (int)args["buttons"].nVal : 0;
+            int wheel = args.contains("wheel") ? (int)args["wheel"].nVal : 0;
+            ms->machine->onMouse((int)args["dx"].nVal, (int)args["dy"].nVal, (uint8_t)buttons, wheel);
+            textItem.oVal["text"] = Json("Mouse moved");
         }
     } else if (name == "project_open") {
         auto cfg = std::make_unique<project::Config>();

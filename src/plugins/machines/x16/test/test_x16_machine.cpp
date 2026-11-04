@@ -55,6 +55,35 @@ TEST_CASE(x16_boots_to_ready_and_runs_basic) {
     delete m;
 }
 
+// SNES pad 1 through the KERNAL (JOY) and the mouse (MOUSE, MX/MY/MB)
+TEST_CASE(x16_basic_reads_gamepad_and_mouse) {
+    std::string err;
+    MachineDescriptor* m = x16::create(&err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    Vera* vera = findVera(m);
+    auto run = [&](long steps) { for (long s = 0; s < steps; s++) m->schedulerStep(*m); };
+    IKeyboardMatrix* kbd = nullptr;
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    for (auto* h : hs) if ((kbd = dynamic_cast<IKeyboardMatrix*>(h))) break;
+    run(16000000);
+
+    ASSERT(m->onGamepad(0, MachineDescriptor::PAD_B | MachineDescriptor::PAD_UP | MachineDescriptor::PAD_START));
+    ASSERT(!m->onGamepad(4, 0));
+    kbd->enqueueText("PRINT JOY(1);JOY(2)\n");
+    run(16000000);
+    ASSERT(screenHas(vera, { 0x20, 0x31, 0x35, 0x32, 0x20, 0x2D, 0x31 }));      // " 152 -1"
+
+    kbd->enqueueText("MOUSE 1\n");
+    run(8000000);
+    m->onMouse(100, 50, 2, 0);                                                  // right button
+    run(1000000);
+    kbd->enqueueText("PRINT MX;MY;MB\n");
+    run(16000000);
+    ASSERT(screenHas(vera, { 0x20, 0x34, 0x31, 0x39, 0x20, 0x20, 0x32, 0x38, 0x39, 0x20, 0x20, 0x32 }));   // " 419  289  2"
+    delete m;
+}
+
 // The 65C02's VPB pin: the hook runs before an IRQ fetches its vector
 TEST_CASE(cpu65c02_vector_pull_hook_before_irq_vector) {
     FlatMemoryBus bus("system", 16);
