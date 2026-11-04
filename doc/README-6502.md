@@ -165,7 +165,7 @@ The faithfully reproduced bug: `JMP ($xxFF)` fetches the high byte of the target
 Decodes all 256 opcode bytes (including all illegal/undocumented instructions) into standard assembly syntax. It provides control-flow metadata (calls, returns, branches) for the debugger.
 
 ### 4.2 Native Mini-Assembler
-Supports full standard 6502 assembly syntax for both the CLI `.` (direct execute) and `asm` (interactive mode) commands.
+Supports full standard 6502 assembly syntax for both the CLI `.` (direct execute) and `asm` (interactive mode) commands. For the 65C02 ISA (`Native65C02`) it takes the CMOS instruction set instead of the NMOS illegal opcodes: `STZ`, `TRB`/`TSB`, `BRA`, `PHX`/`PHY`/`PLX`/`PLY`, `INC`/`DEC` (or `INA`/`DEA`) on A, `BIT #`/`zp,X`/`abs,X`, `(zp)`, `JMP (abs,X)`, `WAI`, `STP`, `RMBn`/`SMBn zp` and `BBRn`/`BBSn zp,target`.
 - **Mnemonics**: All 56 standard opcodes plus common undocumented ones (`SLO`, `RLA`, `SRE`, `RRA`, `SAX`, `LAX`, `DCP`, `ISC`).
 - **Addressing Modes**: Complete support for Immediate, Zero Page, Absolute, Indexed (X and Y), Indirect, and Relative (including automatic branch offset calculation).
 - **Flexibility**: Handles both hex (`$`) and decimal values.
@@ -191,7 +191,7 @@ The same plugin also provides the **MOS 6510** — the CPU used in the Commodore
 
 ## 7. WDC 65C02 Variant
 
-`MOS65C02` (`cpu65c02.h`, opcode table and CMOS instructions in `cpu6502_cmos.cpp`) is the CMOS part used by the Commander X16. ISA name `65C02`, with its own disassembler; the assembler is the NMOS one for now (no CMOS mnemonics).
+`MOS65C02` (`cpu65c02.h`, opcode table and CMOS instructions in `cpu6502_cmos.cpp`) is the CMOS part used by the Commander X16. ISA name `65C02`, with its own disassembler and assembler (§4.2).
 
 - **Instructions**: STZ, TRB/TSB, BRA, PHX/PHY/PLX/PLY, INC A/DEC A, BIT #/zp,X/abs,X, `(zp)` addressing, `JMP (abs,X)`, BBR/BBS/RMB/SMB (Rockwell/WDC bit ops), WAI (waits for an interrupt line; with I set, execution simply continues) and STP (stops until reset). Undefined opcodes are NOPs of their documented length; there are no illegal opcodes.
 - **Differences**: ADC/SBC in decimal mode set N, Z and V and take a cycle more (SBC follows Bruce Clark's 65C02 algorithm); BRK, IRQ and NMI clear D; `JMP ($xxFF)` reads its high byte from the next page and takes 6 cycles; read-modify-write `abs,X` shifts and rotates take 6 cycles plus 1 on a page crossing.

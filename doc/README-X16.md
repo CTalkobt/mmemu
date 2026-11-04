@@ -79,4 +79,3 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 ## Not yet emulated
 
 - IEC devices (and the host filesystem as a drive); mouse; NES/SNES controllers.
-- The 65C02 assembler is the NMOS one (no CMOS mnemonics).

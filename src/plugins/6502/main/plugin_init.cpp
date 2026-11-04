@@ -36,6 +36,10 @@ static IAssembler* createAsm6502() {
     return new Assembler6502();
 }
 
+static IAssembler* createAsm65C02() {
+    return new Assembler6502(true);
+}
+
 static IAssembler* createAsmKick() {
     return new KickAssemblerBackend();
 }
@@ -78,7 +82,7 @@ static CorePluginInfo s_cores[] = {
 
 static ToolchainPluginInfo s_toolchains[] = {
     {"6502", nullptr, createDisasm6502, createAsm6502},           // ISA default, no name
-    {"65C02", nullptr, createDisasm65C02, createAsm6502},         // 65C02: NMOS assembler for now
+    {"65C02", nullptr, createDisasm65C02, createAsm65C02},
     {nullptr, "kickAssembler", nullptr, createAsmKick}            // Name-only registration
 };
 

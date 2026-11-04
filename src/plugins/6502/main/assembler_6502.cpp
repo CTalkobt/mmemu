@@ -7,8 +7,9 @@
 #include <vector>
 #include <regex>
 
-Assembler6502::Assembler6502() {
+Assembler6502::Assembler6502(bool cmos) : m_cmos(cmos) {
     initTable();
+    if (m_cmos) initCmos();
 }
 
 void Assembler6502::add(const std::string& mnem, const std::string& mode, uint8_t op, int sz) {
@@ -80,6 +81,8 @@ void Assembler6502::initTable() {
     add("RTI", "imp", 0x40, 1); add("RTS", "imp", 0x60, 1);
     add("NOP", "imp", 0xEA, 1);
 
+    if (m_cmos) return;     // the NMOS illegal opcodes are NOPs on the 65C02
+
     // Illegal Opcodes (subset)
     add("SLO", "zp", 0x07, 2); add("SLO", "zpx", 0x17, 2); add("SLO", "abs", 0x0F, 3); add("SLO", "absx", 0x1F, 3); add("SLO", "absy", 0x1B, 3); add("SLO", "zpxind", 0x03, 2); add("SLO", "indzpy", 0x13, 2);
     add("RLA", "zp", 0x27, 2); add("RLA", "zpx", 0x37, 2); add("RLA", "abs", 0x2F, 3); add("RLA", "absx", 0x3F, 3); add("RLA", "absy", 0x3B, 3); add("RLA", "zpxind", 0x23, 2); add("RLA", "indzpy", 0x33, 2);
@@ -89,6 +92,35 @@ void Assembler6502::initTable() {
     add("LAX", "zp", 0xA7, 2); add("LAX", "zpy", 0xB7, 2); add("LAX", "abs", 0xAF, 3); add("LAX", "absy", 0xBF, 3); add("LAX", "zpxind", 0xA3, 2); add("LAX", "indzpy", 0xB3, 2);
     add("DCP", "zp", 0xC7, 2); add("DCP", "zpx", 0xD7, 2); add("DCP", "abs", 0xCF, 3); add("DCP", "absx", 0xDF, 3); add("DCP", "absy", 0xDB, 3); add("DCP", "zpxind", 0xC3, 2); add("DCP", "indzpy", 0xD3, 2);
     add("ISC", "zp", 0xE7, 2); add("ISC", "zpx", 0xF7, 2); add("ISC", "abs", 0xEF, 3); add("ISC", "absx", 0xFF, 3); add("ISC", "absy", 0xFB, 3); add("ISC", "zpxind", 0xE3, 2); add("ISC", "indzpy", 0xF3, 2);
+}
+
+void Assembler6502::initCmos() {
+    // (zp) indirect without index
+    const std::pair<const char*, uint8_t> zpind[] = {
+        {"ORA", 0x12}, {"AND", 0x32}, {"EOR", 0x52}, {"ADC", 0x72},
+        {"STA", 0x92}, {"LDA", 0xB2}, {"CMP", 0xD2}, {"SBC", 0xF2},
+    };
+    for (const auto& [m, op] : zpind) add(m, "zpind", op, 2);
+
+    add("BIT", "imm", 0x89, 2); add("BIT", "zpx", 0x34, 2); add("BIT", "absx", 0x3C, 3);
+    add("INC", "acc", 0x1A, 1); add("DEC", "acc", 0x3A, 1);
+    add("INA", "imp", 0x1A, 1); add("DEA", "imp", 0x3A, 1);
+    add("JMP", "absxind", 0x7C, 3);
+    add("BRA", "rel", 0x80, 2);
+    add("STZ", "zp", 0x64, 2); add("STZ", "zpx", 0x74, 2); add("STZ", "abs", 0x9C, 3); add("STZ", "absx", 0x9E, 3);
+    add("TSB", "zp", 0x04, 2); add("TSB", "abs", 0x0C, 3);
+    add("TRB", "zp", 0x14, 2); add("TRB", "abs", 0x1C, 3);
+    add("PHY", "imp", 0x5A, 1); add("PLY", "imp", 0x7A, 1);
+    add("PHX", "imp", 0xDA, 1); add("PLX", "imp", 0xFA, 1);
+    add("WAI", "imp", 0xCB, 1); add("STP", "imp", 0xDB, 1);
+    // Rockwell/WDC bit instructions: RMBn/SMBn zp, BBRn/BBSn zp,target
+    for (int n = 0; n < 8; n++) {
+        std::string d(1, (char)('0' + n));
+        add("RMB" + d, "zp", (uint8_t)(0x07 + n * 0x10), 2);
+        add("SMB" + d, "zp", (uint8_t)(0x87 + n * 0x10), 2);
+        add("BBR" + d, "zprel", (uint8_t)(0x0F + n * 0x10), 3);
+        add("BBS" + d, "zprel", (uint8_t)(0x8F + n * 0x10), 3);
+    }
 }
 
 AssemblerResult Assembler6502::assemble(const std::string& sourcePath, const std::string& outputPath) {
@@ -134,6 +166,8 @@ int Assembler6502::assembleLine(const std::string& line, uint8_t* buf, int bufsz
     static std::regex re_ind("^\\((\\$[0-9A-F]+|[0-9]+)\\)$");
     static std::regex re_indx("^\\((\\$[0-9A-F]+|[0-9]+),X\\)$");
     static std::regex re_indy("^\\((\\$[0-9A-F]+|[0-9]+)\\),Y$");
+    static std::regex re_zprel("^(\\$[0-9A-F]+|[0-9]+),(\\$[0-9A-F]+|[0-9]+)$");
+    uint32_t target = 0;
 
     std::smatch match;
 
@@ -144,15 +178,19 @@ int Assembler6502::assembleLine(const std::string& line, uint8_t* buf, int bufsz
     } else if (std::regex_match(oper, match, re_imm)) {
         mode = "imm";
         val = parseValue(match[1]);
-    } else if (std::regex_match(oper, match, re_indx)) {
-        mode = "zpxind";
+    } else if (m_mnemonics[mnem].count("zprel") && std::regex_match(oper, match, re_zprel)) {
+        mode = "zprel";
         val = parseValue(match[1]);
+        target = parseValue(match[2]);
+    } else if (std::regex_match(oper, match, re_indx)) {
+        val = parseValue(match[1]);
+        mode = m_mnemonics[mnem].count("absxind") ? "absxind" : "zpxind";
     } else if (std::regex_match(oper, match, re_indy)) {
         mode = "indzpy";
         val = parseValue(match[1]);
     } else if (std::regex_match(oper, match, re_ind)) {
-        mode = "ind";
         val = parseValue(match[1]);
+        mode = m_mnemonics[mnem].count("zpind") ? "zpind" : "ind";
     } else if (std::regex_match(oper, match, re_absx)) {
         val = parseValue(match[1]);
         mode = (val <= 0xFF && m_mnemonics[mnem].count("zpx")) ? "zpx" : "absx";
@@ -187,7 +225,15 @@ int Assembler6502::assembleLine(const std::string& line, uint8_t* buf, int bufsz
     if (info.size > bufsz) return -1;
 
     buf[0] = info.opcode;
-    if (mode == "rel") {
+    if (mode == "zprel") {
+        if (val > 0xFF) return -1;
+        int32_t offset = (int32_t)target - (int32_t)(currentAddr + 3);
+        if (offset < -128 || offset > 127) return -1;
+        buf[1] = (uint8_t)val;
+        buf[2] = (uint8_t)(offset & 0xFF);
+    } else if (mode == "zpind" && val > 0xFF) {
+        return -1;
+    } else if (mode == "rel") {
         int32_t offset = (int32_t)val - (int32_t)(currentAddr + 2);
         if (offset < -128 || offset > 127) return -1;
         buf[1] = (uint8_t)(offset & 0xFF);
