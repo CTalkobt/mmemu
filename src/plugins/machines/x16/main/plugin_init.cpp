@@ -1,5 +1,6 @@
 #include "mmemu_plugin_api.h"
 #include "machine_x16.h"
+#include "x16_hostfs.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "util/logging.h"
 
@@ -21,6 +22,7 @@ static SimPluginManifest s_manifest = {
 };
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
+    registerX16HostFsIntercept();     // "x16.hostfs": a host folder as an IEEE unit
     MachineRegistry::instance().registerMachine("x16", []() -> MachineDescriptor* {
         std::string err;
         MachineDescriptor* m = x16::create(&err);

@@ -40,7 +40,7 @@ mmemu-cli -m x16 --speed max
 - **I2C** (`x16_i2c.cpp`, after x16-emulator's `i2c.c`, `smc.c`, `rtc.c`): VIA1's PA0 (SDA) and PA1 (SCL) are open collector — a line is low while its DDR bit is 1 and its output bit 0. Devices:
   - **SMC** (`$42`): the keyboard buffer (16 key codes), version 47.0.0, reset/NMI/power requests; no mouse yet (mouse reads give "no packet").
   - **RTC** (`$6F`, MCP7940N): BCD time starting at the host's local time, 64 bytes of NVRAM (`$20-$5F`).
-- **IEC serial bus**: nothing attached (lines read released).
+- **IEC serial bus**: nothing attached (lines read released); unit 8 is the host folder (HostFS, below) or the SD card.
 - **Interrupt vectors**: the 65C02's VPB pin selects ROM bank 0 while an interrupt (IRQ, NMI, BRK) fetches its vector, as on the hardware — other banks hold `$AAAA` there. Only the bank latch changes: `$01` still reads the interrupted bank, which the KERNAL's handler restores (x16-emulator `vp6502()`). The core exposes this as `MOS6502::setVectorPullHook`.
 
 ## VERA
@@ -67,6 +67,25 @@ mkfs.vfat -F 32 -n X16SD --offset 2048 sd.img
 
 Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_disk`), or put it at `roms/x16/sdcard.img` to have it mounted at start. Then `SAVE"NAME"`, `DOS"$"`, `LOAD"NAME"` work.
 
+## Host folder (HostFS)
+
+`X16HostFs` (`src/plugins/machines/x16/main/x16_hostfs.cpp`, ported from x16-emulator's `ieee.c`) serves a host folder as an IEEE / CBM DOS unit, as x16-emulator's HostFS does: it intercepts the KERNAL's IEEE API — `LISTEN` `$FFB1`, `SECOND` `$FF93`, `CIOUT` `$FFA8`, `MCIOUT` `$FEB1`, `UNLSN` `$FFAE`, `TALK` `$FFB4`, `TKSA` `$FF96`, `ACPTR` `$FFA5`, `MACPTR` `$FF44`, `UNTLK` `$FFAB` — and answers calls for its unit itself (then returns as RTS would); calls for other units run in the KERNAL. It fires only while the KERNAL's ROM bank is mapped.
+
+- **Default**: unit 8, the current directory of the emulator (`-m x16` in a folder serves that folder). Nothing outside the folder can be reached (`..` stops at it).
+- **What works**: `LOAD`, `SAVE` (`@:` to replace), `OPEN`/`CLOSE`/`GET#`/`INPUT#`/`PRINT#` with `,S,R`/`,W`/`,A`/`,M`, block transfers (MACPTR/MCIOUT, as `LOAD`, `BLOAD`, `BSAVE` use), `DOS"$"` with CMDR-DOS's options (`$:PAT*`, `$=D`, `$=P`, `$=T`, `$=L`, `$=C`), the error channel (`DOS`, channel 15; `73,HOST FS V1.0 X16` after reset), and the DOS commands `CD`, `MD`, `RD`, `S:` (scratch), `R:NEW=OLD`, `P` (seek), `T` (tell), `I`, `UI`, `U0>`n, `S-8`/`S-9`. Matching is case-insensitive with `*` and `?`; host names are shown in ISO-8859-15 (UTF-8 on the host).
+- **SD card rule**: while an SD card is mounted (see above) and HostFS uses unit 8, HostFS steps aside and the SD card (CMDR-DOS in ROM) serves unit 8. This is checked at every call, so mounting or ejecting at run time switches between them. Move HostFS to another unit to use both.
+- **CLI** (`intercept`): the intercept is `x16.hostfs`.
+
+  ```
+  intercept list                          # x16.hostfs [x16.hostfs] on  Host folder as IEEE unit 8: .
+  intercept set x16.hostfs path ~/x16     # serve another folder (closes open files, back to its root)
+  intercept set x16.hostfs startin sub    # start in a directory inside it
+  intercept set x16.hostfs unit 9         # 8-31
+  intercept off x16.hostfs                # no host folder: the KERNAL's serial bus (nothing attached)
+  ```
+
+Not ported: the 65C816-only `EXTAPI16` calls (`XMACPTR`/`XMCIOUT`), x16-emulator's `-prg` autoload, and its cycle compensation for the host time a call takes (a call costs 6 cycles here).
+
 ## YM2151
 
 `src/plugins/devices/ym2151/` wraps [ymfm](https://github.com/aaronsgiles/ymfm)'s OPM (vendored in `src/third_party/ymfm`, BSD-3-Clause), with x16-emulator's glue (`ymglue.cpp`): 3.579545 MHz, one sample per 64 chip clocks (55,930 Hz), the busy flag and timers counted in those clocks, writes while busy dropped, timer interrupts on the shared IRQ line. VERA mixes it into its output as the X16 does — `(psg + pcm) * 2 + ym` through VERA's limiter — resampling it linearly to 48,828 Hz. BASIC's `FMINIT`, `FMNOTE`, `FMPLAY`... play (`FMNOTE 0,$4A` gives 440 Hz).
@@ -77,6 +96,7 @@ Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_di
 - `test_x16_i2c.cpp`: the I2C bus bit-banged through a real VIA as the KERNAL does it: SMC keyboard buffer and version, RTC time, ticking and NVRAM.
 - `x16_basic_reads_gamepad_and_mouse` (ROM): `JOY(1)` with pad buttons held, `MX`/`MY`/`MB` after a mouse move; `test_x16_i2c.cpp` also scans the pads as the KERNAL does and reads mouse packets from the SMC.
 - `test_ym2151.cpp`: the busy flag, a keyed-on voice producing sound, timer A raising the IRQ line.
+- `test_x16_hostfs.cpp`: HostFS on R49 in a temporary folder: `SAVE` (the host file's bytes), `NEW`/`LOAD`/`RUN`, `DOS"$"`, the error channel, `S:`, `MD`/`CD`, `R:`, `OPEN`/`PRINT#`/`GET#`, and stepping aside while an SD card is mounted (skipped without the ROM).
 - `test_sdcard_spi.cpp`: initialisation, a block read and write against an image file, out-of-range reads.
 - `test_vera.cpp`: VERA registers, address ports, palette, text layer, sprites, collisions, LINE/VSYNC interrupts, peeks, PSG, PCM and FX.
 
@@ -92,4 +112,4 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 
 ## Not yet emulated
 
-- IEC devices (and the host filesystem as a drive); host gamepads in the GUI.
+- IEC serial bus devices (bit-level; the host folder is served at the KERNAL API instead); host gamepads in the GUI.

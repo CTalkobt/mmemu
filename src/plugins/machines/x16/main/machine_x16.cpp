@@ -4,6 +4,8 @@
 
 #include "machine_x16.h"
 #include "x16_i2c.h"
+#include "x16_hostfs.h"
+#include "libcore/main/intercept.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -422,6 +424,20 @@ MachineDescriptor* create(std::string* err) {
     {
         std::string sd = PathUtil::findResource("roms/x16/sdcard.img");
         if (std::ifstream(sd).good()) vera->mountDisk(8, sd);
+    }
+
+    // HostFS: the current directory as IEEE unit 8 (x16-emulator's default).
+    // It steps aside while an SD card is attached and it uses unit 8.
+    registerX16HostFsIntercept();
+    installIntercepts(*desc, nlohmann::json::parse(
+        R"({"intercepts":[{"type":"x16.hostfs","unit":8,"path":"."}]})"));
+    if (auto* hostfs = dynamic_cast<X16HostFs*>(findIntercept(*desc, "x16.hostfs"))) {
+        hostfs->setSdCardProbe([vera]() { return vera->sdCard().attached(); });
+        auto reset = desc->onReset;
+        desc->onReset = [reset, hostfs](MachineDescriptor& m) {
+            hostfs->reset();
+            reset(m);
+        };
     }
 
     desc->clockHz = CPU_HZ;

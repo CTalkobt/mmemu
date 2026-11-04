@@ -244,6 +244,7 @@ PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
 	src/plugins/devices/ym2151/main/ym2151.cpp \
 	src/third_party/ymfm/ymfm_opm.cpp \
 	src/plugins/machines/x16/main/x16_i2c.cpp \
+	src/plugins/machines/x16/main/x16_hostfs.cpp \
 	src/plugins/machines/x16/main/plugin_init.cpp \
 	src/plugins/devices/vera/main/vera.cpp \
 	src/plugins/devices/vera/main/vera_psg.cpp \
@@ -368,6 +369,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6502/test/test_cpu_opcode_suites.cpp \
 	src/plugins/machines/x16/test/test_x16_i2c.cpp \
 	src/plugins/machines/x16/test/test_x16_machine.cpp \
+	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
@@ -455,6 +457,7 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 # Test-related objects (excluding plugin entry points to avoid multiple mmemuPluginInit definitions)
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/x16/main/x16_i2c.o \
+	src/plugins/machines/x16/main/x16_hostfs.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \
