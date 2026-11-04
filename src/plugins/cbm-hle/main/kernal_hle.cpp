@@ -168,11 +168,51 @@ void KernalHLE::handleLoad(ICore* cpu, IBus* bus) {
     simulateRts(cpu, bus);
 }
 
+// KERNAL SAVE: A = zero-page address of the start pointer, X/Y = end + 1.
+// Writes <name> in the host folder: the 2-byte start address, then the data.
+// As on a CBM drive, an existing file is replaced only with an "@:" (or
+// "@0:") prefix; otherwise it is left alone and SAVE still returns normally
+// (a real drive reports 63 FILE EXISTS on its command channel only).
 void KernalHLE::handleSave(ICore* cpu, IBus* bus) {
-    // Similar to LOAD
-    setStatus(bus, 5); // 5 = Device not present / Not implemented
-    setCarry(cpu, true);
-    
+    std::string name = getFilename(bus);
+    bool replace = false;
+    if (!name.empty() && name[0] == '@') { replace = true; name = name.substr(1); }
+    if (name.size() >= 2 && name[0] == '0' && name[1] == ':') name = name.substr(2);
+    else if (!name.empty() && name[0] == ':') name = name.substr(1);
+    if (auto comma = name.find(','); comma != std::string::npos) name = name.substr(0, comma);   // ",P,W"
+
+    auto fail = [&](uint8_t kernalError) {
+        cpu->regWriteByName("A", kernalError);
+        setCarry(cpu, true);
+        simulateRts(cpu, bus);
+    };
+    if (name.empty()) { fail(8); return; }                 // 8 = MISSING FILE NAME
+
+    uint8_t zp = (uint8_t)cpu->regReadByName("A");
+    uint16_t start = bus->read8(zp) | (bus->read8((uint8_t)(zp + 1)) << 8);
+    uint16_t end = (uint16_t)(cpu->regReadByName("X") | (cpu->regReadByName("Y") << 8));
+
+    fs::path path = fs::path(m_hostPath) / name;
+    std::error_code ec;
+    if (fs::exists(path, ec) && !replace) {
+        LogRegistry::instance().getLogger("hle")->warn(
+            "SAVE \"{}\": {} exists, not replaced (use \"@:{}\" to replace)", name, path.string(), name);
+        setStatus(bus, 0);
+        setCarry(cpu, false);
+        simulateRts(cpu, bus);
+        return;
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) { fail(5); return; }                        // host folder not writable
+    file.put((char)(start & 0xFF));
+    file.put((char)(start >> 8));
+    for (uint32_t a = start; a < end; ++a) file.put((char)bus->read8((uint16_t)a));
+    file.close();
+    if (!file) { fail(5); return; }
+
+    setStatus(bus, 0);
+    setCarry(cpu, false);
     simulateRts(cpu, bus);
 }
 

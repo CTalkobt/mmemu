@@ -19,7 +19,8 @@ class IBus;
  *
  * The addresses default to the C64 KERNAL's. A unit that an emulated drive
  * answers (an IOHandler's getDiskStatus) is left to the KERNAL. Settings:
- * `path` (host folder). SAVE is not implemented and reports error 5.
+ * `path` (host folder). SAVE writes the file there (start address first);
+ * an existing file is replaced only with an "@:" prefix, as on CBM DOS.
  */
 class KernalHLE : public IPcIntercept {
 public:
