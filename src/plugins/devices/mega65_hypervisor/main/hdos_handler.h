@@ -1,5 +1,6 @@
 #pragma once
 
+#include "libcore/main/intercept.h"
 #include <string>
 #include <cstdint>
 #include <functional>
@@ -14,6 +15,14 @@ class IBus;
  * bypassing the need for full SD card + FAT32 emulation. Modeled after
  * xemu's hdos.c trap_for_xemu() approach.
  *
+ * Intercept type "mega65.hdos" (libcore/main/intercept.h): machines/mega65.json
+ * lists it with the DOS functions it serves ("trap": "$00", "functions":
+ * [...]) and the host folders to use ("paths", the first that exists). It
+ * reads the name a program passes to setname ($2E) and the transfer area
+ * ($3A) from user memory and still lets HYPPO handle those two calls, so
+ * keep them in "functions". Settings: `path` (host folder), `filename`
+ * (overrides the setname name for findfile/openfile/loadfile; empty = off).
+ *
  * Function numbers (already masked & 0x7E by caller):
  *   $00 = get version          $02 = get default drive
  *   $04 = get current drive    $06 = select drive
@@ -27,7 +36,7 @@ class IBus;
  *
  * Carry convention: SET = success, CLEAR = error.
  */
-class HdosHandler {
+class HdosHandler : public ICallIntercept {
 public:
     static constexpr int MAX_DESCRIPTORS = 4;
 
@@ -42,7 +51,14 @@ public:
     static constexpr uint8_t HDOSERR_CANNOT_OPEN_DIR  = 0x0C;
 
     HdosHandler();
-    ~HdosHandler();
+    /** From an intercept entry: "paths" (or "path") for the host folder. */
+    explicit HdosHandler(const nlohmann::json& settings);
+    ~HdosHandler() override;
+
+    bool onCall(MachineDescriptor& m, ICore& cpu, uint32_t trap, uint32_t function) override;
+    bool setOption(const std::string& key, const std::string& value) override;
+    std::string describe() const override;
+    const std::string& rootDir() const { return m_rootDir; }
 
     void setRootDir(const std::string& path);
     void setPhysBus(IBus* bus) { m_physBus = bus; }
@@ -51,8 +67,8 @@ public:
     /// Returns true if the function was virtualized (caller should exit hypervisor).
     bool handleTrap(uint8_t func, MOS45GS02* cpu);
 
-    /// Called after HYPPO processes a non-virtualized trap (for setname tracking).
-    void onHyppoLeave(uint8_t func, MOS45GS02* cpu);
+    /// setname ($2E): remember the name at user page Y (as HYPPO reads it).
+    void captureSetname(MOS45GS02* cpu);
 
     void closeAll();
 
@@ -90,6 +106,8 @@ private:
     std::string m_rootDir;
     std::string m_cwd;           // Current working directory (full host path, always ends with /)
     std::string m_setnameFn;     // Last filename set by setname
+    std::string m_overrideName;  // `filename` setting: replaces m_setnameFn when set
+    const std::string& requestedName() const { return m_overrideName.empty() ? m_setnameFn : m_overrideName; }
     std::string m_fileFound;     // Last file found by findfile
     IBus* m_physBus = nullptr;
     int m_currentDesc = -1;      // Last opened file descriptor
@@ -98,3 +116,9 @@ private:
 
     Descriptor m_descriptors[MAX_DESCRIPTORS];
 };
+
+/** Register the "mega65.hdos" intercept type (idempotent). */
+void registerHdosIntercept();
+
+/** The settings machines/mega65.json had before intercepts were configurable. */
+nlohmann::json defaultHdosInterceptSpec();

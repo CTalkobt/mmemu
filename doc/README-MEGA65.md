@@ -89,7 +89,15 @@ The F011 controller (`$D080-$D09F`, `src/plugins/devices/sdcard/main/f011.cpp`) 
 - **Disk buffers**: the 4 KB at `$FFD6000` hold the F011 buffer (`+$C00`) and the SD card buffer (`+$E00`). `$DE00` (after SD command `$81`) shows the one `$D689` bit 7 selects, except in the hypervisor, which always sees the SD card buffer.
 - With no disk, `DIR` ends with `74,DRIVE NOT READY`.
 
-Since the F011 answers for units 8 and 9, the CBM KERNAL HLE (`hle`) passes `LOAD`/`SAVE` on those units to the ROM's DOS.
+The MEGA65 installs no KERNAL intercept (`cbm.kernal.fileio`), so `LOAD`/`SAVE` always go through the ROM's DOS.
+
+### 4.6 HYPPO call intercepts
+
+Before HYPPO sees a user-mode trap, the machine's call intercepts may serve it (`machines/mega65.json`, `"intercepts"`; format in `machines/README-machines.md`). The default entry, `mega65.hdos` (`src/plugins/devices/mega65_hypervisor/main/hdos_handler.cpp`), serves these DOS calls (trap `$00`) from a host folder, the first of its `paths` that exists: get/select drive, disk size, chdir, opendir/readdir/closedir, openfile/readfile/closefile, closeall, findfile, loadfile, get last error, cdrootdir and loadfile-to-attic.
+
+- **setname** (`$2E`) and **set transfer area** (`$3A`) are noted and still passed to HYPPO: the name is read from user memory at page Y, as HYPPO reads it, so findfile, openfile and loadfile see it. Keep both listed.
+- `intercept set hdos filename <NAME>` overrides the name (empty: off); `intercept set hdos path <dir>` changes the folder; `intercept off hdos` hands every call to HYPPO.
+- Remove a function from `functions` to let HYPPO serve it from the SD card; `"intercepts": []` for none. Without an `"intercepts"` key the machine uses this default list.
 
 Not emulated: real floppy drives (`$D6A0`), 64 MB MEGA disk images (`$D68B` bits 6-7), D64/D71 image modes, the FDC interrupt, and the delays of a real drive.
 

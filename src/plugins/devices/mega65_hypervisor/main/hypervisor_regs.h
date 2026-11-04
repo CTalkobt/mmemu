@@ -12,9 +12,9 @@
  * In hypervisor mode: these are read/write registers for saved CPU state.
  * Writing to $D67F (ENTEREXIT) exits hypervisor mode.
  *
- * HDOS trap virtualization: when enabled, trap 0 (DOS) intercepts
- * function calls and services them from the host filesystem, bypassing
- * HYPPO's SD card code entirely.
+ * Call intercepts: before HYPPO sees a user-mode trap, the machine's call
+ * intercepts (libcore/main/intercept.h, from machines/mega65.json) may
+ * service it, e.g. "mega65.hdos" for DOS calls from a host folder.
  */
 class HypervisorRegs : public IOHandler {
 public:
@@ -35,15 +35,17 @@ public:
 
     std::vector<std::string> deviceAliases() const override { return {"MEGA65_HYPERVISOR", "M45_HYPERVISOR"}; }
 
-    /// Set HDOS trap handler. Called with function code (from A register).
-    /// Returns true if the function was virtualized (caller should exit hypervisor).
-    using HdosTrapFn = std::function<bool(uint8_t func, MOS45GS02* cpu)>;
-    void setHdosTrapHandler(HdosTrapFn fn) { m_hdosTrap = std::move(fn); }
+    /**
+     * Called for each user-mode trap once the hypervisor is entered, with the
+     * trap number (0-63) and the function: A & $7E for trap $00 (DOS, as
+     * HYPPO dispatches it), else A. Return true if the call was serviced
+     * (the hypervisor is left at once and HYPPO does not run).
+     */
+    using CallInterceptFn = std::function<bool(uint8_t trap, uint8_t function)>;
+    void setCallIntercept(CallInterceptFn fn) { m_callIntercept = std::move(fn); }
 
 private:
     MOS45GS02* m_cpu;
     std::string m_name = "HypervisorRegs";
-    HdosTrapFn m_hdosTrap;
-
-    bool handleDosTrap();
+    CallInterceptFn m_callIntercept;
 };

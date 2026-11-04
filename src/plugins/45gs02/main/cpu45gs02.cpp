@@ -1,3 +1,4 @@
+#include "libcore/main/intercept.h"
 #include "cpu45gs02.h"
 #include "libdebug/main/execution_observer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
@@ -368,6 +369,12 @@ int MOS45GS02::step() {
         m_state.pc = irqHandler;
         m_state.cycles += 7;
         return 7;
+    }
+
+    // Configured intercepts (e.g. a KERNAL routine served from the host)
+    if (m_pcHook && m_pcHook->armed(m_state.pc) && m_pcHook->fire(this, m_state.pc)) {
+        m_state.cycles += 6;
+        return 6;
     }
 
     uint16_t startPc = m_state.pc;

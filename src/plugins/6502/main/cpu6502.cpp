@@ -1,3 +1,4 @@
+#include "libcore/main/intercept.h"
 #include "cpu6502.h"
 #include "libtoolchain/main/idisasm.h"
 #include "libdebug/main/execution_observer.h"
@@ -841,6 +842,12 @@ int MOS6502::step() {
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
         m_state.cycles += 7;
         return 7;
+    }
+
+    // Configured intercepts (e.g. a KERNAL routine served from the host)
+    if (m_pcHook && m_pcHook->armed(m_state.pc) && m_pcHook->fire(this, m_state.pc)) {
+        m_state.cycles += 6;
+        return 6;
     }
 
     uint16_t pc = m_state.pc;

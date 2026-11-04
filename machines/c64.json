@@ -29,8 +29,13 @@
           "overlayAddr": null, "writable": false,
           "passToDevice": ["PLA"] },
         { "label": "kernal", "path": "roms/c64/kernal.bin", "size": 8192,
-          "overlayAddr": null, "writable": false,
-          "passToDevice": ["PLA"] },
+          "overlayAddr": null, "writable": false, "cpuAddr": "0xE000",
+          "passToDevice": ["PLA"],
+          "intercepts": [
+            { "type": "cbm.kernal.fileio", "name": "kernal-fileio",
+              "load": "$FFD5", "save": "$FFD8", "path": ".",
+              "zeroPage": { "status": "$90", "fnlen": "$B7", "sa": "$B9", "fa": "$BA", "fnadr": "$BB" } }
+          ] },
         { "label": "char",   "path": "roms/c64/char.bin",   "size": 4096,
           "overlayAddr": null, "writable": false,
           "passToDevice": ["PLA", "VIC-II"] }

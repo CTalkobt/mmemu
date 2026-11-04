@@ -44,6 +44,7 @@ struct MemOverlay {
  * Forward declaration of IORegistry.
  */
 class IORegistry;
+class IIntercept;
 
 /**
  * Machine Descriptor.
@@ -138,6 +139,12 @@ struct MachineDescriptor {
      * adds them to its reply.
      */
     std::vector<std::string>    warnings;
+
+    /**
+     * Intercepts installed from the machine's configuration (installIntercepts
+     * in libcore/main/intercept.h); owned through deleters.
+     */
+    std::vector<IIntercept*>    intercepts;
 
     std::vector<MemOverlay> overlays;
     std::vector<uint8_t*>   roms; // Buffers owned by the machine
