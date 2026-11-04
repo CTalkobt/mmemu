@@ -1371,7 +1371,7 @@ bool Vera::ioWrite(IBus*, uint32_t addr, uint8_t val) {
 }
 
 // ---------------------------------------------------------------------------
-// SPI (vera_spi.c), no SD card attached
+// SPI (vera_spi.c) and the SD card on it (sdcard_spi.cpp)
 // ---------------------------------------------------------------------------
 
 void Vera::spiStep(uint64_t cycles) {
@@ -1380,7 +1380,7 @@ void Vera::spiStep(uint64_t cycles) {
     if (m_spiOutcounter >= 10) {
         // 9 is closer to reality; 10 is safe against clock alignment on hardware
         m_spiBusy = false;
-        m_spiReceivedByte = 0xff;   // no card
+        m_spiReceivedByte = m_sd.attached() ? m_sd.handle(m_spiSendingByte) : 0xff;
     }
 }
 
@@ -1410,7 +1410,10 @@ void Vera::spiWrite(uint8_t reg, uint8_t value) {
             }
             break;
         case 1:
-            m_spiSs = value & 1;   // sdcard_select() with no card does nothing
+            if (m_spiSs != (bool)(value & 1)) {
+                m_spiSs = value & 1;
+                if (m_spiSs) m_sd.select(true);     // as vera_spi.c: only on select
+            }
             m_spiAutotx = !!(value & 4);
             break;
     }
@@ -1552,4 +1555,29 @@ std::vector<std::pair<std::string, uint32_t>> Vera::getDerivedValues() const {
         {"IEN", m_ien},
         {"DCSEL", m_ioDcsel},
     };
+}
+
+// ---------------------------------------------------------------------------
+// The SD card as disk unit 8 (the X16 DOS's device)
+// ---------------------------------------------------------------------------
+
+bool Vera::mountDisk(int unit, const std::string& path) {
+    if (unit != 8) return false;
+    return m_sd.attach(path);
+}
+
+void Vera::ejectDisk(int unit) {
+    if (unit == 8) m_sd.detach();
+}
+
+bool Vera::getDiskStatus(int unit, int& track, int& sector, bool& led) {
+    if (unit != 8) return false;
+    track = 0;
+    sector = (int)m_sd.lastLba();
+    led = m_spiSs && m_sd.attached();
+    return true;
+}
+
+std::string Vera::getMountedDiskPath(int unit) {
+    return unit == 8 ? m_sd.path() : std::string();
 }

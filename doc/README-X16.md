@@ -44,9 +44,21 @@ mmemu-cli -m x16 --speed max
 - **Video**: 640×480; layers in text, tile and bitmap modes; 128 sprites with Z depth, flips and collisions; HSCALE/VSCALE, border and display window; VGA, NTSC interlaced and 240p timing at 25 MHz; VSYNC, LINE, SPRCOL and AFLOW interrupts. Mid-line register changes are rendered.
 - **FX**: line, polygon and affine address helpers, the 32-bit cache with nibble masks and transparent writes, the multiplier/accumulator.
 - **Audio**: 16 PSG voices and the PCM FIFO, mixed at 48,828 Hz (25 MHz / 512) as x16-emulator does; the GUI and `recordaudio` play it.
-- **SPI** (SD card): the registers and busy timing; no card is attached (transfers return `$FF`).
+- **SPI**: the registers and busy timing, with the SD card below on the select line.
 
 Where the port departs from the emulator (integer scan timing, a repeatable VRAM fill at reset, 17-bit address wrap, peeks that return what a read would) is commented in `vera.cpp`.
+
+## SD card
+
+`SdCardSpi` (`src/plugins/devices/vera/main/sdcard_spi.cpp`, after x16-emulator's `sdcard.c`) answers VERA's SPI port as an SD card in SPI mode, from a raw image file: CMD0/8/9/12/13/16/17/18/24/55/58 and ACMD41, block reads (single and multiple) and block writes, which go straight to the file (read-only if the file cannot be opened for writing). The X16's DOS wants a FAT32 partition, for example:
+
+```
+truncate -s 64M sd.img
+echo 'start=2048, type=c' | sfdisk sd.img
+mkfs.vfat -F 32 -n X16SD --offset 2048 sd.img
+```
+
+Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_disk`), or put it at `roms/x16/sdcard.img` to have it mounted at start. Then `SAVE"NAME"`, `DOS"$"`, `LOAD"NAME"` work.
 
 ## YM2151
 
@@ -57,6 +69,7 @@ Where the port departs from the emulator (integer scan timing, a repeatable VRAM
 - `x16_boots_to_ready_and_runs_basic` boots R49 to READY and runs a typed `PRINT 6*7` (skipped without `roms/x16/rom.bin`).
 - `test_x16_i2c.cpp`: the I2C bus bit-banged through a real VIA as the KERNAL does it: SMC keyboard buffer and version, RTC time, ticking and NVRAM.
 - `test_ym2151.cpp`: the busy flag, a keyed-on voice producing sound, timer A raising the IRQ line.
+- `test_sdcard_spi.cpp`: initialisation, a block read and write against an image file, out-of-range reads.
 - `test_vera.cpp`: VERA registers, address ports, palette, text layer, sprites, collisions, LINE/VSYNC interrupts, peeks, PSG, PCM and FX.
 
 ## Keyboard
@@ -65,5 +78,5 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 
 ## Not yet emulated
 
-- SD card (VERA SPI) and IEC devices, so no `LOAD`/`SAVE` yet; mouse; NES/SNES controllers.
+- IEC devices (and the host filesystem as a drive); mouse; NES/SNES controllers.
 - The 65C02 assembler is the NMOS one (no CMOS mnemonics).

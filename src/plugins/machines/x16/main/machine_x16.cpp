@@ -369,6 +369,12 @@ MachineDescriptor* create(std::string* err) {
         return c;
     };
 
+    // An SD card image found at start-up (else `disk mount 8 <file.img>`)
+    {
+        std::string sd = PathUtil::findResource("roms/x16/sdcard.img");
+        if (std::ifstream(sd).good()) vera->mountDisk(8, sd);
+    }
+
     desc->clockHz = CPU_HZ;
     desc->onReset(*desc);
     return desc;

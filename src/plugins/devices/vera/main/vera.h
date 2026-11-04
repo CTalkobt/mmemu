@@ -1,4 +1,5 @@
 #pragma once
+#include "sdcard_spi.h"
 #include <functional>
 
 // VERA (Versatile Embedded Retro Adapter), the Commander X16's video and
@@ -115,6 +116,13 @@ public:
     void getDeviceInfo(DeviceInfo& out) const override;
     std::vector<std::pair<std::string, uint32_t>> getDerivedValues() const override;
     std::vector<std::string> deviceAliases() const override { return {"VERA"}; }
+
+    /** The SD card on VERA's SPI port, as disk unit 8: a raw image (e.g. FAT32). */
+    bool mountDisk(int unit, const std::string& path) override;
+    void ejectDisk(int unit) override;
+    bool getDiskStatus(int unit, int& track, int& sector, bool& led) override;
+    std::string getMountedDiskPath(int unit) override;
+    SdCardSpi& sdCard() { return m_sd; }
 
     // IVideoOutput: the last completed 640x480 frame
     VideoDimensions getDimensions() const override {
@@ -314,4 +322,5 @@ private:
     uint8_t m_spiSendingByte = 0, m_spiReceivedByte = 0xFF;
     double  m_spiOutcounter = 0.0;
     std::function<void(int32_t&, int32_t&)> m_externalAudio;
+    SdCardSpi m_sd;
 };

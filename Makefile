@@ -202,6 +202,7 @@ PLUGIN_POKEY_SRCS = src/plugins/devices/pokey/main/pokey.cpp \
 	src/plugins/devices/pokey/main/plugin_init.cpp
 
 PLUGIN_VERA_SRCS = src/plugins/devices/vera/main/vera.cpp \
+	src/plugins/devices/vera/main/sdcard_spi.cpp \
 	src/plugins/devices/vera/main/vera_psg.cpp \
 	src/plugins/devices/vera/main/vera_pcm.cpp \
 	src/plugins/devices/vera/main/plugin_init.cpp
@@ -239,6 +240,7 @@ PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/6502/main/cpu6502_cmos.cpp
 
 PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
+	src/plugins/devices/vera/main/sdcard_spi.cpp \
 	src/plugins/devices/ym2151/main/ym2151.cpp \
 	src/third_party/ymfm/ymfm_opm.cpp \
 	src/plugins/machines/x16/main/x16_i2c.cpp \
@@ -382,6 +384,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
 	src/plugins/devices/vera/test/test_vera.cpp \
+	src/plugins/devices/vera/test/test_sdcard_spi.cpp \
 	src/plugins/machines/atari/test/test_atari_machine.cpp \
 	src/plugins/devices/cia6526/test/test_cia6526.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec.cpp \
@@ -498,6 +501,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/pokey/main/pokey.o \
 	src/plugins/devices/vera/main/vera.o \
 	src/plugins/devices/vera/main/vera_psg.o \
+	src/plugins/devices/vera/main/sdcard_spi.o \
 	src/plugins/devices/vera/main/vera_pcm.o \
 	src/plugins/machines/atari/main/machine_atari.o \
 	src/plugins/machines/atari/main/atari_sio.o \
