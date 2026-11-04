@@ -23,13 +23,13 @@ KbdVic20::KbdVic20()
         {"m",          {4, 4}}, {"period",     {4, 5}}, {"right_shift",{4,6}},{"f1",    {4, 7}},
         // col 5 (PB5)
         {"cbm",        {5, 0}}, {"s",          {5, 1}}, {"f",        {5, 2}}, {"h",     {5, 3}},
-        {"k",          {5, 4}}, {"minus",      {5, 5}}, {"equal",    {5, 6}}, {"f3",    {5, 7}},
+        {"k",          {5, 4}}, {"colon",      {5, 5}}, {"equal",    {5, 6}}, {"f3",    {5, 7}},
         // col 6 (PB6)
         {"q",          {6, 0}}, {"e",          {6, 1}}, {"t",        {6, 2}}, {"u",     {6, 3}},
-        {"o",          {6, 4}}, {"at",         {6, 5}}, {"up",       {6, 6}}, {"f5",    {6, 7}},
+        {"o",          {6, 4}}, {"at",         {6, 5}}, {"arrow_up", {6, 6}}, {"f5",    {6, 7}},
         // col 7 (PB7)
         {"2",          {7, 0}}, {"4",          {7, 1}}, {"6",        {7, 2}}, {"8",     {7, 3}},
-        {"0",          {7, 4}}, {"arrow_up",   {7, 5}}, {"home",     {7, 6}}, {"f7",    {7, 7}},
+        {"0",          {7, 4}}, {"minus",      {7, 5}}, {"home",     {7, 6}}, {"f7",    {7, 7}},
     };
     KbdVic20::clearKeys();
 }
@@ -78,8 +78,11 @@ bool KbdVic20::pressKeyByName(const std::string& keyName, bool down) {
     if (lower == "question")  return pressCombo({"left_shift", "slash"}, down);
     if (lower == "less")      return pressCombo({"left_shift", "comma"}, down);
     if (lower == "greater")   return pressCombo({"left_shift", "period"}, down);
-    if (lower == "colon")     return pressCombo({"left_shift", "semicolon"}, down);
-    if (lower == "bracket_left")  return pressCombo({"left_shift", "at"}, down);
+    if (lower == "bracket_left")  return pressCombo({"left_shift", "colon"}, down);
+    if (lower == "bracket_right") return pressCombo({"left_shift", "semicolon"}, down);
+    // One key each for cursor down/right; shifted they move up/left
+    if (lower == "up")        return pressCombo({"left_shift", "down"}, down);
+    if (lower == "left")      return pressCombo({"left_shift", "right"}, down);
     
     if (lower == "backslash") return pressKeyByName("arrow_left", down);
 
@@ -112,7 +115,7 @@ bool KbdVic20::pressCombo(const std::vector<std::string>& keys, bool down) {
 }
 
 void KbdVic20::updateMatrix() {
-    uint8_t cols = m_colPort.m_val;
+    uint8_t cols = m_colPort.driven();
     uint8_t rows = 0xFF;
 
     for (int i = 0; i < 8; ++i) {
@@ -172,6 +175,7 @@ void KbdVic20::enqueueText(const std::string& text) {
                         case '?': name = "question"; break;
                         case '@': name = "at"; break;
                         case '[': name = "bracket_left"; break;
+                        case ']': name = "bracket_right"; break;
                         case '^': name = "uparrow"; break;
                         case '_': name = "leftarrow"; break;
                         default:  name = std::string(1, c); break;

@@ -54,20 +54,20 @@ These are the keys most likely to cause confusion because they have no obvious e
 | CBM (Commodore) | `cbm` | `Left Alt` | The Commodore logo key; used for graphics characters and SHIFT+CBM toggles character set |
 | CTRL | `control` | `Tab` | Holds colour codes in BASIC; `CTRL+1`–`CTRL+8` set foreground colour |
 | ← (arrow-left char) | `arrow_left` | `` ` `` (backtick) | Types the PETSCII `←` character (code `$5F`); **not** a cursor key |
-| ↑ (arrow-up char) | `arrow_up` | `\` (backslash) | Types the PETSCII `↑` character (code `$5E`); **not** a cursor key |
+| ↑ (arrow-up char) | `arrow_up` | `\` (backslash) | Types the PETSCII `↑` character (code `$5E`); **not** a cursor key. Its own key (PB6/PA6) |
 | £ (pound sterling) | `pound` | `#` | Types the `£` symbol (PETSCII code `$5C`) |
 | DEL / INST | `delete` | `Backspace` | Deletes character to the left; SHIFT+DEL inserts a space |
 | HOME / CLR | `home` | `Home` | Moves cursor to top-left; SHIFT+HOME clears the screen |
-| CRSR → / ← | `right` | `→` (right arrow) | Moves cursor right; hold SHIFT to move left (no separate `left` key on the matrix) |
+| CRSR → / ← | `right` | `→` (right arrow) | Moves cursor right; hold SHIFT to move left. `left` presses SHIFT+`right` |
 | CRSR ↓ / ↑ | `down` | `↓` (down arrow) | Moves cursor down; hold SHIFT to move up |
-| Cursor up | `up` | `↑` (up arrow) | Direct cursor-up matrix position (PA6/PB6); equivalent to SHIFT+CRSR↓ in hardware |
+| Cursor up | `up` | `↑` (up arrow) | Presses SHIFT+`down` (the VIC-20 has no separate cursor-up key) |
 | + | `plus` | `+` / `=` | Plus sign; not the same physical key as `=` |
 | * | `asterisk` | `*` / `8` | Asterisk |
 | @ | `at` | `@` / `2` | At sign |
 | = | `equal` | `=` | Equals |
-| - | `minus` | `-` | Minus / hyphen |
+| - | `minus` | `-` | Minus / hyphen (PB7/PA5) |
 | ; | `semicolon` | `;` | Semicolon |
-| : | *(shift+semicolon)* | `:` | Colon is SHIFT+`;` — inject `left_shift` + `semicolon` simultaneously |
+| : | `colon` | `:` | Its own key (PB5/PA5); SHIFT+`:` is `[` (`bracket_left`), SHIFT+`;` is `]` (`bracket_right`) |
 | / | `slash` | `/` | Forward slash |
 | , | `comma` | `,` | Comma |
 | . | `period` | `.` | Full stop / period |
@@ -94,6 +94,8 @@ The VIC-20 has four physical function keys. Each produces a second function when
 
 ### 5.4 Full Matrix Reference
 
+As in VICE's `vic20via2.c`. Column PB7 is shared with the joystick's right switch (see README-VIC20.md); only PB bits set as outputs drive a column.
+
 The hardware matrix uses VIA2 Port B to select columns (PB0–PB7 driven low in turn) and reads rows from VIA2 Port A (PA0–PA7). The table below lists every key by its matrix position.
 
 ```
@@ -103,8 +105,8 @@ PA1 (bit 1):  3           w            a         left_shift  z            s     
 PA2 (bit 2):  5           r            d         x           c            f       t          6
 PA3 (bit 3):  7           y            g         v           b            h       u          8
 PA4 (bit 4):  9           i            j         n           m            k       o          0
-PA5 (bit 5):  plus        p            l         comma       period       minus   at         arrow_up
-PA6 (bit 6):  pound       asterisk     semicolon slash       right_shift  equal   up         home
+PA5 (bit 5):  plus        p            l         comma       period       colon   at         minus
+PA6 (bit 6):  pound       asterisk     semicolon slash       right_shift  equal   arrow_up   home
 PA7 (bit 7):  delete      return       right     down        f1           f3      f5         f7
 ```
 

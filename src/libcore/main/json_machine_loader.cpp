@@ -673,26 +673,46 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         if (jw.is_array()) for (const auto& p : jw) ports.push_back(p);
         else ports.push_back(jw);
         std::vector<Joystick*> joys;
-        for (const auto& p : ports) {
-            std::string joyDev  = p.value("device", "");
-            std::string joyPort = p.value("port",   "B");
-            if (!devPtrs.count(joyDev)) { joys.push_back(nullptr); continue; }
-            IOHandler* chip = devPtrs[joyDev];
-            auto* joy = new Joystick();
-            desc->deleters.push_back([joy]() { delete joy; });
-            bool portA = joyPort == "A";
+        // Attach a port device, sharing the pins with one already there.
+        auto attach = [&](IOHandler* chip, bool portA, IPortDevice* dev) {
             IPortDevice* existing = portA ? chip->portADevice() : chip->portBDevice();
-            IPortDevice* dev = joy;
             if (existing) {
                 auto* both = new CombinedPortDevice();
                 both->addDevice(existing);
-                both->addDevice(joy);
+                both->addDevice(dev);
                 desc->deleters.push_back([both]() { delete both; });
                 dev = both;
                 chip->setOutputsReadPins(true);
             }
             if (portA) chip->setPortADevice(dev);
             else       chip->setPortBDevice(dev);
+        };
+        for (const auto& p : ports) {
+            // {"lines": [{device, port, up|down|left|right|fire: bit}, ...]}:
+            // one joystick whose switches are on chosen bits of several ports
+            if (p.contains("lines")) {
+                auto* joy = new Joystick();
+                desc->deleters.push_back([joy]() { delete joy; });
+                static const char* SWITCHES[5] = {"up", "down", "left", "right", "fire"};
+                for (const auto& l : p["lines"]) {
+                    std::string dev = l.value("device", "");
+                    if (!devPtrs.count(dev)) continue;
+                    int bitFor[5];
+                    for (int i = 0; i < 5; i++) bitFor[i] = l.value(SWITCHES[i], -1);
+                    auto* pins = new JoystickPins(joy, bitFor);
+                    desc->deleters.push_back([pins]() { delete pins; });
+                    attach(devPtrs[dev], l.value("port", "B") == "A", pins);
+                }
+                joys.push_back(joy);
+                continue;
+            }
+            std::string joyDev  = p.value("device", "");
+            std::string joyPort = p.value("port",   "B");
+            if (!devPtrs.count(joyDev)) { joys.push_back(nullptr); continue; }
+            IOHandler* chip = devPtrs[joyDev];
+            auto* joy = new Joystick();
+            desc->deleters.push_back([joy]() { delete joy; });
+            attach(chip, joyPort == "A", joy);
             joys.push_back(joy);
         }
         desc->joystickPorts = (int)joys.size();

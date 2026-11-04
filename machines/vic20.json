@@ -52,7 +52,7 @@
         "colPort": { "device": "VIA2", "port": "B" },
         "rowPort": { "device": "VIA2", "port": "A" }
       },
-      "joystick": { "device": "VIA1", "port": "B" },
+      "joystick": { "lines": [ { "device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5 }, { "device": "VIA2", "port": "B", "right": 7 } ] },
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     },
 
@@ -107,7 +107,7 @@
         "colPort": { "device": "VIA2", "port": "B" },
         "rowPort": { "device": "VIA2", "port": "A" }
       },
-      "joystick": { "device": "VIA1", "port": "B" },
+      "joystick": { "lines": [ { "device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5 }, { "device": "VIA2", "port": "B", "right": 7 } ] },
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     },
 
@@ -162,7 +162,7 @@
         "colPort": { "device": "VIA2", "port": "B" },
         "rowPort": { "device": "VIA2", "port": "A" }
       },
-      "joystick": { "device": "VIA1", "port": "B" },
+      "joystick": { "lines": [ { "device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5 }, { "device": "VIA2", "port": "B", "right": 7 } ] },
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     },
 
@@ -217,7 +217,7 @@
         "colPort": { "device": "VIA2", "port": "B" },
         "rowPort": { "device": "VIA2", "port": "A" }
       },
-      "joystick": { "device": "VIA1", "port": "B" },
+      "joystick": { "lines": [ { "device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5 }, { "device": "VIA2", "port": "B", "right": 7 } ] },
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     },
 
@@ -272,7 +272,7 @@
         "colPort": { "device": "VIA2", "port": "B" },
         "rowPort": { "device": "VIA2", "port": "A" }
       },
-      "joystick": { "device": "VIA1", "port": "B" },
+      "joystick": { "lines": [ { "device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5 }, { "device": "VIA2", "port": "B", "right": 7 } ] },
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     }
 
