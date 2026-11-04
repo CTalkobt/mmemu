@@ -31,6 +31,11 @@ public:
     bool dispatchRead(IBus* bus, uint32_t addr, uint8_t* val);
 
     /**
+     * Like dispatchRead, but through ioPeek: no side effects in any device.
+     */
+    bool dispatchPeek(IBus* bus, uint32_t addr, uint8_t* val);
+
+    /**
      * Dispatch a write to the first handler that matches the address.
      */
     bool dispatchWrite(IBus* bus, uint32_t addr, uint8_t val);

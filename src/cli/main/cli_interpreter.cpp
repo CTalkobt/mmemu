@@ -2558,7 +2558,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             // Read current personality from KEY register
             uint8_t val = 0;
-            m_ctx.machine->ioRegistry->dispatchRead(nullptr, 0xD02F, &val);
+            m_ctx.machine->ioRegistry->dispatchPeek(nullptr, 0xD02F, &val);
             m_output("KEY register: $" + toHex(val, 2) + "\n");
         }
     } else if (cmd == "iomap") {
@@ -2578,7 +2578,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             bool found = false;
             for (auto* h : handlers) {
                 uint8_t dummy = 0;
-                if (h->ioRead(nullptr, addr, &dummy)) {
+                if (h->ioPeek(nullptr, addr, &dummy)) {
                     uint32_t base = h->baseAddr();
                     uint32_t end = base + h->addrMask();
                     m_output("$" + toHex(addr, addrWidth()) + " → "

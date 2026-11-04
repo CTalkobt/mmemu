@@ -40,6 +40,12 @@ bool SidPair::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
         return m_sid2.ioRead(bus, addr, val);
 }
 
+bool SidPair::ioPeek(IBus* bus, uint32_t addr, uint8_t* val) {
+    uint32_t offset = addr - m_baseAddr;
+    if (offset >= 64) return false;
+    return offset < 32 ? m_sid1.ioPeek(bus, addr, val) : m_sid2.ioPeek(bus, addr, val);
+}
+
 bool SidPair::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
     uint32_t offset = addr - m_baseAddr;
     if (offset >= 64) return false;

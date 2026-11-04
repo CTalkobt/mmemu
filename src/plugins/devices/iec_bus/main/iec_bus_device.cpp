@@ -62,6 +62,23 @@ uint8_t IECBusDevice::readPort() {
     return response;
 }
 
+// What readPort() would return, without advancing the handshake
+uint8_t IECBusDevice::peekPort() {
+    if (!m_computerPortPtr) return 0xFF;
+    uint8_t computerValue = *m_computerPortPtr;
+    int state = m_handshakeState, stable = m_stableCount;
+    if ((computerValue & ATN) != (m_lastComputerValue & ATN)) {
+        if (!(computerValue & ATN)) { state = 1; stable = 0; }
+        else state = 0;
+    }
+    uint8_t response = computerValue | CLOCK_IN | DATA_IN;
+    if (state == 1) {
+        stable++;
+        if (stable <= 50 && stable > 20) response &= ~CLOCK_IN;
+    }
+    return response;
+}
+
 void IECBusDevice::writePort(uint8_t data) {
     // Computer can write to DATA_OUT, CLOCK_OUT, ATN
     iecLog()->trace("writePort: ${:02X}", data);

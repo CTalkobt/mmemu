@@ -81,7 +81,8 @@ public:
      * Set I/O hooks for the virtual address space (before translation).
      */
     void setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
-                    std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn);
+                    std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn,
+                    std::function<bool(IBus*, uint32_t, uint8_t*)> peekFn = {});
 
     /**
      * Set hypervisor overlay so debugger reads see the hypervisor ROM/RAM
@@ -111,6 +112,7 @@ private:
     MapState m_mapState;
 
     std::function<bool(IBus*, uint32_t, uint8_t*)> m_ioRead;
+    std::function<bool(IBus*, uint32_t, uint8_t*)> m_ioPeek;   // side-effect free (peek8)
     std::function<bool(IBus*, uint32_t, uint8_t)>  m_ioWrite;
 
     // Hypervisor overlay (visible to debugger when hypervisor mode is active)

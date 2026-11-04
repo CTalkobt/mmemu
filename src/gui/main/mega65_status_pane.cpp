@@ -67,7 +67,7 @@ void Mega65StatusPane::RefreshValues() {
     // I/O Personality — read via IOHandler dispatch ($D02F)
     if (m_keyHandler) {
         uint8_t val = 0;
-        m_keyHandler->ioRead(nullptr, 0xD02F, &val);
+        m_keyHandler->ioPeek(nullptr, 0xD02F, &val);
         // The KEY register returns last-written byte; decode personality from known values
         // We use the IORegistry dispatch to read which also returns the state.
         // Actually we need the personality mode. Since we can't dynamic_cast to KeyRegister

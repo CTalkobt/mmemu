@@ -63,8 +63,12 @@ void VIA6522::reset() {
     driveCB2(true);
 }
 
-bool VIA6522::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
-    (void)bus;
+bool VIA6522::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, false); }
+bool VIA6522::ioPeek(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, true); }
+
+// A register read; `peek` returns the same value without its side effects
+// (interrupt flags cleared, CA2/CB2 handshake, IRQ update, port device reads).
+bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0xF;
@@ -73,10 +77,10 @@ bool VIA6522::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
         case IORA2:
             *val = m_regs[ORA];
             if (m_portADevice) {
-                uint8_t pins = m_portADevice->readPort();
+                uint8_t pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
                 *val = (m_regs[ORA] & m_regs[DDRA]) | (pins & ~m_regs[DDRA]);
             }
-            if (reg == ORA) {
+            if (reg == ORA && !peek) {
                 m_regs[IFR] &= ~0x02; // Clear CA1 flag
                 // Clear CA2 flag if CA2 is input in non-independent mode (PCR[3]=0, PCR[1]=0)
                 if (!(m_regs[PCR] & 0x08) && !(m_regs[PCR] & 0x02))
@@ -92,9 +96,10 @@ bool VIA6522::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
         case ORB:
             *val = m_regs[ORB];
             if (m_portBDevice) {
-                uint8_t pins = m_portBDevice->readPort();
+                uint8_t pins = peek ? m_portBDevice->peekPort() : m_portBDevice->readPort();
                 *val = (m_regs[ORB] & m_regs[DDRB]) | (pins & ~m_regs[DDRB]);
             }
+            if (peek) break;
             m_regs[IFR] &= ~0x10; // Clear CB1 flag
             // Clear CB2 flag if CB2 is input in non-independent mode (PCR[7]=0, PCR[5]=0)
             if (!(m_regs[PCR] & 0x80) && !(m_regs[PCR] & 0x20))
@@ -109,6 +114,7 @@ bool VIA6522::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
 
         case T1CL:
             *val = m_t1Counter & 0xFF;
+            if (peek) break;
             m_regs[IFR] &= ~0x40; // Clear T1 interrupt
             updateIrq();
             break;
@@ -119,6 +125,7 @@ bool VIA6522::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
 
         case T2CL:
             *val = m_t2Counter & 0xFF;
+            if (peek) break;
             m_regs[IFR] &= ~0x20; // Clear T2 interrupt
             updateIrq();
             break;

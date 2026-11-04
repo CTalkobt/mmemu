@@ -84,10 +84,13 @@ public:
     /**
      * Register IO dispatch hooks.  The read hook returns true and fills *val if
      * it owns the address; the write hook returns true if it owns the address.
-     * Called before overlay / RAM on every read8 / write8.
+     * Called before overlay / RAM on every read8 / write8. The peek hook
+     * serves peek8 and must have no side effects (IORegistry::dispatchPeek);
+     * without one, peek8 of an I/O address uses the read hook.
      */
     void setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
-                    std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn);
+                    std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn,
+                    std::function<bool(IBus*, uint32_t, uint8_t*)> peekFn = {});
 
     void setIoLowBase(uint32_t base) { m_ioLowBase = base; }
 
@@ -104,6 +107,7 @@ private:
 
     std::function<bool(IBus*, uint32_t, uint8_t*)> m_ioRead;
     std::function<bool(IBus*, uint32_t, uint8_t)>  m_ioWrite;
+    std::function<bool(IBus*, uint32_t, uint8_t*)> m_ioPeek;
     std::function<bool()>                          m_haltCheck;
     uint32_t m_ioLowBase = UINT32_MAX;
 

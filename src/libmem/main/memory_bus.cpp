@@ -118,9 +118,10 @@ uint8_t FlatMemoryBus::peek8(uint32_t addr) {
         }
         return m_data[addr];
     }
-    if (m_ioRead) {
+    const auto& peekHook = m_ioPeek ? m_ioPeek : m_ioRead;
+    if (peekHook) {
         uint8_t ioVal;
-        if (m_ioRead(this, addr, &ioVal)) {
+        if (peekHook(this, addr, &ioVal)) {
             return ioVal;
         }
     }
@@ -178,9 +179,11 @@ void FlatMemoryBus::removeRomOverlay(uint32_t base) {
 }
 
 void FlatMemoryBus::setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
-                                std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn) {
+                                std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn,
+                                std::function<bool(IBus*, uint32_t, uint8_t*)> peekFn) {
     m_ioRead  = std::move(readFn);
     m_ioWrite = std::move(writeFn);
+    m_ioPeek  = std::move(peekFn);
 }
 
 bool FlatMemoryBus::isHaltRequested() {

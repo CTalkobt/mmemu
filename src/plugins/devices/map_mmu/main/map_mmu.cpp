@@ -88,9 +88,10 @@ uint8_t MapMmu::peek8(uint32_t addr) {
         return m_hyperRam[addr - m_hyperBase];
     }
 
-    // Check I/O hooks first (virtual address space)
+    // Check I/O hooks first (virtual address space), without side effects
     uint8_t ioVal = 0;
-    if (m_ioRead && m_ioRead(this, addr, &ioVal)) {
+    const auto& peekHook = m_ioPeek ? m_ioPeek : m_ioRead;
+    if (peekHook && peekHook(this, addr, &ioVal)) {
         return ioVal;
     }
 
@@ -136,10 +137,12 @@ void MapMmu::write8(uint32_t addr, uint8_t val) {
 IBus* MapMmu::getPhysBus() const { return m_physBus; }
 
 void MapMmu::setIoHooks(std::function<bool(IBus*, uint32_t, uint8_t*)> readFn,
-                        std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn)
+                        std::function<bool(IBus*, uint32_t, uint8_t)>  writeFn,
+                        std::function<bool(IBus*, uint32_t, uint8_t*)> peekFn)
 {
     m_ioRead = std::move(readFn);
     m_ioWrite = std::move(writeFn);
+    m_ioPeek = std::move(peekFn);
 }
 
 void MapMmu::setHypervisorOverlay(std::function<bool()> isActive,

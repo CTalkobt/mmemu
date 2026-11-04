@@ -11,6 +11,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Licence: AGPL-3.0-or-later**: mmemu is now licensed under the GNU Affero General Public License v3 or later (`LICENSE`, the unmodified text from gnu.org). Anyone distributing it, or running a modified version as a network service, must share the source under the same terms. `CONTRIBUTING.md` asks for changes to be offered back via https://github.com/CTalkobt/mmemu and describes the workflow, including DCO sign-off. `NOTICE` credits reSID, reSIDfp and atari800 (all GPL-2.0-or-later, so compatible) and states that the ROM images in `roms/` are not covered. The README gains a License section.
 
 ### Debugger
+- **Peeks have no side effects**: memory dumps, debugger views, `iomap` and the "before" value of a write (taken whenever a debugger is attached) read I/O registers the way the CPU does, so merely looking could clear a CIA's interrupt flags, release a PIA/VIA handshake, clear VIC-II collisions, advance the MEGA65 floppy's data pointer or random number generator, or run a pending floppy command. Devices now have `IOHandler::ioPeek` (default `ioRead`, for devices whose reads change nothing), `IORegistry::dispatchPeek` serves `peek8` on `FlatMemoryBus`, `MapMmu` and the Atari bus, and these devices peek without side effects:
+  - **CIA 6526**: ICR not cleared and IRQ not released; TODHR does not latch, TODTEN does not release.
+  - **VIA 6522**: ORA/ORB do not clear CA1/CA2/CB1/CB2 or run the handshake; T1CL/T2CL do not clear their flags.
+  - **PIA 6520**: ORA/ORB do not clear IRQ flags or drive CA2 (the Atari bus no longer returns `$FF` for the PIA on a peek).
+  - **VIC-II, VIC-III, VIC-IV**: `$D01E`/`$D01F` collisions not cleared. **VIC 6560**: no bus-pointer update.
+  - **F011**: the registers as they are: no media refresh, no pending command run, `$D087` does not advance, `$D083` keeps WTREQ.
+  - **MEGA65 maths unit**: `$D7EF` does not advance the random number generator.
+  - **Port devices**: `IPortDevice::peekPort` (the IEC bus device does not advance its handshake).
+  - `FlatMemoryBus::write8` took a write's "before" value with a side-effecting I/O read, like `MapMmu` did before #183. CLI `iomap`, the CLI and GUI KEY-register displays and the MEGA65's `$D030` queries now peek too.
+  - Tests: `src/libdevices/test/test_io_peek.cpp` (the CIA, VIC-II, F011 and bus tests fail without the change).
 - **Intercepts installed by the machine's configuration**: host-side handlers for firmware routines and calls are now listed in the machine JSON, on the machine or on one of its ROMs, instead of being wired in code or attached to every machine (`src/libcore/main/intercept.h`, `machines/README-machines.md`):
   - **PC intercepts** run instead of the instruction at their addresses; the CPU core (6502 and 45GS02) tests a per-machine table before each opcode, so they no longer depend on a debugger observer. On a ROM entry (`cpuAddr` or `overlayAddr`) they fire only while that ROM is visible.
   - **Call intercepts** see a machine's firmware calls first: the MEGA65 asks them about every user-mode hypervisor trap, with `trap` and `functions` selecting which calls they serve.

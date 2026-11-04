@@ -43,6 +43,7 @@ public:
     uint32_t addrMask() const override { return 0x000F; } // 16 registers
 
     bool ioRead(IBus* bus, uint32_t addr, uint8_t* val) override;
+    bool ioPeek(IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void reset() override;
     void tick(uint64_t cycles) override;
@@ -81,6 +82,7 @@ public:
     };
 
 private:
+    bool readReg(uint32_t addr, uint8_t* val, bool peek);
     struct SignalLine : public ISignalLine {
         bool m_level = true;
         bool get() const override { return m_level; }

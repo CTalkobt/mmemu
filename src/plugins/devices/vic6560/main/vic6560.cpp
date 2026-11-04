@@ -25,8 +25,15 @@ void VIC6560::reset() {
     m_audioBufCount = 0;
 }
 
+bool VIC6560::ioPeek(IBus* bus, uint32_t addr, uint8_t* val) {
+    m_peeking = true;
+    bool handled = ioRead(bus, addr, val);
+    m_peeking = false;
+    return handled;
+}
+
 bool VIC6560::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
-    m_bus = bus;
+    if (!m_peeking) m_bus = bus;
     if ((addr & ~addrMask()) != m_baseAddr) return false;
     
     uint8_t reg = addr & 0xF;

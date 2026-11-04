@@ -485,7 +485,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     bankCtrl->setD030Query([vic4]() -> uint8_t {
         if (vic4->isLocked()) return 0x00;
         uint8_t val = 0;
-        vic4->ioRead(nullptr, 0xD030, &val);
+        vic4->ioPeek(nullptr, 0xD030, &val);
         return val;
     });
 
@@ -494,7 +494,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // is mapped instead of C64 I/O chip range.
     ioStub->setCram2kQuery([vic4]() -> bool {
         uint8_t val = 0;
-        vic4->ioRead(nullptr, 0xD030, &val);
+        vic4->ioPeek(nullptr, 0xD030, &val);
         return (val & 0x01) != 0;  // Bit 0 = CRAM2K enable
     });
 
@@ -578,7 +578,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Wire I/O hooks to MapMmu so virtual space accesses to $D000 etc. are dispatched
     mmu->setIoHooks(
         [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead(b, a, v); },
-        [io](IBus* b, uint32_t a, uint8_t v) { return io->dispatchWrite(b, a, v); }
+        [io](IBus* b, uint32_t a, uint8_t v) { return io->dispatchWrite(b, a, v); },
+        [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchPeek(b, a, v); }
     );
 
     // Joystick callbacks

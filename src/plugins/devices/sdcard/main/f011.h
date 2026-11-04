@@ -43,6 +43,12 @@ public:
 
     void reset() override;
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    /**
+     * The registers as they are now: no media refresh, no pending command
+     * run, no buffer pointer or flag change (a read of $D087 advances the
+     * CPU pointer; ioRead also runs a command left BUSY).
+     */
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void tick(uint64_t) override {}
     void getDeviceInfo(DeviceInfo& out) const override;

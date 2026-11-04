@@ -114,18 +114,24 @@ void PIA6520::driveCB2(bool level) {
     if (m_cb2Line) m_cb2Line->set(level);
 }
 
-bool PIA6520::ioRead(IBus*, uint32_t addr, uint8_t* val) {
+bool PIA6520::ioRead(IBus*, uint32_t addr, uint8_t* val) { return readReg(addr, val, false); }
+bool PIA6520::ioPeek(IBus*, uint32_t addr, uint8_t* val) { return readReg(addr, val, true); }
+
+// A register read; `peek` returns the same value without its side effects
+// (IRQ flags cleared, CA2 handshake, IRQ update, port device reads).
+bool PIA6520::readReg(uint32_t addr, uint8_t* val, bool peek) {
     if ((addr & ~addrMask()) != baseAddr()) return false;
 
     switch (addr & 0x03) {
         case 0x00: // ORA/DDRA
             if (m_cra & 0x04) {
                 if (m_portADevice) {
-                    uint8_t pins = m_portADevice->readPort();
+                    uint8_t pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
                     *val = (m_ora & m_ddra) | (pins & ~m_ddra);
                 } else {
                     *val = m_ora;
                 }
+                if (peek) break;
                 if (m_logger && m_logNamed && *val != 0xFF) {
                     char buf[40]; snprintf(buf, sizeof(buf), "ioRead ORA: %02X (orb=%02X)", *val, m_orb);
                     m_logNamed(m_logger, SIM_LOG_DEBUG, buf);
@@ -146,11 +152,12 @@ bool PIA6520::ioRead(IBus*, uint32_t addr, uint8_t* val) {
         case 0x02: // ORB/DDRB
             if (m_crb & 0x04) {
                 if (m_portBDevice) {
-                    uint8_t pins = m_portBDevice->readPort();
+                    uint8_t pins = peek ? m_portBDevice->peekPort() : m_portBDevice->readPort();
                     *val = (m_orb & m_ddrb) | (pins & ~m_ddrb);
                 } else {
                     *val = m_orb;
                 }
+                if (peek) break;
                 m_crb &= ~0x80;
                 if (!(m_crb & 0x20)) m_crb &= ~0x40;
                 updateIrq();
