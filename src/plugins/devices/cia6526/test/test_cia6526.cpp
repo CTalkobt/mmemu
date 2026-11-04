@@ -436,3 +436,30 @@ TEST_CASE(cia_timer_start_leaves_icr_mask_alone) {
     ASSERT_EQ((int)(icr & 0x01), 0x01);    // underflow flagged without delay...
     ASSERT_EQ((int)(icr & 0x80), 0x00);    // ...but no IRQ: the mask is still clear
 }
+
+namespace {
+struct PullDown : IPortDevice {
+    uint8_t pins = 0xFF;
+    uint8_t readPort() override { return pins; }
+    void writePort(uint8_t) override {}
+    void setDdr(uint8_t) override {}
+};
+}
+
+TEST_CASE(cia_outputs_read_pins_when_enabled) {
+    CiaFixture f;
+    PullDown dev;
+    dev.pins = 0xEF;                                // something holds bit 4 low
+    f.cia.setPortADevice(&dev);
+    uint8_t val;
+    f.cia.ioWrite(&f.bus, 0xDC02, 0xFF);            // all outputs
+    f.cia.ioWrite(&f.bus, 0xDC00, 0xFF);
+    f.cia.ioRead(&f.bus, 0xDC00, &val);
+    ASSERT_EQ((int)val, 0xFF);                      // default: the output latch
+    f.cia.setOutputsReadPins(true);
+    f.cia.ioRead(&f.bus, 0xDC00, &val);
+    ASSERT_EQ((int)val, 0xEF);                      // the pin level
+    f.cia.ioWrite(&f.bus, 0xDC00, 0x7F);
+    f.cia.ioRead(&f.bus, 0xDC00, &val);
+    ASSERT_EQ((int)val, 0x6F);
+}

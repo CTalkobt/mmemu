@@ -60,6 +60,8 @@
         "write": "cassette_write",
         "readPulse": "CIA1.flag"
       },
+      "joystick": [ { "device": "CIA1", "port": "B" }, { "device": "CIA1", "port": "A" } ],
+      "joystickPrimary": 1,
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "CIA1", "port": "A" },

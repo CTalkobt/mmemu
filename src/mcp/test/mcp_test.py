@@ -1100,7 +1100,17 @@ def run_tests():
     assert item.get("isError") and "only up, down" in item["text"], item
     item = client.call_tool("mouse_input", {"machine_id": jid, "dx": 1, "dy": 1})["result"]["content"][0]
     assert item.get("isError") and "no mouse" in item["text"], item
+    item = client.call_tool("set_joystick", {"machine_id": jid, "port": 1, "buttons": ["up"]})["result"]["content"][0]
+    assert item.get("isError") and "No joystick port" in item["text"], item
     client.call_tool("destroy_machine", {"machine_id": jid})
+    # C64: two control ports on CIA1 (port index 1 = control port 2 on $DC00)
+    res = client.call_tool("create_machine", {"machine_type": "c64"})
+    cid = res["result"]["content"][0]["text"].split('"')[1]
+    item = client.call_tool("set_joystick", {"machine_id": cid, "port": 1, "buttons": ["up", "fire"]})["result"]["content"][0]
+    assert not item.get("isError"), item
+    item = client.call_tool("read_memory", {"machine_id": cid, "addr": 0xDC00, "size": 1})["result"]["content"][0]
+    assert "EE" in item["text"].upper(), item          # up (bit 0) and fire (bit 4) held low
+    client.call_tool("destroy_machine", {"machine_id": cid})
     res = client.call_tool("create_machine", {"machine_type": "x16"})
     text = res["result"]["content"][0]["text"]
     if '"' in text:
@@ -1110,9 +1120,9 @@ def run_tests():
         item = client.call_tool("mouse_input", {"machine_id": xid, "dx": 3, "dy": -2, "buttons": 1})["result"]["content"][0]
         assert not item.get("isError"), item
         client.call_tool("destroy_machine", {"machine_id": xid})
-        print("  ✓ set_joystick and mouse_input OK (VIC-20 joystick, X16 pad and mouse)")
+        print("  ✓ set_joystick and mouse_input OK (VIC-20 and C64 joysticks, X16 pad and mouse)")
     else:
-        print("  ✓ set_joystick and mouse_input OK (VIC-20; X16 skipped: " + text + ")")
+        print("  ✓ set_joystick and mouse_input OK (VIC-20, C64; X16 skipped: " + text + ")")
 
     client.close()
     print("\n" + "="*60)

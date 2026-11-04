@@ -389,6 +389,7 @@ MachineDescriptor* create(std::string* err) {
         return true;
     };
     // A CBM-style joystick (active low: up, down, left, right, fire) as a pad; fire is B
+    desc->joystickPorts = Via1PortA::NUM_PADS;
     desc->onJoystick = [self](int port, uint8_t bits) {
         using M = MachineDescriptor;
         uint32_t b = 0;

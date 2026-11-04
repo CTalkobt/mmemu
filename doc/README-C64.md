@@ -81,6 +81,15 @@ Key name strings passed to `MachineDescriptor::onKey`:
 | `,` / `.` | `comma` `period` | £ | `pound` |
 | ↑ (arrow up) | `arrow_up` | ← (arrow left) | `arrow_left` |
 
+### 2.6.1 Joysticks
+Two control ports on CIA1, as on the real machine (and in VICE): **control port 1** pulls Port B low, alongside the keyboard rows; **control port 2** pulls Port A low, alongside the columns. Port A's bits are outputs while the KERNAL scans the keyboard, so CIA1 reads its output bits back from the pins (`setOutputsReadPins`): a joystick on port 2 shows in `PEEK(56320)` either way. As on the hardware, moving joystick 1 can look like a key press to the KERNAL.
+
+`onJoystick` port 0 is control port 1 ($DC01) and port 1 is control port 2 ($DC00), the one most games read (`primaryJoystickPort` = 1). Bits are active low: up, down, left, right, fire. Input: CLI `joy 1 up fire` (port 2); MCP `set_joystick`; the GUI's host controllers (the first one goes to control port 2).
+
+In the machine JSON: `"joystick": [ {"device": "CIA1", "port": "B"}, {"device": "CIA1", "port": "A"} ], "joystickPrimary": 1`.
+
+Not modelled: a joystick on port 2 holding a column line low does not change which keys the keyboard matrix reports.
+
 ### 2.7 ROM Files
 Required in `roms/c64/` (not distributed; see `.gitignore`):
 

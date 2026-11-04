@@ -12,6 +12,7 @@
 #include "libdevices/main/isignal_line.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/joystick.h"
+#include "libdevices/main/combined_port_device.h"
 #include "libdevices/main/color_ram_handler.h"
 #include "libdevices/main/open_bus_handler.h"
 #include "libdevices/main/shared_irq_manager.h"
@@ -662,21 +663,43 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Phase 3 Step 21 — Joystick wiring
     // -----------------------------------------------------------------------
+    // "joystick": one port {device, port} or an array of them (port index =
+    // array index); "joystickPrimary" names the port most software reads.
+    // A port that already has a device (a keyboard matrix) shares the pins,
+    // and outputs read the pins so a joystick can pull a driven line low.
     if (spec.contains("joystick") && !spec["joystick"].is_null()) {
         const auto& jw = spec["joystick"];
-        std::string joyDev  = jw.value("device", "");
-        std::string joyPort = jw.value("port",   "B");
-        if (devPtrs.count(joyDev)) {
+        std::vector<nlohmann::json> ports;
+        if (jw.is_array()) for (const auto& p : jw) ports.push_back(p);
+        else ports.push_back(jw);
+        std::vector<Joystick*> joys;
+        for (const auto& p : ports) {
+            std::string joyDev  = p.value("device", "");
+            std::string joyPort = p.value("port",   "B");
+            if (!devPtrs.count(joyDev)) { joys.push_back(nullptr); continue; }
+            IOHandler* chip = devPtrs[joyDev];
             auto* joy = new Joystick();
             desc->deleters.push_back([joy]() { delete joy; });
-            if (joyPort == "A")
-                devPtrs[joyDev]->setPortADevice(joy);
-            else
-                devPtrs[joyDev]->setPortBDevice(joy);
-            desc->onJoystick = [joy](int port, uint8_t bits) {
-                if (port == 0) joy->setState(bits);
-            };
+            bool portA = joyPort == "A";
+            IPortDevice* existing = portA ? chip->portADevice() : chip->portBDevice();
+            IPortDevice* dev = joy;
+            if (existing) {
+                auto* both = new CombinedPortDevice();
+                both->addDevice(existing);
+                both->addDevice(joy);
+                desc->deleters.push_back([both]() { delete both; });
+                dev = both;
+                chip->setOutputsReadPins(true);
+            }
+            if (portA) chip->setPortADevice(dev);
+            else       chip->setPortBDevice(dev);
+            joys.push_back(joy);
         }
+        desc->joystickPorts = (int)joys.size();
+        desc->primaryJoystickPort = spec.value("joystickPrimary", 0);
+        desc->onJoystick = [joys](int port, uint8_t bits) {
+            if (port >= 0 && port < (int)joys.size() && joys[port]) joys[port]->setState(bits);
+        };
     }
 
     // -----------------------------------------------------------------------

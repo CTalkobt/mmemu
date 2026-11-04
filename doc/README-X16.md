@@ -108,8 +108,8 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 
 - **SNES pads** (x16-emulator `joystick.c`): four ports on VIA1 port A (latch PA2, clock PA3, data PA7-PA4 for KERNAL joysticks 1-4). The latch loads each pad's 12 buttons and ID bits; each rising clock shifts. A port reads as connected from the first time it is used; an empty port reads all 1s, which the KERNAL reports as not present (`JOY(n)` = -1). Joystick 0 is the KERNAL's keyboard joystick.
 - **Mouse** (x16-emulator `i2c.c`/`smc.c`): the SMC's PS/2 mouse, device ID 3 (4-byte packets with the wheel), registers `$21`, `$22`, `$42`, `$43` and `$20`. Movement and buttons go to the SMC once per frame. `MOUSE 1` shows the pointer; `MX`, `MY`, `MB` read it.
-- Input: CLI `joy <port> [up down left right a b x y l r select start]` (port 0 = KERNAL joystick 1; `fire` = B; no buttons releases them) and `mouse <dx> <dy> [buttons] [wheel]`; MCP `set_joystick` and `mouse_input`; the GUI sends the host mouse while it is over the picture (no host gamepads yet).
+- Input: CLI `joy <port> [up down left right a b x y l r select start]` (port 0 = KERNAL joystick 1; `fire` = B; no buttons releases them) and `mouse <dx> <dy> [buttons] [wheel]`; MCP `set_joystick` and `mouse_input`; the GUI sends the host mouse while it is over the picture, and host USB controllers as SNES pads (face buttons by position: bottom = B, right = A, left = Y, top = X; shoulders L/R; Back = SELECT).
 
 ## Not yet emulated
 
-- IEC serial bus devices (bit-level; the host folder is served at the KERNAL API instead); host gamepads in the GUI.
+- IEC serial bus devices (bit-level; the host folder is served at the KERNAL API instead).

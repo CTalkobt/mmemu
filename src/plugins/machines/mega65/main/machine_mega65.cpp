@@ -524,14 +524,19 @@ MachineDescriptor* Mega65MachineFactory::create() {
     physBus->addRegion(0x0FF80000, 32768, ioStub->colorRam(), true);
     physBus->addRegion(0x00080000, 32768, ioStub->colorRam(), true);
     
-    // Wire keyboard to CIA1
-    cia1->setPortADevice(kbd->getPort(0)); // CIA1 Port A drives columns
-    
-    // CIA1 Port B is shared between Keyboard rows and Joystick 2
+    // CIA1 as on the C64: port A drives the keyboard columns and reads
+    // control port 2; port B reads the keyboard rows and control port 1. A
+    // joystick pulls lines low, also ones the CIA drives as outputs.
+    auto* combined1A = new CombinedPortDevice();
+    combined1A->addDevice(kbd->getPort(0));
+    combined1A->addDevice(joy2);
+    cia1->setPortADevice(combined1A);
     auto* combined1B = new CombinedPortDevice();
     combined1B->addDevice(kbd->getPort(1));
-    combined1B->addDevice(joy2);
+    combined1B->addDevice(joy1);
     cia1->setPortBDevice(combined1B);
+    cia1->setOutputsReadPins(true);
+    desc->deleters.push_back([combined1A]() { delete combined1A; });
     
     // CIA2 Port A is IEC Bus (Commodore serial interface for drives/printers)
     // Create virtual IEC bus device that responds to boot polling
@@ -583,6 +588,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     );
 
     // Joystick callbacks
+    desc->joystickPorts = 2;
+    desc->primaryJoystickPort = 1;     // control port 2
     desc->onJoystick = [joy1, joy2](int port, uint8_t bits) {
         if (port == 0) joy1->setState(bits);
         if (port == 1) joy2->setState(bits);

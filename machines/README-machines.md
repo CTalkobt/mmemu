@@ -38,7 +38,8 @@ This document defines the JSON schema used to describe and reconstruct the vario
 | `signals` | SignalSpec[] | Interrupt and internal signal line definitions |
 | `kbdWiring` | KbdWireSpec | Keyboard matrix port mapping |
 | `plaWiring` | PlaWireSpec | (C64 specific) PLA banking signal mapping |
-| `joystick` | JoySpec | Joystick port mapping |
+| `joystick` | JoySpec or [JoySpec] | Joystick port(s) `{device, port}`; array index = joystick port. A port shared with the keyboard reads both. |
+| `joystickPrimary` | int | The joystick port most software reads (a host's first controller goes here) |
 | `ioHook` | IoHookSpec | Custom I/O address mirroring and remapping |
 | `scheduler` | SchedSpec | Execution policy and frame synchronization |
 | `intercepts` | InterceptSpec[] | (Optional) Host-side handlers for firmware routines and calls, see below |
