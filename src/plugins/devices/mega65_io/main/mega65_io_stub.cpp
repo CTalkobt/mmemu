@@ -50,15 +50,7 @@ void Mega65IoStub::pushKey(uint8_t ascii, uint8_t petscii, uint8_t mods) {
 
 bool Mega65IoStub::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 
-    // F011 FDC registers $D080-$D09F (stub — no real floppy emulation)
-    if (addr >= 0xD080 && addr <= 0xD09F) {
-        uint8_t off = addr & 0x1F;
-        switch (off) {
-            case 0x02: *val = 0x00; return true; // Status A: not busy, no errors
-            case 0x03: *val = 0x00; return true; // Status B: no disk (DSKIN=0)
-            default:   *val = 0x00; return true;
-        }
-    }
+    // F011 FDC registers $D080-$D09F: F011Fdc (sdcard plugin directory)
 
     // Colour RAM window ($D800-$DFFF)
     if (addr >= 0xD800 && addr <= 0xDFFF) {

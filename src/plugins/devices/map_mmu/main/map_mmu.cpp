@@ -100,12 +100,17 @@ uint8_t MapMmu::peek8(uint32_t addr) {
 
 void MapMmu::write8(uint32_t addr, uint8_t val) {
     addr &= 0xFFFF;
-    // The "before" value is only needed by the observer (undo log) and access logging
-    uint8_t before = (m_observer || m_logMemAccess) ? peek8(addr) : 0;
+    // The "before" value is only needed by the observer (undo log) and access
+    // logging. It is taken from memory, never through the I/O hooks: an I/O
+    // read can have side effects (the F011 data register advances its buffer
+    // pointer), so recording it would change what the write does.
+    const bool wantBefore = m_observer || m_logMemAccess;
+    uint8_t before = 0;
 
     // Hypervisor overlay: writes to $8000-$BFFF go to hypervisor RAM
     if (m_hyperRam && addr >= m_hyperBase && addr < m_hyperBase + m_hyperSize &&
         m_hyperActive && m_hyperActive()) {
+        if (wantBefore) before = m_hyperRam[addr - m_hyperBase];
         m_hyperRam[addr - m_hyperBase] = val;
         if (m_logMemAccess) mapLog()->info("WRITE ${:04X} = ${:02X} (was ${:02X}) -> HYPERVISOR", addr, val, before);
         if (m_observer) m_observer->onMemoryWrite(this, addr, before, val);
@@ -120,6 +125,7 @@ void MapMmu::write8(uint32_t addr, uint8_t val) {
     }
 
     uint32_t physAddr = translate(addr);
+    if (wantBefore) before = m_physBus->peek8(physAddr);
     if (m_logMemAccess)
         mapLog()->info("WRITE ${:04X} = ${:02X} (was ${:02X}) -> PHYS ${:07X}", addr, val, before, physAddr);
     m_physBus->write8(physAddr, val);
