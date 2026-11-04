@@ -568,6 +568,7 @@ MachineDescriptor* create(Model model, std::string* err, bool pal) {
     io->registerOwnedHandler(cart);
 
     desc->onKey = [keyboard](const std::string& name, bool down) { return keyboard->key(name, down); };
+    desc->joystickPorts = 2;
     desc->onJoystick = [stick, gtia](int port, uint8_t bits) {
         // bits 0-3: up, down, left, right; bit 4: fire (active low)
         stick->set(port, bits & 0x0F);

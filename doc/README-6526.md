@@ -92,6 +92,8 @@ cia1->setPortBDevice(joystick);
 cia1->setIrqLine(irqLine);
 ```
 
+By default an output bit reads back the output latch. `setOutputsReadPins(true)` makes it read the pin instead, `latch & device pins`, as on the real 6526: a device can then pull low a line the CIA drives high. The C64 and MEGA65 turn this on for CIA1, where control port 2 shares Port A with the keyboard columns.
+
 ---
 
 ## 3. Register Map

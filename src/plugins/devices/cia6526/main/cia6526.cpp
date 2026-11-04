@@ -94,6 +94,7 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
             if (m_portADevice) {
                 uint8_t pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
                 *val |= (pins & ~m_ddra); // input bits
+                if (m_outputsReadPins) *val &= pins | ~m_ddra; // a device pulls an output low
             } else {
                 *val |= (~m_ddra & 0xFF); // unconnected pins float high
             }
@@ -104,6 +105,7 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
             if (m_portBDevice) {
                 uint8_t pins = peek ? m_portBDevice->peekPort() : m_portBDevice->readPort();
                 *val |= (pins & ~m_ddrb);
+                if (m_outputsReadPins) *val &= pins | ~m_ddrb;
             } else {
                 *val |= (~m_ddrb & 0xFF);
             }

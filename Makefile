@@ -53,6 +53,12 @@ MANDIR   = man
 WXCXXFLAGS = $(shell wx-config --cxxflags)
 WXLIBS     = $(shell wx-config --libs aui,stc,xrc,html,qa,core,xml,net,base)
 
+# Host game controllers in the GUI (optional: SDL2's game-controller API)
+SDL2_LIBS   := $(shell pkg-config --libs sdl2 2>/dev/null)
+ifneq ($(SDL2_LIBS),)
+SDL2_CXXFLAGS := $(shell pkg-config --cflags sdl2) -DMMEMU_HAVE_SDL2
+endif
+
 # Plugins must NOT link spdlog/fmt themselves; they use host API function pointers.
 # The host binary (BASE_LIBS) exports spdlog symbols; dlopen resolves them at load time.
 PLUGIN_LIBS =
@@ -315,7 +321,8 @@ GUI_SRCS = src/gui/main/main.cpp \
 	src/gui/main/plugin_pane_manager.cpp \
 	src/cli/main/plugin_command_registry.cpp \
 	src/gui/main/gui_utils.cpp \
-	src/gui/main/audio_output.cpp
+	src/gui/main/audio_output.cpp \
+	src/gui/main/host_gamepad.cpp
 
 CLI_SRCS = src/cli/main/main.cpp \
 	src/cli/main/cli_interpreter.cpp \
@@ -344,6 +351,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	tests/src/test_tape_roundtrip.cpp \
 	src/cli/test/test_cli.cpp \
 	src/gui/test/test_gui_logic.cpp \
+	src/gui/test/test_host_gamepad.cpp \
 	src/libmem/test/test_flatmembus.cpp \
 	src/libmem/test/test_sparse_memory_bus.cpp \
 	src/libcore/test/test_libcore.cpp \
@@ -829,7 +837,7 @@ $(CLI_BIN): $(CLI_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(CLI_OBJS) $(BASE_LIBS)
 
 $(GUI_BIN): $(GUI_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) $(SDL2_LIBS) -lasound
 
 $(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) src/cli/main/lua_engine.o $(BASE_LIBS)
@@ -851,6 +859,7 @@ $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound
 
 src/plugins/45gs02/main/ca45_assembler.o src/plugins/45gs02/test/test_ca45_assemble_line.o: CXXFLAGS += $(CA45_CXXFLAGS)
+src/gui/main/host_gamepad.o: CXXFLAGS += $(SDL2_CXXFLAGS)
 
 # Generic rules
 %.o: %.cpp

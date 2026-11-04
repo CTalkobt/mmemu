@@ -27,6 +27,7 @@
 #include "plugin_pane_manager.h"
 #include "ikeyboard_capture_pane.h"
 #include "audio_output.h"
+#include "host_gamepad.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "libcore/main/json_machine_loader.h"
@@ -164,6 +165,13 @@ private:
     IDisassembler* m_disasm = nullptr;
     DebugContext* m_dbg = nullptr;
     AudioOutput* m_audio = nullptr;
+
+    // Host game controllers -> the machine's joystick/pad ports
+    HostGamepads m_hostPads;
+    std::map<int, uint32_t> m_padSent;     // port -> PAD_* bits last sent
+    bool m_swapJoysticks = false;
+    void pollHostPads();
+    void releaseHostPads();
 
     RegisterPane*   m_regPane;
     wxAuiNotebook*  m_memNotebook = nullptr;
@@ -640,6 +648,9 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
     menuControl->Append(ID_EJECT_CART, "Eject Cartridge");
+    menuControl->AppendSeparator();
+    menuControl->AppendCheckItem(ID_SWAP_JOYSTICKS, "Swap Joystick Ports",
+        "Host controllers: the first one goes to the port most software reads (the C64's control port 2); swap the first two");
 
     auto* menuDebug = new wxMenu;
     menuDebug->Append(ID_ASSEMBLE, "Assemble...\tCtrl-A");
@@ -1168,6 +1179,11 @@ MmemuFrame::MmemuFrame()
 
     Bind(wxEVT_TOOL, &MmemuFrame::OnKbdFocus, this, ID_KBD_FOCUS);
     Bind(wxEVT_TIMER, &MmemuFrame::OnTimer, this, ID_GUI_TIMER);
+    Bind(wxEVT_MENU, [this](wxCommandEvent& e) {
+        releaseHostPads();
+        m_swapJoysticks = e.IsChecked();
+    }, ID_SWAP_JOYSTICKS);
+    m_hostPads.init();
     
     Bind(wxEVT_MENU, &MmemuFrame::OnLoadMachineDirect, this, ID_LOAD_MACHINE_DIRECT);
     Bind(wxEVT_MENU, &MmemuFrame::OnLoadImageDirect,   this, ID_LOAD_IMAGE_DIRECT);
@@ -1286,6 +1302,8 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
     m_sourcePane->SetDebugContext(m_dbg);
+
+    m_padSent.clear();      // a new machine: send the controllers again
 
     // Show/hide MEGA65 status pane and Reset to Monitor menu based on machine type
     {
@@ -2232,8 +2250,50 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
         m_memNotebook->SetPageText(sel, name);
 }
 
+void MmemuFrame::releaseHostPads() {
+    if (m_machine)
+        for (auto& [port, held] : m_padSent)
+            if (held) sendHostPad(*m_machine, port, 0);
+    m_padSent.clear();
+}
+
+void MmemuFrame::pollHostPads() {
+    if (!m_hostPads.available()) return;
+    std::vector<uint32_t> held;
+    auto changes = m_hostPads.poll(held);
+    if (!m_machine) return;
+    for (const auto& c : changes) {
+        int port = hostPadPort(*m_machine, c.slot, m_swapJoysticks);
+        wxString msg = (c.added ? "Controller connected: " : "Controller removed: ") + wxString::FromUTF8(c.name);
+        if (c.added)
+            msg += port >= 0 ? wxString::Format(" (joystick port %d)", port + 1) : wxString(" (no free port)");
+        SetStatusText(msg);
+    }
+    // Each port gets the buttons of the controllers assigned to it; only
+    // changes are sent, so input from the console's `joy` is left alone
+    // until a controller is used.
+    std::map<int, uint32_t> ports;
+    for (size_t s = 0; s < held.size(); s++) {
+        int port = hostPadPort(*m_machine, (int)s, m_swapJoysticks);
+        if (port >= 0) ports[port] |= held[s];
+    }
+    for (auto it = m_padSent.begin(); it != m_padSent.end();) {
+        if (!ports.count(it->first)) {
+            if (it->second) sendHostPad(*m_machine, it->first, 0);
+            it = m_padSent.erase(it);
+        } else ++it;
+    }
+    for (const auto& [port, b] : ports) {
+        auto it = m_padSent.find(port);
+        if (it != m_padSent.end() && it->second == b) continue;
+        sendHostPad(*m_machine, port, b);
+        m_padSent[port] = b;
+    }
+}
+
 void MmemuFrame::OnTimer(wxTimerEvent& event) {
     (void)event;
+    pollHostPads();
     if (m_running && m_machine && m_machine->schedulerStep) {
         // Run for most of the timer period, then return so wx can process
         // input and the panes refresh (~30 Hz). No wxYield() inside the slice:

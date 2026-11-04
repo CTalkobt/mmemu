@@ -48,6 +48,9 @@ public:
 
     void setPortADevice(IPortDevice* d) override { m_portADevice = d; }
     void setPortBDevice(IPortDevice* d) override { m_portBDevice = d; }
+    IPortDevice* portADevice() const override { return m_portADevice; }
+    IPortDevice* portBDevice() const override { return m_portBDevice; }
+    void setOutputsReadPins(bool on) override { m_outputsReadPins = on; }
     void setIrqLine(ISignalLine* line)  override { m_irqLine = line; }
     ISignalLine* signalFlag() { return &m_flagLine; }
     ISignalLine* getSignalLine(const char* name) override { if (std::string(name) == "flag") return &m_flagLine; return nullptr; }
@@ -195,6 +198,7 @@ private:
     };
     SignalLine m_flagLine{this, 0x10};
     IPortDevice* m_portBDevice = nullptr;
+    bool m_outputsReadPins = false;
     ISignalLine* m_irqLine     = nullptr;
 
     std::function<void(uint8_t, uint8_t)> m_portAWriteCallback;

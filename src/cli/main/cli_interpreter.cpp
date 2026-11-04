@@ -2030,13 +2030,10 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             if (held & ~(M::PAD_UP | M::PAD_DOWN | M::PAD_LEFT | M::PAD_RIGHT | M::PAD_B)) {
                 m_output("This machine's joystick has only up, down, left, right and fire.\n"); return;
             }
-            uint8_t bits = 0x1F;
-            if (held & M::PAD_UP) bits &= ~0x01;
-            if (held & M::PAD_DOWN) bits &= ~0x02;
-            if (held & M::PAD_LEFT) bits &= ~0x04;
-            if (held & M::PAD_RIGHT) bits &= ~0x08;
-            if (held & M::PAD_B) bits &= ~0x10;
-            m_ctx.machine->onJoystick(port, bits);
+            if (port < 0 || port >= m_ctx.machine->joystickPorts) {
+                m_output("No joystick port " + std::to_string(port) + "\n"); return;
+            }
+            m_ctx.machine->onJoystick(port, M::cbmJoystickBits(held));
         }
     } else if (cmd == "mouse") {
         // mouse <dx> <dy> [buttons] [wheel]: move, and hold these buttons (bit 0 left, 1 right, 2 middle)

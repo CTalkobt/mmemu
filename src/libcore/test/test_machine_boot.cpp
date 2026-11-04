@@ -277,3 +277,39 @@ TEST_CASE(c64_boot_screen) {
     // 10 seconds is ample for C64 Kernal to initialize and display message
     verifyMachineBoot("c64", 10000000);
 }
+
+// The C64's joysticks on CIA1 (control port 1 on port B with the keyboard
+// rows, control port 2 on port A with the columns): a joystick pulls lines
+// low, also the column lines the CIA drives as outputs.
+TEST_CASE(c64_joysticks_on_cia1) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    ASSERT(desc->onJoystick != nullptr);
+    ASSERT_EQ(desc->joystickPorts, 2);
+    ASSERT_EQ(desc->primaryJoystickPort, 1);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
+
+    CIA6526* cia1 = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (auto* h : handlers) {
+        auto* c = dynamic_cast<CIA6526*>(h);
+        if (c && c->baseAddr() == 0xDC00) cia1 = c;
+    }
+    ASSERT(cia1 != nullptr);
+    auto rd = [cia1](uint32_t a) { uint8_t v = 0; cia1->ioPeek(nullptr, a, &v); return (int)v; };
+    ASSERT_EQ(rd(0xDC02), 0xFF);                    // KERNAL: port A all outputs
+    int idleA = rd(0xDC00), idleB = rd(0xDC01);
+    ASSERT_EQ(idleB, 0xFF);                         // no key, no joystick
+
+    desc->onJoystick(1, (uint8_t)~(0x01 | 0x10) & 0x1F);   // port 2: up + fire
+    ASSERT_EQ(rd(0xDC00), idleA & ~0x11);
+    ASSERT_EQ(rd(0xDC01), 0xFF);
+    desc->onJoystick(1, 0x1F);
+    desc->onJoystick(0, (uint8_t)~0x04 & 0x1F);     // port 1: left
+    ASSERT_EQ(rd(0xDC00), idleA);
+    ASSERT_EQ(rd(0xDC01), 0xFB);
+    delete desc;
+}

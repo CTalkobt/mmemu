@@ -23,6 +23,7 @@ enum {
     ID_PAUSE,
     ID_RESET,
     ID_RESET_TO_MONITOR,
+    ID_SWAP_JOYSTICKS,
     ID_SPEED_1,          // Control > Speed: 1, 2, 3.5, 40.5 MHz, real time, max (warp)
     ID_SPEED_2,
     ID_SPEED_3_5,

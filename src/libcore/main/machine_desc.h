@@ -94,6 +94,11 @@ struct MachineDescriptor {
      *  @param bits     5-bit active-low state (0=pressed, 1=idle).
      */
     std::function<void(int port, uint8_t bits)> onJoystick;
+    /** Number of onJoystick ports. */
+    int joystickPorts = 0;
+    /** The port most software reads (the C64's control port 2 is index 1);
+     *  a host's first controller goes here. */
+    int primaryJoystickPort = 0;
 
     /** Gamepad buttons for onGamepad (1 = pressed). */
     enum GamepadButton : uint32_t {
@@ -107,6 +112,18 @@ struct MachineDescriptor {
      *  @return false if the machine has no such port.
      */
     std::function<bool(int port, uint32_t buttons)> onGamepad;
+
+    /** PAD_* bits as a 5-bit active-low CBM joystick (up, down, left, right,
+     *  fire); any face button fires. */
+    static uint8_t cbmJoystickBits(uint32_t buttons) {
+        uint8_t bits = 0x1F;
+        if (buttons & PAD_UP)    bits &= ~0x01;
+        if (buttons & PAD_DOWN)  bits &= ~0x02;
+        if (buttons & PAD_LEFT)  bits &= ~0x04;
+        if (buttons & PAD_RIGHT) bits &= ~0x08;
+        if (buttons & (PAD_A | PAD_B | PAD_X | PAD_Y)) bits &= ~0x10;
+        return bits;
+    }
 
     /** Mouse injection hook.
      *  @param dx, dy   Movement since the last call, in host pixels (y down).

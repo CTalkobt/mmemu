@@ -29,6 +29,11 @@ public:
     // Port device attachment (VIA, CIA, PIA)
     virtual void setPortADevice(IPortDevice*) {}
     virtual void setPortBDevice(IPortDevice*) {}
+    virtual IPortDevice* portADevice() const { return nullptr; }
+    virtual IPortDevice* portBDevice() const { return nullptr; }
+    /** Port bits set as outputs read the pin level, so a device can pull a
+     *  line low that the chip drives high (the C64's joysticks on CIA1). */
+    virtual void setOutputsReadPins(bool) {}
 
     // Port-A write callback — called with (pra, ddra) after each PRA/DDRA write.
     // CIA6526 overrides this for VIC-II bank switching.

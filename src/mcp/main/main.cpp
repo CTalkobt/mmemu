@@ -2521,14 +2521,10 @@ Json handleToolsCall(const Json& params) {
         } else if (error.empty() && ms->machine->onJoystick) {
             if (held & ~(M::PAD_UP | M::PAD_DOWN | M::PAD_LEFT | M::PAD_RIGHT | M::PAD_B)) {
                 error = "This machine's joystick has only up, down, left, right and fire";
+            } else if (port < 0 || port >= ms->machine->joystickPorts) {
+                error = "No joystick port " + std::to_string(port);
             } else {
-                uint8_t bits = 0x1F;
-                if (held & M::PAD_UP) bits &= ~0x01;
-                if (held & M::PAD_DOWN) bits &= ~0x02;
-                if (held & M::PAD_LEFT) bits &= ~0x04;
-                if (held & M::PAD_RIGHT) bits &= ~0x08;
-                if (held & M::PAD_B) bits &= ~0x10;
-                ms->machine->onJoystick(port, bits);
+                ms->machine->onJoystick(port, M::cbmJoystickBits(held));
             }
         } else if (error.empty()) error = "Machine has no joystick or gamepad input";
         if (!error.empty()) {
