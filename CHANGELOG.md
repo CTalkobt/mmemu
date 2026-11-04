@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Commander X16
+- **Commander X16 machine (`x16`, #16)**: boots the R49 ROM (`roms/x16/rom.bin`, not in the repository) to BASIC's READY in the CLI, GUI and MCP, and runs BASIC including VERA graphics (`SCREEN`, `LINE`) and PSG sound (`PSGNOTE`/`PSGFREQ`). See `doc/README-X16.md`.
+  - **Machine** (`src/plugins/machines/x16/`, after x16-emulator's `memory.c`/`via.c`): WDC 65C02 at 8 MHz; RAM, bank registers `$00`/`$01`, 512 KB banked RAM, 32 ROM banks; VIA1 (I2C, NES lines, IEC port) and VIA2; slow-I/O wait states; YM2151 not emulated yet (status reads 0).
+  - **I2C** (`x16_i2c.cpp`, after `i2c.c`/`smc.c`/`rtc.c`): the SMC (keyboard buffer, version, reset/NMI requests) and the MCP7940N RTC (BCD time from the host clock, NVRAM), bit-banged through VIA1 port A as open-collector lines.
+  - **Keyboard**: key names to IBM key numbers through the SMC; CLI `type`/MCP `type_string`; the GUI sends keys positionally (and now names the backslash and backtick keys).
+  - **Interrupt vectors**: the 6502 core gains a vector-pull hook (the 65C02's VPB pin); the X16 uses it to select ROM bank 0 for the vector fetch while `$01` keeps the interrupted bank — without it the first IRQ in another bank jumped to `$AAAA`.
+  - **VERA** (`src/plugins/devices/vera/`, `mmemu-plugin-vera.so`, ported from x16-emulator's `video.c`, `vera_psg.c`, `vera_pcm.c`, `vera_spi.c`): registers, VRAM and address ports, layers (text/tile/bitmap), 128 sprites with collisions, composer and display window, VGA/NTSC/240p timing, interrupts, the full FX set, 16-voice PSG and PCM audio at 48,828 Hz, SPI without a card. Side-effect-free peeks.
+  - Tests: `test_vera.cpp` (16), `test_x16_i2c.cpp` (3), `test_x16_machine.cpp` (boot to READY and a typed line; the vector-pull hook).
+
 ### Project
 - **Licence: AGPL-3.0-or-later**: mmemu is now licensed under the GNU Affero General Public License v3 or later (`LICENSE`, the unmodified text from gnu.org). Anyone distributing it, or running a modified version as a network service, must share the source under the same terms. `CONTRIBUTING.md` asks for changes to be offered back via https://github.com/CTalkobt/mmemu and describes the workflow, including DCO sign-off. `NOTICE` credits reSID, reSIDfp and atari800 (all GPL-2.0-or-later, so compatible) and states that the ROM images in `roms/` are not covered. The README gains a License section.
 

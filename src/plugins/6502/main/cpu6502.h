@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libcore/main/icore.h"
+#include <functional>
 #include <vector>
 
 /**
@@ -133,6 +134,16 @@ private:
     bool     m_cmos = false;            // WDC 65C02 behaviour
     uint8_t  m_curOp = 0;               // opcode being executed (BBR/BBS/RMB/SMB bit)
     uint16_t m_branchTarget = 0;        // BPREL: the branch target
+
+public:
+    /**
+     * Called as an interrupt (IRQ, NMI, BRK) is about to fetch its vector:
+     * the 65C02's VPB pin. The Commander X16 uses it to select ROM bank 0.
+     */
+    void setVectorPullHook(std::function<void()> fn) { m_onVectorPull = std::move(fn); }
+
+private:
+    std::function<void()> m_onVectorPull;
 
 protected:
     /** Switch to the WDC 65C02: its opcode table, decimal flags, BRK/IRQ clear D, no JMP ($xxFF) bug. */

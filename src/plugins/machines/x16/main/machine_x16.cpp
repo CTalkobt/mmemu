@@ -10,6 +10,7 @@
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/shared_irq_manager.h"
 #include "libmem/main/ibus.h"
+#include "libdebug/main/execution_observer.h"
 #include "plugins/6502/main/cpu65c02.h"
 #include "plugins/devices/via6522/main/via6522.h"
 #include "plugins/devices/vera/main/vera.h"
@@ -43,9 +44,14 @@ public:
     }
     void setDevices(IOHandler* via1, IOHandler* via2, IOHandler* vera) { m_via1 = via1; m_via2 = via2; m_vera = vera; }
 
-    uint8_t ramBank() const { return m_ram[0]; }
-    uint8_t romBank() const { return m_ram[1]; }
-    void resetBanks() { m_ram[0] = 0; m_ram[1] = 0; }
+    // The bank latches: written with $00/$01 (which are also RAM: reads
+    // return the RAM byte). An interrupt's vector fetch (the 65C02's VPB pin)
+    // clears the ROM bank latch only, so the KERNAL's handler can read the
+    // interrupted bank back from $01 (x16-emulator vp6502()).
+    uint8_t ramBank() const { return m_ramBank; }
+    uint8_t romBank() const { return m_romBank; }
+    void resetBanks() { m_ramBank = m_romBank = 0; m_ram[0] = m_ram[1] = 0; }
+    void vectorPull() { m_romBank = 0; }
     /** Wait states from the last access (slow I/O ranges), taken by the scheduler. */
     int takeWaitCycles() { int w = m_wait; m_wait = 0; return w; }
 
@@ -64,7 +70,9 @@ public:
         addr &= 0xFFFF;
         uint8_t before = m_observer ? read(addr, true) : 0;
         if (addr < 0x9F00) {
-            m_ram[addr] = val;                       // $00/$01: the bank registers
+            m_ram[addr] = val;
+            if (addr == 0) m_ramBank = val;
+            else if (addr == 1) m_romBank = val;
         } else if (addr < 0xA000) {
             if (addr >= 0x9FA0) m_wait += 3;
             if (addr < 0x9F10) m_via1->ioWrite(this, addr, val);
@@ -86,6 +94,8 @@ public:
     void loadState(const uint8_t* buf) override {
         std::memcpy(m_ram, buf, sizeof(m_ram));
         std::memcpy(m_bram.data(), buf + sizeof(m_ram), m_bram.size());
+        m_ramBank = m_ram[0];
+        m_romBank = m_ram[1];
     }
     int  writeCount() const override { return 0; }
     void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
@@ -124,6 +134,7 @@ private:
     IOHandler* m_via2 = nullptr;
     IOHandler* m_vera = nullptr;
     uint8_t m_ymAddr = 0;
+    uint8_t m_ramBank = 0, m_romBank = 0;
     int m_wait = 0;
 };
 
@@ -291,6 +302,7 @@ MachineDescriptor* create(std::string* err) {
     auto* cpu = new MOS65C02();
     cpu->setDataBus(bus);
     cpu->setCodeBus(bus);
+    cpu->setVectorPullHook([bus]() { bus->vectorPull(); });
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
 
     auto* io = new IORegistry();

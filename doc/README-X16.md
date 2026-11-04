@@ -34,6 +34,25 @@ mmemu-cli -m x16 --speed max
   - **SMC** (`$42`): the keyboard buffer (16 key codes), version 47.0.0, reset/NMI/power requests; no mouse yet (mouse reads give "no packet").
   - **RTC** (`$6F`, MCP7940N): BCD time starting at the host's local time, 64 bytes of NVRAM (`$20-$5F`).
 - **IEC serial bus**: nothing attached (lines read released).
+- **Interrupt vectors**: the 65C02's VPB pin selects ROM bank 0 while an interrupt (IRQ, NMI, BRK) fetches its vector, as on the hardware — other banks hold `$AAAA` there. Only the bank latch changes: `$01` still reads the interrupted bank, which the KERNAL's handler restores (x16-emulator `vp6502()`). The core exposes this as `MOS6502::setVectorPullHook`.
+
+## VERA
+
+`src/plugins/devices/vera/` (`Vera`, `VeraPsg`, `VeraPcm`), ported from x16-emulator's `video.c`, `vera_psg.c`, `vera_pcm.c` and `vera_spi.c`:
+
+- **Registers and VRAM**: `$9F20-$9F3F`, 128 KB VRAM (PSG `$1F9C0`, palette `$1FA00`, sprite attributes `$1FC00`), both address ports with the increment/decrement table and nibble steps, every DCSEL bank including FX and the version string (DCSEL 63). Peeks (debugger, memory views) do not move the address ports.
+- **Video**: 640×480; layers in text, tile and bitmap modes; 128 sprites with Z depth, flips and collisions; HSCALE/VSCALE, border and display window; VGA, NTSC interlaced and 240p timing at 25 MHz; VSYNC, LINE, SPRCOL and AFLOW interrupts. Mid-line register changes are rendered.
+- **FX**: line, polygon and affine address helpers, the 32-bit cache with nibble masks and transparent writes, the multiplier/accumulator.
+- **Audio**: 16 PSG voices and the PCM FIFO, mixed at 48,828 Hz (25 MHz / 512) as x16-emulator does; the GUI and `recordaudio` play it.
+- **SPI** (SD card): the registers and busy timing; no card is attached (transfers return `$FF`).
+
+Where the port departs from the emulator (integer scan timing, a repeatable VRAM fill at reset, 17-bit address wrap, peeks that return what a read would) is commented in `vera.cpp`.
+
+## Tests
+
+- `x16_boots_to_ready_and_runs_basic` boots R49 to READY and runs a typed `PRINT 6*7` (skipped without `roms/x16/rom.bin`).
+- `test_x16_i2c.cpp`: the I2C bus bit-banged through a real VIA as the KERNAL does it: SMC keyboard buffer and version, RTC time, ticking and NVRAM.
+- `test_vera.cpp`: VERA registers, address ports, palette, text layer, sprites, collisions, LINE/VSYNC interrupts, peeks, PSG, PCM and FX.
 
 ## Keyboard
 
@@ -41,5 +60,6 @@ Keys go to the SMC as IBM key numbers (x16-emulator `keyboard.c`): the GUI sends
 
 ## Not yet emulated
 
-- YM2151 FM sound.
-- SD card (VERA SPI), IEC devices, mouse, NES/SNES controllers.
+- YM2151 FM sound (`FMPLAY` and friends are silent).
+- SD card (VERA SPI) and IEC devices, so no `LOAD`/`SAVE` yet; mouse; NES/SNES controllers.
+- The 65C02 assembler is the NMOS one (no CMOS mnemonics).

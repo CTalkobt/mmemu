@@ -516,6 +516,7 @@ int MOS6502::opBRK(uint16_t addr) {
     push(m_state.p | FLAG_B | FLAG_U);
     m_state.p |= FLAG_I;
     if (m_cmos) m_state.p &= ~FLAG_D;   // the 65C02 clears D on BRK
+    if (m_onVectorPull) m_onVectorPull();
     uint8_t lo = read(0xFFFE);
     uint8_t hi = read(0xFFFF);
     m_state.pc = lo | (hi << 8);
@@ -925,6 +926,7 @@ int MOS6502::step() {
         push((m_state.p & ~FLAG_B) | FLAG_U);
         m_state.p |= FLAG_I;
         if (m_cmos) m_state.p &= ~FLAG_D;
+        if (m_onVectorPull) m_onVectorPull();
         uint8_t lo = read(0xFFFA);
         uint8_t hi = read(0xFFFB);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
@@ -942,6 +944,7 @@ int MOS6502::step() {
         push((m_state.p & ~FLAG_B) | FLAG_U);
         m_state.p |= FLAG_I;
         if (m_cmos) m_state.p &= ~FLAG_D;
+        if (m_onVectorPull) m_onVectorPull();
         uint8_t lo = read(0xFFFE);
         uint8_t hi = read(0xFFFF);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);

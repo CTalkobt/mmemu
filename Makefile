@@ -236,6 +236,16 @@ PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/6502/main/cpu6502.cpp \
 	src/plugins/6502/main/cpu6502_cmos.cpp
 
+PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
+	src/plugins/machines/x16/main/x16_i2c.cpp \
+	src/plugins/machines/x16/main/plugin_init.cpp \
+	src/plugins/devices/vera/main/vera.cpp \
+	src/plugins/devices/vera/main/vera_psg.cpp \
+	src/plugins/devices/vera/main/vera_pcm.cpp \
+	src/plugins/devices/via6522/main/via6522.cpp \
+	src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp
+
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
 	src/plugins/devices/cia6526/main/cia6526.cpp \
@@ -351,6 +361,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6502/test/test_cpu6502.cpp \
 	src/plugins/6502/test/test_cpu_opcode_suites.cpp \
 	src/plugins/machines/x16/test/test_x16_i2c.cpp \
+	src/plugins/machines/x16/test/test_x16_machine.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
 	src/plugins/6502/test/test_cpu6510_io.cpp \
@@ -436,6 +447,7 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 # Test-related objects (excluding plugin entry points to avoid multiple mmemuPluginInit definitions)
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/x16/main/x16_i2c.o \
+	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/6502/main/cpu6502_cmos.o \
 	src/plugins/6502/main/cpu6510.o \
 	src/plugins/6502/main/disassembler_6502.o \
@@ -579,6 +591,7 @@ PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
 PLUGIN_SID_PAIR_OBJS = $(PLUGIN_SID_PAIR_SRCS:.cpp=.o)
 PLUGIN_MEGA65_OBJS = $(PLUGIN_MEGA65_SRCS:.cpp=.o)
 PLUGIN_ATARI_OBJS = $(PLUGIN_ATARI_SRCS:.cpp=.o)
+PLUGIN_X16_OBJS = $(PLUGIN_X16_SRCS:.cpp=.o)
 PLUGIN_EXIT_TRAP_OBJS = $(PLUGIN_EXIT_TRAP_SRCS:.cpp=.o)
 PLUGIN_MEGA65_MATH_OBJS = $(PLUGIN_MEGA65_MATH_SRCS:.cpp=.o)
 PLUGIN_CBMHLE_OBJS = $(PLUGIN_CBMHLE_SRCS:.cpp=.o)
@@ -627,6 +640,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-map-mmu.so \
 	$(LIBDIR)/mmemu-plugin-mega65.so \
 	$(LIBDIR)/mmemu-plugin-atari.so \
+	$(LIBDIR)/mmemu-plugin-x16.so \
 	$(LIBDIR)/mmemu-plugin-exit-trap.so \
 	$(LIBDIR)/mmemu-plugin-mega65-math.so \
 	$(LIBDIR)/mmemu-plugin-sid-pair.so \
@@ -768,6 +782,9 @@ $(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS) $(CA45_LIBS)
 
 $(LIBDIR)/mmemu-plugin-atari.so: $(PLUGIN_ATARI_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-x16.so: $(PLUGIN_X16_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
