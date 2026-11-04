@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
+import shutil
 import subprocess
 import os
 import sys
 import time
 
-XMEGA65 = "/usr/local/bin/xemu-xmega65"
+XMEGA65 = shutil.which("xemu-xmega65") or "/usr/local/bin/xemu-xmega65"
 MMSIM_CLI = "./bin/mmemu-cli"
-CA45 = "/usr/local/bin/ca45"
+CA45 = shutil.which("ca45") or "/usr/local/bin/ca45"
 
 EXIT_TRIGGER_ADDR = 0xD6CF
 EXIT_VALUE = 0x42

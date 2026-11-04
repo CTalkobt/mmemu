@@ -68,6 +68,8 @@ void MOS6502::reset() {
     m_state.nmiLine = 0;
     m_state.nmiPrev = 0;
     m_state.haltLine = 0;
+    m_state.waiting = 0;
+    m_state.stopped = 0;
 
     if (m_bus) {
         uint8_t lo = m_bus->read8(0xFFFC);
@@ -124,8 +126,8 @@ void MOS6502::updateNZ(uint8_t val) {
 
 int MOS6502::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
     uint8_t op = bus->peek8(addr);
-    const Opcode& info = s_opcodes[op];
-    
+    const Opcode& info = m_ops[op];
+
     int bytes = 1;
     char operands[32] = "";
 
@@ -168,6 +170,19 @@ int MOS6502::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
         }
         case Mode::BPXIND: std::snprintf(operands, sizeof(operands), "($%02X,X)", bus->peek8(addr+1)); bytes=2; break;
         case Mode::INDBPY: std::snprintf(operands, sizeof(operands), "($%02X),Y", bus->peek8(addr+1)); bytes=2; break;
+        case Mode::BPIND:  std::snprintf(operands, sizeof(operands), "($%02X)", bus->peek8(addr+1)); bytes=2; break;
+        case Mode::ABSXIND: {
+            uint16_t target = bus->peek8(addr+1) | (bus->peek8(addr+2) << 8);
+            std::snprintf(operands, sizeof(operands), "($%04X,X)", target);
+            bytes=3;
+            break;
+        }
+        case Mode::BPREL: {
+            int8_t rel = (int8_t)bus->peek8(addr+2);
+            std::snprintf(operands, sizeof(operands), "$%02X,$%04X", bus->peek8(addr+1), (uint16_t)(addr + 3 + rel));
+            bytes=3;
+            break;
+        }
     }
 
     std::snprintf(buf, bufsz, "%-4s %s", info.mnemonic, operands);
@@ -196,7 +211,7 @@ static StackOp stackOpFor(const char* mn) {
 int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
     DisasmEntry* entry = (DisasmEntry*)entryOut;
     uint8_t op = bus->peek8(addr);
-    const Opcode& info = s_opcodes[op];
+    const Opcode& info = m_ops[op];
 
     entry->addr = addr;
     entry->mnemonic = info.mnemonic;   // short: fits the string's inline buffer
@@ -204,7 +219,8 @@ int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
     entry->complete.clear();
     switch (info.mode) {
         case Mode::IMP: case Mode::ACC: entry->bytes = 1; break;
-        case Mode::ABS: case Mode::ABSX: case Mode::ABSY: case Mode::IND: entry->bytes = 3; break;
+        case Mode::ABS: case Mode::ABSX: case Mode::ABSY: case Mode::IND:
+        case Mode::ABSXIND: case Mode::BPREL: entry->bytes = 3; break;
         default: entry->bytes = 2; break;  // IMM, BP, BPX, BPY, REL, BPXIND, INDBPY
     }
     // Instruction bytes, reused by the debugger's trace
@@ -214,7 +230,7 @@ int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
 
     entry->isCall   = (op == 0x20); // JSR
     entry->isReturn = (op == 0x60 || op == 0x40); // RTS or RTI
-    entry->isBranch = (info.mode == Mode::REL);
+    entry->isBranch = (info.mode == Mode::REL || info.mode == Mode::BPREL);
     entry->stackOp  = stackOpFor(info.mnemonic);
 
     // Mark unofficial/illegal opcodes.  All handlers that exist exclusively
@@ -228,7 +244,7 @@ int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
         fn == &MOS6502::opANC || fn == &MOS6502::opALR || fn == &MOS6502::opARR ||
         fn == &MOS6502::opXAA || fn == &MOS6502::opAHX || fn == &MOS6502::opTAS ||
         fn == &MOS6502::opSHY || fn == &MOS6502::opSHX || fn == &MOS6502::opLAS ||
-        fn == &MOS6502::opAXS ||
+        fn == &MOS6502::opAXS || fn == &MOS6502::opLXA ||
         (fn == &MOS6502::opNOP && op != 0xEA) ||   // $EA is the only official NOP
         (fn == &MOS6502::opSBC && op == 0xEB);      // $EB is the unofficial SBC
 
@@ -237,6 +253,9 @@ int MOS6502::decodeEntry(IBus* bus, uint32_t addr, void* entryOut) {
         if (info.mode == Mode::REL) {
             int8_t rel = (int8_t)bus->peek8(addr + 1);
             entry->targetAddr = (uint16_t)(addr + 2 + rel);
+        } else if (info.mode == Mode::BPREL) {
+            int8_t rel = (int8_t)bus->peek8(addr + 2);
+            entry->targetAddr = (uint16_t)(addr + 3 + rel);
         } else if (info.mode == Mode::ABS || info.mode == Mode::IND) {
             entry->targetAddr = bus->peek8(addr+1) | (bus->peek8(addr+2) << 8);
         } else {
@@ -325,8 +344,20 @@ uint16_t MOS6502::addrABSY(bool& pageCrossed) {
 uint16_t MOS6502::addrIND() {
     uint16_t ptr = addrABS();
     uint16_t lo = read(ptr);
-    uint16_t hi = read((ptr & 0xFF00) | ((ptr + 1) & 0x00FF));
+    // NMOS: the high byte comes from the same page (JMP ($12FF) reads $1200);
+    // the 65C02 fixed that
+    uint16_t hi = m_cmos ? read((uint16_t)(ptr + 1)) : read((ptr & 0xFF00) | ((ptr + 1) & 0x00FF));
     return lo | (hi << 8);
+}
+uint16_t MOS6502::addrBPIND() {
+    uint8_t ptr = read(m_state.pc++);
+    uint16_t lo = read(ptr);
+    uint16_t hi = read((uint8_t)(ptr + 1));
+    return lo | (hi << 8);
+}
+uint16_t MOS6502::addrABSXIND() {
+    uint16_t ptr = (uint16_t)(addrABS() + m_state.x);
+    return read(ptr) | (read((uint16_t)(ptr + 1)) << 8);
 }
 uint16_t MOS6502::addrBPXIND() {
     uint8_t ptr = (read(m_state.pc++) + m_state.x) & 0xFF;
@@ -347,6 +378,7 @@ uint16_t MOS6502::addrINDBPY(bool& pageCrossed) {
 // Opcode Implementations
 int MOS6502::opADC(uint16_t addr) {
     uint8_t m = read(addr);
+    if (m_cmos && (m_state.p & FLAG_D)) return adcDecimalCmos(m);
     if (m_state.p & FLAG_D) {
         // NMOS decimal mode (Bruce Clark, "Decimal Mode in NMOS 6500 series"):
         // Z from the binary sum; N and V from the sum before the high-nibble
@@ -483,6 +515,7 @@ int MOS6502::opBRK(uint16_t addr) {
     // BRK pushes P with bit 4 (B) and bit 5 (U) set.
     push(m_state.p | FLAG_B | FLAG_U);
     m_state.p |= FLAG_I;
+    if (m_cmos) m_state.p &= ~FLAG_D;   // the 65C02 clears D on BRK
     uint8_t lo = read(0xFFFE);
     uint8_t hi = read(0xFFFF);
     m_state.pc = lo | (hi << 8);
@@ -677,6 +710,7 @@ int MOS6502::opRTS(uint16_t addr) {
 
 int MOS6502::opSBC(uint16_t addr) {
     uint8_t raw = read(addr);
+    if (m_cmos && (m_state.p & FLAG_D)) return sbcDecimalCmos(raw);
     uint8_t m = raw ^ 0xFF;
     int carryIn = m_state.p & FLAG_C;
     uint8_t a = m_state.a;
@@ -726,16 +760,71 @@ int MOS6502::opSAX(uint16_t addr) { write(addr, m_state.a & m_state.x); return 0
 int MOS6502::opLAX(uint16_t addr) { m_state.a = m_state.x = read(addr); updateNZ(m_state.a); return 0; }
 int MOS6502::opDCP(uint16_t addr) { write(addr, read(addr) - 1); return opCMP(addr); }
 int MOS6502::opISC(uint16_t addr) { write(addr, read(addr) + 1); return opSBC(addr); }
-int MOS6502::opANC(uint16_t addr) { (void)addr; m_state.a &= read(m_state.pc++); updateNZ(m_state.a); if (m_state.p & FLAG_N) m_state.p |= FLAG_C; else m_state.p &= ~FLAG_C; return 0; }
-int MOS6502::opALR(uint16_t addr) { (void)addr; m_state.a &= read(m_state.pc++); return opLSR(0xFFFF); }
-int MOS6502::opARR(uint16_t addr) { (void)addr; m_state.a &= read(m_state.pc++); return opROR(0xFFFF); }
-int MOS6502::opXAA(uint16_t addr) { (void)addr; m_state.a = m_state.x & read(m_state.pc++); updateNZ(m_state.a); return 0; }
-int MOS6502::opAXS(uint16_t addr) { (void)addr; uint8_t m = read(m_state.pc++); uint8_t res = (m_state.a & m_state.x) - m; m_state.p &= ~FLAG_C; if ((m_state.a & m_state.x) >= m) m_state.p |= FLAG_C; m_state.x = res; updateNZ(m_state.x); return 0; }
-int MOS6502::opAHX(uint16_t addr) { (void)addr; m_state.pc += 2; return 0; }
-int MOS6502::opTAS(uint16_t addr) { (void)addr; m_state.pc += 2; return 0; }
-int MOS6502::opSHY(uint16_t addr) { (void)addr; m_state.pc += 2; return 0; }
-int MOS6502::opSHX(uint16_t addr) { (void)addr; m_state.pc += 2; return 0; }
-int MOS6502::opLAS(uint16_t addr) { (void)addr; m_state.a = m_state.x = m_state.sp &= read(addrABS()); updateNZ(m_state.a); return 0; }
+// The immediate operand is at `addr` (the IMM mode has already stepped the PC)
+int MOS6502::opANC(uint16_t addr) { m_state.a &= read(addr); updateNZ(m_state.a); if (m_state.p & FLAG_N) m_state.p |= FLAG_C; else m_state.p &= ~FLAG_C; return 0; }
+int MOS6502::opALR(uint16_t addr) { m_state.a &= read(addr); return opLSR(0xFFFF); }
+// ARR: AND then ROR A, with its own flags ("No More Secrets", NMOS 6510
+// unintended opcodes): C = bit 6, V = bit 6 ^ bit 5; in decimal mode N is
+// the old carry, V from the AND result, and each nibble is BCD-adjusted.
+int MOS6502::opARR(uint16_t addr) {
+    uint8_t t = m_state.a & read(addr);
+    uint8_t cin = (m_state.p & FLAG_C) ? 0x80 : 0;
+    uint8_t r = (uint8_t)((t >> 1) | cin);
+    m_state.p &= ~(FLAG_N | FLAG_Z | FLAG_C | FLAG_V);
+    if (!(m_state.p & FLAG_D)) {
+        if (r & 0x80) m_state.p |= FLAG_N;
+        if (!r) m_state.p |= FLAG_Z;
+        if (r & 0x40) m_state.p |= FLAG_C;
+        if (((r >> 6) ^ (r >> 5)) & 1) m_state.p |= FLAG_V;
+        m_state.a = r;
+        return 0;
+    }
+    if (cin) m_state.p |= FLAG_N;
+    if (!r) m_state.p |= FLAG_Z;
+    if ((t ^ r) & 0x40) m_state.p |= FLAG_V;
+    if ((t & 0x0F) + (t & 0x01) > 0x05) r = (uint8_t)((r & 0xF0) | ((r + 0x06) & 0x0F));
+    if ((t & 0xF0) + (t & 0x10) > 0x50) { r = (uint8_t)(r + 0x60); m_state.p |= FLAG_C; }
+    m_state.a = r;
+    return 0;
+}
+// XAA/ANE and LXA depend on the chip ("magic" constant); $EE is the common
+// value (SingleStepTests 6502)
+int MOS6502::opXAA(uint16_t addr) { m_state.a = (uint8_t)((m_state.a | 0xEE) & m_state.x & read(addr)); updateNZ(m_state.a); return 0; }
+int MOS6502::opLXA(uint16_t addr) { m_state.a = m_state.x = (uint8_t)((m_state.a | 0xEE) & read(addr)); updateNZ(m_state.a); return 0; }
+int MOS6502::opAXS(uint16_t addr) { uint8_t m = read(addr); uint8_t res = (m_state.a & m_state.x) - m; m_state.p &= ~FLAG_C; if ((m_state.a & m_state.x) >= m) m_state.p |= FLAG_C; m_state.x = res; updateNZ(m_state.x); return 0; }
+// SHA/AHX, TAS, SHY, SHX store register & (high byte of the base address + 1);
+// when the index crosses a page, that value also becomes the high byte of the
+// address written (common NMOS behaviour, as SingleStepTests records it)
+void MOS6502::storeAndHigh(uint16_t addr, uint8_t index, uint8_t value) {
+    uint16_t base = (uint16_t)(addr - index);
+    uint8_t v = (uint8_t)(value & ((base >> 8) + 1));
+    if ((base ^ addr) & 0xFF00) addr = (uint16_t)((v << 8) | (addr & 0xFF));
+    write(addr, v);
+}
+int MOS6502::opAHX(uint16_t addr) { storeAndHigh(addr, m_state.y, m_state.a & m_state.x); return 0; }
+int MOS6502::opTAS(uint16_t addr) { m_state.sp = m_state.a & m_state.x; storeAndHigh(addr, m_state.y, m_state.sp); return 0; }
+int MOS6502::opSHY(uint16_t addr) { storeAndHigh(addr, m_state.x, m_state.y); return 0; }
+int MOS6502::opSHX(uint16_t addr) { storeAndHigh(addr, m_state.y, m_state.x); return 0; }
+int MOS6502::opLAS(uint16_t addr) { m_state.a = m_state.x = m_state.sp &= read(addr); updateNZ(m_state.a); return 0; }
+
+// An indexed page crossing costs a cycle only for instructions that just read
+// (stores and read-modify-write instructions always take the longer path)
+bool MOS6502::pagePenalty(uint8_t op) const {
+    if (m_cmos) return m_ops[op].penalty;
+    static bool table[256];
+    static bool built = false;
+    if (!built) {
+        for (int i = 0; i < 256; i++) {
+            OpcodeFn fn = s_opcodes[i].fn;
+            table[i] = fn == &MOS6502::opADC || fn == &MOS6502::opAND || fn == &MOS6502::opCMP ||
+                       fn == &MOS6502::opEOR || fn == &MOS6502::opLDA || fn == &MOS6502::opLDX ||
+                       fn == &MOS6502::opLDY || fn == &MOS6502::opORA || fn == &MOS6502::opSBC ||
+                       fn == &MOS6502::opLAX || fn == &MOS6502::opLAS || fn == &MOS6502::opNOP;
+        }
+        built = true;
+    }
+    return table[op];
+}
 
 // Opcode Table
 const MOS6502::Opcode MOS6502::s_opcodes[256] = {
@@ -781,7 +870,7 @@ const MOS6502::Opcode MOS6502::s_opcodes[256] = {
     {"SHY", &MOS6502::opSHY, Mode::ABSX, 5}, {"STA", &MOS6502::opSTA, Mode::ABSX, 5}, {"SHX", &MOS6502::opSHX, Mode::ABSY, 5}, {"AHX", &MOS6502::opAHX, Mode::ABSY, 5},
     {"LDY", &MOS6502::opLDY, Mode::IMM, 2}, {"LDA", &MOS6502::opLDA, Mode::BPXIND, 6}, {"LDX", &MOS6502::opLDX, Mode::IMM, 2}, {"LAX", &MOS6502::opLAX, Mode::BPXIND, 6},
     {"LDY", &MOS6502::opLDY, Mode::BP, 3}, {"LDA", &MOS6502::opLDA, Mode::BP, 3}, {"LDX", &MOS6502::opLDX, Mode::BP, 3}, {"LAX", &MOS6502::opLAX, Mode::BP, 3},
-    {"TAY", &MOS6502::opTAY, Mode::IMP, 2}, {"LDA", &MOS6502::opLDA, Mode::IMM, 2}, {"TAX", &MOS6502::opTAX, Mode::IMP, 2}, {"LAX", &MOS6502::opLAX, Mode::IMM, 2},
+    {"TAY", &MOS6502::opTAY, Mode::IMP, 2}, {"LDA", &MOS6502::opLDA, Mode::IMM, 2}, {"TAX", &MOS6502::opTAX, Mode::IMP, 2}, {"LXA", &MOS6502::opLXA, Mode::IMM, 2},
     {"LDY", &MOS6502::opLDY, Mode::ABS, 4}, {"LDA", &MOS6502::opLDA, Mode::ABS, 4}, {"LDX", &MOS6502::opLDX, Mode::ABS, 4}, {"LAX", &MOS6502::opLAX, Mode::ABS, 4},
     {"BCS", &MOS6502::opBCS, Mode::REL, 2}, {"LDA", &MOS6502::opLDA, Mode::INDBPY, 5}, {"KIL", &MOS6502::opKIL, Mode::IMP, 2}, {"LAX", &MOS6502::opLAX, Mode::INDBPY, 5},
     {"LDY", &MOS6502::opLDY, Mode::BPX, 4}, {"LDA", &MOS6502::opLDA, Mode::BPX, 4}, {"LDX", &MOS6502::opLDX, Mode::BPY, 4}, {"LAX", &MOS6502::opLAX, Mode::BPY, 4},
@@ -811,6 +900,20 @@ int MOS6502::step() {
         m_state.cycles++;
         return 1;
     }
+    // 65C02 STP: stopped until reset. WAI: until an interrupt line is
+    // asserted (with I set, execution then continues without the IRQ).
+    if (m_state.stopped) {
+        m_state.cycles++;
+        return 1;
+    }
+    if (m_state.waiting) {
+        if (m_state.irqLine || (m_state.nmiLine && !m_state.nmiPrev)) {
+            m_state.waiting = 0;
+        } else {
+            m_state.cycles++;
+            return 1;
+        }
+    }
 
     // NMI handling (falling edge)
     if (m_state.nmiLine && !m_state.nmiPrev) {
@@ -821,6 +924,7 @@ int MOS6502::step() {
         // IRQ/NMI pushes P with B=0 and U=1
         push((m_state.p & ~FLAG_B) | FLAG_U);
         m_state.p |= FLAG_I;
+        if (m_cmos) m_state.p &= ~FLAG_D;
         uint8_t lo = read(0xFFFA);
         uint8_t hi = read(0xFFFB);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
@@ -837,6 +941,7 @@ int MOS6502::step() {
         // IRQ/NMI pushes P with B=0 and U=1
         push((m_state.p & ~FLAG_B) | FLAG_U);
         m_state.p |= FLAG_I;
+        if (m_cmos) m_state.p &= ~FLAG_D;
         uint8_t lo = read(0xFFFE);
         uint8_t hi = read(0xFFFF);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
@@ -852,8 +957,9 @@ int MOS6502::step() {
 
     uint16_t pc = m_state.pc;
     uint8_t op = read(m_state.pc++);
-    const Opcode& info = s_opcodes[op];
-    
+    const Opcode& info = m_ops[op];
+    m_curOp = op;
+
     int extraCycles = 0;
     bool pageCrossed = false;
     uint16_t addr = 0;
@@ -866,14 +972,22 @@ int MOS6502::step() {
         case Mode::BPX:    addr = addrBPX(); break;
         case Mode::BPY:    addr = addrBPY(); break;
         case Mode::ABS:    addr = addrABS(); break;
-        case Mode::ABSX:   addr = addrABSX(pageCrossed); if (pageCrossed) extraCycles++; break;
-        case Mode::ABSY:   addr = addrABSY(pageCrossed); if (pageCrossed) extraCycles++; break;
+        case Mode::ABSX:   addr = addrABSX(pageCrossed); if (pageCrossed && pagePenalty(op)) extraCycles++; break;
+        case Mode::ABSY:   addr = addrABSY(pageCrossed); if (pageCrossed && pagePenalty(op)) extraCycles++; break;
         case Mode::IND:    addr = addrIND(); break;
         case Mode::BPXIND: addr = addrBPXIND(); break;
-        case Mode::INDBPY: addr = addrINDBPY(pageCrossed); if (pageCrossed) extraCycles++; break;
+        case Mode::INDBPY: addr = addrINDBPY(pageCrossed); if (pageCrossed && pagePenalty(op)) extraCycles++; break;
         case Mode::REL: {
             int8_t rel = (int8_t)read(m_state.pc++);
             addr = m_state.pc + rel;
+            break;
+        }
+        case Mode::BPIND:   addr = addrBPIND(); break;
+        case Mode::ABSXIND: addr = addrABSXIND(); break;
+        case Mode::BPREL: {
+            addr = read(m_state.pc++);
+            int8_t rel = (int8_t)read(m_state.pc++);
+            m_branchTarget = (uint16_t)(m_state.pc + rel);
             break;
         }
     }

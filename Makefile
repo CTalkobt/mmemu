@@ -103,6 +103,7 @@ PLUGIN_CBMHLE_SRCS = src/plugins/cbm-hle/main/kernal_hle.cpp \
 	src/plugins/cbm-hle/main/plugin_init.cpp
 
 PLUGIN_6502_SRCS = src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp \
 	src/plugins/6502/main/cpu6510.cpp \
 	src/plugins/6502/main/disassembler_6502.cpp \
 	src/plugins/6502/main/assembler_6502.cpp \
@@ -226,7 +227,8 @@ PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/devices/gtia/main/gtia.cpp \
 	src/plugins/devices/pokey/main/pokey.cpp \
 	src/plugins/devices/pia6520/main/pia6520.cpp \
-	src/plugins/6502/main/cpu6502.cpp
+	src/plugins/6502/main/cpu6502.cpp \
+	src/plugins/6502/main/cpu6502_cmos.cpp
 
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
@@ -341,6 +343,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libtoolchain/test/test_debug_metadata.cpp \
 	src/libcore/test/test_machine_symbols.cpp \
 	src/plugins/6502/test/test_cpu6502.cpp \
+	src/plugins/6502/test/test_cpu_opcode_suites.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
 	src/plugins/6502/test/test_cpu6510_io.cpp \
@@ -424,6 +427,7 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 
 # Test-related objects (excluding plugin entry points to avoid multiple mmemuPluginInit definitions)
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
+	src/plugins/6502/main/cpu6502_cmos.o \
 	src/plugins/6502/main/cpu6510.o \
 	src/plugins/6502/main/disassembler_6502.o \
 	src/plugins/6502/main/assembler_6502.o \

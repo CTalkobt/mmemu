@@ -138,11 +138,11 @@ These instructions are not part of the official specification but exist due to t
 - **ISC**: (INC + SBC) Increments memory, then subtracts the result from A.
 - **ANC**: ANDs Accumulator with immediate value, then copies N flag into Carry.
 - **ALR**: ANDs Accumulator with immediate value, then performs LSR on the result.
-- **ARR**: ANDs Accumulator with immediate value, then performs ROR on the result.
-- **XAA**: Transfers X to A, then ANDs A with immediate value (result can be unstable on real hardware).
+- **ARR**: ANDs Accumulator with immediate value, then performs ROR on the result; C is bit 6, V is bit 6 XOR bit 5, and decimal mode adjusts each nibble.
+- **XAA/ANE**, **LXA** (`$8B`, `$AB`): A (and X for LXA) = (A | $EE) & ... ; the "magic" constant varies between chips, $EE is the common one.
 - **AXS**: ANDs A and X, then subtracts immediate value from the result and stores it in X.
 - **LAS**: ANDs memory with stack pointer, then stores result in A, X, and SP.
-- **AHX/TAS/SHY/SHX**: Highly unstable opcodes that perform complex AND/Store operations (implemented as stubs).
+- **SHA/AHX, TAS, SHY, SHX**: store the register (A&X, A&X into SP for TAS, Y, X) ANDed with the base address's high byte + 1; when the index crosses a page, that value also becomes the high byte of the address written.
 - **KIL**: Crashes the CPU (Jam).
 
 ---
@@ -151,7 +151,7 @@ These instructions are not part of the official specification but exist due to t
 
 ### 3.1 Cycle Accuracy
 Every instruction is modeled with its correct base cycle count.
-- **Page Crossing**: Indexed addressing modes (`ABS,X`, `ABS,Y`, `(BP),Y`) add 1 cycle if a page boundary is crossed.
+- **Page Crossing**: Indexed addressing modes (`ABS,X`, `ABS,Y`, `(BP),Y`) add 1 cycle if a page boundary is crossed, for instructions that only read (stores and read-modify-write instructions always take the longer count).
 - **Branch Taken**: Branch instructions add 1 cycle if the condition is met, and 1 additional cycle if the target is on a different page.
 
 ### 3.2 The Indirect JMP Bug
@@ -187,3 +187,18 @@ The same plugin also provides the **MOS 6510** — the CPU used in the Commodore
 |-------------------|-------|----------------|
 | `"6502"` | `MOS6502` | `"raw6502"` |
 | `"6510"` | `MOS6510` | `"raw6510"` |
+| `"65C02"` | `MOS65C02` | — (Commander X16) |
+
+## 7. WDC 65C02 Variant
+
+`MOS65C02` (`cpu65c02.h`, opcode table and CMOS instructions in `cpu6502_cmos.cpp`) is the CMOS part used by the Commander X16. ISA name `65C02`, with its own disassembler; the assembler is the NMOS one for now (no CMOS mnemonics).
+
+- **Instructions**: STZ, TRB/TSB, BRA, PHX/PHY/PLX/PLY, INC A/DEC A, BIT #/zp,X/abs,X, `(zp)` addressing, `JMP (abs,X)`, BBR/BBS/RMB/SMB (Rockwell/WDC bit ops), WAI (waits for an interrupt line; with I set, execution simply continues) and STP (stops until reset). Undefined opcodes are NOPs of their documented length; there are no illegal opcodes.
+- **Differences**: ADC/SBC in decimal mode set N, Z and V and take a cycle more (SBC follows Bruce Clark's 65C02 algorithm); BRK, IRQ and NMI clear D; `JMP ($xxFF)` reads its high byte from the next page and takes 6 cycles; read-modify-write `abs,X` shifts and rotates take 6 cycles plus 1 on a page crossing.
+
+## 8. Testing the whole instruction set
+
+`src/plugins/6502/test/test_cpu_opcode_suites.cpp` runs, when the suites are present (they are not in the repository):
+
+- **Klaus Dormann's functional tests** ([6502_65C02_functional_tests](https://github.com/Klaus2m5/6502_65C02_functional_tests), `bin_files/`): the 6502 test on the 6502 and on the 65C02, and the 65C02 extended-opcodes test. `MMEMU_DORMANN_DIR`, default `../refs/6502_65C02_functional_tests/bin_files`.
+- **SingleStepTests** ([65x02](https://github.com/SingleStepTests/65x02)) `6502/` and `wdc65c02/`: one JSON file per opcode; each test sets registers and RAM, runs one instruction and compares registers, RAM and the cycle count. `MMEMU_SST_DIR`, default `../refs/65x02-sample` (any subset of each file works; the JAM opcodes are skipped).
