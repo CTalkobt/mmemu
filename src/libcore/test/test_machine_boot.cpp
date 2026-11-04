@@ -313,3 +313,41 @@ TEST_CASE(c64_joysticks_on_cia1) {
     ASSERT_EQ(rd(0xDC01), 0xFB);
     delete desc;
 }
+
+// The VIC-20's one joystick, as in VICE: up, down, left and fire on VIA1 port
+// A (PA2-PA5), right on VIA2 PB7, which it shares with keyboard column 7.
+TEST_CASE(vic20_joystick_on_via1_and_via2) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("vic20");
+    ASSERT(desc != nullptr);
+    ASSERT_EQ(desc->joystickPorts, 1);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
+
+    VIA6522* via1 = nullptr;
+    VIA6522* via2 = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (auto* h : handlers) {
+        auto* v = dynamic_cast<VIA6522*>(h);
+        if (v && v->baseAddr() == 0x9110) via1 = v;
+        if (v && v->baseAddr() == 0x9120) via2 = v;
+    }
+    ASSERT(via1 && via2);
+    auto rd = [](VIA6522* v, uint32_t a) { uint8_t x = 0; v->ioPeek(nullptr, a, &x); return (int)x; };
+    ASSERT_EQ(rd(via1, 0x9113) & 0x3C, 0);          // KERNAL: PA2-PA5 are inputs
+    via2->ioWrite(nullptr, 0x9122, 0x7F);           // as games do: POKE 37154,127
+    ASSERT_EQ(rd(via1, 0x911F) & 0x3C, 0x3C);       // idle
+    ASSERT_EQ(rd(via2, 0x9120) & 0x80, 0x80);
+
+    desc->onJoystick(0, (uint8_t)~(0x01 | 0x10) & 0x1F);   // up + fire
+    ASSERT_EQ(rd(via1, 0x911F) & 0x3C, 0x3C & ~0x04 & ~0x20);
+    ASSERT_EQ(rd(via2, 0x9120) & 0x80, 0x80);
+    desc->onJoystick(0, (uint8_t)~(0x02 | 0x04 | 0x08) & 0x1F);   // down + left + right
+    ASSERT_EQ(rd(via1, 0x911F) & 0x3C, 0x3C & ~0x08 & ~0x10);
+    ASSERT_EQ(rd(via2, 0x9120) & 0x80, 0);
+    desc->onJoystick(0, 0x1F);
+    ASSERT_EQ(rd(via2, 0x9120) & 0x80, 0x80);
+    via2->ioWrite(nullptr, 0x9122, 0xFF);
+    delete desc;
+}

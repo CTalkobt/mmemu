@@ -34,10 +34,14 @@ public:
     class ColumnPort : public IPortDevice {
     public:
         ColumnPort(KbdVic20* parent) : m_parent(parent) {}
-        uint8_t readPort() override { return m_val; }
+        // Only bits set as outputs drive the columns; an input bit floats
+        // high, so a joystick sharing the line (right, on PB7) can be read.
+        uint8_t readPort() override { return driven(); }
         void writePort(uint8_t val) override { m_val = val; m_parent->updateMatrix(); }
-        void setDdr(uint8_t ddr) override { (void)ddr; }
+        void setDdr(uint8_t ddr) override { m_ddr = ddr; m_parent->updateMatrix(); }
+        uint8_t driven() const { return m_val | (uint8_t)~m_ddr; }
         uint8_t m_val = 0xFF;
+        uint8_t m_ddr = 0xFF;
     private:
         KbdVic20* m_parent;
     };

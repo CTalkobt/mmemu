@@ -44,6 +44,23 @@ The VIC-20 machine includes a Datasette wired through VIA2 and VIA1:
 
 See [doc/README-DATASETTE.md](README-DATASETTE.md) for the full Datasette API.
 
+### 2.3.1 Joystick
+One control port, wired as on the real machine (and in VICE's `vic20via1.c`/`vic20via2.c`):
+
+| Switch | Line | Register |
+|--------|------|----------|
+| Up | VIA1 PA2 | `$911F`/`$9111` bit 2 (37151, 37137) |
+| Down | VIA1 PA3 | bit 3 |
+| Left | VIA1 PA4 | bit 4 |
+| Fire | VIA1 PA5 | bit 5 |
+| Right | VIA2 PB7 | `$9120` bit 7 (37152), shared with keyboard column 7 |
+
+Bits read 0 while pressed. To read right, a program makes PB7 an input first: `POKE 37154,127:R=PEEK(37152)AND128:POKE 37154,255`.
+
+`onJoystick` port 0 (the only one). Input: CLI `joy 0 up fire`, MCP `set_joystick`, or a host USB controller in the GUI. In the machine JSON: `"joystick": {"lines": [{"device": "VIA1", "port": "A", "up": 2, "down": 3, "left": 4, "fire": 5}, {"device": "VIA2", "port": "B", "right": 7}]}`.
+
+Not modelled: holding right does not change which keys the keyboard matrix reports (on the hardware it makes column 7 look selected).
+
 ### 2.4 Scheduler
 - Implements a synchronous cycle-stepper that ticks all I/O devices (`tickAll`) in lock-step with CPU instruction execution.
 
