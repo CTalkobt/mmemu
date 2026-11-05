@@ -104,6 +104,11 @@ struct MachineDescriptor {
     };
     std::vector<ScreenButton> screenButtons;
 
+    /** Memory as RAM, also under ROM, for KERNAL file calls that fetch the
+     *  file name and SAVE data from RAM whatever is banked in (the Plus/4's
+     *  KERNAL does). Empty: they read through the bus. */
+    std::function<uint8_t(uint16_t addr)> readRam;
+
     /**
      * Debugger panes that depend on this machine's hardware, by GUI pane id:
      * "graphics-vic" (VIC-I/II/IV sprites and characters), "sidscope",

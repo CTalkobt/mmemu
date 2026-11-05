@@ -26,6 +26,7 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/crtc6545/main -Isrc/plugins/devices/pet_video/main \
 	-Isrc/plugins/devices/pokey/main -Isrc/plugins/devices/datasette/main \
 	-Isrc/plugins/devices/vera/main \
+	-Isrc/plugins/devices/ted/main \
 	-Isrc/plugins/devices/ym2151/main \
 	-Isrc/third_party/ymfm \
 	-Isrc/plugins/devices/keyboard/main \
@@ -175,6 +176,12 @@ PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 	src/plugins/devices/pia6520/main/plugin_init.cpp
 
+PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
+	src/plugins/devices/ted/main/ted.cpp \
+	src/plugins/devices/ted/main/ted_video.cpp \
+	src/plugins/devices/ted/main/ted_sound.cpp \
+	src/plugins/machines/plus4/main/plugin_init.cpp
+
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
@@ -218,6 +225,11 @@ PLUGIN_VERA_SRCS = src/plugins/devices/vera/main/vera.cpp \
 	src/plugins/devices/vera/main/vera_psg.cpp \
 	src/plugins/devices/vera/main/vera_pcm.cpp \
 	src/plugins/devices/vera/main/plugin_init.cpp
+
+PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
+	src/plugins/devices/ted/main/ted_video.cpp \
+	src/plugins/devices/ted/main/ted_sound.cpp \
+	src/plugins/devices/ted/main/plugin_init.cpp
 
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
@@ -387,6 +399,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
 	src/plugins/devices/ieee488/test/test_ieee488_bus.cpp \
 	src/plugins/devices/keyboard/test/test_keyboard_matrix_pet.cpp \
+	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
@@ -403,6 +416,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
 	src/plugins/devices/vera/test/test_vera.cpp \
+	src/plugins/devices/ted/test/test_ted.cpp \
 	src/plugins/devices/vera/test/test_sdcard_spi.cpp \
 	src/plugins/machines/atari/test/test_atari_machine.cpp \
 	src/plugins/devices/cia6526/test/test_cia6526.cpp \
@@ -478,6 +492,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/cbm_host_dos.o \
 	src/plugins/devices/ieee488/main/ieee488_bus.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
+	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \
@@ -526,6 +541,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vera/main/vera_psg.o \
 	src/plugins/devices/vera/main/sdcard_spi.o \
 	src/plugins/devices/vera/main/vera_pcm.o \
+	src/plugins/devices/ted/main/ted.o \
+	src/plugins/devices/ted/main/ted_video.o \
+	src/plugins/devices/ted/main/ted_sound.o \
 	src/plugins/machines/atari/main/machine_atari.o \
 	src/plugins/machines/atari/main/atari_sio.o \
 	src/plugins/machines/atari/main/atari_cart.o \
@@ -605,6 +623,7 @@ PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o) \
 PLUGIN_C64_GUI_OBJS  = src/plugins/machines/c64/main/plugin_init.o
 PLUGIN_PIA6520_OBJS  = $(PLUGIN_PIA6520_SRCS:.cpp=.o)
 PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
+PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -619,6 +638,7 @@ PLUGIN_GTIA_OBJS = $(PLUGIN_GTIA_SRCS:.cpp=.o)
 PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VERA_OBJS = $(PLUGIN_VERA_SRCS:.cpp=.o)
+PLUGIN_TED_OBJS = $(PLUGIN_TED_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
 PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_AUDIODMA_OBJS = $(PLUGIN_AUDIODMA_SRCS:.cpp=.o)
@@ -661,6 +681,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-c64.so \
 	$(LIBDIR)/mmemu-plugin-pia6520.so \
 	$(LIBDIR)/mmemu-plugin-ieee488.so \
+	$(LIBDIR)/mmemu-plugin-plus4.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -669,6 +690,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-gtia.so \
 	$(LIBDIR)/mmemu-plugin-pokey.so \
 	$(LIBDIR)/mmemu-plugin-vera.so \
+	$(LIBDIR)/mmemu-plugin-ted.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
 	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
@@ -778,6 +800,9 @@ $(LIBDIR)/mmemu-plugin-pia6520.so: $(PLUGIN_PIA6520_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-ieee488.so: $(PLUGIN_IEEE488_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
+$(LIBDIR)/mmemu-plugin-plus4.so: $(PLUGIN_PLUS4_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
@@ -803,6 +828,9 @@ $(LIBDIR)/mmemu-plugin-pokey.so: $(PLUGIN_POKEY_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-vera.so: $(PLUGIN_VERA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-ted.so: $(PLUGIN_TED_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)

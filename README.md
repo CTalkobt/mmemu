@@ -63,6 +63,10 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Hardware**: MOS 6502 CPU, 6520 PIA, 6522 VIA, 6545 CRTC (for 4032/8032), discrete video logic (for 2001), IEEE-488 bus.
 - **Symbols**: Standard KERNAL jump table symbols are auto-loaded from `roms/pet4032/kernal.sym`.
 
+### Commodore Plus/4 and C16
+- **Profiles**: `plus4`, `plus4-ntsc`, `c16`, `c16-ntsc`.
+- **Hardware**: 7501/8501 CPU, MOS 7360/8360 TED video/sound/timers, ROM banking (BASIC 3.5, KERNAL, 3-plus-1), keyboard matrix, two joysticks. See `doc/README-PLUS4.md`.
+
 ---
 
 ## 4. Symbol Management & Expressions

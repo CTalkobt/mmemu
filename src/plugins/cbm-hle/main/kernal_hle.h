@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 
 #include "libcore/main/intercept.h"
 #include <cstdint>
@@ -53,6 +54,9 @@ private:
     uint8_t getDevice(IBus* bus);
     uint8_t getSecondaryAddress(IBus* bus);
     std::string getFilename(IBus* bus);
+    /** A byte the KERNAL would fetch from RAM (MachineDescriptor::readRam, else the bus). */
+    uint8_t ramByte(IBus* bus, uint16_t addr) const;
+    std::function<uint8_t(uint16_t)> m_readRam;     // set from the machine at each call
     void setStatus(IBus* bus, uint8_t status);
     void setCarry(ICore* cpu, bool set);
 };
