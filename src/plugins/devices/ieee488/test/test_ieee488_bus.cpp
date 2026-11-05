@@ -176,3 +176,114 @@ TEST_CASE(ieee488_drive_other_unit_not_present) {
     ASSERT(!pet.bus.getDiskStatus(9, t, s, led));
     fs::remove_all(dir);
 }
+
+// ---------------------------------------------------------------------------
+// Disk images
+// ---------------------------------------------------------------------------
+
+namespace {
+// A D64 with "HELLO" (PRG, 1 block) at 1/0 and "NOTES" (SEQ) at 1/1
+std::string makeD64(const char* tag) {
+    static const int spt[35] = {21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,
+                                19,19,19,19,19,19,19,18,18,18,18,18,18,17,17,17,17,17};
+    auto off = [](int t, int s) { size_t o = 0; for (int i = 1; i < t; ++i) o += spt[i - 1]; return (o + s) * 256; };
+    std::vector<uint8_t> img(174848, 0);
+    size_t h = off(18, 0);
+    img[h] = 18; img[h + 1] = 1; img[h + 2] = 0x41;
+    for (int i = 0; i < 27; ++i) img[h + 0x90 + i] = 0xA0;
+    std::string name = "TEST DISK";
+    for (size_t i = 0; i < name.size(); ++i) img[h + 0x90 + i] = (uint8_t)name[i];
+    img[h + 0xA2] = 'A'; img[h + 0xA3] = 'B'; img[h + 0xA5] = '2'; img[h + 0xA6] = 'A';
+    for (int t = 1; t <= 35; ++t) img[h + 4 + (t - 1) * 4] = (uint8_t)(t == 1 ? spt[0] - 2 : t == 18 ? spt[17] - 2 : spt[t - 1]);
+    auto file = [&](int s, const std::string& data) {
+        size_t o = off(1, s);
+        img[o] = 0; img[o + 1] = (uint8_t)(data.size() + 1);
+        for (size_t i = 0; i < data.size(); ++i) img[o + 2 + i] = (uint8_t)data[i];
+    };
+    file(0, std::string("\x01\x04\xEA\x60", 4));
+    file(1, "LINE\r");
+    size_t d = off(18, 1);
+    img[d] = 0; img[d + 1] = 0xFF;
+    auto entry = [&](int i, uint8_t type, int s, const std::string& n) {
+        size_t e = d + i * 32;
+        img[e + 2] = type; img[e + 3] = 1; img[e + 4] = (uint8_t)s;
+        for (int k = 0; k < 16; ++k) img[e + 5 + k] = 0xA0;
+        for (size_t k = 0; k < n.size(); ++k) img[e + 5 + k] = (uint8_t)n[k];
+        img[e + 30] = 1;
+    };
+    entry(0, 0x82, 0, "HELLO");
+    entry(1, 0x81, 1, "NOTES");
+    fs::path p = fs::temp_directory_path() / (std::string("mmemu_ieee_") + tag + ".d64");
+    std::ofstream(p, std::ios::binary).write((const char*)img.data(), (std::streamsize)img.size());
+    return p.string();
+}
+}
+
+TEST_CASE(ieee488_drive_loads_from_a_disk_image) {
+    std::string img = makeD64("img");
+    Pet pet(".");
+    ASSERT(pet.bus.mountDisk(8, img));
+    ASSERT_EQ(pet.bus.getMountedDiskPath(8), img);
+    pet.open(0, "0:HEL*");                          // drive prefix and a wildcard
+    pet.talk(0);
+    auto bytes = pet.receiveAll();
+    ASSERT_EQ((int)bytes.size(), 4);
+    ASSERT_EQ((int)bytes[2], 0xEA);
+    pet.untalk();
+    pet.close(0);
+    pet.open(2, "NOTES,S,R");                       // a SEQ file
+    pet.talk(2);
+    auto seq = pet.receiveAll();
+    ASSERT_EQ(std::string(seq.begin(), seq.end()), std::string("LINE\r"));
+    pet.untalk();
+    pet.close(2);
+    fs::remove(img);
+}
+
+TEST_CASE(ieee488_disk_image_directory_as_the_drive_sends_it) {
+    std::string img = makeD64("dir");
+    Pet pet(".");
+    ASSERT(pet.bus.mountDisk(8, img));
+    pet.open(0, "$");
+    pet.talk(0);
+    auto d = pet.receiveAll();
+    std::string s(d.begin(), d.end());
+    ASSERT_EQ((int)d[0], 0x01);                     // loaded at $0401
+    ASSERT_EQ((int)d[1], 0x04);
+    ASSERT(s.find("\x12\"TEST DISK       \" AB 2A") != std::string::npos);
+    ASSERT(s.find("\"HELLO\"            PRG") != std::string::npos);
+    ASSERT(s.find("\"NOTES\"            SEQ") != std::string::npos);
+    ASSERT(s.find("BLOCKS FREE.") != std::string::npos);
+    // The first line's link points at the second line ($0401 + 2 + link + line + text + 0)
+    uint16_t link = (uint16_t)(d[2] | d[3] << 8);
+    size_t firstLen = s.find('\0', 6) - 2;          // from the link to the line's 0, inclusive
+    ASSERT_EQ((int)link, 0x0401 + (int)firstLen + 1);
+    // Blocks free: 664 - 2 (track 18 left out, as CBM DOS counts)
+    size_t bf = s.find("BLOCKS FREE.");
+    ASSERT_EQ((int)(uint8_t)s[bf - 2] | (int)(uint8_t)s[bf - 1] << 8, 662);
+    pet.untalk();
+    fs::remove(img);
+}
+
+TEST_CASE(ieee488_disk_image_is_write_protected) {
+    std::string img = makeD64("wp");
+    Pet pet(".");
+    ASSERT(pet.bus.mountDisk(8, img));
+    pet.open(1, "NEW");                             // SAVE opens channel 1
+    pet.talk(15);
+    auto msg = pet.receiveAll();
+    ASSERT_EQ(std::string(msg.begin(), msg.end()), std::string("26,WRITE PROTECT ON,00,00\r"));
+    pet.untalk();
+    pet.open(0, "NOPE");
+    pet.talk(15);
+    msg = pet.receiveAll();
+    ASSERT_EQ(std::string(msg.begin(), msg.end()), std::string("62,FILE NOT FOUND,00,00\r"));
+    pet.untalk();
+    pet.talk(15);                                   // read once, then OK
+    msg = pet.receiveAll();
+    ASSERT_EQ(std::string(msg.begin(), msg.end()), std::string("00, OK,00,00\r"));
+    pet.untalk();
+    pet.bus.ejectDisk(8);                           // back to the host folder
+    ASSERT(pet.bus.getMountedDiskPath(8) != img);
+    fs::remove(img);
+}

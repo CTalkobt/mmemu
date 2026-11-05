@@ -6,7 +6,7 @@
 Ieee488Bus::Ieee488Bus()
     : m_ndacOut(this, &Lines::ndac), m_davOut(this, &Lines::dav), m_eoiOut(this, &Lines::eoi),
       m_atnLine(this), m_dataIn(this), m_dataOut(this), m_via(this), m_eoiIn(this) {
-    m_dos.setDirectoryLoadAddress(0x0401);     // a Commodore drive's directory (PET BASIC start)
+    m_host.setDirectoryLoadAddress(0x0401);     // a Commodore drive's directory (PET BASIC start)
 }
 
 void Ieee488Bus::reset() {
@@ -16,7 +16,7 @@ void Ieee488Bus::reset() {
     m_lastWasOurListen = m_lastWasOurTalk = false;
     m_prevAtn = true;
     m_byteTaken = m_byteOnBus = m_talkEnded = m_hasPending = m_tentative = false;
-    m_dos.reset();
+    m_dos->reset();
 }
 
 ISignalLine* Ieee488Bus::getSignalLine(const char* name) {
@@ -119,7 +119,7 @@ void Ieee488Bus::listenerStep() {
             uint8_t b = (uint8_t)~data();
             m_drv.nrfd = false;                 // busy
             if (!atn()) command(b);
-            else        (void)m_dos.ciout(b);
+            else        (void)m_dos->ciout(b);
             m_byteTaken = true;
             m_drv.ndac = true;                  // accepted
         }
@@ -156,7 +156,7 @@ void Ieee488Bus::talkerStep() {
     uint8_t b = 0;
     int s;
     if (m_hasPending) { b = m_pendingByte; s = m_pendingStatus; }   // not taken last time
-    else              s = m_dos.acptr(&b);
+    else              s = m_dos->acptr(&b);
     if (s == -2 || s == 0x42) {
         // Nothing to send (no file): stay silent, as Commodore's drives do;
         // the computer's read times out and it reports FILE NOT FOUND
@@ -174,37 +174,37 @@ void Ieee488Bus::talkerStep() {
 }
 
 void Ieee488Bus::command(uint8_t b) {
-    int unit = m_dos.unit();
+    int unit = m_dos->unit();
     if (((b >= 0x20 && b <= 0x3E) || (b >= 0x40 && b <= 0x5E)) && (b & 0x1F) == unit)
-        m_dos.ensureInit();                     // resolve the folder at first use
+        m_dos->ensureInit();                     // resolve the folder at first use
     if (b >= 0x20 && b <= 0x3E) {               // LISTEN
         m_lastWasOurListen = (b & 0x1F) == unit;
         m_lastWasOurTalk = false;
-        if (m_lastWasOurListen && m_dos.listen(b) != -2) m_listener = true;
+        if (m_lastWasOurListen && m_dos->listen(b) != -2) m_listener = true;
     } else if (b == 0x3F) {                     // UNLISTEN
-        if (m_listener) { m_dos.unlsn(); m_listener = false; }
+        if (m_listener) { m_dos->unlsn(); m_listener = false; }
         m_lastWasOurListen = m_lastWasOurTalk = false;
     } else if (b >= 0x40 && b <= 0x5E) {        // TALK (another talker untalks us)
         bool ours = (b & 0x1F) == unit;
         if (ours) {
-            if (m_dos.talk(b) != -2) { m_talker = true; m_talkEnded = false; }
+            if (m_dos->talk(b) != -2) { m_talker = true; m_talkEnded = false; }
         } else if (m_talker) {
-            m_dos.untlk();
+            m_dos->untlk();
             m_talker = false;
         }
         m_lastWasOurTalk = ours;
         m_lastWasOurListen = false;
     } else if (b == 0x5F) {                     // UNTALK
-        if (m_talker) { m_dos.untlk(); m_talker = false; }
+        if (m_talker) { m_dos->untlk(); m_talker = false; }
         m_lastWasOurListen = m_lastWasOurTalk = false;
     } else if (b >= 0x60) {                     // secondary: $6x data, $Ex close, $Fx open
         if (m_lastWasOurListen) {
-            m_dos.second(b);
+            m_dos->second(b);
             m_hasPending = false;               // a new open, close or write: the old byte is gone
         } else if (m_lastWasOurTalk) {
             if ((b & 0x0F) != m_pendingChannel) m_hasPending = false;
             m_pendingChannel = b & 0x0F;
-            m_dos.tksa(b);
+            m_dos->tksa(b);
         }
     }
 }
@@ -214,26 +214,42 @@ void Ieee488Bus::command(uint8_t b) {
 // ---------------------------------------------------------------------------
 
 bool Ieee488Bus::mountDisk(int unit, const std::string& path) {
-    if (unit != m_dos.unit()) return false;
+    if (unit != m_dos->unit()) return false;
     struct stat st;
-    if (stat(path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) return false;   // a folder (images: to come)
-    m_dos.setRoot(path);
+    if (stat(path.c_str(), &st) != 0) return false;
+    if (S_ISDIR(st.st_mode)) {                  // a host folder
+        m_host.setRoot(path);
+        m_dos = &m_host;
+        m_imageMounted = false;
+    } else {                                    // a disk image
+        m_image.setUnit(unit);
+        if (!m_image.open(path)) return false;
+        m_dos = &m_image;
+        m_imageMounted = true;
+    }
+    m_listener = m_talker = false;
+    m_hasPending = m_tentative = m_talkEnded = false;
     return true;
 }
 
 void Ieee488Bus::ejectDisk(int unit) {
-    if (unit == m_dos.unit()) m_dos.setRoot(".");
+    if (unit != m_dos->unit()) return;
+    // No image: back to the host folder (the directory mmemu runs in)
+    m_dos = &m_host;
+    m_imageMounted = false;
+    m_host.setRoot(".");
 }
 
 bool Ieee488Bus::getDiskStatus(int unit, int& track, int& sector, bool& led) {
-    if (unit != m_dos.unit()) return false;
+    if (unit != m_dos->unit()) return false;
     track = sector = 0;
-    led = m_dos.active();
+    led = m_dos->active();
     return true;
 }
 
 std::string Ieee488Bus::getMountedDiskPath(int unit) {
-    return unit == m_dos.unit() ? m_dos.rootPath() : std::string();
+    if (unit != m_dos->unit()) return std::string();
+    return m_imageMounted ? m_image.path() : m_host.rootPath();
 }
 
 void Ieee488Bus::getDeviceInfo(DeviceInfo& out) const {
@@ -249,7 +265,8 @@ void Ieee488Bus::getDeviceInfo(DeviceInfo& out) const {
     char buf[8];
     std::snprintf(buf, sizeof buf, "$%02X", data());
     out.state.push_back({"Data lines", buf});
-    out.state.push_back({"Drive", "unit " + std::to_string(const_cast<CbmHostDos&>(m_dos).unit()) +
-                                  ": host folder " + const_cast<CbmHostDos&>(m_dos).rootPath()});
+    out.state.push_back({"Drive", "unit " + std::to_string(m_dos->unit()) +
+                                  (m_imageMounted ? ": disk image " + m_image.path()
+                                                  : ": host folder " + m_host.rootPath())});
     out.state.push_back({"Drive role", m_talker ? "talker" : m_listener ? "listener" : "idle"});
 }

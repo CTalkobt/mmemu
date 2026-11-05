@@ -9,6 +9,7 @@
 // Copyright (c) 2019, 2022, 2023 Michael Steil, et al. All rights reserved.
 // License: 2-clause BSD (see cbm_host_dos.cpp).
 
+#include "cbm_dos.h"
 #include <cstdint>
 #include <cstdio>
 #include <optional>
@@ -23,7 +24,7 @@
  * The bus calls return >= 0 a STATUS value, -1 handled without STATUS, -2 not
  * for this unit (another device must answer).
  */
-class CbmHostDos {
+class CbmHostDos : public ICbmDos {
 public:
     CbmHostDos() = default;
     virtual ~CbmHostDos();
@@ -37,29 +38,29 @@ public:
     /** Load address of a `$` listing: $0801 (X16, as x16-emulator), $0401
      *  (the PET's BASIC start, as Commodore's drives send it). */
     void setDirectoryLoadAddress(uint16_t a) { m_dirLoadAddr = a; }
-    int unit() const { return m_unit; }
+    int unit() const override { return m_unit; }
     const std::string& rootPath() const { return m_rootSetting; }
     /** The current directory (after the folder is first used), else empty. */
     const std::string& currentDir() const { return m_cwd; }
     const std::string& resolvedRoot() const { return m_fsroot; }
 
     /** Close every channel and return to the start directory (machine reset). */
-    virtual void reset();
+    void reset() override;
     /** Resolve the folder (done at first use). False if it does not exist. */
-    bool ensureInit() { return m_initialized || init(); }
+    bool ensureInit() override { return m_initialized || init(); }
 
     // Commodore bus L2 (the KERNAL IEEE API, or the bus commands under ATN)
-    int listen(uint8_t a);
-    int second(uint8_t a);
-    int ciout(uint8_t a);
-    int unlsn();
-    int talk(uint8_t a);
-    int tksa(uint8_t a);
-    int acptr(uint8_t* a);
-    int untlk();
+    int listen(uint8_t a) override;
+    int second(uint8_t a) override;
+    int ciout(uint8_t a) override;
+    int unlsn() override;
+    int talk(uint8_t a) override;
+    int tksa(uint8_t a) override;
+    int acptr(uint8_t* a) override;
+    int untlk() override;
 
     /** Busy (between LISTEN/TALK and UNLSN/UNTLK): the drive's activity LED. */
-    bool active() const { return m_active; }
+    bool active() const override { return m_active; }
     /** The error channel holds an error (the LED flashes on a real drive). */
     bool errorPending() const { return m_errorFlag; }
     bool listening() const { return m_listening; }

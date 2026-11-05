@@ -177,6 +177,8 @@ PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
+	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/devices/ieee488/main/plugin_init.cpp
 
 PLUGIN_CBMLOADER_SRCS = src/plugins/cbm-loader/main/prg_loader.cpp \
@@ -474,6 +476,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/x16/main/x16_hostfs.o \
 	src/plugins/devices/ieee488/main/cbm_host_dos.o \
 	src/plugins/devices/ieee488/main/ieee488_bus.o \
+	src/plugins/devices/ieee488/main/cbm_image_dos.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \

@@ -19,6 +19,7 @@
 #include "libdevices/main/iport_device.h"
 #include "libdevices/main/isignal_line.h"
 #include "cbm_host_dos.h"
+#include "cbm_image_dos.h"
 #include <cstdint>
 #include <string>
 
@@ -49,7 +50,7 @@ public:
     ISignalLine* getSignalLine(const char* name) override;
     IPortDevice* namedPort(const std::string& name) override;
 
-    // The drive: a host folder as unit 8 (CLI `disk mount 8 <folder>`)
+    // The drive: unit 8 serves a host folder or a disk image (CLI `disk mount 8 <folder or image>`)
     bool mountDisk(int unit, const std::string& path) override;
     void ejectDisk(int unit) override;
     bool getDiskStatus(int unit, int& track, int& sector, bool& led) override;
@@ -63,7 +64,9 @@ public:
     bool ndac() const { return m_ctl.ndac && m_drv.ndac; }
     uint8_t data() const { return (uint8_t)(m_ctl.data & m_drv.data); }
 
-    CbmHostDos& dos() { return m_dos; }
+    /** The DOS serving unit 8: the host folder, or the mounted disk image. */
+    ICbmDos& dos() { return *m_dos; }
+    CbmHostDos& hostDos() { return m_host; }
 
 private:
     struct Lines {
@@ -153,7 +156,10 @@ private:
     EoiInPort m_eoiIn;
 
     // The drive
-    CbmHostDos m_dos;
+    CbmHostDos m_host;                 // a host folder (the default)
+    CbmImageDos m_image;               // a disk image (D64/D71/D80/D81/D82)
+    ICbmDos* m_dos = &m_host;
+    bool m_imageMounted = false;
     bool m_listener = false;           // addressed to listen (data after ATN)
     bool m_talker = false;             // addressed to talk
     bool m_lastWasOurListen = false;   // a secondary address follows our LISTEN
