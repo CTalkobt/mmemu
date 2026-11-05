@@ -308,9 +308,14 @@ MachineDescriptor* create(std::string* err) {
 
     auto* desc = new MachineDescriptor();
     desc->machineId = "x16";
-    // No VIC graphics viewer; a VERA one (sprites, tiles) is to come
+    // The VERA graphics viewer: sprites and tiles
     desc->uiPanesSet = true;
-    desc->uiPanes = {"drive"};
+    desc->uiPanes = {"drive", "graphics-vera"};
+    desc->graphicsFormats = {
+        "vera-tile8-1", "vera-tile8-2", "vera-tile8-4", "vera-tile8-8",
+        "vera-tile16-1", "vera-tile16-2", "vera-tile16-4", "vera-tile16-8",
+        "vera-spr8-4", "vera-spr16-4", "vera-spr32-4", "vera-spr64-4",
+        "vera-spr8-8", "vera-spr16-8", "vera-spr32-8", "vera-spr64-8"};
     desc->displayName = "Commander X16";
     desc->licenseClass = "open";
 

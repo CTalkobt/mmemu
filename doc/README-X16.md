@@ -52,6 +52,7 @@ mmemu-cli -m x16 --speed max
 - **FX**: line, polygon and affine address helpers, the 32-bit cache with nibble masks and transparent writes, the multiplier/accumulator.
 - **Audio**: 16 PSG voices and the PCM FIFO, mixed at 48,828 Hz (25 MHz / 512) as x16-emulator does; the GUI and `recordaudio` play it.
 - **SPI**: the registers and busy timing, with the SD card below on the select line.
+- **Debugger**: View > Graphics (VERA) shows the 128 sprites, both tile layers and any VRAM address as VERA sprites or tiles (see [README-graphics-viewer.md](README-graphics-viewer.md)); CLI `gfx chip-sprite <0-127>`, `gfx chip-layer <0|1>`.
 
 Where the port departs from the emulator (integer scan timing, a repeatable VRAM fill at reset, 17-bit address wrap, peeks that return what a read would) is commented in `vera.cpp`.
 

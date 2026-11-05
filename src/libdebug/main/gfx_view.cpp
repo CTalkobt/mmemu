@@ -11,7 +11,8 @@ namespace gfx {
 std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc, const char* family) {
     std::vector<const FormatInfo*> out;
     auto want = [family](const FormatInfo& f) { return !family || std::string(f.family) == family; };
-    if (desc && !desc->hasPane("graphics-vic") && !desc->hasPane("graphics-antic")) return out;
+    if (desc && !desc->hasPane("graphics-vic") && !desc->hasPane("graphics-antic") &&
+        !desc->hasPane("graphics-vera")) return out;
     if (desc && !desc->graphicsFormats.empty()) {
         for (const auto& id : desc->graphicsFormats) {
             Format f;
@@ -62,6 +63,7 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
 
     Format fmt = req.format;
     uint32_t start = req.addr;
+    uint32_t stride = req.stride;
     int rows = 0;
     int palBase = req.paletteBase >= 0 ? req.paletteBase : 0;
 
@@ -71,7 +73,8 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
         start = si.dataAddr;
         // 16-colour sprites are 16 pixels wide only with SPRX64EN; otherwise
         // 3 bytes per row give 6 pixels (MEGA65 book, Full-Colour Sprite Mode)
-        fmt = si.playerMissile ? (si.height > 128 ? Format::Player : Format::Player2Line)
+        fmt = si.width > 0     ? veraSpriteFormat(si.width, si.bitsPerPixel)
+            : si.playerMissile ? (si.height > 128 ? Format::Player : Format::Player2Line)
             : si.sixteenColor ? (si.wide64 ? Format::Sprite16 : Format::Sprite16Narrow)
             : si.wide64       ? Format::Sprite64
             : si.multicolor   ? Format::SpriteMulti
@@ -83,8 +86,19 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
         colors.slot[3] = color(si.mc1);
         colors.slot[0] = colors.transparent = color(bg0);
     } else if (req.source == Source::Charset) {
+        if (req.layer >= 0) {
+            if (req.layer >= video->layerCount()) { v.error = "No such layer."; return v; }
+            haveCs = video->layerCharsetInfo(req.layer, ci);
+            if (!haveCs) { v.error = "That layer has no tiles (bitmap mode)."; return v; }
+        }
         if (!haveCs) { v.error = "The video chip has no character set."; return v; }
         start = ci.addr;
+        if (ci.bitsPerPixel > 0) {             // VERA tiles
+            fmt = veraTileFormat(ci.tileW, ci.bitsPerPixel);
+            if (ci.tileH != info(fmt).height) rows = ci.tileH;
+            if (!stride) stride = (uint32_t)(info(fmt).bytesPerRow * ci.tileH);
+        }
+        else
         fmt = ci.antic     ? (ci.multicolor ? Format::AnticChar4 : Format::AnticChar)
             : ci.fullColor ? Format::CharFCM : ci.multicolor ? Format::CharMulti : Format::CharHires;
         int fg = ci.fg >= 0 ? ci.fg : 1;
@@ -92,6 +106,7 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
         colors.slot[1] = ci.multicolor ? color(ci.bg[1]) : color(fg);
         colors.slot[2] = color(ci.bg[2]);
         colors.slot[3] = color(fg);
+        colors.transparent = color(ci.bg[0]);
     } else {
         const FormatInfo& fi = info(fmt);
         colors.slot[0] = colors.transparent = color(bg0);
@@ -109,10 +124,12 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
     colors.paletteBase = palBase;
 
     ReadFn read;
-    if (req.videoView && video) read = [video](uint32_t a) { return video->peekVideo(a); };
+    // VERA formats are in VRAM, which is not on the CPU bus
+    bool viaVideo = req.videoView || std::string(info(fmt).family) == "vera";
+    if (viaVideo && video) read = [video](uint32_t a) { return video->peekVideo(a); };
     else                        read = [cpuBus](uint32_t a) { return cpuBus->peek8(a); };
 
-    v.sheet = renderSheet(fmt, read, start, req.count, req.columns, req.stride, colors,
+    v.sheet = renderSheet(fmt, read, start, req.count, req.columns, stride, colors,
                           req.swapNibbles, 1, 0xFF303030, rows);
     v.format = fmt;
     v.start = start;

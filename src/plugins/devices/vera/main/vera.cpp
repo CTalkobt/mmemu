@@ -1581,3 +1581,51 @@ bool Vera::getDiskStatus(int unit, int& track, int& sector, bool& led) {
 std::string Vera::getMountedDiskPath(int unit) {
     return unit == 8 ? m_sd.path() : std::string();
 }
+
+// ---------------------------------------------------------------------------
+// IVideoInspect (VERA Programmer's Reference: Sprite attributes, Layer 0/1)
+// ---------------------------------------------------------------------------
+
+uint32_t Vera::paletteColor(int index) const {
+    // As displayed, after DC_VIDEO's output mode (refreshes a dirty palette cache)
+    return 0xFF000000u | const_cast<Vera*>(this)->paletteRgb(index);
+}
+
+bool Vera::spriteInfo(int n, SpriteInfo& out) const {
+    if (n < 0 || n >= 128) return false;
+    const uint8_t* a = &m_vram[0x1FC00 + n * 8];
+    out = SpriteInfo{};
+    out.dataAddr = ((uint32_t)(a[1] & 0x0F) << 13) | ((uint32_t)a[0] << 5);
+    out.bitsPerPixel = (a[1] & 0x80) ? 8 : 4;
+    out.enabled = ((a[6] >> 2) & 3) != 0;              // Z-depth 0: disabled
+    out.width = 8 << ((a[7] >> 4) & 3);
+    out.height = 8 << ((a[7] >> 6) & 3);
+    out.paletteBase = (a[7] & 0x0F) * 16;              // moves colour indices 1-15
+    return true;
+}
+
+bool Vera::layerCharsetInfo(int layer, CharsetInfo& out) const {
+    if (layer < 0 || layer > 1) return false;
+    uint8_t config = layerReg(layer, 0);
+    if (config & 0x04) return false;                    // bitmap mode: no tiles
+    uint8_t mapBase = layerReg(layer, 1), tileBase = layerReg(layer, 2);
+    out = CharsetInfo{};
+    out.bitsPerPixel = 1 << (config & 3);
+    out.addr = (uint32_t)(tileBase & 0xFC) << 9;        // bits 16:11
+    out.tileW = (tileBase & 0x01) ? 16 : 8;
+    out.tileH = (tileBase & 0x02) ? 16 : 8;
+    if (out.bitsPerPixel == 1) {
+        // 1 bpp: colours from the map's attribute bytes, the most common one
+        // (normally the text colour): background/foreground nibbles, or a
+        // 256-colour foreground (T256C). Map size from Lx_CONFIG bits 7:4.
+        int mapW = 32 << ((config >> 4) & 3), mapH = 32 << ((config >> 6) & 3);
+        uint32_t count[256] = {};
+        uint32_t base = (uint32_t)mapBase << 9;
+        for (int i = 0; i < mapW * mapH; ++i) ++count[m_vram[(base + (uint32_t)i * 2 + 1) & 0x1FFFF]];
+        uint8_t attr = 0;
+        for (int a = 1; a < 256; ++a) if (count[a] > count[attr]) attr = (uint8_t)a;
+        if (config & 0x08) { out.fg = attr; out.bg[0] = 0; }
+        else               { out.fg = attr & 0x0F; out.bg[0] = attr >> 4; }
+    }
+    return true;
+}

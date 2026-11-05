@@ -1,10 +1,10 @@
-# Graphics Viewers (VIC and ANTIC/GTIA)
+# Graphics Viewers (VIC, ANTIC/GTIA and VERA)
 
 Issue #28. Decodes sprite and character graphics from memory. It is available
 in three places, which all use the same code (`src/libtoolchain/main/gfx_decode.*`
 for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 
-- **GUI**: View > Graphics (VIC) (pane id `graphics-vic`) or View > Graphics (ANTIC/GTIA) (`graphics-antic`, Atari 8-bit), side panes
+- **GUI**: View > Graphics (VIC) (pane id `graphics-vic`) or View > Graphics (ANTIC/GTIA) (`graphics-antic`, Atari 8-bit), or View > Graphics (VERA) (`graphics-vera`, Commander X16), side panes
 - **CLI**: `gfx`
 - **MCP**: `render_graphics`
 
@@ -28,6 +28,14 @@ for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 | `player`    | ANTIC/GTIA player or missiles, single-line resolution | 8x256 | 256 |
 | `player-2line` | ANTIC/GTIA player or missiles, double-line resolution | 8x128 | 128 |
 
+| `vera-spr<W>-<B>` | VERA sprite, W = 8/16/32/64 pixels, B = 4 or 8 bpp | WxW (taller or shorter when followed) | W x W x B / 8 |
+| `vera-tile<W>-<B>` | VERA tile, W = 8 or 16 pixels, B = 1/2/4/8 bpp | WxW | W x W x B / 8 |
+
+VERA formats read VRAM ($00000-$1FFFF) through the chip, since it is not on the
+CPU bus. Their leftmost pixel is in the high bits; colour index 0 is
+transparent, and a palette offset (Palette + = 16 x offset) moves indices 1-15
+only, as on VERA.
+
 The missiles share one byte per row, 2 bits each (missile 3 in bits 7-6 to
 missile 0 in bits 1-0), so `player` at the missile address shows all four.
 
@@ -44,7 +52,8 @@ has (`"ui": {"graphicsFormats": [...]}` in the machine JSON,
 | C64     | VIC-II     | `sprite`, `sprite-mc`, `char`, `char-mc` |
 | MEGA65  | VIC-IV     | every format (it declares no list) |
 | Atari 8-bit | ANTIC + GTIA | `antic2`, `antic4`, `player`, `player-2line` (in the Graphics (ANTIC/GTIA) pane) |
-| PET, X16 | CRTC / VERA | none: no viewer pane. A VERA viewer (sprites, tiles) is planned as its own pane. |
+| Commander X16 | VERA | the 16 `vera-*` formats (in the Graphics (VERA) pane) |
+| PET | CRTC | none: no viewer pane |
 
 The stride (bytes from one item to the next) defaults to the size above and can
 be changed, e.g. to view sprites packed at 63-byte intervals.
@@ -79,6 +88,15 @@ On the Atari (ANTIC/GTIA), the same sources are:
 character ROM appears at $1000-$1FFF and $9000-$9FFF of VIC banks 0 and 2.
 **CPU view** reads through the CPU's memory map.
 
+On the Commander X16 (VERA):
+
+- **Sprite** (with a sprite number, 0-127): from its attributes at $1FC00:
+  data address, 4 or 8 bpp, width and height (8-64), palette offset;
+- **Layer 0 tiles** / **Layer 1 tiles**: the layer's tile base, tile size and
+  colour depth; 1 bpp tiles in the map's most common colours (the text colour
+  on the KERNAL screen: layer 1, $1F000, white on blue). A layer in bitmap mode
+  has no tiles.
+
 ## GUI
 
 Controls: source (address, VIC sprite 0-7 / Atari player 0-3 and missiles, the
@@ -99,7 +117,8 @@ gfx formats
 gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]
 gfx chip-sprite <n> [file.png]      VIC sprite 0-7; Atari player 0-3, 4 = missiles
 gfx chip-charset [count] [columns] [file.png]
-(vic-sprite / vic-charset are the same commands)
+gfx chip-layer <0|1> [count] [columns] [file.png]   VERA tile layer
+(vic-sprite / vic-charset are the same commands; chip-sprite takes VERA sprites 0-127)
 ```
 
 Without a file the items are printed as ASCII art (at most 16): `.` for 0,
