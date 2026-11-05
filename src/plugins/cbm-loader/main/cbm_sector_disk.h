@@ -36,6 +36,12 @@ public:
     std::string getDiskName() override;
     std::string getDiskId() override;
     uint16_t getFreeBlocks() const override;
+    /** The DOS type after the disk ID ("2A", "2C", "3D"), as the directory header shows it. */
+    std::string getDosType();
+    /** The raw image (for a DOS reading files by track and sector). */
+    const std::vector<uint8_t>& data() const { return m_data; }
+    /** Byte offset of a track/sector, 0xFFFFFFFF if out of range. */
+    uint32_t sectorOffset(int track, int sector) const { return getSectorOffset(track, sector); }
 
     const CbmDiskGeometry& geometry() const { return m_geom; }
 

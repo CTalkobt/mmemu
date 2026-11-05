@@ -83,10 +83,11 @@ static const size_t s_d80Sizes[] = { 533248, 535331 };
 static const CbmDiskGeometry s_d80Geom = {
     "D80", 77, s_d80Spt,
     39, 1,      // dir at 39/1
-    38, 0,      // header sector
+    39, 0,      // header: disk name, ID, DOS type (VICE vdrive-bam.c: "the
+                // first BAM block with the disk name is at 39/0")
     0x06, 0x18, // disk name at +$06, ID at +$18
     38, 0,      // BAM at 38/0
-    0x06, 5, 50, // BAM entries (approximate — D80 BAM is split across 38/0 and 38/3)
+    0x06, 5, 50, // BAM entries: 38/0 tracks 1-50, then 38/3 (getFreeBlocks follows the chain)
     s_d80Sizes, 2
 };
 
@@ -109,7 +110,7 @@ static const size_t s_d82Sizes[] = { 1066496, 1070662 };
 static const CbmDiskGeometry s_d82Geom = {
     "D82", 154, s_d82Spt,
     39, 1,
-    38, 0,
+    39, 0,      // header (as the 8050)
     0x06, 0x18,
     38, 0,
     0x06, 5, 50,
@@ -315,30 +316,56 @@ std::string CbmSectorDisk::getDiskId() {
     return id;
 }
 
+std::string CbmSectorDisk::getDosType() {
+    // The two bytes after the ID and a shifted space: "2A" (1541), "2C"
+    // (8050/8250), "3D" (1581)
+    if (m_data.empty()) return "";
+    uint32_t offset = getSectorOffset(m_geom.headerTrack, m_geom.headerSector);
+    if (offset == 0xFFFFFFFF || offset + m_geom.diskIdOffset + 5 > m_data.size()) return "";
+    const uint8_t* sec = &m_data[offset];
+    return std::string{(char)sec[m_geom.diskIdOffset + 3], (char)sec[m_geom.diskIdOffset + 4]};
+}
+
+// Blocks free as CBM DOS counts them: the free-sector counts in the BAM,
+// leaving out the directory track
 uint16_t CbmSectorDisk::getFreeBlocks() const {
     if (m_data.empty()) return 0;
-
-    // Try reading free counts from BAM
-    uint32_t bamOff = getSectorOffset(m_geom.bamTrack, m_geom.bamSector);
-    if (bamOff != 0xFFFFFFFF && bamOff + 256 <= m_data.size()) {
-        uint16_t total = 0;
-        for (int i = 0; i < m_geom.bamTrackCount; ++i) {
-            uint32_t entryOff = bamOff + m_geom.bamEntryOffset + i * m_geom.bamEntrySize;
-            if (entryOff >= m_data.size()) break;
-            total += m_data[entryOff]; // First byte of each BAM entry is free count
+    auto sector = [this](int t, int s) -> const uint8_t* {
+        uint32_t o = getSectorOffset(t, s);
+        return (o == 0xFFFFFFFF || o + 256 > m_data.size()) ? nullptr : &m_data[o];
+    };
+    std::string kind = m_geom.name;
+    int total = 0;
+    if (kind == "D64" || kind == "D71") {
+        const uint8_t* bam = sector(18, 0);
+        if (!bam) return 0;
+        for (int t = 1; t <= 35; ++t)
+            if (t != 18) total += bam[4 + (t - 1) * 4];
+        if (kind == "D71")                                // side 2: counts at $DD-$FF
+            for (int t = 36; t <= 70; ++t)
+                if (t != 53) total += bam[0xDD + (t - 36)];
+    } else if (kind == "D81") {
+        for (int b = 1; b <= 2; ++b) {                    // 40/1: tracks 1-40, 40/2: 41-80
+            const uint8_t* bam = sector(40, b);
+            if (!bam) return 0;
+            for (int i = 0; i < 40; ++i) {
+                int t = (b - 1) * 40 + i + 1;
+                if (t != 40) total += bam[0x10 + i * 6];
+            }
         }
-        if (total > 0) return total;
+    } else if (kind == "D80" || kind == "D82") {
+        // Bitmap blocks from 38/0, chained while they stay on track 38; each
+        // holds tracks [byte 4, byte 5) at 5 bytes per track from offset 6
+        int t = 38, s = 0;
+        for (int guard = 0; t == 38 && guard < 8; ++guard) {
+            const uint8_t* bam = sector(t, s);
+            if (!bam) break;
+            int first = bam[4], last = bam[5];
+            for (int tr = first; tr < last && tr <= m_geom.totalTracks; ++tr)
+                if (tr != m_geom.dirTrack) total += bam[6 + (tr - first) * 5];
+            t = bam[0];
+            s = bam[1];
+        }
     }
-
-    // Fallback: total sectors minus directory track minus used blocks
-    int totalSec = m_geom.totalSectors();
-    int dirTrackSectors = m_geom.sectorsPerTrack[m_geom.dirTrack - 1];
-    uint16_t available = totalSec - dirTrackSectors;
-
-    uint16_t used = 0;
-    auto entries = getDirectory();
-    for (const auto& e : entries)
-        used += e.sizeBlocks;
-
-    return (used > available) ? 0 : available - used;
+    return (uint16_t)std::min(total, 65535);
 }

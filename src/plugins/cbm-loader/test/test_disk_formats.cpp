@@ -211,12 +211,21 @@ TEST_CASE(d80_open_dir_read) {
     const char* path = "test_fmt.d80";
     {
         std::vector<uint8_t> img(533248, 0);
-        // Header at 38/0
-        uint32_t hdrOff = sectorOffset(s_d80Spt, 38, 0);
+        // Header (disk name, ID, "2C") at 39/0, as VICE's vdrive-bam.c has
+        // it; it points to the bitmap blocks at 38/0 (tracks 1-50) and 38/3
+        // (51-77): byte 4 first track, 5 last + 1, 5 bytes per track from 6
+        uint32_t hdrOff = sectorOffset(s_d80Spt, 39, 0);
         img[hdrOff] = 38;
-        img[hdrOff + 1] = 3;
+        img[hdrOff + 1] = 0;
         writeDirAndFile(img, s_d80Spt, 39, 1, 1, 0);
-        writeHeader(img, s_d80Spt, 38, 0, 0x06, 0x18);
+        writeHeader(img, s_d80Spt, 39, 0, 0x06, 0x18);
+        img[hdrOff + 0x1B] = '2'; img[hdrOff + 0x1C] = 'C';
+        uint32_t b0 = sectorOffset(s_d80Spt, 38, 0), b3 = sectorOffset(s_d80Spt, 38, 3);
+        img[b0] = 38; img[b0 + 1] = 3; img[b0 + 4] = 1;  img[b0 + 5] = 51;
+        img[b3] = 39; img[b3 + 1] = 1; img[b3 + 4] = 51; img[b3 + 5] = 78;
+        img[b0 + 6 + 0 * 5] = 29;                    // track 1: 29 free
+        img[b0 + 6 + 38 * 5] = 28;                   // track 39 (directory): not counted
+        img[b3 + 6 + (60 - 51) * 5] = 23;            // track 60: 23 free
         std::ofstream f(path, std::ios::binary);
         f.write(reinterpret_cast<char*>(img.data()), img.size());
     }
@@ -225,6 +234,8 @@ TEST_CASE(d80_open_dir_read) {
     ASSERT(parser.open(path));
     ASSERT(parser.getDiskName() == "TEST DISK");
     ASSERT(parser.getDiskId() == "TD");
+    ASSERT(parser.getDosType() == "2C");
+    ASSERT_EQ((int)parser.getFreeBlocks(), 29 + 23);   // both bitmap blocks, not the directory track
 
     auto dir = parser.getDirectory();
     ASSERT(dir.size() == 1);
@@ -258,11 +269,11 @@ TEST_CASE(d82_open_dir_read) {
     const char* path = "test_fmt.d82";
     {
         std::vector<uint8_t> img(1066496, 0);
-        uint32_t hdrOff = sectorOffset(s_d82Spt, 38, 0);
+        uint32_t hdrOff = sectorOffset(s_d82Spt, 39, 0);   // header at 39/0, as the 8050
         img[hdrOff] = 38;
-        img[hdrOff + 1] = 3;
+        img[hdrOff + 1] = 0;
         writeDirAndFile(img, s_d82Spt, 39, 1, 1, 0);
-        writeHeader(img, s_d82Spt, 38, 0, 0x06, 0x18);
+        writeHeader(img, s_d82Spt, 39, 0, 0x06, 0x18);
         std::ofstream f(path, std::ios::binary);
         f.write(reinterpret_cast<char*>(img.data()), img.size());
     }
@@ -441,4 +452,27 @@ TEST_CASE(geometry_base_sizes) {
 
     D82Parser d82;
     ASSERT(d82.geometry().baseSize() == 1066496);
+}
+
+// Blocks free as CBM DOS counts them: the BAM's free counts without the
+// directory track (an empty 1541 disk shows 664, not 683)
+TEST_CASE(d64_free_blocks_leave_out_the_directory_track) {
+    const char* path = "test_free.d64";
+    {
+        std::vector<uint8_t> img(174848, 0);
+        uint32_t bam = 0;
+        for (int t = 1; t < 18; ++t) bam += (t <= 17 ? 21 : 0) * 256;   // offset of 18/0
+        img[bam] = 18; img[bam + 1] = 1;
+        img[bam + 4 + 0 * 4] = 21;                  // track 1
+        img[bam + 4 + 17 * 4] = 17;                 // track 18: the directory, not counted
+        img[bam + 4 + 34 * 4] = 17;                 // track 35
+        img[bam + 0xA5] = '2'; img[bam + 0xA6] = 'A';
+        std::ofstream f(path, std::ios::binary);
+        f.write(reinterpret_cast<char*>(img.data()), img.size());
+    }
+    D64Parser d64;
+    ASSERT(d64.open(path));
+    ASSERT_EQ((int)d64.getFreeBlocks(), 21 + 17);
+    ASSERT(d64.getDosType() == "2A");
+    fs::remove(path);
 }

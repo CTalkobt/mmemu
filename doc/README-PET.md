@@ -63,11 +63,12 @@ The bus is wired to the PIAs and VIA as on the real board (from VICE's `petpia1.
 **Drive 8** is on the bus: a host folder served as a Commodore DOS unit (the same DOS as the Commander X16's HostFS, `CbmHostDos`). It answers the three-wire handshake as listener and talker, and LISTEN/TALK/UNLISTEN/UNTALK and secondary addresses under ATN:
 
 - `LOAD"NAME",8`, `SAVE"NAME",8`, `LOAD"$",8` (a directory loaded at $0401, as Commodore's drives send it), BASIC 4's `DLOAD`, `DSAVE`, `DIRECTORY`, `DS$`/`DS`, and `OPEN`/`PRINT#`/`INPUT#`/`GET#`/`CLOSE` with `,S,W`/`,S,R` files; the error channel (15) and DOS commands.
-- Choose the folder with `disk mount 8 <folder>` (CLI), the GUI's Drive Status pane, or MCP; the default is the folder mmemu runs in.
+- **Or a disk image**: `disk mount 8 <image>` (CLI, MCP, or the GUI's Drive Status pane) serves a D64, D71, D80 (8050), D81 or D82 (8250) image, read-only: LOAD with `*`/`?` wildcards and the `0:` drive prefix, the directory as the drive sends it (disk name, ID and DOS type, block counts, file types with `*` for unclosed and `<` for locked files, blocks free as CBM DOS counts them), PRG/SEQ/USR files through OPEN, the error channel. Writes (SAVE, `,W`, scratch, rename, ...) answer `26,WRITE PROTECT ON`. `disk eject 8` returns to the host folder.
+- Choose the folder with `disk mount 8 <folder>` (CLI or MCP; the GUI's Drive Status pane mounts images); the default is the folder mmemu runs in.
 - A missing file: the drive stays silent, as Commodore's drives do, and the PET's read times out. BASIC 4 reports `?FILE NOT FOUND ERROR`; BASIC 2's LOAD (2001) keeps retrying the timed-out read until STOP is pressed (its ROM retries timeouts).
 - A byte the PET cuts off before UNTALK (it releases NDAC with NRFD high and takes ATN) is sent again at the next TALK, as Commodore's drives do. BASIC 4's `DIRECTORY` reads two bytes per TALK this way.
-- Not yet: disk images (D64/D80/D82) as drive 8, other units, CBM file types (a host file has none: every file lists as PRG).
-- Tests: `test_ieee488_bus.cpp` (load, save, a cut-off byte, a missing file and the error channel, another unit not present); checked from BASIC on the 2001 and 4032.
+- Not yet: writing to disk images, units other than 8, CBM file types in a host folder (a host file has none: every file lists as PRG).
+- Tests: `test_ieee488_bus.cpp` (host folder: load, save, a cut-off byte, a missing file and the error channel, another unit not present; image: load with a wildcard, a SEQ file, the directory bytes, write protection and errors); checked from BASIC on the 2001 and 4032, and on the 4032 with a D64 and a D80 image (`DIRECTORY`, `LOAD"$",8`, `DLOAD`, `RUN`, `INPUT#` from a SEQ file, `DSAVE` giving `26,WRITE PROTECT ON`).
 
 The VIA's PB5 is the vertical retrace: low for the last 4000 cycles of each 20000-cycle frame (`frameAccumulator.retraceSignal`). The 2001's screen editor waits for it before writing to the screen.
 
