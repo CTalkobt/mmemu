@@ -713,10 +713,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     };
                 };
                 if (kw.contains("restore")) wireKey(kw["restore"], "restore");
-                if (kw.contains("nmiKey")) {
-                    wireKey(kw["nmiKey"], "nmi");
-                    desc->nmiButtonKey = kw["nmiKey"].value("key", "nmi");
-                }
+                if (kw.contains("nmiKey"))  wireKey(kw["nmiKey"], "nmi");
             }
         }
     }
@@ -730,6 +727,13 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         if (ui.contains("panes")) {
             desc->uiPanesSet = true;
             for (const auto& p : ui["panes"]) desc->uiPanes.push_back(p.get<std::string>());
+        }
+        for (const auto& b : ui.value("screenButtons", nlohmann::json::array())) {
+            MachineDescriptor::ScreenButton sb;
+            sb.label = b.value("label", "");
+            sb.tooltip = b.value("tooltip", "");
+            for (const auto& k : b.value("keys", nlohmann::json::array())) sb.keys.push_back(k.get<std::string>());
+            if (!sb.label.empty() && !sb.keys.empty()) desc->screenButtons.push_back(sb);
         }
         if (ui.contains("graphicsFormats"))
             for (const auto& f : ui["graphicsFormats"]) desc->graphicsFormats.push_back(f.get<std::string>());

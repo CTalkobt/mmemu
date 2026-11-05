@@ -50,7 +50,7 @@ These are the keys most likely to cause confusion because they have no obvious e
 | VIC-20 Key | Key Name | Suggested PC Key | Notes |
 |---|---|---|---|
 | RUN/STOP | `run_stop` | `Escape` | Breaks running BASIC programs; SHIFT+RUN/STOP loads from tape |
-| RESTORE | `restore` | `Page Up` | Not in the matrix: it pulls VIA1 CA1 low, and VIA1's interrupt output is the CPU's NMI. RUN/STOP+RESTORE warm-starts BASIC. Wired by the machine's `kbdWiring.restore`. |
+| RESTORE | `restore` | `Page Up` | Not in the matrix: it pulls VIA1 CA1 low, and VIA1's interrupt output is the CPU's NMI. RUN/STOP+RESTORE warm-starts BASIC. Wired by the machine's `kbdWiring.restore`. The GUI screen pane has **RUN/STOP + RESTORE** and **RESTORE** buttons. |
 | CBM (Commodore) | `cbm` | `Left Alt` | The Commodore logo key; used for graphics characters and SHIFT+CBM toggles character set |
 | CTRL | `control` | `Tab` | Holds colour codes in BASIC; `CTRL+1`–`CTRL+8` set foreground colour |
 | ← (arrow-left char) | `arrow_left` | `` ` `` (backtick) | Types the PETSCII `←` character (code `$5F`); **not** a cursor key |

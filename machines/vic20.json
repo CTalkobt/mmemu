@@ -4,7 +4,12 @@
     {
       "id": "vic20",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
-              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] },
+              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore VIC-20",
       "licenseClass": "proprietary",
       "clockHz": 1022727,
@@ -63,7 +68,12 @@
     {
       "id": "vic20+3k",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
-              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] },
+              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore VIC-20 +3K",
       "licenseClass": "proprietary",
       "clockHz": 1022727,
@@ -122,7 +132,12 @@
     {
       "id": "vic20+8k",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
-              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] },
+              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore VIC-20 +8K",
       "licenseClass": "proprietary",
       "clockHz": 1022727,
@@ -181,7 +196,12 @@
     {
       "id": "vic20+16k",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
-              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] },
+              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore VIC-20 +16K",
       "licenseClass": "proprietary",
       "clockHz": 1022727,
@@ -240,7 +260,12 @@
     {
       "id": "vic20+32k",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
-              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] },
+              "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore VIC-20 +32K",
       "licenseClass": "proprietary",
       "clockHz": 1022727,

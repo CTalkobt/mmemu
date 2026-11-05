@@ -448,7 +448,9 @@ TEST_CASE(pet_nmi_button) {
     ensureRegistriesAndLoad();
     auto* desc = MachineRegistry::instance().createMachine("pet4032");
     ASSERT(desc != nullptr && !desc->cpus.empty());
-    ASSERT_EQ(desc->nmiButtonKey, std::string("nmi"));
+    ASSERT_EQ((int)desc->screenButtons.size(), 1);  // "Trigger NMI", not a RESTORE key
+    ASSERT_EQ(desc->screenButtons[0].label, std::string("Trigger NMI"));
+    ASSERT(desc->screenButtons[0].keys == std::vector<std::string>{"nmi"});
     ASSERT(!desc->onKey("restore", true));          // no RESTORE key on a PET
     desc->onReset(*desc);
     for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
@@ -467,13 +469,36 @@ TEST_CASE(pet_nmi_button) {
     ASSERT_EQ((int)bus->peek8(0x033A), 1);          // one press, one NMI
     delete desc;
 
-    for (const char* id : {"vic20", "c64"}) {        // RESTORE machines: no NMI button
-        auto* m = MachineRegistry::instance().createMachine(id);
-        ASSERT(m != nullptr);
-        ASSERT(m->nmiButtonKey.empty());
-        delete m;
-    }
 }
+
+// The C64 and VIC-20 screen buttons: RUN/STOP + RESTORE and RESTORE. Holding
+// the first button's keys gives the KERNAL's warm start, which clears the
+// screen (a character poked at the top left goes).
+static void runStopRestoreButton(const std::string& id, uint16_t screen) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine(id);
+    ASSERT(desc != nullptr && !desc->cpus.empty());
+    ASSERT_EQ((int)desc->screenButtons.size(), 2);
+    const auto& rsr = desc->screenButtons[0];
+    ASSERT_EQ(rsr.label, std::string("RUN/STOP + RESTORE"));
+    ASSERT(rsr.keys == (std::vector<std::string>{"run_stop", "restore"}));
+    ASSERT_EQ(desc->screenButtons[1].label, std::string("RESTORE"));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->cpus[0].dataBus;
+    bus->write8(screen, 0x18);                      // 'X' at the top left
+    for (uint64_t c = 0; c < 50000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(screen), 0x18);
+    for (const auto& k : rsr.keys) ASSERT(desc->onKey(k, true));     // as the button does
+    for (uint64_t c = 0; c < 150000;) c += desc->schedulerStep(*desc);
+    for (auto it = rsr.keys.rbegin(); it != rsr.keys.rend(); ++it) ASSERT(desc->onKey(*it, false));
+    for (uint64_t c = 0; c < 500000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(screen), 0x20);       // warm start: screen cleared
+    delete desc;
+}
+
+TEST_CASE(c64_run_stop_restore_button)   { runStopRestoreButton("c64", 0x0400); }
+TEST_CASE(vic20_run_stop_restore_button) { runStopRestoreButton("vic20", 0x1E00); }
 
 // Each machine declares its hardware panes and VIC graphics formats
 // ("ui" in the machine JSON); gfx::machineFormats follows them.

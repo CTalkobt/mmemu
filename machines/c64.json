@@ -4,7 +4,12 @@
     {
       "id": "c64",
       "ui": { "panes": ["tape", "drive", "cartridge", "sidscope", "graphics-vic"],
-              "graphicsFormats": ["sprite", "sprite-mc", "char", "char-mc"] },
+              "graphicsFormats": ["sprite", "sprite-mc", "char", "char-mc"],
+              "screenButtons": [
+                { "label": "RUN/STOP + RESTORE", "keys": ["run_stop", "restore"],
+                  "tooltip": "Hold RUN/STOP and press RESTORE: the KERNAL's warm start. It stops a running program, resets the screen and I/O, and keeps the program in memory." },
+                { "label": "RESTORE", "keys": ["restore"],
+                  "tooltip": "RESTORE on its own: an NMI. The KERNAL ignores it unless RUN/STOP is held (or a cartridge is present); programs can catch it through the NMI vector at $0318." } ] },
       "displayName": "Commodore 64",
       "licenseClass": "proprietary",
       "clockHz": 985248,

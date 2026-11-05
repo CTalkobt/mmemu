@@ -78,7 +78,7 @@ The ROMs do handle an NMI: the vector at `$FFFA` points to a `JMP ($0094)`, and 
 mmemu models that added button as an **NMI trigger**, held while pressed:
 - GUI: the **Trigger NMI** button under **Capture Keyboard** on the screen pane (shown only on the PET).
 - CLI: `key nmi down` / `key nmi up`; MCP: the same key name.
-- Machine JSON: a `sharedNmi` signal with an extra line (`"lines": ["nmi_button"]`) and `kbdWiring.nmiKey: {"key": "nmi", "line": "nmi_button"}`, which also sets `MachineDescriptor::nmiButtonKey`.
+- Machine JSON: a `sharedNmi` signal with an extra line (`"lines": ["nmi_button"]`) and `kbdWiring.nmiKey: {"key": "nmi", "line": "nmi_button"}`; the button is `ui.screenButtons: [{"label": "Trigger NMI", "keys": ["nmi"], ...}]`.
 
 ---
 

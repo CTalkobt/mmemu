@@ -4,6 +4,9 @@
 #include "libdevices/main/ivideo_output.h"
 #include "gui/main/ikeyboard_capture_pane.h"
 #include <functional>
+#include <string>
+#include <memory>
+#include <chrono>
 #include <vector>
 
 /**
@@ -28,12 +31,17 @@ public:
      */
     void SetMouseHandler(std::function<void(int dx, int dy, uint8_t buttons, int wheel)> fn);
 
-    /**
-     * Show the "Trigger NMI" button (machines with an NMI button but no
-     * RESTORE key, e.g. the PET): fn(true) while it is held, fn(false) on
-     * release. Empty hides it.
-     */
-    void SetNmiHandler(std::function<void(bool down)> fn);
+    /** A button under Capture Keyboard that holds machine keys (RUN/STOP +
+     *  RESTORE, RESTORE, the PET's NMI button): press(true) while held,
+     *  press(false) on release, at least MIN_HOLD_MS after a click. */
+    struct KeyButton {
+        std::string label;
+        std::string tooltip;
+        std::function<void(bool down)> press;
+    };
+    static constexpr int MIN_HOLD_MS = 150;
+    /** Replace the buttons (none = no buttons). */
+    void SetKeyButtons(std::vector<KeyButton> buttons);
 
     // IKeyboardCapturePane
     void SetCaptureCallback(std::function<void(bool)> fn) override { m_captureCallback = std::move(fn); }
@@ -49,10 +57,19 @@ private:
     std::vector<uint32_t>      m_pixelBuf;
     wxToggleButton*            m_ratioBtn;
     wxToggleButton*            m_captureBtn;
-    wxButton*                  m_nmiBtn;
-    std::function<void(bool)>  m_nmiHandler;
-    bool                       m_nmiDown = false;
-    void setNmi(bool down);
+    struct LiveButton {
+        wxButton* btn = nullptr;
+        std::function<void(bool)> press;
+        bool down = false;              // keys held
+        bool releasePending = false;    // mouse released before MIN_HOLD_MS
+        std::chrono::steady_clock::time_point since;
+    };
+    std::vector<std::unique_ptr<LiveButton>> m_keyButtons;
+    wxBoxSizer* m_rightSizer = nullptr;
+    wxTimer     m_releaseTimer;
+    void buttonDown(LiveButton& b);
+    void buttonUp(LiveButton& b);
+    void releaseDue();
     std::function<void(bool)>  m_captureCallback;
 
     std::function<void(int, int, uint8_t, int)> m_mouseHandler;

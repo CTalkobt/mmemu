@@ -14,15 +14,10 @@ ScreenPane::ScreenPane(wxWindow* parent)
     m_captureBtn = new wxToggleButton(this, wxID_ANY, "Capture Keyboard");
     m_ratioBtn->SetValue(true);
 
-    m_nmiBtn = new wxButton(this, wxID_ANY, "Trigger NMI");
-    m_nmiBtn->SetToolTip("Pulls the CPU's NMI line low while held. The PET had no RESTORE key; "
-                         "this stands in for the NMI pushbutton owners often added, so programs "
-                         "for a stock PET will not expect it.");
-    m_nmiBtn->Hide();
-
+    // Capture Keyboard, then the machine's key buttons below it
     auto* right = new wxBoxSizer(wxVERTICAL);
     right->Add(m_captureBtn, 0, wxEXPAND | wxALL, 4);
-    right->Add(m_nmiBtn,     0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+    m_rightSizer = right;
 
     auto* toolbar = new wxBoxSizer(wxHORIZONTAL);
     toolbar->Add(m_ratioBtn,   0, wxALL, 4);
@@ -37,10 +32,8 @@ ScreenPane::ScreenPane(wxWindow* parent)
     Bind(wxEVT_SIZE,  &ScreenPane::OnSize,           this);
     m_ratioBtn->Bind(wxEVT_TOGGLEBUTTON,   [this](wxCommandEvent&) { Refresh(); });
     m_captureBtn->Bind(wxEVT_TOGGLEBUTTON, &ScreenPane::OnCaptureToggle, this);
-    // Held while the mouse button is down, so the CPU sees the NMI edge
-    m_nmiBtn->Bind(wxEVT_LEFT_DOWN,    [this](wxMouseEvent& e) { setNmi(true);  e.Skip(); });
-    m_nmiBtn->Bind(wxEVT_LEFT_UP,      [this](wxMouseEvent& e) { setNmi(false); e.Skip(); });
-    m_nmiBtn->Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& e) { setNmi(false); e.Skip(); });
+    m_releaseTimer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { releaseDue(); }, m_releaseTimer.GetId());
     for (auto t : {wxEVT_MOTION, wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_RIGHT_DOWN, wxEVT_RIGHT_UP,
                    wxEVT_MIDDLE_DOWN, wxEVT_MIDDLE_UP, wxEVT_MOUSEWHEEL, wxEVT_LEAVE_WINDOW})
         Bind(t, &ScreenPane::OnMouse, this);
@@ -52,17 +45,66 @@ void ScreenPane::OnCaptureToggle(wxCommandEvent&) {
     if (m_captureCallback) m_captureCallback(active);
 }
 
-void ScreenPane::setNmi(bool down) {
-    if (down == m_nmiDown || !m_nmiHandler) return;
-    m_nmiDown = down;
-    m_nmiHandler(down);
+void ScreenPane::buttonDown(LiveButton& b) {
+    b.releasePending = false;
+    if (b.down) return;
+    b.down = true;
+    b.since = std::chrono::steady_clock::now();
+    b.press(true);
 }
 
-void ScreenPane::SetNmiHandler(std::function<void(bool)> fn) {
-    setNmi(false);
-    m_nmiHandler = std::move(fn);
-    m_nmiBtn->Show((bool)m_nmiHandler);
+void ScreenPane::buttonUp(LiveButton& b) {
+    if (!b.down) return;
+    // A quick click would press and release between two emulation slices,
+    // so the machine would not see it: hold for at least MIN_HOLD_MS
+    auto held = std::chrono::steady_clock::now() - b.since;
+    if (held < std::chrono::milliseconds(MIN_HOLD_MS)) {
+        b.releasePending = true;
+        if (!m_releaseTimer.IsRunning()) m_releaseTimer.Start(20);
+        return;
+    }
+    b.down = false;
+    b.press(false);
+}
+
+void ScreenPane::releaseDue() {
+    bool waiting = false;
+    for (auto& b : m_keyButtons) {
+        if (!b->releasePending) continue;
+        auto held = std::chrono::steady_clock::now() - b->since;
+        if (held >= std::chrono::milliseconds(MIN_HOLD_MS)) {
+            b->releasePending = false;
+            b->down = false;
+            b->press(false);
+        } else {
+            waiting = true;
+        }
+    }
+    if (!waiting) m_releaseTimer.Stop();
+}
+
+void ScreenPane::SetKeyButtons(std::vector<KeyButton> buttons) {
+    m_releaseTimer.Stop();
+    for (auto& b : m_keyButtons) {
+        if (b->down) b->press(false);
+        m_rightSizer->Detach(b->btn);
+        b->btn->Destroy();
+    }
+    m_keyButtons.clear();
+    for (auto& kb : buttons) {
+        auto live = std::make_unique<LiveButton>();
+        live->btn = new wxButton(this, wxID_ANY, wxString::FromUTF8(kb.label));
+        if (!kb.tooltip.empty()) live->btn->SetToolTip(wxString::FromUTF8(kb.tooltip));
+        live->press = std::move(kb.press);
+        LiveButton* lb = live.get();
+        lb->btn->Bind(wxEVT_LEFT_DOWN,    [this, lb](wxMouseEvent& e) { buttonDown(*lb); e.Skip(); });
+        lb->btn->Bind(wxEVT_LEFT_UP,      [this, lb](wxMouseEvent& e) { buttonUp(*lb);   e.Skip(); });
+        lb->btn->Bind(wxEVT_LEAVE_WINDOW, [this, lb](wxMouseEvent& e) { buttonUp(*lb);   e.Skip(); });
+        m_rightSizer->Add(lb->btn, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+        m_keyButtons.push_back(std::move(live));
+    }
     Layout();
+    Refresh();
 }
 
 void ScreenPane::SetMouseHandler(std::function<void(int, int, uint8_t, int)> fn) {
@@ -164,9 +206,9 @@ void ScreenPane::OnPaint(wxPaintEvent&) {
     wxImage img(srcW, srcH, rgb);
 
     wxRect canvas = GetClientRect();
-    // Below the controls (taller when the NMI button is shown)
+    // Below the controls (taller with key buttons under Capture Keyboard)
     int btnH = m_ratioBtn->GetSize().y + 8;
-    if (m_nmiBtn->IsShown()) btnH = std::max(btnH, m_nmiBtn->GetRect().GetBottom() + 5);
+    if (!m_keyButtons.empty()) btnH = std::max(btnH, m_keyButtons.back()->btn->GetRect().GetBottom() + 5);
     canvas.y      += btnH;
     canvas.height -= btnH;
     if (canvas.width <= 0 || canvas.height <= 0) return;

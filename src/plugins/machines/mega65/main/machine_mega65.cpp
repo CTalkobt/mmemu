@@ -254,6 +254,14 @@ MachineDescriptor* Mega65MachineFactory::create() {
     desc->machineId    = "mega65";
     desc->uiPanesSet   = true;      // every graphics format (VIC-II and VIC-IV)
     desc->uiPanes      = {"drive", "cartridge", "sidscope", "mega65", "graphics-vic"};
+    desc->screenButtons = {
+        {"RUN/STOP + RESTORE", {"run_stop", "restore"},
+         "Hold RUN/STOP and press RESTORE: the ROM's warm start. It stops a running program and "
+         "resets the screen, keeping the program in memory."},
+        {"RESTORE", {"restore"},
+         "RESTORE on its own: an NMI, which programs can catch through the NMI vector. (On a real "
+         "MEGA65, holding RESTORE opens the Freeze menu; mmemu does not emulate that.)"},
+    };
     desc->displayName  = "MEGA65";
     desc->licenseClass = "proprietary";
 
