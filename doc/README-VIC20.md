@@ -37,10 +37,12 @@ The VIC-20 machine includes a Datasette wired through VIA2 and VIA1:
 
 | Signal | Source/Destination | Description |
 |--------|--------------------|-------------|
-| Motor | VIA2 PB3 (`$9120` bit 3, active-low) | Motor on when CPU drives bit 3 low. |
-| Write | VIA2 PB7 (`$9120` bit 7) | Cassette write line from CPU. |
-| Read pulse | VIA1 CA1 → IFR (`$911D` bit 1) | Each pulse sets the VIA1 CA1 interrupt flag. |
-| Sense | VIA2 PB6 (input) | Asserted when tape is mounted. |
+| Motor | VIA1 CA2 (`$911C` PCR, manual low = on) | The KERNAL's IRQ starts the motor while a button is held, as on the real machine. |
+| Write | VIA2 PB3 (`$9120` bit 3) | Cassette write line from CPU (shared with keyboard column 3). |
+| Read pulse | VIA2 CA1 → IFR (`$912D` bit 1) | Each pulse sets the VIA2 CA1 interrupt flag; the KERNAL times pulses with VIA2 Timer 2. |
+| Sense | VIA1 PA6 (`$911F` bit 6, input) | Low while PLAY or RECORD is pressed (a mounted tape counts as PLAY). |
+
+As in VICE (`vic20via1.c`, `vic20via2.c`) and the KERNAL (`BIT $911F` for the sense, `$912D` for the read flag). Mount a tape after typing `LOAD`: a tape mounted at power-on starts moving as soon as the KERNAL's IRQ runs, and its leader passes before `LOAD`.
 
 See [doc/README-DATASETTE.md](README-DATASETTE.md) for the full Datasette API.
 

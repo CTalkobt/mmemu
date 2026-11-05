@@ -32,6 +32,7 @@ The VIA exposes all four handshake/interrupt control lines via `getSignalLine(na
 | `"cb2"` | In/Out | bit 3 | Input edge or output (per PCR bits 7–5). |
 | `"pb7"` | Read-only proxy | — | Reads bit 7 of the ORB register. |
 | `"pb0"`–`"pb6"` | Read-only proxy | — | Reads the corresponding bit of ORB. |
+| `"pa0"`–`"pa7"` | Input pin | Peripheral | A port A pin held by a peripheral: `set(false)` pulls it low. While its DDRA bit is 0, ORA reads it (other input pins read high). The VIC-20's tape sense is VIA1 `"pa6"`. |
 
 **Immediate CA1/CB1 edge detection**: CA1 and CB1 use dedicated conduit objects that detect the active edge inside `set()` and update IFR immediately — without waiting for the next `tick()` call. This ensures devices that pulse these lines instantaneously within their own tick (such as the Datasette) are correctly detected regardless of device tick ordering. CA2 and CB2 in input mode continue to use tick-based polling.
 

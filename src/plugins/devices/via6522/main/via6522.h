@@ -30,6 +30,12 @@ public:
         if (n == "pb7") return &m_pb7Proxy;
         if (n.size() == 3 && n[0] == 'p' && n[1] == 'b' && n[2] >= '0' && n[2] <= '6')
             return &m_pbProxy[n[2] - '0'];
+        // paN: an input pin on port A that a peripheral drives (the VIC-20's
+        // tape sense on VIA1 PA6); reads as the pin while DDRA bit N is 0.
+        if (n.size() == 3 && n[0] == 'p' && n[1] == 'a' && n[2] >= '0' && n[2] <= '7') {
+            m_paInUsed = true;
+            return &m_paIn[n[2] - '0'];
+        }
         return nullptr;
     }
 
@@ -122,6 +128,20 @@ private:
     SignalLine   m_ca2Conduit, m_cb2Conduit;
     RegBitSignal m_pb7Proxy;
     RegBitSignal m_pbProxy[7]; // pb0–pb6 read-only proxies into ORB
+    /** A port A pin held by a peripheral: set(false) pulls it low. */
+    struct InputPin : public ISignalLine {
+        uint8_t* m_pins = nullptr;
+        uint8_t  m_bit = 0;
+        bool get() const override { return (*m_pins >> m_bit) & 1; }
+        void set(bool level) override {
+            if (level) *m_pins |= (uint8_t)(1 << m_bit);
+            else       *m_pins &= (uint8_t)~(1 << m_bit);
+        }
+        void pulse() override { set(false); set(true); }
+    };
+    InputPin m_paIn[8];
+    uint8_t  m_paInPins = 0xFF;   // levels of the paN lines
+    bool     m_paInUsed = false;
     void updateIrq();
     void driveCA2(bool level);
     void driveCB2(bool level);

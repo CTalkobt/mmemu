@@ -21,6 +21,7 @@
 #include "kbd_c64.h"
 #include "kbd_vic20.h"
 #include "keyboard_matrix_pet.h"
+#include "plugins/devices/datasette/main/datasette.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -92,6 +93,9 @@ static void ensureBootTestRegistriesReady() {
         []() -> IOHandler* { return new CIA6526("CIA", 0); });
     DeviceRegistry::instance().registerDevice("kbd_c64",
         []() -> IOHandler* { return new KbdC64(); });
+
+    DeviceRegistry::instance().registerDevice("datasette",
+        []() -> IOHandler* { return new Datasette(); });
 
     // VIC-20 Devices
     DeviceRegistry::instance().registerDevice("6560",
@@ -349,5 +353,57 @@ TEST_CASE(vic20_joystick_on_via1_and_via2) {
     desc->onJoystick(0, 0x1F);
     ASSERT_EQ(rd(via2, 0x9120) & 0x80, 0x80);
     via2->ioWrite(nullptr, 0x9122, 0xFF);
+    delete desc;
+}
+
+// The VIC-20's tape lines, as in VICE and the KERNAL: sense on VIA1 PA6
+// ($911F bit 6), motor on VIA1 CA2 (PCR $911C), write on VIA2 PB3, read
+// pulses on VIA2 CA1 (IFR $912D bit 1).
+TEST_CASE(vic20_tape_lines) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("vic20");
+    ASSERT(desc != nullptr);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2000000;) c += desc->schedulerStep(*desc);
+
+    VIA6522* via1 = nullptr;
+    VIA6522* via2 = nullptr;
+    IOHandler* tape = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (auto* h : handlers) {
+        auto* v = dynamic_cast<VIA6522*>(h);
+        if (v && v->baseAddr() == 0x9110) via1 = v;
+        if (v && v->baseAddr() == 0x9120) via2 = v;
+        if (std::string(h->name()) == "Tape") tape = h;
+    }
+    ASSERT(via1 && via2 && tape);
+    auto rd = [](VIA6522* v, uint32_t a) { uint8_t x = 0; v->ioPeek(nullptr, a, &x); return (int)x; };
+    auto state = [tape](const std::string& key) {
+        DeviceInfo info; tape->getDeviceInfo(info);
+        for (auto& s : info.state) if (s.first == key) return s.second;
+        return std::string();
+    };
+
+    ASSERT_EQ(rd(via1, 0x911F) & 0x40, 0x40);       // no button pressed
+    tape->controlTape("record");                    // RECORD + PLAY
+    ASSERT_EQ(rd(via1, 0x911F) & 0x40, 0);          // sense low
+    // The KERNAL's IRQ starts the motor while a button is held: CA2 low
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ(rd(via1, 0x911C) & 0x0E, 0x0C);
+    ASSERT_EQ(state("Motor On"), std::string("yes"));
+    tape->controlTape("stoprecord");
+    ASSERT_EQ(rd(via1, 0x911F) & 0x40, 0x40);
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ(state("Motor On"), std::string("no"));
+
+    // Read pulses arrive on VIA2 CA1
+    ISignalLine* ca1 = via2->getSignalLine("ca1");
+    ASSERT(ca1 != nullptr);
+    via2->ioWrite(nullptr, 0x912C, rd(via2, 0x912C) & ~0x01);  // negative edge
+    uint8_t dummy; via2->ioRead(nullptr, 0x9121, &dummy);      // clear CA1
+    ASSERT_EQ(rd(via2, 0x912D) & 0x02, 0);
+    ca1->set(false); ca1->set(true);
+    ASSERT_EQ(rd(via2, 0x912D) & 0x02, 0x02);
     delete desc;
 }

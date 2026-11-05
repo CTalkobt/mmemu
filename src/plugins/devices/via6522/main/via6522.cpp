@@ -13,6 +13,7 @@ VIA6522::VIA6522(const std::string& name, uint32_t baseAddr)
     m_pb7Proxy.m_reg = &m_regs[ORB];
     m_pb7Proxy.m_bit = 7;
     for (int i = 0; i < 7; ++i) { m_pbProxy[i].m_reg = &m_regs[ORB]; m_pbProxy[i].m_bit = i; }
+    for (int i = 0; i < 8; ++i) { m_paIn[i].m_pins = &m_paInPins; m_paIn[i].m_bit = (uint8_t)i; }
     VIA6522::reset();
 }
 
@@ -76,8 +77,10 @@ bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
         case ORA:
         case IORA2:
             *val = m_regs[ORA];
-            if (m_portADevice) {
-                uint8_t pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
+            if (m_portADevice || m_paInUsed) {
+                uint8_t pins = 0xFF;
+                if (m_portADevice) pins = peek ? m_portADevice->peekPort() : m_portADevice->readPort();
+                pins &= m_paInPins;
                 *val = (m_regs[ORA] & m_regs[DDRA]) | (pins & ~m_regs[DDRA]);
             }
             if (reg == ORA && !peek) {

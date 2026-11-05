@@ -150,3 +150,28 @@ TEST_CASE(via6522_ports) {
     via.ioWrite(nullptr, 0x9111, 0x55); // Write ORA
     ASSERT(portA.m_written == 0x55);
 }
+
+// paN: a peripheral holds a port A input pin (the VIC-20's tape sense on PA6)
+TEST_CASE(via6522_port_a_input_pin_lines) {
+    VIA6522 via("VIA1", 0x9110);
+    uint8_t v = 0;
+    via.ioWrite(nullptr, 0x9113, 0x80);             // DDRA: PA7 output, others input
+    via.ioWrite(nullptr, 0x9111, 0x00);
+    via.ioRead(nullptr, 0x9111, &v);
+    ASSERT_EQ((int)v, 0x00);                        // no pin lines: the latch, as before
+    ISignalLine* sense = via.getSignalLine("pa6");
+    ASSERT(sense != nullptr);
+    ASSERT(via.getSignalLine("pa8") == nullptr);
+    via.ioRead(nullptr, 0x9111, &v);
+    ASSERT_EQ((int)v, 0x7F);                        // inputs pulled up; PA7 drives 0
+    sense->set(false);
+    via.ioRead(nullptr, 0x911F, &v);
+    ASSERT_EQ((int)v, 0x3F);
+    ASSERT(!sense->get());
+    via.ioWrite(nullptr, 0x9113, 0xC0);             // PA6 now an output: the latch wins
+    via.ioRead(nullptr, 0x9111, &v);
+    ASSERT_EQ((int)v, 0x3F);
+    via.ioWrite(nullptr, 0x9111, 0x40);
+    via.ioRead(nullptr, 0x9111, &v);
+    ASSERT_EQ((int)v, 0x7F);
+}
