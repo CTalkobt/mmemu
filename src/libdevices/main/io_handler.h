@@ -30,6 +30,8 @@ public:
     virtual void setPortADevice(IPortDevice*) {}
     virtual void setPortBDevice(IPortDevice*) {}
     virtual IPortDevice* portADevice() const { return nullptr; }
+    /** A port this device offers by name, for machine JSON "portWiring" (e.g. an IEEE-488 bus's "dataIn"). */
+    virtual IPortDevice* namedPort(const std::string&) { return nullptr; }
     virtual IPortDevice* portBDevice() const { return nullptr; }
     /** Port bits set as outputs read the pin level, so a device can pull a
      *  line low that the chip drives high (the C64's joysticks on CIA1). */

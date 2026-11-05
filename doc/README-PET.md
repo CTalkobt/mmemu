@@ -18,9 +18,9 @@ The PET machine plugin integrates the 6502 CPU, legacy discrete logic or CRTC vi
     - **PET 4032**: MOS 6545 CRTC (40 columns).
     - **PET 8032**: MOS 6545 CRTC (80 columns).
 - **I/O**:
-    - **PIA #1 (6520)**: IEEE-488 data, keyboard rows, and CA1/CB1 interrupts.
-    - **PIA #2 (6520)**: IEEE-488 control signals.
-    - **VIA (6522)**: Keyboard column selection (via 4-to-10 decoder), cassette control, and user port.
+    - **PIA #1 (6520)**: keyboard row select and EOI (CA2 out, PA6 in), cassette, CA1/CB1 interrupts.
+    - **PIA #2 (6520)**: IEEE-488 data (port A in, port B out), NDAC (CA2) and DAV (CB2) out, ATN in (CA1).
+    - **VIA (6522)**: NRFD and ATN out (PB1/PB2), NDAC/NRFD/DAV in (PB0/PB6/PB7), vertical retrace (PB5), cassette write, user port.
 - **Bus**: IEEE-488 (GPIB) for peripheral communication.
 
 ### 2.2 Memory Map (Standard PET)
@@ -48,10 +48,28 @@ The PET machine plugin integrates the 6502 CPU, legacy discrete logic or CRTC vi
 - Supports dynamic reconfiguration of screen geometry (columns/rows).
 - Documentation: [README-6545.md](README-6545.md)
 
-### 3.2 IEEE-488 Bus (`SimpleIEEE488Bus`)
-- Implements the active-low logic of the parallel peripheral bus.
-- **Signals**: ATN, DAV, NRFD, NDAC, EOI, SRQ, IFC, REN.
-- Wired to PIA1 (Data) and PIA2 (Control).
+### 3.2 IEEE-488 Bus and Drive 8 (`Ieee488Bus`, device type `ieee488_bus`)
+The bus is wired to the PIAs and VIA as on the real board (from VICE's `petpia1.c`, `petpia2.c`, `petvia.c`); the lines are active low and wired-AND:
+
+| Line | Out (PET drives it) | In (PET reads it) |
+|------|----------------------|-------------------|
+| Data | PIA2 port B ($E822) | PIA2 port A ($E820) |
+| NDAC | PIA2 CA2 | VIA PB0 |
+| DAV  | PIA2 CB2 | VIA PB7 |
+| EOI  | PIA1 CA2 | PIA1 PA6 |
+| NRFD | VIA PB1 | VIA PB6 |
+| ATN  | VIA PB2 | PIA2 CA1 |
+
+**Drive 8** is on the bus: a host folder served as a Commodore DOS unit (the same DOS as the Commander X16's HostFS, `CbmHostDos`). It answers the three-wire handshake as listener and talker, and LISTEN/TALK/UNLISTEN/UNTALK and secondary addresses under ATN:
+
+- `LOAD"NAME",8`, `SAVE"NAME",8`, `LOAD"$",8` (a directory loaded at $0401, as Commodore's drives send it), BASIC 4's `DLOAD`, `DSAVE`, `DIRECTORY`, `DS$`/`DS`, and `OPEN`/`PRINT#`/`INPUT#`/`GET#`/`CLOSE` with `,S,W`/`,S,R` files; the error channel (15) and DOS commands.
+- Choose the folder with `disk mount 8 <folder>` (CLI), the GUI's Drive Status pane, or MCP; the default is the folder mmemu runs in.
+- A missing file: the drive stays silent, as Commodore's drives do, and the PET's read times out. BASIC 4 reports `?FILE NOT FOUND ERROR`; BASIC 2's LOAD (2001) keeps retrying the timed-out read until STOP is pressed (its ROM retries timeouts).
+- A byte the PET cuts off before UNTALK (it releases NDAC with NRFD high and takes ATN) is sent again at the next TALK, as Commodore's drives do. BASIC 4's `DIRECTORY` reads two bytes per TALK this way.
+- Not yet: disk images (D64/D80/D82) as drive 8, other units, CBM file types (a host file has none: every file lists as PRG).
+- Tests: `test_ieee488_bus.cpp` (load, save, a cut-off byte, a missing file and the error channel, another unit not present); checked from BASIC on the 2001 and 4032.
+
+The VIA's PB5 is the vertical retrace: low for the last 4000 cycles of each 20000-cycle frame (`frameAccumulator.retraceSignal`). The 2001's screen editor waits for it before writing to the screen.
 
 ### 3.3 Datasette (Tape)
 The PET machine includes a Datasette wired through the VIA and PIA1:

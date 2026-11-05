@@ -40,6 +40,8 @@ public:
     // Peripheral attachment
     void setPortADevice(IPortDevice* device) override { m_portADevice = device; }
     void setPortBDevice(IPortDevice* device) override { m_portBDevice = device; }
+    IPortDevice* portADevice() const override { return m_portADevice; }
+    IPortDevice* portBDevice() const override { return m_portBDevice; }
 
     // Line signals
     void setIrqALine(ISignalLine* line) override { m_irqALine = line; }
