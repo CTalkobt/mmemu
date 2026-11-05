@@ -78,12 +78,17 @@ std::string KernalHLE::describe() const {
     return buf + m_hostPath;
 }
 
+uint8_t KernalHLE::ramByte(IBus* bus, uint16_t addr) const {
+    return m_readRam ? m_readRam(addr) : bus->read8(addr);
+}
+
 bool KernalHLE::onExecute(MachineDescriptor& m, ICore& cpu, IBus& bus, uint32_t pc) {
     return handle(cpu, bus, pc, &m);
 }
 
 bool KernalHLE::handle(ICore& cpu, IBus& bus, uint32_t pc, MachineDescriptor* m) {
     if (pc != m_load && pc != m_save) return false;
+    m_readRam = m ? m->readRam : nullptr;
     uint8_t device = getDevice(&bus);
     LogRegistry::instance().getLogger("hle")->debug("vector ${:04X}, device {}", pc, device);
 
@@ -207,7 +212,7 @@ void KernalHLE::handleSave(ICore* cpu, IBus* bus) {
     if (!file) { fail(5); return; }                        // host folder not writable
     file.put((char)(start & 0xFF));
     file.put((char)(start >> 8));
-    for (uint32_t a = start; a < end; ++a) file.put((char)bus->read8((uint16_t)a));
+    for (uint32_t a = start; a < end; ++a) file.put((char)ramByte(bus, (uint16_t)a));
     file.close();
     if (!file) { fail(5); return; }
 
@@ -229,7 +234,7 @@ std::string KernalHLE::getFilename(IBus* bus) {
     uint16_t ptr = bus->read8(m_zp.fnadr) | (bus->read8(m_zp.fnadr + 1) << 8);
     std::string name;
     for (int i = 0; i < len; ++i) {
-        name += (char)bus->read8(ptr + i);
+        name += (char)ramByte(bus, (uint16_t)(ptr + i));
     }
     return name;
 }

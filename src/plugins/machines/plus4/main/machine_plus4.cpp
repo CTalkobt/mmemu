@@ -64,6 +64,7 @@ public:
         resetBanks();
     }
 
+    uint8_t ramByte(uint16_t addr) const { return m_ram[addr & m_ramMask]; }
     /** What the TED sees: RAM, or ROM in the current banking (character data from ROM). */
     uint8_t tedFetch(uint16_t addr, bool fromRom) {
         if (fromRom && addr >= 0x8000) return romRead(addr);
@@ -351,6 +352,9 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     ted->setRomSelect([bus](bool on) { bus->setRomOn(on); });
 
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
+    // The KERNAL fetches file names and SAVE data from RAM under the ROMs
+    // (BASIC 3.5 keeps strings at the top of RAM)
+    desc->readRam = [bus](uint16_t a) { return bus->ramByte(a); };
     desc->joystickPorts = 2;
     desc->onJoystick = [kbd](int port, uint8_t bits) { kbd->setJoystick(port, bits); };
 

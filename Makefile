@@ -177,6 +177,9 @@ PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 	src/plugins/devices/pia6520/main/plugin_init.cpp
 
 PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
+	src/plugins/devices/ted/main/ted.cpp \
+	src/plugins/devices/ted/main/ted_video.cpp \
+	src/plugins/devices/ted/main/ted_sound.cpp \
 	src/plugins/machines/plus4/main/plugin_init.cpp
 
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
