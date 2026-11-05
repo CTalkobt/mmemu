@@ -40,6 +40,7 @@ struct KbdPetBootTestWrapper : public IOHandler, public IKeyboardMatrix {
     void keyUp(int, int)   override {}
     void clearKeys() override {}
     bool pressKeyByName(const std::string& n, bool d) override {
+        if (!m_kbd.hasKey(n)) return false;
         if (d) m_kbd.keyDown(n); else m_kbd.keyUp(n); return true;
     }
     void enqueueText(const std::string&) override {}
@@ -438,3 +439,37 @@ static void restoreGivesNmi(const std::string& id) {
 
 TEST_CASE(vic20_restore_is_nmi) { restoreGivesNmi("vic20"); }
 TEST_CASE(c64_restore_is_nmi)   { restoreGivesNmi("c64"); }
+
+// The PET had no RESTORE key; its NMI line is reachable only through an
+// added button, modelled as the "nmi" key. The ROM's NMI handler jumps
+// through $0094 (BASIC's warm start by default); point it at a counter.
+TEST_CASE(pet_nmi_button) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("pet4032");
+    ASSERT(desc != nullptr && !desc->cpus.empty());
+    ASSERT_EQ(desc->nmiButtonKey, std::string("nmi"));
+    ASSERT(!desc->onKey("restore", true));          // no RESTORE key on a PET
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->cpus[0].dataBus;
+    const uint8_t code[] = {0xEE, 0x3A, 0x03, 0x40};       // $033B: INC $033A ; RTI
+    bus->write8(0x033A, 0);
+    for (size_t i = 0; i < sizeof code; i++) bus->write8(0x033B + (uint32_t)i, code[i]);
+    bus->write8(0x0094, 0x3B);
+    bus->write8(0x0095, 0x03);
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(0x033A), 0);
+    ASSERT(desc->onKey("nmi", true));
+    for (uint64_t c = 0; c < 20000;) c += desc->schedulerStep(*desc);
+    ASSERT(desc->onKey("nmi", false));
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(0x033A), 1);          // one press, one NMI
+    delete desc;
+
+    for (const char* id : {"vic20", "c64"}) {        // RESTORE machines: no NMI button
+        auto* m = MachineRegistry::instance().createMachine(id);
+        ASSERT(m != nullptr);
+        ASSERT(m->nmiButtonKey.empty());
+        delete m;
+    }
+}

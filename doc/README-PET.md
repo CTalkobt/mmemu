@@ -68,6 +68,17 @@ See [doc/README-DATASETTE.md](README-DATASETTE.md) for the full Datasette API.
 ### 3.4 Keyboard Matrix
 - **Graphics Layout (2001/4000)**: 8x8 matrix wired to VIA (columns) and PIA1 (rows).
 - **Business Layout (8000)**: Modified 8x8 matrix for the professional keyboard.
+- Typing (CLI `type`, MCP `type_string`): capitals are plain key presses, as on a PET (SHIFT+letter gives a graphics character). Unknown key names, such as `restore`, are rejected.
+
+### 3.5 NMI Button (not a RESTORE key)
+**The PET has no RESTORE key.** On a stock PET nothing drives the 6502's NMI line, so software for a stock PET never expects an NMI, and you should not rely on one when writing for real hardware.
+
+The ROMs do handle an NMI: the vector at `$FFFA` points to a `JMP ($0094)`, and at boot the KERNAL sets `$0094` to BASIC's warm start (`$C389` on the 2001, `$B3FF` on the 4032/8032), which prints `READY.` and keeps the program. Owners often wired a pushbutton to NMI for this, and a monitor can redirect `$0094` to itself.
+
+mmemu models that added button as an **NMI trigger**, held while pressed:
+- GUI: the **Trigger NMI** button under **Capture Keyboard** on the screen pane (shown only on the PET).
+- CLI: `key nmi down` / `key nmi up`; MCP: the same key name.
+- Machine JSON: a `sharedNmi` signal with an extra line (`"lines": ["nmi_button"]`) and `kbdWiring.nmiKey: {"key": "nmi", "line": "nmi_button"}`, which also sets `MachineDescriptor::nmiButtonKey`.
 
 ---
 

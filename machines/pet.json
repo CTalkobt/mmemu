@@ -33,7 +33,8 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "irq",   "type": "shared",
-          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] }
+          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
+        { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
@@ -45,7 +46,8 @@
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
-        "rowPort": { "device": "PIA1", "port": "A" }
+        "rowPort": { "device": "PIA1", "port": "A" },
+        "nmiKey":  { "key": "nmi", "line": "nmi_button" }
       },
       "ioHook": {
         "mirrorRanges": [
@@ -95,7 +97,8 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "irq",   "type": "shared",
-          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] }
+          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
+        { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
@@ -107,7 +110,8 @@
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
-        "rowPort": { "device": "PIA1", "port": "A" }
+        "rowPort": { "device": "PIA1", "port": "A" },
+        "nmiKey":  { "key": "nmi", "line": "nmi_button" }
       },
       "ioHook": {
         "mirrorRanges": [
@@ -157,7 +161,8 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "irq",   "type": "shared",
-          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] }
+          "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
+        { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
@@ -169,7 +174,8 @@
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
-        "rowPort": { "device": "PIA1", "port": "A" }
+        "rowPort": { "device": "PIA1", "port": "A" },
+        "nmiKey":  { "key": "nmi", "line": "nmi_button" }
       },
       "ioHook": {
         "mirrorRanges": [

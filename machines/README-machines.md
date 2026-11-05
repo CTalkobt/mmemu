@@ -121,6 +121,7 @@ Wires a keyboard matrix device to I/O ports.
 - `device`: Name of the keyboard device instance.
 - `colPort`: `{ "device": "...", "port": "A" or "B" }`
 - `rowPort`: `{ "device": "...", "port": "A" or "B" }`
+- `nmiKey` (optional): a plain NMI button for a machine with no RESTORE key (the PET): `{ "key": "nmi", "line": "<signal>" }`, same `line` forms as `restore`. Sets `MachineDescriptor::nmiButtonKey`, which makes the GUI show a **Trigger NMI** button.
 - `restore` (optional): the RESTORE key, outside the matrix. `{ "line": "<signal>" }` (a `sharedNmi` line, asserted while held) or `{ "line": "DEV.pin", "activeLow": true }` (e.g. the VIC-20's `VIA1.ca1`). `onKey("restore", down)` drives it.
 
 ### PlaWireSpec (plaWiring)

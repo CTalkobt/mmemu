@@ -683,12 +683,15 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 desc->onKey = [kbd](const std::string& keyName, bool down) {
                     return kbd->pressKeyByName(keyName, down);
                 };
-                // RESTORE is not in the matrix: {"line": "<signal>"} (asserted
-                // while held) or {"line": "DEV.pin", "activeLow": true}, e.g.
-                // the VIC-20's VIA1 CA1.
-                if (kw.contains("restore")) {
-                    const auto& rw = kw["restore"];
+                // Keys outside the matrix, wired to a line:
+                //  "restore": RESTORE (VIC-20, C64), key name "restore";
+                //  "nmiKey":  a plain NMI button (the PET, which had no
+                //             RESTORE key), key name from "key" (default "nmi").
+                // {"line": "<signal>"} is asserted while held;
+                // {"line": "DEV.pin", "activeLow": true} is pulled low.
+                auto wireKey = [&](const nlohmann::json& rw, const std::string& defaultKey) {
                     std::string src = rw.value("line", "");
+                    std::string keyName = rw.value("key", defaultKey);
                     bool activeLow = rw.value("activeLow", false);
                     ISignalLine* line = nullptr;
                     auto dot = src.find('.');
@@ -699,16 +702,20 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     } else if (signalMap.count(src)) {
                         line = signalMap[src];
                     }
-                    if (line) {
-                        if (activeLow) line->set(true);
-                        auto keys = desc->onKey;
-                        desc->onKey = [keys, line, activeLow](const std::string& keyName, bool down) {
-                            std::string n = keyName;
-                            std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-                            if (n == "restore") { line->set(activeLow ? !down : down); return true; }
-                            return keys(keyName, down);
-                        };
-                    }
+                    if (!line) return;
+                    if (activeLow) line->set(true);
+                    auto keys = desc->onKey;
+                    desc->onKey = [keys, line, activeLow, keyName](const std::string& name, bool down) {
+                        std::string n = name;
+                        std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                        if (n == keyName) { line->set(activeLow ? !down : down); return true; }
+                        return keys(name, down);
+                    };
+                };
+                if (kw.contains("restore")) wireKey(kw["restore"], "restore");
+                if (kw.contains("nmiKey")) {
+                    wireKey(kw["nmiKey"], "nmi");
+                    desc->nmiButtonKey = kw["nmiKey"].value("key", "nmi");
                 }
             }
         }

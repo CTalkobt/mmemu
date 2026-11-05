@@ -444,6 +444,13 @@ static void onScreenMachineLoad(void* paneHandle, MachineDescriptor* desc, void*
     pane->SetVideoOutput(vid);
     if (desc && desc->onMouse) pane->SetMouseHandler(desc->onMouse);
     else pane->SetMouseHandler(nullptr);
+    if (desc && desc->onKey && !desc->nmiButtonKey.empty()) {
+        auto onKey = desc->onKey;
+        std::string key = desc->nmiButtonKey;
+        pane->SetNmiHandler([onKey, key](bool down) { (void)onKey(key, down); });
+    } else {
+        pane->SetNmiHandler(nullptr);
+    }
 }
 
 static void refreshScreenPane(void* paneHandle, uint64_t /*cycles*/, void* /*ctx*/) {

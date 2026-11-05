@@ -14,10 +14,20 @@ ScreenPane::ScreenPane(wxWindow* parent)
     m_captureBtn = new wxToggleButton(this, wxID_ANY, "Capture Keyboard");
     m_ratioBtn->SetValue(true);
 
+    m_nmiBtn = new wxButton(this, wxID_ANY, "Trigger NMI");
+    m_nmiBtn->SetToolTip("Pulls the CPU's NMI line low while held. The PET had no RESTORE key; "
+                         "this stands in for the NMI pushbutton owners often added, so programs "
+                         "for a stock PET will not expect it.");
+    m_nmiBtn->Hide();
+
+    auto* right = new wxBoxSizer(wxVERTICAL);
+    right->Add(m_captureBtn, 0, wxEXPAND | wxALL, 4);
+    right->Add(m_nmiBtn,     0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 4);
+
     auto* toolbar = new wxBoxSizer(wxHORIZONTAL);
     toolbar->Add(m_ratioBtn,   0, wxALL, 4);
     toolbar->AddStretchSpacer();
-    toolbar->Add(m_captureBtn, 0, wxALL, 4);
+    toolbar->Add(right, 0);
 
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(toolbar, 0, wxEXPAND);
@@ -27,6 +37,10 @@ ScreenPane::ScreenPane(wxWindow* parent)
     Bind(wxEVT_SIZE,  &ScreenPane::OnSize,           this);
     m_ratioBtn->Bind(wxEVT_TOGGLEBUTTON,   [this](wxCommandEvent&) { Refresh(); });
     m_captureBtn->Bind(wxEVT_TOGGLEBUTTON, &ScreenPane::OnCaptureToggle, this);
+    // Held while the mouse button is down, so the CPU sees the NMI edge
+    m_nmiBtn->Bind(wxEVT_LEFT_DOWN,    [this](wxMouseEvent& e) { setNmi(true);  e.Skip(); });
+    m_nmiBtn->Bind(wxEVT_LEFT_UP,      [this](wxMouseEvent& e) { setNmi(false); e.Skip(); });
+    m_nmiBtn->Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& e) { setNmi(false); e.Skip(); });
     for (auto t : {wxEVT_MOTION, wxEVT_LEFT_DOWN, wxEVT_LEFT_UP, wxEVT_RIGHT_DOWN, wxEVT_RIGHT_UP,
                    wxEVT_MIDDLE_DOWN, wxEVT_MIDDLE_UP, wxEVT_MOUSEWHEEL, wxEVT_LEAVE_WINDOW})
         Bind(t, &ScreenPane::OnMouse, this);
@@ -36,6 +50,19 @@ void ScreenPane::OnCaptureToggle(wxCommandEvent&) {
     bool active = m_captureBtn->GetValue();
     m_captureBtn->SetLabel(active ? "Keyboard Captured \u25cf" : "Capture Keyboard");
     if (m_captureCallback) m_captureCallback(active);
+}
+
+void ScreenPane::setNmi(bool down) {
+    if (down == m_nmiDown || !m_nmiHandler) return;
+    m_nmiDown = down;
+    m_nmiHandler(down);
+}
+
+void ScreenPane::SetNmiHandler(std::function<void(bool)> fn) {
+    setNmi(false);
+    m_nmiHandler = std::move(fn);
+    m_nmiBtn->Show((bool)m_nmiHandler);
+    Layout();
 }
 
 void ScreenPane::SetMouseHandler(std::function<void(int, int, uint8_t, int)> fn) {
@@ -137,7 +164,9 @@ void ScreenPane::OnPaint(wxPaintEvent&) {
     wxImage img(srcW, srcH, rgb);
 
     wxRect canvas = GetClientRect();
+    // Below the controls (taller when the NMI button is shown)
     int btnH = m_ratioBtn->GetSize().y + 8;
+    if (m_nmiBtn->IsShown()) btnH = std::max(btnH, m_nmiBtn->GetRect().GetBottom() + 5);
     canvas.y      += btnH;
     canvas.height -= btnH;
     if (canvas.width <= 0 || canvas.height <= 0) return;

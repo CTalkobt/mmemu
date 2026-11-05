@@ -41,6 +41,7 @@ public:
         if (lower == "backslash") lower = "leftarrow";
         if (lower == "shift")     lower = "left_shift";
 
+        if (!m_kbd.hasKey(lower)) return false;     // e.g. "restore": the PET has none
         if (down) m_kbd.keyDown(lower);
         else      m_kbd.keyUp(lower);
         return true;
@@ -109,7 +110,9 @@ void KbdPetWrapper::enqueueText(const std::string& text) {
             else if (c == '\t')         name = "space";
             else if (c == '\\')         name = "leftarrow";
             else {
-                if (c >= 'A' && c <= 'Z') name = std::string(1, c);
+                // Unshifted letter keys give capitals on a PET (SHIFT gives
+                // graphics), so typed capitals are plain key presses.
+                if (c >= 'A' && c <= 'Z') name = std::string(1, (char)(c - 'A' + 'a'));
                 else {
                     switch (c) {
                         case ' ': name = "space"; break;
