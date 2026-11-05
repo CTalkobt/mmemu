@@ -44,6 +44,8 @@ ROM images
 -------------------------------------------------------------------------------
 
 The ROM images under roms/ (*.bin: Commodore 64, VIC-20 and PET BASIC,
-KERNAL, editor and character ROMs; Atari 8-bit OS, BASIC and character ROMs)
+KERNAL, editor and character ROMs; Commodore Plus/4 and C16 BASIC 3.5,
+KERNAL and 3-plus-1 ROMs, from ftp.funet.fi/pub/cbm/firmware/computers/plus4;
+Atari 8-bit OS, BASIC and character ROMs)
 are NOT part of mmemu and are NOT licensed under the AGPL. They remain the
 property of their respective copyright holders.
