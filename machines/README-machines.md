@@ -133,7 +133,8 @@ C++ machines set `MachineDescriptor::uiPanes` (with `uiPanesSet = true`) and `gr
 ### Wiring between devices
 - A device's `"lines"` (`ca1`, `cb1`, `ca2`, `cb2`, `irqA`, `irqB`) name a signal from `signals`, or another device's line as `"DEV.line"` (its `getSignalLine`), e.g. `"ca2": "IEEE.ndacOut"`.
 - `portWiring`: `[{ "device", "port": "A"|"B", "from": "DEV.port" }]` attaches a device's named port (`IOHandler::namedPort`, e.g. an IEEE-488 bus's `dataIn`) to a chip port, sharing it with a device already there (a keyboard).
-- `pinWiring`: `[{ "device", "port", "bit", "signal" }]` puts a signal's level on one input bit of a chip port, e.g. the PET's retrace on VIA PB5.
+- `pinWiring`: `[{ "device", "port", "bit", "signal" }]` puts a signal's level on one input bit of a chip port, e.g. the PET's retrace on VIA PB5 or its tape sense on PIA1 PA4.
+- `tapeWiring` lines (`sense`, `motor`, `write`, `readPulse`) are `"DEV.pin"`, a signal declared in `signals` (e.g. a latch the tape sets and `pinWiring` reads), or a CPU line.
 
 ### KbdWireSpec (kbdWiring)
 Wires a keyboard matrix device to I/O ports.

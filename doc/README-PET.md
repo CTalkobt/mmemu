@@ -73,14 +73,16 @@ The bus is wired to the PIAs and VIA as on the real board (from VICE's `petpia1.
 The VIA's PB5 is the vertical retrace: low for the last 4000 cycles of each 20000-cycle frame (`frameAccumulator.retraceSignal`). The 2001's screen editor waits for it before writing to the screen.
 
 ### 3.3 Datasette (Tape)
-The PET machine includes a Datasette wired through the VIA and PIA1:
+The PET machine has a Datasette as cassette #1, wired as VICE does it (`petpia1.c`, `petvia.c`):
 
 | Signal | Source/Destination | Description |
 |--------|--------------------|-------------|
-| Motor | VIA CA2 (PCR `$E84C` bits 3–1 = `110` → manual low) | Motor on when CA2 is driven low. |
-| Write | VIA PB7 (`$E840` bit 7) | Cassette write line from CPU. |
+| Motor | PIA1 CB2 (CRB `$E813` bits 5–3 = `110` → manual low) | Motor on when CB2 is driven low (signal `tapeMotor`). |
+| Write | VIA PB3 (`$E840` bit 3) | Cassette write line from CPU. |
 | Read pulse | PIA1 CA1 → CRA (`$E811` bit 7) | Each pulse sets the PIA1 CA1 IRQ1 flag; cleared by reading ORA (`$E810`). |
-| Sense | PIA1 PB6 (input) | Asserted when tape is mounted. |
+| Sense | PIA1 PA4 (`$E810` bit 4, input) | Low while PLAY or RECORD is pressed (signal `tapeSense`, put on the pin by `pinWiring`). |
+
+SAVE (`PRESS PLAY & RECORD ON TAPE #1`), then LOAD and RUN from the recorded `.tap`, work on the 2001 and 4032 (checked from BASIC). Mount a tape after typing `LOAD`. Cassette #2 is not emulated.
 
 See [doc/README-DATASETTE.md](README-DATASETTE.md) for the full Datasette API.
 

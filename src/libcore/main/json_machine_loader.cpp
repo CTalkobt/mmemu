@@ -413,38 +413,6 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Phase 14 — tapeWiring: Datasette <-> CPU Port / CIA / VIA
-    // -----------------------------------------------------------------------
-    if (spec.contains("tapeWiring") && !spec["tapeWiring"].is_null()) {
-        const auto& tw = spec["tapeWiring"];
-        std::string tapeDevName = tw.value("device", "");
-        if (devPtrs.count(tapeDevName)) {
-            auto* tape = devPtrs[tapeDevName];
-
-            auto getSig = [&](const std::string& key) -> ISignalLine* {
-                if (!tw.contains(key)) return nullptr;
-                std::string srcStr = tw[key].get<std::string>();
-                auto dot = srcStr.find(".");
-                if (dot != std::string::npos) {
-                    std::string devName = srcStr.substr(0, dot);
-                    std::string subPin  = srcStr.substr(dot + 1);
-                    if (devPtrs.count(devName))
-                        return devPtrs[devName]->getSignalLine(subPin.c_str());
-                } else if (cpu) {
-                    return cpu->getSignalLine(srcStr.c_str());
-                }
-                return nullptr;
-            };
-
-            ISignalLine* sig;
-            if ((sig = getSig("sense")))     tape->setSignalLine("sense", sig);
-            if ((sig = getSig("motor")))     tape->setSignalLine("motor", sig);
-            if ((sig = getSig("write")))     tape->setSignalLine("write", sig);
-            if ((sig = getSig("readPulse"))) tape->setSignalLine("readPulse", sig);
-        }
-    }
-
     // Phase 3 Step 12 — ramExpansions → OpenBusHandler for absent blocks
     // -----------------------------------------------------------------------
     if (spec.contains("ramExpansions")) {
@@ -728,6 +696,40 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Phase 3 Step 21 — Joystick wiring
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Phase 14 — tapeWiring: Datasette <-> CPU Port / CIA / VIA
+    // -----------------------------------------------------------------------
+    if (spec.contains("tapeWiring") && !spec["tapeWiring"].is_null()) {
+        const auto& tw = spec["tapeWiring"];
+        std::string tapeDevName = tw.value("device", "");
+        if (devPtrs.count(tapeDevName)) {
+            auto* tape = devPtrs[tapeDevName];
+
+            auto getSig = [&](const std::string& key) -> ISignalLine* {
+                if (!tw.contains(key)) return nullptr;
+                std::string srcStr = tw[key].get<std::string>();
+                auto dot = srcStr.find(".");
+                if (dot != std::string::npos) {
+                    std::string devName = srcStr.substr(0, dot);
+                    std::string subPin  = srcStr.substr(dot + 1);
+                    if (devPtrs.count(devName))
+                        return devPtrs[devName]->getSignalLine(subPin.c_str());
+                } else if (signalMap.count(srcStr)) {
+                    return signalMap[srcStr];           // a declared signal (e.g. a latch wired to pins)
+                } else if (cpu) {
+                    return cpu->getSignalLine(srcStr.c_str());
+                }
+                return nullptr;
+            };
+
+            ISignalLine* sig;
+            if ((sig = getSig("sense")))     tape->setSignalLine("sense", sig);
+            if ((sig = getSig("motor")))     tape->setSignalLine("motor", sig);
+            if ((sig = getSig("write")))     tape->setSignalLine("write", sig);
+            if ((sig = getSig("readPulse"))) tape->setSignalLine("readPulse", sig);
+        }
+    }
+
     // "ui": the hardware-dependent debugger panes and graphics formats
     if (spec.contains("ui") && spec["ui"].is_object()) {
         const auto& ui = spec["ui"];

@@ -21,7 +21,7 @@ The Datasette communicates with the host machine through four signal lines, decl
 |---------|-------------|--------------|------------------------|
 | C64 | 6510 port bit 5 (active-low) | 6510 port bit 3 | CIA1 FLAG → `$DC0D` bit 4 |
 | VIC-20 | VIA1 CA2 (manual low via PCR `$911C`) | VIA2 PB3 | VIA2 CA1 → `$912D` bit 1 (sense: VIA1 PA6, `$911F` bit 6) |
-| PET 2001/4032/8032 | VIA CA2 (manual low via PCR) | VIA PB7 | PIA1 CA1 → `$E811` bit 7 |
+| PET 2001/4032/8032 | PIA1 CB2 (manual low via CRB) | VIA PB3 | PIA1 CA1 → `$E811` bit 7 (sense: PIA1 PA4) |
 
 ---
 

@@ -536,3 +536,41 @@ TEST_CASE(machine_ui_capabilities) {
     ASSERT_EQ((int)gfx::machineFormats(nullptr).size(), vicFormats);
     ASSERT_EQ((int)gfx::machineFormats(nullptr, "antic").size(), 0);
 }
+
+// The PET's cassette #1, as VICE wires it (petpia1.c, petvia.c): sense on
+// PIA1 PA4, motor on PIA1 CB2 (low = on), write on VIA PB3, read on PIA1 CA1
+TEST_CASE(pet_tape_lines) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("pet4032");
+    ASSERT(desc != nullptr);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2000000;) c += desc->schedulerStep(*desc);
+    IOHandler* pia1 = nullptr;
+    IOHandler* tape = nullptr;
+    std::vector<IOHandler*> handlers;
+    desc->ioRegistry->enumerate(handlers);
+    for (auto* h : handlers) {
+        if (h->baseAddr() == 0xE810 && dynamic_cast<PIA6520*>(h)) pia1 = h;
+        if (std::string(h->name()) == "Tape") tape = h;
+    }
+    ASSERT(pia1 && tape);
+    auto rd = [pia1](uint32_t a) { uint8_t x = 0; pia1->ioPeek(nullptr, a, &x); return (int)x; };
+    auto state = [tape](const std::string& key) {
+        DeviceInfo info; tape->getDeviceInfo(info);
+        for (auto& s : info.state) if (s.first == key) return s.second;
+        return std::string();
+    };
+    ASSERT_EQ(rd(0xE810) & 0x10, 0x10);            // no button
+    tape->controlTape("record");
+    ASSERT_EQ(rd(0xE810) & 0x10, 0);                // sense low
+    uint8_t crb = (uint8_t)rd(0xE813);
+    pia1->ioWrite(nullptr, 0xE813, (uint8_t)((crb & ~0x38) | 0x30));   // CB2 output low
+    for (uint64_t c = 0; c < 1000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ(state("Motor On"), std::string("yes"));
+    pia1->ioWrite(nullptr, 0xE813, (uint8_t)((crb & ~0x38) | 0x38));   // CB2 output high
+    for (uint64_t c = 0; c < 1000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ(state("Motor On"), std::string("no"));
+    tape->controlTape("stoprecord");
+    ASSERT_EQ(rd(0xE810) & 0x10, 0x10);
+    delete desc;
+}

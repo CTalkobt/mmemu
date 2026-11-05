@@ -14,7 +14,7 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut", "cb2": "tapeMotor" } },
         { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
           "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
         { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
@@ -39,15 +39,17 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "retrace", "type": "latch" },
+        { "name": "tapeSense", "type": "latch" },
+        { "name": "tapeMotor", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "PIA1.pb6",
-        "motor": "VIA.ca2",
-        "write": "VIA.pb7",
+        "sense": "tapeSense",
+        "motor": "tapeMotor",
+        "write": "VIA.pb3",
         "readPulse": "PIA1.ca1"
       },
       "portWiring": [
@@ -57,7 +59,8 @@
         { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
       ],
       "pinWiring": [
-        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" },
+        { "device": "PIA1", "port": "A", "bit": 4, "signal": "tapeSense" }
       ],
       "kbdWiring": {
         "device": "Keyboard",
@@ -94,7 +97,7 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut", "cb2": "tapeMotor" } },
         { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
           "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
         { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
@@ -121,15 +124,17 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "retrace", "type": "latch" },
+        { "name": "tapeSense", "type": "latch" },
+        { "name": "tapeMotor", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "PIA1.pb6",
-        "motor": "VIA.ca2",
-        "write": "VIA.pb7",
+        "sense": "tapeSense",
+        "motor": "tapeMotor",
+        "write": "VIA.pb3",
         "readPulse": "PIA1.ca1"
       },
       "portWiring": [
@@ -139,7 +144,8 @@
         { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
       ],
       "pinWiring": [
-        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" },
+        { "device": "PIA1", "port": "A", "bit": 4, "signal": "tapeSense" }
       ],
       "kbdWiring": {
         "device": "Keyboard",
@@ -176,7 +182,7 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut", "cb2": "tapeMotor" } },
         { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
           "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
         { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
@@ -203,15 +209,17 @@
       "signals": [
         { "name": "vsync", "type": "latch" },
         { "name": "retrace", "type": "latch" },
+        { "name": "tapeSense", "type": "latch" },
+        { "name": "tapeMotor", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "PIA1.pb6",
-        "motor": "VIA.ca2",
-        "write": "VIA.pb7",
+        "sense": "tapeSense",
+        "motor": "tapeMotor",
+        "write": "VIA.pb3",
         "readPulse": "PIA1.ca1"
       },
       "portWiring": [
@@ -221,7 +229,8 @@
         { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
       ],
       "pinWiring": [
-        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" },
+        { "device": "PIA1", "port": "A", "bit": 4, "signal": "tapeSense" }
       ],
       "kbdWiring": {
         "device": "Keyboard",
