@@ -190,7 +190,8 @@ private:
     TracePane* m_tracePane = nullptr;
     Mega65StatusPane* m_mega65StatusPane = nullptr;
     SourcePane*     m_sourcePane = nullptr;
-    GraphicsPane*   m_graphicsPane = nullptr;
+    GraphicsPane*   m_graphicsPane = nullptr;      // VIC family
+    GraphicsPane*   m_anticGraphicsPane = nullptr; // ANTIC/GTIA (Atari)
     SidScopePane*   m_sidScopePane = nullptr;
 
     // Makefile project (#148)
@@ -757,13 +758,16 @@ MmemuFrame::MmemuFrame()
     m_cartPane = new CartridgePane(host);
     m_mega65StatusPane = new Mega65StatusPane(host);
     m_sourcePane = new SourcePane(host);
-    m_graphicsPane = new GraphicsPane(host);
+    m_graphicsPane = new GraphicsPane(host, GraphicsPane::Family::Vic);
+    m_anticGraphicsPane = new GraphicsPane(host, GraphicsPane::Family::Antic);
     m_sidScopePane = new SidScopePane(host);
-    m_graphicsPane->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
-    m_graphicsPane->SetMemoryCallback([this](uint32_t addr) {
-        if (auto* mp = activeMemPane()) mp->SetAddress(addr);
-        m_dock->open("memory");
-    });
+    for (auto* gp : {m_graphicsPane, m_anticGraphicsPane}) {
+        gp->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
+        gp->SetMemoryCallback([this](uint32_t addr) {
+            if (auto* mp = activeMemPane()) mp->SetAddress(addr);
+            m_dock->open("memory");
+        });
+    }
     m_outputPane = new wxTextCtrl(host, wxID_ANY, "", wxDefaultPosition, wxDefaultSize,
                                   wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP | wxTE_RICH2);
     m_outputPane->SetFont(wxFont(wxFontInfo(9).Family(wxFONTFAMILY_TELETYPE)));
@@ -797,6 +801,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
     m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
     m_dock->addPane("graphics-vic", "Graphics (VIC)",  m_graphicsPane,         Area::Side,   false);
+    m_dock->addPane("graphics-antic", "Graphics (ANTIC/GTIA)", m_anticGraphicsPane, Area::Side, false);
     m_dock->addPane("sidscope",    "SID Scope",        m_sidScopePane,         Area::Side,   false);
     m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
     m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
@@ -1308,6 +1313,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_deviceInfoPane->setMachine(m_machine);
     m_regWatchPane->setMachine(m_machine);
     m_graphicsPane->SetMachine(m_machine, m_bus, m_dbg);
+    m_anticGraphicsPane->SetMachine(m_machine, m_bus, m_dbg);
     m_sidScopePane->SetMachine(m_machine);
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
@@ -2269,6 +2275,8 @@ void MmemuFrame::applyPaneAvailability() {
     if (!m_machine || !m_dock) return;
     for (const char* pane : {"graphics-vic", "sidscope", "cartridge", "tape", "drive"})
         if (m_dock->hasPane(pane)) m_dock->setAvailable(pane, m_machine->hasPane(pane));
+    // Chip-specific panes only where the machine lists them
+    m_dock->setAvailable("graphics-antic", m_machine->uiPanesSet && m_machine->hasPane("graphics-antic"));
     // The MEGA65 Status pane also needs a MEGA65
     bool isMega65 = m_machine->machineId.find("mega65") != std::string::npos;
     m_dock->setAvailable("mega65", isMega65 && m_machine->hasPane("mega65"));
@@ -2371,6 +2379,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_sourcePane->RefreshBreakpointMarkers();   // only redraws if breakpoints changed
         if (m_graphicsPane)
             m_graphicsPane->RefreshValues();            // no-op unless shown; throttled while live
+        if (m_anticGraphicsPane)
+            m_anticGraphicsPane->RefreshValues();
         if (m_sidScopePane)
             m_sidScopePane->RefreshValues(m_cpu->cycles());   // no-op unless shown and the machine ran
         if (isPaused) {

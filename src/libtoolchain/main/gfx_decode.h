@@ -25,6 +25,10 @@ enum class Format {
     CharNCM,       ///< VIC-IV nybl-colour character, 16x8, 4 bpp (64 bytes)
     Char16,        ///< VIC-I double-height character, 8x16, 1 bpp
     Char16Multi,   ///< VIC-I double-height multicolour character, 4x16 double-wide pixels, 2 bpp
+    Player,        ///< ANTIC/GTIA player or missiles, single-line resolution: 8x256, 1 bpp
+    Player2Line,   ///< ANTIC/GTIA player or missiles, double-line resolution: 8x128, 1 bpp
+    AnticChar,     ///< ANTIC character, modes 2/3 (and 6/7): 8x8, 1 bpp
+    AnticChar4,    ///< ANTIC character, modes 4/5: 4x8 double-wide pixels, 2 bpp (4 colours)
 };
 
 struct FormatInfo {
@@ -39,6 +43,7 @@ struct FormatInfo {
     uint32_t stride;           ///< default bytes from one item to the next
     bool isSprite;
     bool lowNibbleFirst;       ///< 4 bpp: low nibble is the left pixel
+    const char* family;        ///< video chip family: "vic" (VIC-I/II/IV) or "antic" (ANTIC/GTIA)
 };
 
 /** All formats, in menu order. */

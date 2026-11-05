@@ -95,3 +95,11 @@ When DMACTL bits 2-3 enable it, ANTIC fetches the missiles and the four players 
 - **Plugin**: `lib/mmemu-plugin-antic.so`
 - **Class**: `Antic`
 - **Registration Name**: `"ANTIC"`
+
+## Debugger inspection
+
+ANTIC implements `IVideoInspect` for the Graphics (ANTIC/GTIA) pane, the CLI's
+`gfx chip-sprite`/`gfx chip-charset` and MCP `render_graphics`: players 0-3 and
+the missiles (sprite 4) from PMBASE at the DMACTL resolution, and the character
+set from CHBASE in the display list's main text mode, coloured from GTIA's
+registers. See [README-graphics-viewer.md](README-graphics-viewer.md).

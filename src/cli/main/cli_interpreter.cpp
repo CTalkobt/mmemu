@@ -1494,15 +1494,16 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (args.empty() || args[0] == "formats") {
             if (args.empty())
                 m_output("Syntax: gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]\n"
-                         "        gfx vic-sprite <0-7> [file.png]\n"
-                         "        gfx vic-charset [count] [columns] [file.png]\n"
-                         "  vic = read memory as the video chip sees it; swap = swap nibble order\n");
+                         "        gfx chip-sprite <n> [file.png]     (VIC sprite 0-7; Atari player 0-3, 4 = missiles)\n"
+                         "        gfx chip-charset [count] [columns] [file.png]\n"
+                         "  vic = read memory as the video chip sees it; swap = swap nibble order\n"
+                         "  vic-sprite / vic-charset are the same as chip-sprite / chip-charset\n");
             auto fmts = gfx::machineFormats(m_ctx.machine);
-            if (fmts.empty()) { m_output("This machine has no VIC graphics formats.\n"); return; }
+            if (fmts.empty()) { m_output("This machine has no graphics viewer formats.\n"); return; }
             m_output(m_ctx.machine ? "Formats for this machine:\n" : "Formats:\n");
             for (const auto* f : fmts) {
                 std::ostringstream os;
-                os << "  " << std::left << std::setw(12) << f->id << f->label << " (" << f->width << "x"
+                os << "  " << std::left << std::setw(14) << f->id << f->label << " (" << f->width << "x"
                    << f->height << ", " << f->stride << " bytes)\n";
                 m_output(os.str());
             }
@@ -1510,21 +1511,23 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
         if (!m_ctx.machine || !m_ctx.bus) { m_output("No machine created.\n"); return; }
         if (gfx::machineFormats(m_ctx.machine).empty()) {
-            m_output("This machine has no VIC graphics viewer (gfx shows VIC-I/II/IV sprites and characters).\n");
+            m_output("This machine has no graphics viewer (gfx shows VIC-I/II/IV and ANTIC/GTIA graphics).\n");
             return;
         }
 
         gfx::ViewRequest req;
         size_t next = 1;
-        if (args[0] == "vic-sprite") {
+        if (args[0] == "vic-sprite" || args[0] == "chip-sprite") {
             req.source = gfx::Source::Sprite;
-            if (args.size() < 2 || args[1].size() != 1 || args[1][0] < '0' || args[1][0] > '7') {
-                m_output("Syntax: gfx vic-sprite <0-7> [file.png]\n"); return;
+            IVideoInspect* vi = gfx::findVideoInspect(m_ctx.machine);
+            int n = vi ? vi->spriteCount() : 0;
+            if (args.size() < 2 || args[1].size() != 1 || args[1][0] < '0' || args[1][0] - '0' >= std::max(n, 1)) {
+                m_output("Syntax: gfx chip-sprite <0-" + std::to_string(std::max(n, 1) - 1) + "> [file.png]\n"); return;
             }
             req.sprite = args[1][0] - '0';
             req.videoView = true;
             next = 2;
-        } else if (args[0] == "vic-charset") {
+        } else if (args[0] == "vic-charset" || args[0] == "chip-charset") {
             req.source = gfx::Source::Charset;
             req.videoView = true;
             req.count = 256;

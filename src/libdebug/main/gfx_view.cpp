@@ -8,16 +8,19 @@
 
 namespace gfx {
 
-std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc) {
+std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc, const char* family) {
     std::vector<const FormatInfo*> out;
-    if (desc && !desc->hasPane("graphics-vic")) return out;
+    auto want = [family](const FormatInfo& f) { return !family || std::string(f.family) == family; };
+    if (desc && !desc->hasPane("graphics-vic") && !desc->hasPane("graphics-antic")) return out;
     if (desc && !desc->graphicsFormats.empty()) {
         for (const auto& id : desc->graphicsFormats) {
             Format f;
-            if (formatById(id, f)) out.push_back(&info(f));
+            if (formatById(id, f) && want(info(f))) out.push_back(&info(f));
         }
     } else {
-        for (const auto& f : formats()) out.push_back(&f);
+        // A machine that lists none: the VIC family (the original viewer)
+        for (const auto& f : formats())
+            if (want(f) && std::string(f.family) == "vic") out.push_back(&f);
     }
     return out;
 }
@@ -68,11 +71,12 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
         start = si.dataAddr;
         // 16-colour sprites are 16 pixels wide only with SPRX64EN; otherwise
         // 3 bytes per row give 6 pixels (MEGA65 book, Full-Colour Sprite Mode)
-        fmt = si.sixteenColor ? (si.wide64 ? Format::Sprite16 : Format::Sprite16Narrow)
+        fmt = si.playerMissile ? (si.height > 128 ? Format::Player : Format::Player2Line)
+            : si.sixteenColor ? (si.wide64 ? Format::Sprite16 : Format::Sprite16Narrow)
             : si.wide64       ? Format::Sprite64
             : si.multicolor   ? Format::SpriteMulti
                               : Format::SpriteHires;
-        if (si.height != 21) rows = si.height;
+        if (si.height != info(fmt).height) rows = si.height;
         if (req.paletteBase < 0) palBase = si.paletteBase;
         colors.slot[1] = color(fmt == Format::SpriteMulti ? si.mc0 : si.color);
         colors.slot[2] = color(si.color);
@@ -81,11 +85,13 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
     } else if (req.source == Source::Charset) {
         if (!haveCs) { v.error = "The video chip has no character set."; return v; }
         start = ci.addr;
-        fmt = ci.fullColor ? Format::CharFCM : ci.multicolor ? Format::CharMulti : Format::CharHires;
+        fmt = ci.antic     ? (ci.multicolor ? Format::AnticChar4 : Format::AnticChar)
+            : ci.fullColor ? Format::CharFCM : ci.multicolor ? Format::CharMulti : Format::CharHires;
+        int fg = ci.fg >= 0 ? ci.fg : 1;
         colors.slot[0] = color(ci.bg[0]);
-        colors.slot[1] = ci.multicolor ? color(ci.bg[1]) : color(1);
+        colors.slot[1] = ci.multicolor ? color(ci.bg[1]) : color(fg);
         colors.slot[2] = color(ci.bg[2]);
-        colors.slot[3] = color(1);
+        colors.slot[3] = color(fg);
     } else {
         const FormatInfo& fi = info(fmt);
         colors.slot[0] = colors.transparent = color(bg0);
@@ -94,9 +100,10 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
             colors.slot[2] = color(haveSp ? si0.color : 2);
             colors.slot[3] = color(haveSp ? si0.mc1 : 7);
         } else {
-            colors.slot[1] = color(fi.bitsPerPixel == 2 ? (haveCs ? ci.bg[1] : 2) : 1);
+            int fg = haveCs && ci.fg >= 0 ? ci.fg : 1;
+            colors.slot[1] = color(fi.bitsPerPixel == 2 ? (haveCs ? ci.bg[1] : 2) : fg);
             colors.slot[2] = color(haveCs ? ci.bg[2] : 7);
-            colors.slot[3] = color(1);
+            colors.slot[3] = color(fg);
         }
     }
     colors.paletteBase = palBase;

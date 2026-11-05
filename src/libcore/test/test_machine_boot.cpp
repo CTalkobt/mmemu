@@ -502,8 +502,12 @@ TEST_CASE(machine_ui_capabilities) {
     ASSERT_EQ(ids(c64), std::string("sprite,sprite-mc,char,char-mc"));    // VIC-II
     delete c64;
 
-    MachineDescriptor undeclared;                   // a machine that says nothing: everything
-    ASSERT(undeclared.hasPane("sidscope"));
-    ASSERT_EQ((int)gfx::machineFormats(&undeclared).size(), (int)gfx::formats().size());
-    ASSERT_EQ((int)gfx::machineFormats(nullptr).size(), (int)gfx::formats().size());
+    MachineDescriptor undeclared;                   // a machine that says nothing: every pane,
+    ASSERT(undeclared.hasPane("sidscope"));         // and the VIC formats
+    int vicFormats = 0;
+    for (const auto& f : gfx::formats()) vicFormats += std::string(f.family) == "vic";
+    ASSERT(vicFormats > 0 && vicFormats < (int)gfx::formats().size());
+    ASSERT_EQ((int)gfx::machineFormats(&undeclared).size(), vicFormats);
+    ASSERT_EQ((int)gfx::machineFormats(nullptr).size(), vicFormats);
+    ASSERT_EQ((int)gfx::machineFormats(nullptr, "antic").size(), 0);
 }

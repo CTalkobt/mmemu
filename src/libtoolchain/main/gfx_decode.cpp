@@ -7,17 +7,23 @@ namespace gfx {
 const std::vector<FormatInfo>& formats() {
     static const std::vector<FormatInfo> s = {
         // fmt                 id            label                          w   h  pw bpp bpr stride sprite lowNib
-        {Format::SpriteHires, "sprite",     "Sprite (hires)",             24, 21, 1, 1, 3,   64,  true,  false},
-        {Format::SpriteMulti, "sprite-mc",  "Sprite (multicolour)",       12, 21, 2, 2, 3,   64,  true,  false},
-        {Format::Sprite64,    "sprite64",   "Sprite 64-wide (VIC-IV)",    64, 21, 1, 1, 8,  192,  true,  false},
-        {Format::Sprite16,    "sprite16",   "Sprite 16-colour (VIC-IV)",  16, 21, 1, 4, 8,  192,  true,  false},
-        {Format::Sprite16Narrow, "sprite16-6", "Sprite 16-colour 6-wide (VIC-IV)", 6, 21, 1, 4, 3, 64, true, false},
-        {Format::CharHires,   "char",       "Character (hires)",           8,  8, 1, 1, 1,    8,  false, false},
-        {Format::CharMulti,   "char-mc",    "Character (multicolour)",     4,  8, 2, 2, 1,    8,  false, false},
-        {Format::CharFCM,     "char-fcm",   "Character FCM (VIC-IV)",      8,  8, 1, 8, 8,   64,  false, false},
-        {Format::CharNCM,     "char-ncm",   "Character NCM (VIC-IV)",     16,  8, 1, 4, 8,   64,  false, true},
-        {Format::Char16,      "char16",     "Character 8x16 (VIC-I)",      8, 16, 1, 1, 1,   16,  false, false},
-        {Format::Char16Multi, "char16-mc",  "Character 8x16 multicolour (VIC-I)", 4, 16, 2, 2, 1, 16, false, false},
+        {Format::SpriteHires, "sprite",     "Sprite (hires)",             24, 21, 1, 1, 3,   64,  true,  false, "vic"},
+        {Format::SpriteMulti, "sprite-mc",  "Sprite (multicolour)",       12, 21, 2, 2, 3,   64,  true,  false, "vic"},
+        {Format::Sprite64,    "sprite64",   "Sprite 64-wide (VIC-IV)",    64, 21, 1, 1, 8,  192,  true,  false, "vic"},
+        {Format::Sprite16,    "sprite16",   "Sprite 16-colour (VIC-IV)",  16, 21, 1, 4, 8,  192,  true,  false, "vic"},
+        {Format::Sprite16Narrow, "sprite16-6", "Sprite 16-colour 6-wide (VIC-IV)", 6, 21, 1, 4, 3, 64, true, false, "vic"},
+        {Format::CharHires,   "char",       "Character (hires)",           8,  8, 1, 1, 1,    8,  false, false, "vic"},
+        {Format::CharMulti,   "char-mc",    "Character (multicolour)",     4,  8, 2, 2, 1,    8,  false, false, "vic"},
+        {Format::CharFCM,     "char-fcm",   "Character FCM (VIC-IV)",      8,  8, 1, 8, 8,   64,  false, false, "vic"},
+        {Format::CharNCM,     "char-ncm",   "Character NCM (VIC-IV)",     16,  8, 1, 4, 8,   64,  false, true, "vic"},
+        {Format::Char16,      "char16",     "Character 8x16 (VIC-I)",      8, 16, 1, 1, 1,   16,  false, false, "vic"},
+        {Format::Char16Multi, "char16-mc",  "Character 8x16 multicolour (VIC-I)", 4, 16, 2, 2, 1, 16, false, false, "vic"},
+        // ANTIC/GTIA (Atari 8-bit): one player is one byte per row; the missiles
+        // share a byte, 2 bits each (missile 3 in bits 7-6 ... missile 0 in 1-0)
+        {Format::Player,      "player",     "Player/missiles, single-line (ANTIC)",  8, 256, 1, 1, 1, 256, true,  false, "antic"},
+        {Format::Player2Line, "player-2line", "Player/missiles, double-line (ANTIC)", 8, 128, 1, 1, 1, 128, true, false, "antic"},
+        {Format::AnticChar,   "antic2",     "Character, ANTIC modes 2/3 (2 colours)", 8, 8, 1, 1, 1,   8,  false, false, "antic"},
+        {Format::AnticChar4,  "antic4",     "Character, ANTIC modes 4/5 (4 colours)", 4, 8, 2, 2, 1,   8,  false, false, "antic"},
     };
     return s;
 }
