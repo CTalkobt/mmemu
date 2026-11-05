@@ -214,6 +214,7 @@ Automate GUI startup tasks:
 - **Register Pane**: Real-time inspection of all CPU registers. Status registers (P on the 6502/6510) additionally display individual flag bits in `NV-BDIZC` notation — uppercase letter = bit set, `.` = bit clear — alongside the hex value (e.g. `$36  ..-.IZ.`).
 - **Stack Pane**: JSR/RTS tracking with navigation support.
 - **Tape Pane**: Datasette controls — Mount, Play, Stop, Rewind, Record, and Save.
+- **Screen pane**: **Capture Keyboard** sends host keys to the machine. On the PET, a **Trigger NMI** button below it pulls the CPU's NMI line while held, standing in for the NMI pushbutton owners often added. The PET has no RESTORE key, so programs for a stock PET will not expect an NMI.
 - **Host controllers**: USB game controllers and joysticks (through SDL2, when it is installed at build time) drive the machine's joystick ports. On CBM machines the D-pad, hat or left stick steers and any face button fires; on the Commander X16 a controller is a SNES pad, with buttons matched by position. The first controller goes to the port most software reads (the C64's and MEGA65's control port 2), the second to the other; **Control > Swap Joystick Ports** swaps them. The status bar shows each controller as it connects. On Linux the controller needs read access to its `/dev/input/event*` device (normally granted to the logged-in user).
 - **Engineering Calculator** (**Ctrl-Shift-C**):
     - **28-Button Dynamic Layout**: Key labels and functions adapt automatically based on the current numerical base.

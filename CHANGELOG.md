@@ -7,6 +7,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Commodore Fixes (PET)
+- **PET NMI button**: the PET has no RESTORE key and nothing drives its NMI line, but its ROMs send an NMI to BASIC's warm start through `$0094`, and owners often added a pushbutton for it. mmemu models that button, not a RESTORE key: the GUI's **Trigger NMI** button below **Capture Keyboard** on the screen pane (PET only), or the key name `nmi` in the CLI and MCP. It breaks a running `10 GOTO 10` into `READY.` on the 2001 and 4032 (checked in the CLI). New `kbdWiring.nmiKey` and `MachineDescriptor::nmiButtonKey`. Test `pet_nmi_button`.
+- **PET typing**: the CLI's `type` and MCP's `type_string` sent capitals as SHIFT+letter, which is a graphics character on a PET, so typed BASIC came out as graphics. Capitals are now plain key presses. Unknown key names (such as `restore`) are now rejected instead of silently accepted.
+
 ### Commodore Fixes (NMI and RESTORE)
 - **VIC-20 NMI**: VIA1 now drives the CPU's NMI and VIA2 alone drives IRQ, as on the real machine; both were on IRQ.
 - **C64 NMI**: CIA2's interrupt output now reaches NMI. The machine file named it as an NMI source, but the loader attached it to a device NMI output the CIA does not have, so it was not connected.

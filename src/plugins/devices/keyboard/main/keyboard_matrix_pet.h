@@ -19,6 +19,8 @@ public:
     PetKeyboardMatrix(Layout layout = Layout::GRAPHICS);
 
     void keyDown(const std::string& keyName);
+    /** True if the layout has a key of this name. */
+    bool hasKey(const std::string& keyName) const { return m_keyMap.count(keyName) != 0; }
     void keyUp(const std::string& keyName);
 
     void setLogger(void* handle, void (*logFn)(void*, int, const char*)) {

@@ -89,6 +89,11 @@ struct MachineDescriptor {
      */
     std::function<bool(const std::string& keyName, bool down)> onKey;
 
+    /** Key name (for onKey) of a plain NMI button, for machines that have no
+     *  RESTORE key but whose NMI line can be triggered (the PET: owners often
+     *  wired a pushbutton to it). Empty if none. Frontends show a button. */
+    std::string nmiButtonKey;
+
     /** Joystick injection hook.
      *  @param port     Joystick port index (0 or 1).
      *  @param bits     5-bit active-low state (0=pressed, 1=idle).
