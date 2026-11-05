@@ -143,3 +143,28 @@ TEST_CASE(gfx_vic1_double_height_characters) {
     ASSERT_EQ((int)px[15 * 4 + 0], 0);
     ASSERT_EQ((int)px[15 * 4 + 3], 3);
 }
+
+// VERA colours: index 0 transparent; a palette offset moves indices 1-15 only
+// (VERA Programmer's Reference, "Tile mode 2/4/8 bpp")
+TEST_CASE(gfx_vera_palette_offset) {
+    gfx::Format f;
+    ASSERT(gfx::formatById("vera-spr8-4", f));
+    ASSERT(f == gfx::veraSpriteFormat(8, 4));
+    ASSERT(gfx::veraSpriteFormat(64, 8) == gfx::Format::VeraSprite64x8);
+    ASSERT(gfx::veraTileFormat(16, 2) == gfx::Format::VeraTile16x2);
+    ASSERT_EQ(gfx::info(gfx::Format::VeraSprite32x4).stride, 512u);     // 32x32 at 4 bpp
+    ASSERT_EQ(gfx::info(gfx::Format::VeraTile16x8).stride, 256u);
+    Mem mem;
+    mem.m[0x100] = 0x10;                            // 4 bpp: pixel 0 = 1, pixel 1 = 0
+    gfx::Colors c;
+    c.palette = [](int i) { return 0xFF000000u | (uint32_t)i; };
+    c.paletteBase = 32;                             // offset 2
+    c.transparent = 0xFF123456;
+    auto s = gfx::renderSheet(gfx::Format::VeraSprite8x4, mem.fn(), 0x100, 1, 1, 0, c, false, 0, 0, 0);
+    ASSERT_EQ(s.argb[0], 0xFF000000u | 33u);       // 1 + 32
+    ASSERT_EQ(s.argb[1], 0xFF123456u);             // 0: transparent
+    mem.m[0x200] = 20; mem.m[0x201] = 5;            // 8 bpp: 20 unmodified, 5 -> 37
+    s = gfx::renderSheet(gfx::Format::VeraSprite8x8, mem.fn(), 0x200, 1, 1, 0, c, false, 0, 0, 0);
+    ASSERT_EQ(s.argb[0], 0xFF000000u | 20u);
+    ASSERT_EQ(s.argb[1], 0xFF000000u | 37u);
+}

@@ -87,6 +87,7 @@ private:
 
 wxString GraphicsPane::sourceName(int src) const {
     if (src == SRC_ADDRESS) return "Address";
+    if (m_family == Family::Vera) return src == SRC_SPRITE0 ? wxString("Sprite") : wxString::Format("Layer %d tiles", src - m_srcCharset);
     if (src == m_srcCharset) return m_family == Family::Antic ? "Character set (CHBASE)" : "VIC character set";
     int n = src - SRC_SPRITE0;
     if (m_family == Family::Antic) return n < 4 ? wxString::Format("Player %d", n) : wxString("Missiles");
@@ -95,7 +96,8 @@ wxString GraphicsPane::sourceName(int src) const {
 
 GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     : wxPanel(parent, wxID_ANY), m_family(family),
-      m_sprites(family == Family::Antic ? 5 : 8), m_srcCharset(SRC_SPRITE0 + m_sprites) {
+      m_sprites(family == Family::Antic ? 5 : family == Family::Vera ? 1 : 8),
+      m_srcCharset(SRC_SPRITE0 + m_sprites), m_layers(family == Family::Vera ? 2 : 1) {
     auto* top = new wxBoxSizer(wxVERTICAL);
     auto label = [this](const wxString& s) { return new wxStaticText(this, wxID_ANY, s); };
     auto addRow = [&](std::initializer_list<std::pair<wxWindow*, int>> items) {
@@ -121,7 +123,7 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     };
 
     wxArrayString sources;
-    for (int i = SRC_ADDRESS; i <= m_srcCharset; ++i) sources.Add(sourceName(i));
+    for (int i = SRC_ADDRESS; i < m_srcCharset + m_layers; ++i) sources.Add(sourceName(i));
     m_source = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, sources);
     m_source->SetSelection(SRC_ADDRESS);
     m_source->SetToolTip("Show graphics at an address, or follow a sprite / the character set the video chip is using");
@@ -169,7 +171,14 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     m_live->SetToolTip("Redraw as memory changes");
     auto* exportBtn = new wxButton(this, wxID_ANY, "Export PNG...");
 
-    addRow({{m_source, 6}, {label("Address"), 3}, {m_addr, 6}, {m_format, 0}});
+    if (m_family == Family::Vera) {
+        m_spriteNum = makeSpin(0, 127, 0);
+        m_spriteNum->SetToolTip("Sprite number (0-127) for the Sprite source");
+        addRow({{m_source, 6}, {label("#"), 3}, {m_spriteNum, 6}, {label("Address"), 3}, {m_addr, 6}, {m_format, 0}});
+        m_spriteNum->Bind(wxEVT_SPINCTRL, [this](wxCommandEvent&) { OnSettingChanged(); });
+    } else {
+        addRow({{m_source, 6}, {label("Address"), 3}, {m_addr, 6}, {m_format, 0}});
+    }
     addRow({{label("Count"), 3}, {m_count, 6}, {label("Columns"), 3}, {m_cols, 6},
             {label("Stride"), 3}, {m_stride, 6}, {label("Zoom"), 3}, {m_zoom, 0}});
     if (m_family == Family::Antic) {
@@ -177,6 +186,10 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
         m_palBase->Hide();
         m_swap->Hide();
         addRow({{m_memSel, 6}, {m_live, 6}, {exportBtn, 0}});
+    } else if (m_family == Family::Vera) {
+        // VERA's nibble order is fixed (leftmost pixel high); palette offsets apply
+        m_swap->Hide();
+        addRow({{m_memSel, 6}, {label("Palette +"), 3}, {m_palBase, 6}, {m_live, 6}, {exportBtn, 0}});
     } else {
         addRow({{m_memSel, 6}, {label("Palette +"), 3}, {m_palBase, 6}, {m_swap, 6}, {m_live, 6}, {exportBtn, 0}});
     }
@@ -198,8 +211,9 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     m_live->Bind(wxEVT_CHECKBOX, changed);
     exportBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnExport(); });
 
-    // VIC: $2000, a common place for sprites; Atari: the ROM character set
-    m_start = m_family == Family::Antic ? 0xE000 : 0x2000;
+    // VIC: $2000, a common place for sprites; Atari: the ROM character set;
+    // X16: the KERNAL's character set in VRAM
+    m_start = m_family == Family::Antic ? 0xE000 : m_family == Family::Vera ? 0x1F000 : 0x2000;
     m_addr->ChangeValue(wxString::Format("$%X", m_start));
 }
 
@@ -222,12 +236,16 @@ void GraphicsPane::SetMachine(MachineDescriptor* desc, IBus* cpuBus, DebugContex
     m_dbg = dbg;
     m_video = gfx::findVideoInspect(desc);
     // Following the VIC needs a video chip that supports inspection
-    for (int i = SRC_SPRITE0; i <= m_srcCharset; ++i)
+    for (int i = SRC_SPRITE0; i < m_srcCharset + m_layers; ++i)
         m_source->SetString(i, m_video ? sourceName(i) : wxString("(no video chip)"));
     m_memSel->Enable(m_video != nullptr);
     if (!m_video) {
         m_source->SetSelection(SRC_ADDRESS);
         m_memSel->SetSelection(0);
+    } else if (m_family == Family::Vera) {
+        // VRAM is not on the CPU bus: always read it through VERA
+        m_memSel->SetSelection(1);
+        m_memSel->Enable(false);
     }
     m_selected = m_hover = -1;
     m_dirty = true;
@@ -259,7 +277,7 @@ void GraphicsPane::OnSourceChanged() {
     if (follow) {
         m_memSel->SetSelection(1);   // the VIC's own view
         // A VIC set is 256 characters; ANTIC's 128 (modes 2-5)
-        if (src == m_srcCharset) { m_count->SetValue(m_family == Family::Antic ? 128 : 256); m_cols->SetValue(16); m_stride->SetValue(0); }
+        if (src >= m_srcCharset) { m_count->SetValue(m_family == Family::Antic ? 128 : 256); m_cols->SetValue(16); m_stride->SetValue(0); }
         else                    { m_count->SetValue(1);   m_cols->SetValue(1); }
     }
     m_selected = -1;
@@ -300,8 +318,13 @@ void GraphicsPane::Rebuild() {
 
     gfx::ViewRequest req;
     int src = m_source->GetSelection();
-    if (src >= SRC_SPRITE0 && src < m_srcCharset) { req.source = gfx::Source::Sprite; req.sprite = src - SRC_SPRITE0; }
-    else if (src == m_srcCharset)                  req.source = gfx::Source::Charset;
+    if (src >= SRC_SPRITE0 && src < m_srcCharset) {
+        req.source = gfx::Source::Sprite;
+        req.sprite = m_spriteNum ? m_spriteNum->GetValue() : src - SRC_SPRITE0;
+    } else if (src >= m_srcCharset) {
+        req.source = gfx::Source::Charset;
+        if (m_layers > 1) req.layer = src - m_srcCharset;
+    }
     req.addr        = m_start;
     req.format      = SelectedFormat();
     req.count       = m_count->GetValue();

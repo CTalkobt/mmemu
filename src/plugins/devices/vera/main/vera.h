@@ -14,6 +14,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ivideo_output.h"
+#include "libdevices/main/ivideo_inspect.h"
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/isignal_line.h"
 #include "vera_psg.h"
@@ -45,7 +46,7 @@
  *
  * tick() takes CPU cycles at setCpuClockHz() (8 MHz by default).
  */
-class Vera : public IOHandler, public IVideoOutput, public IAudioOutput {
+class Vera : public IOHandler, public IVideoOutput, public IAudioOutput, public IVideoInspect {
 public:
     static constexpr int SCREEN_WIDTH  = 640;
     static constexpr int SCREEN_HEIGHT = 480;
@@ -161,6 +162,18 @@ public:
     int32_t  fxAccumulator() const { return m_fxMultAccumulator; }
     const VeraPsg& psg() const { return m_psg; }
     const VeraPcm& pcm() const { return m_pcm; }
+
+    // IVideoInspect (the Graphics (VERA) pane, CLI gfx, MCP render_graphics):
+    // the 128 sprites from their attributes at $1FC00, both layers' tile
+    // sets, and the palette as displayed.
+    int      paletteSize() const override { return 256; }
+    uint32_t paletteColor(int index) const override;
+    uint8_t  peekVideo(uint32_t addr) const override { return vramPeek(addr); }
+    int      spriteCount() const override { return 128; }
+    bool     spriteInfo(int n, SpriteInfo& out) const override;
+    bool     charsetInfo(CharsetInfo& out) const override { return layerCharsetInfo(1, out); }
+    int      layerCount() const override { return 2; }
+    bool     layerCharsetInfo(int layer, CharsetInfo& out) const override;
 
 private:
     struct LayerProps {

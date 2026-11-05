@@ -21,6 +21,7 @@ enum class Source { Address, Sprite, Charset };
 struct ViewRequest {
     Source   source = Source::Address;
     int      sprite = 0;            ///< Source::Sprite
+    int      layer = -1;            ///< Source::Charset: tile layer (VERA 0/1); -1 = the chip's default
     uint32_t addr = 0;              ///< Source::Address
     Format   format = Format::SpriteHires;   ///< Source::Address (others pick it from the chip)
     int      count = 1;

@@ -24,8 +24,39 @@ const std::vector<FormatInfo>& formats() {
         {Format::Player2Line, "player-2line", "Player/missiles, double-line (ANTIC)", 8, 128, 1, 1, 1, 128, true, false, "antic"},
         {Format::AnticChar,   "antic2",     "Character, ANTIC modes 2/3 (2 colours)", 8, 8, 1, 1, 1,   8,  false, false, "antic"},
         {Format::AnticChar4,  "antic4",     "Character, ANTIC modes 4/5 (4 colours)", 4, 8, 2, 2, 1,   8,  false, false, "antic"},
+        // VERA: leftmost pixel in the high bits; colour indices into the palette
+        {Format::VeraSprite8x4, "vera-spr8-4", "Sprite 8x8, 4 bpp (VERA)", 8, 8, 1, 4, 4, 32, true, false, "vera"},
+        {Format::VeraSprite16x4, "vera-spr16-4", "Sprite 16x16, 4 bpp (VERA)", 16, 16, 1, 4, 8, 128, true, false, "vera"},
+        {Format::VeraSprite32x4, "vera-spr32-4", "Sprite 32x32, 4 bpp (VERA)", 32, 32, 1, 4, 16, 512, true, false, "vera"},
+        {Format::VeraSprite64x4, "vera-spr64-4", "Sprite 64x64, 4 bpp (VERA)", 64, 64, 1, 4, 32, 2048, true, false, "vera"},
+        {Format::VeraSprite8x8, "vera-spr8-8", "Sprite 8x8, 8 bpp (VERA)", 8, 8, 1, 8, 8, 64, true, false, "vera"},
+        {Format::VeraSprite16x8, "vera-spr16-8", "Sprite 16x16, 8 bpp (VERA)", 16, 16, 1, 8, 16, 256, true, false, "vera"},
+        {Format::VeraSprite32x8, "vera-spr32-8", "Sprite 32x32, 8 bpp (VERA)", 32, 32, 1, 8, 32, 1024, true, false, "vera"},
+        {Format::VeraSprite64x8, "vera-spr64-8", "Sprite 64x64, 8 bpp (VERA)", 64, 64, 1, 8, 64, 4096, true, false, "vera"},
+        {Format::VeraTile8x1, "vera-tile8-1", "Tile 8x8, 1 bpp (VERA)", 8, 8, 1, 1, 1, 8, false, false, "vera"},
+        {Format::VeraTile8x2, "vera-tile8-2", "Tile 8x8, 2 bpp (VERA)", 8, 8, 1, 2, 2, 16, false, false, "vera"},
+        {Format::VeraTile8x4, "vera-tile8-4", "Tile 8x8, 4 bpp (VERA)", 8, 8, 1, 4, 4, 32, false, false, "vera"},
+        {Format::VeraTile8x8, "vera-tile8-8", "Tile 8x8, 8 bpp (VERA)", 8, 8, 1, 8, 8, 64, false, false, "vera"},
+        {Format::VeraTile16x1, "vera-tile16-1", "Tile 16x16, 1 bpp (VERA)", 16, 16, 1, 1, 2, 32, false, false, "vera"},
+        {Format::VeraTile16x2, "vera-tile16-2", "Tile 16x16, 2 bpp (VERA)", 16, 16, 1, 2, 4, 64, false, false, "vera"},
+        {Format::VeraTile16x4, "vera-tile16-4", "Tile 16x16, 4 bpp (VERA)", 16, 16, 1, 4, 8, 128, false, false, "vera"},
+        {Format::VeraTile16x8, "vera-tile16-8", "Tile 16x16, 8 bpp (VERA)", 16, 16, 1, 8, 16, 256, false, false, "vera"},
     };
     return s;
+}
+
+Format veraSpriteFormat(int width, int bitsPerPixel) {
+    int w = width >= 64 ? 3 : width >= 32 ? 2 : width >= 16 ? 1 : 0;
+    static const Format f4[] = {Format::VeraSprite8x4, Format::VeraSprite16x4, Format::VeraSprite32x4, Format::VeraSprite64x4};
+    static const Format f8[] = {Format::VeraSprite8x8, Format::VeraSprite16x8, Format::VeraSprite32x8, Format::VeraSprite64x8};
+    return bitsPerPixel >= 8 ? f8[w] : f4[w];
+}
+
+Format veraTileFormat(int width, int bitsPerPixel) {
+    int b = bitsPerPixel >= 8 ? 3 : bitsPerPixel >= 4 ? 2 : bitsPerPixel >= 2 ? 1 : 0;
+    static const Format f8[]  = {Format::VeraTile8x1, Format::VeraTile8x2, Format::VeraTile8x4, Format::VeraTile8x8};
+    static const Format f16[] = {Format::VeraTile16x1, Format::VeraTile16x2, Format::VeraTile16x4, Format::VeraTile16x8};
+    return width >= 16 ? f16[b] : f8[b];
 }
 
 const FormatInfo& info(Format f) {
@@ -76,6 +107,13 @@ uint32_t c64Palette(int index) {
 }
 
 static uint32_t colorFor(const FormatInfo& fi, uint8_t v, const Colors& c) {
+    if (fi.family[0] == 'v' && fi.family[2] == 'r' && fi.bitsPerPixel > 1) {   // "vera"
+        // Index 0 is transparent; a palette offset (paletteBase = 16 x offset)
+        // moves indices 1-15 only (VERA Programmer's Reference, Tile mode 2/4/8 bpp)
+        if (v == 0) return c.transparent;
+        int idx = (v <= 15) ? ((c.paletteBase + v) & 0xFF) : v;
+        return c.palette ? c.palette(idx) : c64Palette(idx);
+    }
     switch (fi.bitsPerPixel) {
         case 1: return c.slot[v & 1];
         case 2: return c.slot[v & 3];

@@ -26,6 +26,8 @@ public:
         uint8_t  mc0 = 0, mc1 = 0;      ///< sprite multicolour registers
         int      paletteBase = 0;       ///< 16-colour sprites: index added to each nibble
         bool     playerMissile = false; ///< ANTIC/GTIA player or missiles: 8 pixels, 1 byte per row
+        int      width = 0;             ///< VERA: width in pixels (8-64); 0 for the others
+        int      bitsPerPixel = 0;      ///< VERA: 4 or 8
     };
 
     struct CharsetInfo {
@@ -38,6 +40,8 @@ public:
          *  bg[0..2] then give pixel values 0-2 and fg value 3 (or 1 in 2 colours). */
         bool     antic = false;
         int      fg = -1;               ///< foreground palette index; -1 = VIC colour RAM (shown as colour 1)
+        int      bitsPerPixel = 0;      ///< VERA tile layer: 1, 2, 4 or 8 (0 for the others)
+        int      tileW = 8, tileH = 8;  ///< VERA tile size
     };
 
     /** Number of palette entries (16 for a VIC-II, 256 for a VIC-III/IV). */
@@ -50,4 +54,8 @@ public:
     virtual int  spriteCount() const { return 0; }
     virtual bool spriteInfo(int /*n*/, SpriteInfo& /*out*/) const { return false; }
     virtual bool charsetInfo(CharsetInfo& /*out*/) const { return false; }
+    /** Tile layers with their own character/tile set (VERA: 2). */
+    virtual int  layerCount() const { return 1; }
+    /** A layer's character/tile set; layer 0 is charsetInfo() unless overridden. */
+    virtual bool layerCharsetInfo(int layer, CharsetInfo& out) const { return layer == 0 && charsetInfo(out); }
 };

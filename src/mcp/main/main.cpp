@@ -480,8 +480,9 @@ Json handleDescribe() {
         };
         props.oVal["source"] = prop("string", "address (default), sprite (follow a VIC sprite) or charset (the VIC's current character set)");
         props.oVal["address"] = prop("string", "Start address for source=address (number or expression, e.g. \"$2000\")");
-        props.oVal["format"] = prop("string", "For source=address (default: the machine's first): sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm, char16, char16-mc, antic2, antic4, player, player-2line. Each machine accepts only its video chip's formats (VIC-20: char, char-mc, char16, char16-mc; C64: sprite, sprite-mc, char, char-mc; MEGA65: the VIC formats; Atari: antic2, antic4, player, player-2line)");
-        props.oVal["sprite"] = prop("number", "For source=sprite: VIC sprite 0-7, or Atari player 0-3 (4 = the missiles)");
+        props.oVal["format"] = prop("string", "For source=address (default: the machine's first): sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm, char16, char16-mc, antic2, antic4, player, player-2line. Each machine accepts only its video chip's formats (VIC-20: char, char-mc, char16, char16-mc; C64: sprite, sprite-mc, char, char-mc; MEGA65: the VIC formats; Atari: antic2, antic4, player, player-2line; X16: vera-tile8-1/2/4/8, vera-tile16-1/2/4/8, vera-spr8/16/32/64-4/8)");
+        props.oVal["sprite"] = prop("number", "For source=sprite: VIC sprite 0-7, Atari player 0-3 (4 = the missiles), or VERA sprite 0-127");
+        props.oVal["layer"] = prop("number", "For source=charset on the Commander X16: VERA tile layer 0 or 1 (default 1, the text layer)");
         props.oVal["count"] = prop("number", "Number of items (default 1; 256 for charset)");
         props.oVal["columns"] = prop("number", "Items per row in the PNG (default 8; 16 for charset)");
         props.oVal["stride"] = prop("number", "Bytes between items (default: the format's size)");
@@ -491,7 +492,7 @@ Json handleDescribe() {
         schema.oVal["properties"] = props;
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
-        addTool("render_graphics", "Decode sprites/players or characters from memory (VIC-20, C64, MEGA65 VIC formats; Atari ANTIC/GTIA formats) as ASCII art or a PNG sheet.", schema);
+        addTool("render_graphics", "Decode sprites/players or characters from memory (VIC-20, C64, MEGA65 VIC formats; Atari ANTIC/GTIA formats; X16 VERA sprites and tiles) as ASCII art or a PNG sheet.", schema);
     }
 
     {
@@ -1958,6 +1959,7 @@ Json handleToolsCall(const Json& params) {
             } else if (source == "charset") {
                 req.source = gfx::Source::Charset;
                 req.count = 256; req.columns = 16; req.videoView = true;
+                if (args.contains("layer")) req.layer = (int)args["layer"].nVal;
             } else if (source == "address") {
                 auto mf = gfx::machineFormats(ms->machine);
                 std::string fmt = args.contains("format") ? args["format"].sVal

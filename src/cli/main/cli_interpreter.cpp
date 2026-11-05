@@ -1494,8 +1494,9 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (args.empty() || args[0] == "formats") {
             if (args.empty())
                 m_output("Syntax: gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]\n"
-                         "        gfx chip-sprite <n> [file.png]     (VIC sprite 0-7; Atari player 0-3, 4 = missiles)\n"
+                         "        gfx chip-sprite <n> [file.png]     (VIC sprite 0-7; Atari player 0-3, 4 = missiles; VERA 0-127)\n"
                          "        gfx chip-charset [count] [columns] [file.png]\n"
+                         "        gfx chip-layer <n> [count] [columns] [file.png]   (VERA tile layer 0/1)\n"
                          "  vic = read memory as the video chip sees it; swap = swap nibble order\n"
                          "  vic-sprite / vic-charset are the same as chip-sprite / chip-charset\n");
             auto fmts = gfx::machineFormats(m_ctx.machine);
@@ -1521,11 +1522,27 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             req.source = gfx::Source::Sprite;
             IVideoInspect* vi = gfx::findVideoInspect(m_ctx.machine);
             int n = vi ? vi->spriteCount() : 0;
-            if (args.size() < 2 || args[1].size() != 1 || args[1][0] < '0' || args[1][0] - '0' >= std::max(n, 1)) {
+            int num = -1;
+            if (args.size() >= 2 && !args[1].empty() && std::all_of(args[1].begin(), args[1].end(), ::isdigit))
+                num = std::stoi(args[1]);
+            if (num < 0 || num >= std::max(n, 1)) {
                 m_output("Syntax: gfx chip-sprite <0-" + std::to_string(std::max(n, 1) - 1) + "> [file.png]\n"); return;
             }
-            req.sprite = args[1][0] - '0';
+            req.sprite = num;
             req.videoView = true;
+            next = 2;
+        } else if (args[0] == "chip-layer") {
+            // A tile layer's set (VERA layers 0/1)
+            IVideoInspect* vi = gfx::findVideoInspect(m_ctx.machine);
+            int layers = vi ? vi->layerCount() : 0;
+            if (args.size() < 2 || args[1].size() != 1 || args[1][0] < '0' || args[1][0] - '0' >= std::max(layers, 1)) {
+                m_output("Syntax: gfx chip-layer <0-" + std::to_string(std::max(layers, 1) - 1) + "> [count] [columns] [file.png]\n"); return;
+            }
+            req.source = gfx::Source::Charset;
+            req.layer = args[1][0] - '0';
+            req.videoView = true;
+            req.count = 256;
+            req.columns = 16;
             next = 2;
         } else if (args[0] == "vic-charset" || args[0] == "chip-charset") {
             req.source = gfx::Source::Charset;

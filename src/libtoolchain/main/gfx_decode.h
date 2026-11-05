@@ -29,6 +29,12 @@ enum class Format {
     Player2Line,   ///< ANTIC/GTIA player or missiles, double-line resolution: 8x128, 1 bpp
     AnticChar,     ///< ANTIC character, modes 2/3 (and 6/7): 8x8, 1 bpp
     AnticChar4,    ///< ANTIC character, modes 4/5: 4x8 double-wide pixels, 2 bpp (4 colours)
+    // VERA (Commander X16): sprites 8-64 pixels at 4/8 bpp, tiles 8/16 at 1/2/4/8 bpp.
+    // A taller-than-wide item is shown with a rows override.
+    VeraSprite8x4, VeraSprite16x4, VeraSprite32x4, VeraSprite64x4,
+    VeraSprite8x8, VeraSprite16x8, VeraSprite32x8, VeraSprite64x8,
+    VeraTile8x1, VeraTile8x2, VeraTile8x4, VeraTile8x8,
+    VeraTile16x1, VeraTile16x2, VeraTile16x4, VeraTile16x8,
 };
 
 struct FormatInfo {
@@ -43,8 +49,12 @@ struct FormatInfo {
     uint32_t stride;           ///< default bytes from one item to the next
     bool isSprite;
     bool lowNibbleFirst;       ///< 4 bpp: low nibble is the left pixel
-    const char* family;        ///< video chip family: "vic" (VIC-I/II/IV) or "antic" (ANTIC/GTIA)
+    const char* family;        ///< video chip family: "vic" (VIC-I/II/IV), "antic" (ANTIC/GTIA), "vera"
 };
+
+/** VERA sprite (width 8/16/32/64, 4 or 8 bpp) or tile (width 8/16, 1/2/4/8 bpp) format. */
+Format veraSpriteFormat(int width, int bitsPerPixel);
+Format veraTileFormat(int width, int bitsPerPixel);
 
 /** All formats, in menu order. */
 const std::vector<FormatInfo>& formats();
