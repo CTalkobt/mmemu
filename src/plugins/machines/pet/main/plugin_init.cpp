@@ -41,7 +41,14 @@ public:
         if (lower == "backslash") lower = "leftarrow";
         if (lower == "shift")     lower = "left_shift";
 
-        if (!m_kbd.hasKey(lower)) return false;     // e.g. "restore": the PET has none
+        if (!m_kbd.hasKey(lower)) {
+            // A character this layout types with SHIFT (business: " is SHIFT+2)
+            std::string base = m_kbd.shiftedKey(lower);
+            if (base.empty()) return false;         // e.g. "restore": the PET has none
+            if (down) { m_kbd.keyDown("left_shift"); m_kbd.keyDown(base); }
+            else      { m_kbd.keyUp(base); m_kbd.keyUp("left_shift"); }
+            return true;
+        }
         if (down) m_kbd.keyDown(lower);
         else      m_kbd.keyUp(lower);
         return true;

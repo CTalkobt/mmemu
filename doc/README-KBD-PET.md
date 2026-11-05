@@ -21,7 +21,8 @@ The PET keyboard is organized as an 8x10 matrix (8 columns, 10 rows).
 ### 2.2 Layouts
 
 - **Graphics Layout**: 2001/4000 series style with PETSCII graphic symbols on the keycaps.
-- **Business Layout**: 8000 series style with a layout more similar to a typewriter, including a dedicated TAB key and different punctuation placement.
+- **Business Layout**: 8000 series style with a layout more similar to a typewriter, including a dedicated TAB key and different punctuation placement. Its matrix comes from the 8032 editor ROM's decode table ($E6D1, read by `LDA $E6D0,X` with X = 80..1; ROM row *i* is matrix row 9 − *i*, entry *j* is bit 7 − *j*) and was cross-checked key by key against VICE's business keymap (`data/PET/gtk3_buuk_pos.vkm`). It differs from the graphics matrix everywhere (A is row 3 bit 0, not row 4). Key names: the letters, `0`-`9` (main row), `kp0`-`kp9` and `kpperiod` (keypad), `space`, `return`, `delete`, `home`, `right`, `down`, `run_stop`, `rvs`, `escape`, `tab`, `repeat`, `left_shift`, `right_shift`, and the punctuation keys `colon`, `semicolon`, `comma`, `period`, `slash`, `minus`, `at`, `bracket_left`, `bracket_right`, `backslash`, `uparrow`, `leftarrow`.
+- **Shifted characters** (business): `"` and the rest have no key of their own; typing them (CLI `type`, MCP, the GUI, `key dquote`) presses SHIFT with their key: `! " # $ % & ' ( )` on `1`-`9`, `*` on `:`, `=` on `-`, `+` on `;`, `< > ?` on `, . /` (checked against the 8032 editor's output).
 
 ---
 

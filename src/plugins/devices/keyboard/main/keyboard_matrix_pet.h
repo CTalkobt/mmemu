@@ -21,6 +21,12 @@ public:
     void keyDown(const std::string& keyName);
     /** True if the layout has a key of this name. */
     bool hasKey(const std::string& keyName) const { return m_keyMap.count(keyName) != 0; }
+    /** A character typed with SHIFT on this layout (the business keyboard's
+     *  `"` is SHIFT+2): the key to press with it, or "" if none. */
+    std::string shiftedKey(const std::string& name) const {
+        auto it = m_shifted.find(name);
+        return it == m_shifted.end() ? std::string() : it->second;
+    }
     void keyUp(const std::string& keyName);
 
     void setLogger(void* handle, void (*logFn)(void*, int, const char*)) {
@@ -40,6 +46,7 @@ private:
     
     struct KeyPos { uint8_t col; uint8_t bit; };
     std::map<std::string, KeyPos> m_keyMap;
+    std::map<std::string, std::string> m_shifted;   // character -> key pressed with SHIFT
 
     void initKeyMap();
 

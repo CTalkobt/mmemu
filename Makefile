@@ -386,6 +386,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/x16/test/test_x16_machine.cpp \
 	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
 	src/plugins/devices/ieee488/test/test_ieee488_bus.cpp \
+	src/plugins/devices/keyboard/test/test_keyboard_matrix_pet.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
