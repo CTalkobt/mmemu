@@ -39,6 +39,13 @@ version 2 or later (compatible with AGPL-3.0-or-later):
 The GTIA palette (src/plugins/devices/gtia/) is generated from the palette
 model of atari800 (https://atari800.github.io/), GPL-2.0-or-later.
 
+The TED emulation (src/plugins/devices/ted/) is ported from VICE, the
+Versatile Commodore Emulator (https://vice-emu.sourceforge.io/), files
+src/plus4/ted*.c by Andreas Boose, Ettore Perazzoli, Tibor Biczo and Marco
+van den Heuvel; the palette from ted-color.c and src/video/video-color.c by
+John Selck, Philip Timmermann and Groepaz; the sound logic in VICE follows
+SDL-YAPE (https://github.com/calmopyrin/yapesdl). GPL-2.0-or-later.
+
 -------------------------------------------------------------------------------
 ROM images
 -------------------------------------------------------------------------------

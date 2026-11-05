@@ -26,6 +26,7 @@ INCLUDES  = -Isrc -Isrc/include -Isrc/cli/main -Isrc/gui/main -Isrc/libcore/main
 	-Isrc/plugins/devices/crtc6545/main -Isrc/plugins/devices/pet_video/main \
 	-Isrc/plugins/devices/pokey/main -Isrc/plugins/devices/datasette/main \
 	-Isrc/plugins/devices/vera/main \
+	-Isrc/plugins/devices/ted/main \
 	-Isrc/plugins/devices/ym2151/main \
 	-Isrc/third_party/ymfm \
 	-Isrc/plugins/devices/keyboard/main \
@@ -222,6 +223,11 @@ PLUGIN_VERA_SRCS = src/plugins/devices/vera/main/vera.cpp \
 	src/plugins/devices/vera/main/vera_pcm.cpp \
 	src/plugins/devices/vera/main/plugin_init.cpp
 
+PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
+	src/plugins/devices/ted/main/ted_video.cpp \
+	src/plugins/devices/ted/main/ted_sound.cpp \
+	src/plugins/devices/ted/main/plugin_init.cpp
+
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
@@ -407,6 +413,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
 	src/plugins/devices/vera/test/test_vera.cpp \
+	src/plugins/devices/ted/test/test_ted.cpp \
 	src/plugins/devices/vera/test/test_sdcard_spi.cpp \
 	src/plugins/machines/atari/test/test_atari_machine.cpp \
 	src/plugins/devices/cia6526/test/test_cia6526.cpp \
@@ -531,6 +538,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vera/main/vera_psg.o \
 	src/plugins/devices/vera/main/sdcard_spi.o \
 	src/plugins/devices/vera/main/vera_pcm.o \
+	src/plugins/devices/ted/main/ted.o \
+	src/plugins/devices/ted/main/ted_video.o \
+	src/plugins/devices/ted/main/ted_sound.o \
 	src/plugins/machines/atari/main/machine_atari.o \
 	src/plugins/machines/atari/main/atari_sio.o \
 	src/plugins/machines/atari/main/atari_cart.o \
@@ -625,6 +635,7 @@ PLUGIN_GTIA_OBJS = $(PLUGIN_GTIA_SRCS:.cpp=.o)
 PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VERA_OBJS = $(PLUGIN_VERA_SRCS:.cpp=.o)
+PLUGIN_TED_OBJS = $(PLUGIN_TED_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
 PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_AUDIODMA_OBJS = $(PLUGIN_AUDIODMA_SRCS:.cpp=.o)
@@ -676,6 +687,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-gtia.so \
 	$(LIBDIR)/mmemu-plugin-pokey.so \
 	$(LIBDIR)/mmemu-plugin-vera.so \
+	$(LIBDIR)/mmemu-plugin-ted.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
 	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
@@ -813,6 +825,9 @@ $(LIBDIR)/mmemu-plugin-pokey.so: $(PLUGIN_POKEY_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-vera.so: $(PLUGIN_VERA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-ted.so: $(PLUGIN_TED_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
