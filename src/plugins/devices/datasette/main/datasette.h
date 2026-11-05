@@ -73,6 +73,7 @@ private:
     bool       m_recording = false;
     bool       m_lastWriteLevel = true;
     uint64_t   m_writePulseStart = 0;
+    bool       m_haveWriteEdge = false;   // a 0->1 edge seen since recording began
     uint64_t   m_totalCycles = 0;
 
     ISignalLine* m_senseLine     = nullptr;

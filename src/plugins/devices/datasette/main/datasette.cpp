@@ -53,6 +53,7 @@ bool Datasette::startRecord() {
     m_buttonPressed = true;
     m_lastWriteLevel = m_writeLine->get();
     m_writePulseStart = m_totalCycles;
+    m_haveWriteEdge = false;
     if (m_senseLine) m_senseLine->set(false);
     return true;
 }
@@ -77,13 +78,19 @@ void Datasette::tick(uint64_t cycles) {
         m_motorOn = !m_motorLine->get();
     }
 
-    // Recording: capture write-line edges
+    // Recording: one pulse per cycle of the write line, from one 0->1
+    // transition to the next, as VICE records it (datasette.c; the write
+    // signal is inverted on its way to the tape, so this is a falling edge
+    // there). A TAP file stores these; playback gives one read edge each.
     if (m_recording && m_motorOn && m_writeLine) {
         bool level = m_writeLine->get();
         if (level != m_lastWriteLevel) {
-            uint32_t pulseLen = (uint32_t)(m_totalCycles - m_writePulseStart);
-            m_tape.appendPulse(pulseLen);
-            m_writePulseStart = m_totalCycles;
+            if (level) {
+                if (m_haveWriteEdge)
+                    m_tape.appendPulse((uint32_t)(m_totalCycles - m_writePulseStart));
+                m_writePulseStart = m_totalCycles;
+                m_haveWriteEdge = true;
+            }
             m_lastWriteLevel = level;
         }
     }

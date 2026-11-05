@@ -7,6 +7,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Commodore Fixes (tape)
+- **VIC-20 tape** now saves and loads: `SAVE` to the datasette, then `LOAD` and `RUN` from the recorded `.tap`, checked from BASIC. The lines were wired to the wrong pins; now they match VICE and the KERNAL: sense on VIA1 PA6 (was PB6, which the KERNAL never reads), motor on VIA1 CA2 (was VIA2 PB3), write on VIA2 PB3 (was PB7), read pulses on VIA2 CA1 (was VIA1 CA1, the RESTORE line). New VIA input-pin lines `pa0`-`pa7` let a peripheral hold a port A pin.
+- **Datasette recording** stored every edge of the write line as a pulse, so a recorded `.tap` held half-cycles at twice the count. It now stores one pulse per cycle, from one 0→1 transition to the next, as VICE does. A C64 `SAVE` to tape loads back (checked from BASIC; not tried with the old recorder); the PET's recording uses the same code but was not tried.
+- Tests: `vic20_tape_lines`, `via6522_port_a_input_pin_lines`; `datasette_recording` now checks the stored pulse lengths.
+
 ### Input
 - **VIC-20 joystick** now on the right lines, as in VICE: up, down, left and fire on VIA1 PA2-PA5 (`$911F`), right on VIA2 PB7 (`$9120`), shared with keyboard column 7. Before, it was on VIA1 port B (the user port). The machine JSON's `joystick` can put each switch on a chosen bit of several ports (`lines`, new `JoystickPins`). The keyboard's column port now drives only the bits set as outputs, so a program can read PB7. Test `vic20_joystick_on_via1_and_via2`; checked from BASIC.
 - **VIC-20 keyboard matrix** fixed against VICE: `:` is its own key (was typed as SHIFT+`;`, which gives `]`, so typed BASIC lines with `:` failed), `-` and `↑` (arrow) moved to their real positions, and cursor up/left are SHIFT+down/right (the matrix has no keys for them; left did nothing before). `]` can be typed.

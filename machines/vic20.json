@@ -42,10 +42,10 @@
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "VIA1.pb6",
-        "motor": "VIA2.pb3",
-        "write": "VIA2.pb7",
-        "readPulse": "VIA1.ca1"
+        "sense": "VIA1.pa6",
+        "motor": "VIA1.ca2",
+        "write": "VIA2.pb3",
+        "readPulse": "VIA2.ca1"
       },
       "kbdWiring": {
         "device": "Keyboard",
@@ -97,10 +97,10 @@
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "VIA1.pb6",
-        "motor": "VIA2.pb3",
-        "write": "VIA2.pb7",
-        "readPulse": "VIA1.ca1"
+        "sense": "VIA1.pa6",
+        "motor": "VIA1.ca2",
+        "write": "VIA2.pb3",
+        "readPulse": "VIA2.ca1"
       },
       "kbdWiring": {
         "device": "Keyboard",
@@ -152,10 +152,10 @@
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "VIA1.pb6",
-        "motor": "VIA2.pb3",
-        "write": "VIA2.pb7",
-        "readPulse": "VIA1.ca1"
+        "sense": "VIA1.pa6",
+        "motor": "VIA1.ca2",
+        "write": "VIA2.pb3",
+        "readPulse": "VIA2.ca1"
       },
       "kbdWiring": {
         "device": "Keyboard",
@@ -207,10 +207,10 @@
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "VIA1.pb6",
-        "motor": "VIA2.pb3",
-        "write": "VIA2.pb7",
-        "readPulse": "VIA1.ca1"
+        "sense": "VIA1.pa6",
+        "motor": "VIA1.ca2",
+        "write": "VIA2.pb3",
+        "readPulse": "VIA2.ca1"
       },
       "kbdWiring": {
         "device": "Keyboard",
@@ -262,10 +262,10 @@
       ],
       "tapeWiring": {
         "device": "Tape",
-        "sense": "VIA1.pb6",
-        "motor": "VIA2.pb3",
-        "write": "VIA2.pb7",
-        "readPulse": "VIA1.ca1"
+        "sense": "VIA1.pa6",
+        "motor": "VIA1.ca2",
+        "write": "VIA2.pb3",
+        "readPulse": "VIA2.ca1"
       },
       "kbdWiring": {
         "device": "Keyboard",

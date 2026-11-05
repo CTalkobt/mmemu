@@ -1,3 +1,5 @@
+#include <iterator>
+#include <vector>
 #include "test_harness.h"
 #include "plugins/devices/datasette/main/datasette.h"
 #include "libdevices/main/isignal_line.h"
@@ -139,22 +141,29 @@ TEST_CASE(datasette_recording) {
     ASSERT(ds.startRecord());
     ASSERT(ds.isTapeRecording());
 
-    // Simulate write-line edges
-    ds.tick(100);
-    write.m_level = false;
-    ds.tick(1);
-    write.m_level = true;
-    ds.tick(200);
-    write.m_level = false;
-    ds.tick(1);
+    // Two full cycles of the write line, 400 and 240 cycles long: one pulse
+    // each, from one 0->1 edge of the write line to the next. The datasette
+    // sees a level at the end of a tick, so each edge is followed by a
+    // 1-cycle tick.
+    auto edge = [&](bool level, int gap) { ds.tick(gap - 1); write.m_level = level; ds.tick(1); };
+    edge(false, 100);
+    edge(true, 50);             // first 0->1: starts the first pulse
+    edge(false, 200);
+    edge(true, 200);            // pulse of 400
+    edge(false, 120);
+    edge(true, 120);            // pulse of 240
 
     ds.stopTapeRecord();
     ASSERT(!ds.isTapeRecording());
 
-    // Save the recording
+    // Save the recording: TAP v1 stores pulse length / 8
     fs::path p = fs::temp_directory_path() / "mmemu_test_datasette_rec.tap";
     ASSERT(ds.saveTapeRecording(p.string()));
-    ASSERT(fs::file_size(p) > 20); // header + some data
+    std::ifstream f(p, std::ios::binary);
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    ASSERT_EQ((int)bytes.size(), 22);
+    ASSERT_EQ((int)bytes[20], 400 / 8);
+    ASSERT_EQ((int)bytes[21], 240 / 8);
 
     fs::remove(p);
 }

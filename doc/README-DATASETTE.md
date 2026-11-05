@@ -11,7 +11,7 @@ The Datasette communicates with the host machine through four signal lines, decl
 | Signal | Direction | Description |
 |--------|-----------|-------------|
 | `motor` | Machine → Datasette | Enables tape transport. The Datasette only plays/records while the motor is asserted. Active-low on VIC-20 and PET; the signal source is machine-specific. |
-| `write` | Machine → Datasette | Cassette write line. Level changes are captured during recording. |
+| `write` | Machine → Datasette | Cassette write line. While recording, each cycle of the line, from one 0→1 transition to the next, is stored as one pulse, as VICE records it. |
 | `readPulse` | Datasette → Machine | Each stored tape pulse drives this line low then high. The receiving chip (CIA1 FLAG, VIA CA1, or PIA CA1) captures the edge as an interrupt. |
 | `sense` | Datasette → Machine | Asserted (high) whenever a tape is mounted or recording is armed. Tells the KERNAL that a button is pressed. |
 
@@ -20,7 +20,7 @@ The Datasette communicates with the host machine through four signal lines, decl
 | Machine | Motor source | Write source | Read pulse destination |
 |---------|-------------|--------------|------------------------|
 | C64 | 6510 port bit 5 (active-low) | 6510 port bit 3 | CIA1 FLAG → `$DC0D` bit 4 |
-| VIC-20 | VIA2 PB3 (active-low) | VIA2 PB7 | VIA1 CA1 → `$911D` bit 1 |
+| VIC-20 | VIA1 CA2 (manual low via PCR `$911C`) | VIA2 PB3 | VIA2 CA1 → `$912D` bit 1 (sense: VIA1 PA6, `$911F` bit 6) |
 | PET 2001/4032/8032 | VIA CA2 (manual low via PCR) | VIA PB7 | PIA1 CA1 → `$E811` bit 7 |
 
 ---
