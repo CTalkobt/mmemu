@@ -511,8 +511,8 @@ TEST_CASE(machine_ui_capabilities) {
     };
     auto* pet = MachineRegistry::instance().createMachine("pet4032");
     ASSERT(pet && pet->uiPanesSet);
-    ASSERT(pet->hasPane("tape"));
-    ASSERT(!pet->hasPane("graphics-vic") && !pet->hasPane("cartridge") && !pet->hasPane("sidscope") && !pet->hasPane("drive"));
+    ASSERT(pet->hasPane("tape") && pet->hasPane("drive"));         // the IEEE-488 drive
+    ASSERT(!pet->hasPane("graphics-vic") && !pet->hasPane("cartridge") && !pet->hasPane("sidscope"));
     ASSERT_EQ(ids(pet), std::string(""));           // no VIC graphics at all
     delete pet;
 

@@ -70,6 +70,8 @@ Mount it as unit 8 (CLI `disk mount 8 sd.img`, the GUI drive pane, MCP `mount_di
 
 ## Host folder (HostFS)
 
+The DOS is `CbmHostDos` (`src/plugins/devices/ieee488/main/cbm_host_dos.*`), shared with the PET's IEEE-488 drive; the X16 part traps the KERNAL's IEEE API and keeps STATUS and `cbdos_flags`.
+
 `X16HostFs` (`src/plugins/machines/x16/main/x16_hostfs.cpp`, ported from x16-emulator's `ieee.c`) serves a host folder as an IEEE / CBM DOS unit, as x16-emulator's HostFS does: it intercepts the KERNAL's IEEE API — `LISTEN` `$FFB1`, `SECOND` `$FF93`, `CIOUT` `$FFA8`, `MCIOUT` `$FEB1`, `UNLSN` `$FFAE`, `TALK` `$FFB4`, `TKSA` `$FF96`, `ACPTR` `$FFA5`, `MACPTR` `$FF44`, `UNTLK` `$FFAB` — and answers calls for its unit itself (then returns as RTS would); calls for other units run in the KERNAL. It fires only while the KERNAL's ROM bank is mapped.
 
 - **Default**: unit 8, the current directory of the emulator (`-m x16` in a folder serves that folder). Nothing outside the folder can be reached (`..` stops at it).

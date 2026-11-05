@@ -175,6 +175,10 @@ PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 	src/plugins/devices/pia6520/main/plugin_init.cpp
 
+PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
+	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
+	src/plugins/devices/ieee488/main/plugin_init.cpp
+
 PLUGIN_CBMLOADER_SRCS = src/plugins/cbm-loader/main/prg_loader.cpp \
 	src/plugins/cbm-loader/main/crt_parser.cpp \
 	src/plugins/cbm-loader/main/cbm_cart_handler.cpp \
@@ -251,6 +255,7 @@ PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
 	src/third_party/ymfm/ymfm_opm.cpp \
 	src/plugins/machines/x16/main/x16_i2c.cpp \
 	src/plugins/machines/x16/main/x16_hostfs.cpp \
+	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/machines/x16/main/plugin_init.cpp \
 	src/plugins/devices/vera/main/vera.cpp \
 	src/plugins/devices/vera/main/vera_psg.cpp \
@@ -378,6 +383,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/x16/test/test_x16_i2c.cpp \
 	src/plugins/machines/x16/test/test_x16_machine.cpp \
 	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
+	src/plugins/devices/ieee488/test/test_ieee488_bus.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
@@ -466,6 +472,8 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/x16/main/x16_i2c.o \
 	src/plugins/machines/x16/main/x16_hostfs.o \
+	src/plugins/devices/ieee488/main/cbm_host_dos.o \
+	src/plugins/devices/ieee488/main/ieee488_bus.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \
@@ -592,6 +600,7 @@ PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o) \
 	src/plugins/devices/c64_pla/main/c64_pla.o
 PLUGIN_C64_GUI_OBJS  = src/plugins/machines/c64/main/plugin_init.o
 PLUGIN_PIA6520_OBJS  = $(PLUGIN_PIA6520_SRCS:.cpp=.o)
+PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -647,6 +656,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-sid6581.so \
 	$(LIBDIR)/mmemu-plugin-c64.so \
 	$(LIBDIR)/mmemu-plugin-pia6520.so \
+	$(LIBDIR)/mmemu-plugin-ieee488.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -759,6 +769,9 @@ $(LIBDIR)/mmemu-plugin-c64.so: $(PLUGIN_C64_CORE_OBJS) $(PLUGIN_C64_GUI_OBJS) | 
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-pia6520.so: $(PLUGIN_PIA6520_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-ieee488.so: $(PLUGIN_IEEE488_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)

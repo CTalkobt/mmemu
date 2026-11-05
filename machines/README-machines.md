@@ -130,6 +130,11 @@ Which hardware-dependent debugger panes the GUI shows for this machine (others, 
 
 C++ machines set `MachineDescriptor::uiPanes` (with `uiPanesSet = true`) and `graphicsFormats`.
 
+### Wiring between devices
+- A device's `"lines"` (`ca1`, `cb1`, `ca2`, `cb2`, `irqA`, `irqB`) name a signal from `signals`, or another device's line as `"DEV.line"` (its `getSignalLine`), e.g. `"ca2": "IEEE.ndacOut"`.
+- `portWiring`: `[{ "device", "port": "A"|"B", "from": "DEV.port" }]` attaches a device's named port (`IOHandler::namedPort`, e.g. an IEEE-488 bus's `dataIn`) to a chip port, sharing it with a device already there (a keyboard).
+- `pinWiring`: `[{ "device", "port", "bit", "signal" }]` puts a signal's level on one input bit of a chip port, e.g. the PET's retrace on VIA PB5.
+
 ### KbdWireSpec (kbdWiring)
 Wires a keyboard matrix device to I/O ports.
 - `device`: Name of the keyboard device instance.
@@ -154,6 +159,7 @@ Wires a keyboard matrix device to I/O ports.
 - `frameAccumulator`: (Optional) Frame sync settings:
     - `cycles`: Number of cycles per frame.
     - `signal`: Name of the signal to pulse at end of frame (e.g., `"vsync"`).
+    - `retraceSignal`, `retraceCycles`: (Optional) a latch signal held low for the last `retraceCycles` cycles of each frame (a vertical retrace level, e.g. the PET's VIA PB5).
 
 ---
 

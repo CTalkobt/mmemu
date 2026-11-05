@@ -636,8 +636,15 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             IOHandler* dev = devPtrs[devName];
             for (auto& [lineName, sigRef] : devSpec["lines"].items()) {
                 std::string sigStr = sigRef.get<std::string>();
-                if (!signalMap.count(sigStr)) continue;
-                ISignalLine* sig = signalMap[sigStr];
+                ISignalLine* sig = nullptr;
+                if (signalMap.count(sigStr)) {
+                    sig = signalMap[sigStr];
+                } else if (auto dot = sigStr.find('.'); dot != std::string::npos &&
+                           devPtrs.count(sigStr.substr(0, dot))) {
+                    // Another device's line, e.g. "IEEE.ndacOut"
+                    sig = devPtrs[sigStr.substr(0, dot)]->getSignalLine(sigStr.substr(dot + 1).c_str());
+                }
+                if (!sig) continue;
                 if      (lineName == "ca1")  dev->setCA1Line(sig);
                 else if (lineName == "cb1")  dev->setCB1Line(sig);
                 else if (lineName == "ca2")  dev->setCA2Line(sig);
@@ -798,6 +805,59 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         };
     }
 
+    // "portWiring": [{device, port: "A"|"B", from: "DEV.port"}]: attach a
+    // device's named port (e.g. an IEEE-488 bus's "dataIn") to a chip port,
+    // sharing it with a device already there (a keyboard).
+    for (const auto& pw : spec.value("portWiring", nlohmann::json::array())) {
+        std::string chipName = pw.value("device", ""), from = pw.value("from", "");
+        auto dot = from.find('.');
+        if (!devPtrs.count(chipName) || dot == std::string::npos || !devPtrs.count(from.substr(0, dot))) continue;
+        IPortDevice* dev = devPtrs[from.substr(0, dot)]->namedPort(from.substr(dot + 1));
+        if (!dev) continue;
+        IOHandler* chip = devPtrs[chipName];
+        bool portA = pw.value("port", "A") == "A";
+        IPortDevice* existing = portA ? chip->portADevice() : chip->portBDevice();
+        if (existing) {
+            auto* both = new CombinedPortDevice();
+            both->addDevice(existing);
+            both->addDevice(dev);
+            desc->deleters.push_back([both]() { delete both; });
+            dev = both;
+        }
+        if (portA) chip->setPortADevice(dev);
+        else       chip->setPortBDevice(dev);
+    }
+
+    // "pinWiring": [{device, port, bit, signal}]: a signal's level on one input
+    // bit of a chip port (e.g. the PET's vertical retrace on VIA PB5), sharing
+    // the port with what is already there.
+    for (const auto& pw : spec.value("pinWiring", nlohmann::json::array())) {
+        std::string chipName = pw.value("device", ""), sig = pw.value("signal", "");
+        int bit = pw.value("bit", -1);
+        if (!devPtrs.count(chipName) || !signalMap.count(sig) || bit < 0 || bit > 7) continue;
+        struct SignalPin : IPortDevice {
+            ISignalLine* line; uint8_t mask;
+            SignalPin(ISignalLine* l, uint8_t m) : line(l), mask(m) {}
+            uint8_t readPort() override { return line->get() ? 0xFF : (uint8_t)~mask; }
+            void writePort(uint8_t) override {}
+            void setDdr(uint8_t) override {}
+        };
+        IPortDevice* dev = new SignalPin(signalMap[sig], (uint8_t)(1 << bit));
+        desc->deleters.push_back([dev]() { delete dev; });
+        IOHandler* chip = devPtrs[chipName];
+        bool portA = pw.value("port", "A") == "A";
+        IPortDevice* existing = portA ? chip->portADevice() : chip->portBDevice();
+        if (existing) {
+            auto* both = new CombinedPortDevice();
+            both->addDevice(existing);
+            both->addDevice(dev);
+            desc->deleters.push_back([both]() { delete both; });
+            dev = both;
+        }
+        if (portA) chip->setPortADevice(dev);
+        else       chip->setPortBDevice(dev);
+    }
+
     // -----------------------------------------------------------------------
     // Phase 15.2 — iecWiring: VirtualIEC <-> CIA2 Port A
     // -----------------------------------------------------------------------
@@ -829,7 +889,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     bool hasFrameAccum = false;
     SimpleSignalLine* vsyncLine = nullptr;
-    uint64_t frameCycles = 20000;
+    SimpleSignalLine* retraceLine = nullptr;    // low for the last retraceCycles of a frame
+    uint64_t frameCycles = 20000, retraceCycles = 0;
 
     if (spec.contains("scheduler")) {
         const auto& sched = spec["scheduler"];
@@ -848,6 +909,12 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 vsyncLine = newVsync;
                 desc->deleters.push_back([newVsync]() { delete newVsync; });
             }
+            // A vertical retrace level (e.g. the PET's VIA PB5): low while the
+            // frame is in its last retraceCycles cycles
+            std::string rs = fa.value("retraceSignal", "");
+            retraceCycles = (uint64_t)fa.value("retraceCycles", 0);
+            if (!rs.empty() && signalMap.count(rs) && retraceCycles > 0 && retraceCycles < frameCycles)
+                retraceLine = dynamic_cast<SimpleSignalLine*>(signalMap[rs]);
         }
     }
 
@@ -855,8 +922,9 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         auto* frameAccum = new uint64_t(0);
         desc->deleters.push_back([frameAccum]() { delete frameAccum; });
         SimpleSignalLine* vsync = vsyncLine;
-        uint64_t cycles = frameCycles;
-        desc->schedulerStep = [frameAccum, vsync, cycles](MachineDescriptor& d) {
+        SimpleSignalLine* retrace = retraceLine;
+        uint64_t cycles = frameCycles, rcycles = retraceCycles;
+        desc->schedulerStep = [frameAccum, vsync, retrace, cycles, rcycles](MachineDescriptor& d) {
             int total = 0;
             for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
@@ -872,6 +940,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 vsync->set(true);
                 if (d.ioRegistry) d.ioRegistry->tickAll(0);
             }
+            if (retrace) retrace->set(*frameAccum < cycles - rcycles);
             return total;
         };
     } else {

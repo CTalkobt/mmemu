@@ -3,7 +3,7 @@
 
     {
       "id": "pet2001",
-      "ui": { "panes": ["tape"],
+      "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],
                   "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
@@ -14,8 +14,10 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync" } },
-        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820" },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
+          "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
+        { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
         { "type": "6522", "name": "VIA",  "baseAddr": "0xE840",
           "lines": { "cb1": "vsync" } },
         { "type": "pet_video_2001", "name": "PetVideo", "baseAddr": null },
@@ -36,6 +38,7 @@
       "symbolFiles": [ "roms/pet4032/kernal.sym", "roms/pet2001/basic.sym" ],
       "signals": [
         { "name": "vsync", "type": "latch" },
+        { "name": "retrace", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
@@ -47,6 +50,15 @@
         "write": "VIA.pb7",
         "readPulse": "PIA1.ca1"
       },
+      "portWiring": [
+        { "device": "PIA2", "port": "A", "from": "IEEE.dataIn" },
+        { "device": "PIA2", "port": "B", "from": "IEEE.dataOut" },
+        { "device": "VIA",  "port": "B", "from": "IEEE.via" },
+        { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
+      ],
+      "pinWiring": [
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+      ],
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
@@ -62,14 +74,16 @@
         "type": "step_tick",
         "frameAccumulator": {
           "cycles": 20000,
-          "signal": "vsync"
+          "signal": "vsync",
+          "retraceSignal": "retrace",
+          "retraceCycles": 4000
         }
       }
     },
 
     {
       "id": "pet4032",
-      "ui": { "panes": ["tape"],
+      "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],
                   "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
@@ -80,8 +94,10 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync" } },
-        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820" },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
+          "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
+        { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
         { "type": "6522", "name": "VIA",  "baseAddr": "0xE840",
           "lines": { "cb1": "vsync" } },
         { "type": "6545", "name": "CRTC", "baseAddr": null },
@@ -104,6 +120,7 @@
       "symbolFiles": [ "roms/pet4032/kernal.sym", "roms/pet4032/basic.sym" ],
       "signals": [
         { "name": "vsync", "type": "latch" },
+        { "name": "retrace", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
@@ -115,6 +132,15 @@
         "write": "VIA.pb7",
         "readPulse": "PIA1.ca1"
       },
+      "portWiring": [
+        { "device": "PIA2", "port": "A", "from": "IEEE.dataIn" },
+        { "device": "PIA2", "port": "B", "from": "IEEE.dataOut" },
+        { "device": "VIA",  "port": "B", "from": "IEEE.via" },
+        { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
+      ],
+      "pinWiring": [
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+      ],
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
@@ -130,14 +156,16 @@
         "type": "step_tick",
         "frameAccumulator": {
           "cycles": 20000,
-          "signal": "vsync"
+          "signal": "vsync",
+          "retraceSignal": "retrace",
+          "retraceCycles": 4000
         }
       }
     },
 
     {
       "id": "pet8032",
-      "ui": { "panes": ["tape"],
+      "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],
                   "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
@@ -148,8 +176,10 @@
       "cpu": { "type": "6502", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "6520", "name": "PIA1", "baseAddr": "0xE810",
-          "lines": { "cb1": "vsync" } },
-        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820" },
+          "lines": { "cb1": "vsync", "ca2": "IEEE.eoiOut" } },
+        { "type": "6520", "name": "PIA2", "baseAddr": "0xE820",
+          "lines": { "ca2": "IEEE.ndacOut", "cb2": "IEEE.davOut", "ca1": "IEEE.atn" } },
+        { "type": "ieee488_bus", "name": "IEEE", "baseAddr": null },
         { "type": "6522", "name": "VIA",  "baseAddr": "0xE840",
           "lines": { "cb1": "vsync" } },
         { "type": "6545", "name": "CRTC", "baseAddr": null },
@@ -172,6 +202,7 @@
       "symbolFiles": [ "roms/pet4032/kernal.sym", "roms/pet4032/basic.sym" ],
       "signals": [
         { "name": "vsync", "type": "latch" },
+        { "name": "retrace", "type": "latch" },
         { "name": "irq",   "type": "shared",
           "sources": ["PIA1.irqA", "PIA1.irqB", "PIA2.irqA", "PIA2.irqB", "VIA.irq"] },
         { "name": "nmi",   "type": "sharedNmi", "lines": ["nmi_button"] }
@@ -183,6 +214,15 @@
         "write": "VIA.pb7",
         "readPulse": "PIA1.ca1"
       },
+      "portWiring": [
+        { "device": "PIA2", "port": "A", "from": "IEEE.dataIn" },
+        { "device": "PIA2", "port": "B", "from": "IEEE.dataOut" },
+        { "device": "VIA",  "port": "B", "from": "IEEE.via" },
+        { "device": "PIA1", "port": "A", "from": "IEEE.eoiIn" }
+      ],
+      "pinWiring": [
+        { "device": "VIA", "port": "B", "bit": 5, "signal": "retrace" }
+      ],
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "PIA1", "port": "B" },
@@ -198,7 +238,9 @@
         "type": "step_tick",
         "frameAccumulator": {
           "cycles": 20000,
-          "signal": "vsync"
+          "signal": "vsync",
+          "retraceSignal": "retrace",
+          "retraceCycles": 4000
         }
       }
     }
