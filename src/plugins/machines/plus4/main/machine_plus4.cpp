@@ -13,6 +13,7 @@
 #include "libmem/main/ibus.h"
 #include "plugins/6502/main/cpu6502.h"
 #include "plugins/devices/ted/main/ted.h"
+#include "plugins/devices/iec_drive/main/iec_drive.h"
 #include "util/path_util.h"
 #include <algorithm>
 #include <cctype>
@@ -51,13 +52,14 @@ public:
     }
     void setTed(Ted* ted) { m_ted = ted; }
     void setAcia(IOHandler* acia) { m_acia = acia; }
+    void setDrive(IecDrive* d) { m_drive = d; }
 
     // Banking state
     void setRomOn(bool on) { m_romOn = on; }
     bool romOn() const { return m_romOn; }
     uint8_t romBanks() const { return m_banks; }        // bits 0-1 low, 2-3 high
     uint8_t keyboardLatch() const { return m_kbdLatch; }
-    void resetBanks() { m_romOn = true; m_banks = 0; m_kbdLatch = 0xFF; m_portDir = 0; m_portData = 0; }
+    void resetBanks() { m_romOn = true; m_banks = 0; m_kbdLatch = 0xFF; m_portDir = 0; m_portData = 0; portChanged(); }
     void powerOn() {
         // VICE initialises RAM with a pattern; a fixed one keeps runs repeatable
         for (size_t i = 0; i < sizeof m_ram; ++i) m_ram[i] = (i & 0x40) ? 0xFF : 0x00;
@@ -85,8 +87,11 @@ public:
     void write8(uint32_t addr, uint8_t val) override {
         addr &= 0xFFFF;
         uint8_t before = m_observer ? read((uint16_t)addr, true) : 0;
-        if (addr == 0) m_portDir = val & 0xDF;
-        else if (addr == 1) m_portData = val;
+        if (addr < 2) {
+            if (addr == 0) m_portDir = val & 0xDF;
+            else           m_portData = val;
+            portChanged();
+        }
         if (addr >= 0xFD00 && addr < 0xFF40) {
             io(addr, &val, true, false);
         } else {
@@ -122,9 +127,14 @@ private:
     uint8_t read(uint16_t addr, bool peek) {
         if (addr < 2) {
             if (addr == 0) return m_portDir;
-            // 7501 port (mem_proc_port_read): serial CLK/DATA in (bits 6/7),
-            // cassette read (4), motor and write in (3, 1) idle high; bit 5 absent
+            // 7501 port (mem_proc_port_read): serial CLK/DATA in (bits 6/7,
+            // high = released), cassette read (4), motor and write in (3, 1)
+            // idle high; bit 5 absent
             uint8_t input = 0xFF;
+            if (m_drive) {
+                if (!m_drive->clkLine())  input &= (uint8_t)~0x40;
+                if (!m_drive->dataLine()) input &= (uint8_t)~0x80;
+            }
             return (uint8_t)(((input & ~m_portDir) | (m_portData & m_portDir)) & 0xDF);
         }
         if (addr >= 0xFD00 && addr < 0xFF40) {
@@ -134,6 +144,14 @@ private:
         }
         if (addr >= 0x8000 && m_romOn) return romRead(addr);
         return m_ram[addr & m_ramMask];
+    }
+
+    /** The serial bus outputs: bit 0 DATA, 1 CLK, 2 ATN; a 1 pulls the
+     *  line low (through a 7406), an input bit leaves it released. */
+    void portChanged() {
+        if (!m_drive) return;
+        uint8_t out = m_portData & m_portDir;
+        m_drive->setComputerLines(out & 0x04, out & 0x02, out & 0x01);
     }
 
     void io(uint16_t addr, uint8_t* v, bool write, bool peek) {
@@ -173,6 +191,7 @@ private:
     Rom m_basic, m_kernal, m_funcLo, m_funcHi;
     Ted* m_ted = nullptr;
     IOHandler* m_acia = nullptr;
+    IecDrive* m_drive = nullptr;
     bool m_romOn = true;
     uint8_t m_banks = 0;
     uint8_t m_kbdLatch = 0xFF, m_userPort = 0xFF;
@@ -341,8 +360,14 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     auto* kbd = new Plus4Keyboard();
     io->registerHandler(ted);
     io->registerHandler(kbd);
-    desc->deleters.push_back([ted, kbd]() { delete ted; delete kbd; });
+    // Unit 8 on the serial bus: a host folder (the current directory) or a
+    // disk image (`disk mount 8 <folder or image>`)
+    auto* drive = new IecDrive(8);
+    drive->setClockHz(Ted::clockHz(ntsc ? Ted::Standard::NTSC : Ted::Standard::PAL));
+    io->registerHandler(drive);
+    desc->deleters.push_back([ted, kbd, drive]() { delete ted; delete kbd; delete drive; });
     bus->setTed(ted);
+    bus->setDrive(drive);
 
     auto* irq = new SharedIrqManager(cpu);
     desc->deleters.push_back([irq]() { delete irq; });
