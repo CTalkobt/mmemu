@@ -2,6 +2,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ivideo_output.h"
+#include "libdevices/main/ivideo_inspect.h"
 #include "libdevices/main/isignal_line.h"
 #include <cstdint>
 #include <string>
@@ -26,7 +27,7 @@ class GTIA;
  * character data, players/missiles, refresh) takes cycles from the CPU.
  * The machine's scheduler asks cpuBlocked() before each CPU step.
  */
-class Antic : public IOHandler, public IVideoOutput {
+class Antic : public IOHandler, public IVideoOutput, public IVideoInspect {
 public:
     static constexpr int CYCLES_PER_LINE = 114;
     static constexpr int LINES_NTSC = 262;
@@ -80,6 +81,19 @@ public:
     uint16_t displayListPc() const { return m_dlPc; }
     uint16_t memoryScan() const { return m_memScan; }
     uint64_t frameCount() const { return m_frames; }
+
+    // IVideoInspect (the Graphics (ANTIC/GTIA) pane, CLI gfx, MCP render_graphics):
+    // sprites 0-3 are players 0-3 and sprite 4 the missiles, from PMBASE at
+    // the DMACTL resolution; the character set is CHBASE, in the text mode
+    // the display list uses most; colours from GTIA's registers and palette.
+    int      paletteSize() const override { return 256; }
+    uint32_t paletteColor(int index) const override;
+    uint8_t  peekVideo(uint32_t addr) const override;
+    int      spriteCount() const override { return 5; }
+    bool     spriteInfo(int n, SpriteInfo& out) const override;
+    bool     charsetInfo(CharsetInfo& out) const override;
+    /** The ANTIC text mode (2-7) on most display-list lines, 0 if none. */
+    int      mainTextMode() const;
 
     enum Reg {
         DMACTL = 0x00, CHACTL = 0x01, DLISTL = 0x02, DLISTH = 0x03,

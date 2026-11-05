@@ -354,3 +354,87 @@ void Antic::drawLine() {
 void Antic::renderFrame(uint32_t* buffer) {
     std::memcpy(buffer, m_frame.data(), m_frame.size() * sizeof(uint32_t));
 }
+
+// ---------------------------------------------------------------------------
+// IVideoInspect
+// ---------------------------------------------------------------------------
+
+uint32_t Antic::paletteColor(int index) const {
+    return GTIA::getARGB((uint8_t)index, m_gtia && m_gtia->isPal());
+}
+
+uint8_t Antic::peekVideo(uint32_t addr) const {
+    return m_dmaBus ? m_dmaBus->peek8(addr & 0xFFFF) : 0;
+}
+
+bool Antic::spriteInfo(int n, SpriteInfo& out) const {
+    if (n < 0 || n > 4) return false;
+    // As fetched in startLine(): PMBASE on a 2 KB (single-line) or 1 KB
+    // (double-line) boundary; missiles at +$300/+$180, players from +$400/+$200
+    bool single = m_regs[DMACTL] & DMA_PM_1LINE;
+    uint16_t base = single ? (uint16_t)((m_regs[PMBASE] & 0xF8) << 8)
+                           : (uint16_t)((m_regs[PMBASE] & 0xFC) << 8);
+    out = SpriteInfo{};
+    out.playerMissile = true;
+    out.height = single ? 256 : 128;
+    if (n < 4) {
+        out.dataAddr = single ? (uint32_t)(base + 0x400 + n * 0x100) : (uint32_t)(base + 0x200 + n * 0x80);
+        out.enabled = m_regs[DMACTL] & DMA_PLAYER;
+        out.color = m_gtia ? m_gtia->reg(GTIA::COLPM0 + n) : 0x0F;
+    } else {
+        out.dataAddr = (uint32_t)(base + (single ? 0x300 : 0x180));
+        out.enabled = m_regs[DMACTL] & (DMA_MISSILE | DMA_PLAYER);
+        out.color = m_gtia ? m_gtia->reg(GTIA::COLPM0) : 0x0F;   // each missile has its player's colour
+    }
+    return true;
+}
+
+int Antic::mainTextMode() const {
+    if (!m_dmaBus) return 0;
+    int count[8] = {};
+    uint16_t pc = (uint16_t)(m_regs[DLISTL] | (m_regs[DLISTH] << 8));
+    auto next = [&]() {
+        uint8_t b = m_dmaBus->peek8(pc);
+        pc = (uint16_t)((pc & 0xFC00) | ((pc + 1) & 0x03FF));
+        return b;
+    };
+    for (int i = 0; i < 256; ++i) {            // a display list is at most a frame's lines
+        uint8_t ins = next();
+        int mode = ins & 0x0F;
+        if (mode == 1) {                       // JMP / JVB
+            if (ins & 0x40) break;
+            uint8_t lo = next(), hi = next();
+            pc = (uint16_t)(lo | (hi << 8));
+            continue;
+        }
+        if (mode >= 2 && (ins & 0x40)) { next(); next(); }   // LMS address
+        if (mode >= 2 && mode <= 7) ++count[mode];
+    }
+    int best = 0;
+    for (int m = 2; m <= 7; ++m)
+        if (count[m] > (best ? count[best] : 0)) best = m;
+    return best;
+}
+
+bool Antic::charsetInfo(CharsetInfo& out) const {
+    int mode = mainTextMode();
+    if (!mode) mode = 2;
+    out = CharsetInfo{};
+    out.antic = true;
+    out.addr = (mode >= 6) ? (uint32_t)((m_regs[CHBASE] & 0xFE) << 8) : (uint32_t)((m_regs[CHBASE] & 0xFC) << 8);
+    auto r = [this](int reg) -> uint8_t { return m_gtia ? m_gtia->reg(reg) : 0; };
+    if (mode == 4 || mode == 5) {              // 00 COLBK, 01 COLPF0, 10 COLPF1, 11 COLPF2
+        out.multicolor = true;
+        out.bg[0] = r(GTIA::COLBK);
+        out.bg[1] = r(GTIA::COLPF0);
+        out.bg[2] = r(GTIA::COLPF1);
+        out.fg = r(GTIA::COLPF2);
+    } else if (mode >= 6) {                    // characters 0-63 in COLPF0 on COLBK
+        out.bg[0] = r(GTIA::COLBK);
+        out.fg = r(GTIA::COLPF0);
+    } else {                                   // modes 2/3: COLPF2, lit pixels COLPF1's luminance
+        out.bg[0] = r(GTIA::COLPF2);
+        out.fg = (r(GTIA::COLPF2) & 0xF0) | (r(GTIA::COLPF1) & 0x0E);
+    }
+    return true;
+}

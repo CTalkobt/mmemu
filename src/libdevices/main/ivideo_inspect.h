@@ -25,6 +25,7 @@ public:
         uint8_t  color = 0;             ///< sprite colour register
         uint8_t  mc0 = 0, mc1 = 0;      ///< sprite multicolour registers
         int      paletteBase = 0;       ///< 16-colour sprites: index added to each nibble
+        bool     playerMissile = false; ///< ANTIC/GTIA player or missiles: 8 pixels, 1 byte per row
     };
 
     struct CharsetInfo {
@@ -33,6 +34,10 @@ public:
         bool     bitmap = false;
         bool     fullColor = false;     ///< VIC-IV FCM for characters <= $FF
         uint8_t  bg[4] = {0, 0, 0, 0};  ///< background colour registers 0-3
+        /** ANTIC text modes: 2 colours (modes 2/3, 6/7) or 4 (modes 4/5, multicolor);
+         *  bg[0..2] then give pixel values 0-2 and fg value 3 (or 1 in 2 colours). */
+        bool     antic = false;
+        int      fg = -1;               ///< foreground palette index; -1 = VIC colour RAM (shown as colour 1)
     };
 
     /** Number of palette entries (16 for a VIC-II, 256 for a VIC-III/IV). */

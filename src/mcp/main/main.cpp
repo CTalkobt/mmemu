@@ -480,8 +480,8 @@ Json handleDescribe() {
         };
         props.oVal["source"] = prop("string", "address (default), sprite (follow a VIC sprite) or charset (the VIC's current character set)");
         props.oVal["address"] = prop("string", "Start address for source=address (number or expression, e.g. \"$2000\")");
-        props.oVal["format"] = prop("string", "For source=address (default: the machine's first): sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm, char16, char16-mc. Each machine accepts only its video chip's formats (VIC-20: char, char-mc, char16, char16-mc; C64: sprite, sprite-mc, char, char-mc; MEGA65: all)");
-        props.oVal["sprite"] = prop("number", "Sprite number 0-7 for source=sprite");
+        props.oVal["format"] = prop("string", "For source=address (default: the machine's first): sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm, char16, char16-mc, antic2, antic4, player, player-2line. Each machine accepts only its video chip's formats (VIC-20: char, char-mc, char16, char16-mc; C64: sprite, sprite-mc, char, char-mc; MEGA65: the VIC formats; Atari: antic2, antic4, player, player-2line)");
+        props.oVal["sprite"] = prop("number", "For source=sprite: VIC sprite 0-7, or Atari player 0-3 (4 = the missiles)");
         props.oVal["count"] = prop("number", "Number of items (default 1; 256 for charset)");
         props.oVal["columns"] = prop("number", "Items per row in the PNG (default 8; 16 for charset)");
         props.oVal["stride"] = prop("number", "Bytes between items (default: the format's size)");
@@ -491,7 +491,7 @@ Json handleDescribe() {
         schema.oVal["properties"] = props;
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
-        addTool("render_graphics", "Decode VIC-family sprites or characters from memory (VIC-20, C64, MEGA65) as ASCII art or a PNG sheet.", schema);
+        addTool("render_graphics", "Decode sprites/players or characters from memory (VIC-20, C64, MEGA65 VIC formats; Atari ANTIC/GTIA formats) as ASCII art or a PNG sheet.", schema);
     }
 
     {
@@ -1967,7 +1967,7 @@ Json handleToolsCall(const Json& params) {
                     std::string list;
                     for (const auto* f : gfx::machineFormats(ms->machine)) list += (list.empty() ? "" : ", ") + std::string(f->id);
                     ok = false;
-                    err = list.empty() ? "This machine has no VIC graphics formats"
+                    err = list.empty() ? "This machine has no graphics viewer formats"
                                        : "Format '" + fmt + "' is not one this machine's video chip has (" + list + ")";
                 }
                 else if (!args.contains("address")) { ok = false; err = "address is required for source=address"; }

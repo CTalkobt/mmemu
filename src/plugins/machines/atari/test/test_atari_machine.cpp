@@ -1,6 +1,8 @@
 #include "test_harness.h"
 #include "plugins/machines/atari/main/machine_atari.h"
 #include "libcore/main/machine_desc.h"
+#include "libdebug/main/gfx_view.h"
+#include "libdevices/main/ivideo_inspect.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/ivideo_output.h"
@@ -351,11 +353,67 @@ TEST_CASE(atari800xl_pal_boots) {
     ASSERT_EQ(maxV, 155);                                           // 312 lines
 }
 
-// The Atari's hardware panes: no VIC graphics viewer, tape or SID scope
+// The Atari's hardware panes: the ANTIC/GTIA graphics viewer, no VIC one,
+// tape or SID scope; only ANTIC/GTIA formats
 TEST_CASE(atari_ui_panes) {
     Machine m(atari::create(atari::Model::Atari800XL));
     ASSERT(m != nullptr);
     ASSERT(m->uiPanesSet);
-    ASSERT(m->hasPane("drive") && m->hasPane("cartridge"));
+    ASSERT(m->hasPane("drive") && m->hasPane("cartridge") && m->hasPane("graphics-antic"));
     ASSERT(!m->hasPane("graphics-vic") && !m->hasPane("tape") && !m->hasPane("sidscope"));
+    std::string ids;
+    for (const auto* f : gfx::machineFormats(m.get())) ids += std::string(ids.empty() ? "" : ",") + f->id;
+    ASSERT_EQ(ids, std::string("antic2,antic4,player,player-2line"));
+    ASSERT(gfx::machineFormats(m.get(), "vic").empty());
+}
+
+// ANTIC follows the players, missiles and character set as the chip fetches
+// them, with GTIA's colours (the Graphics (ANTIC/GTIA) pane, CLI gfx chip-*)
+TEST_CASE(atari_antic_video_inspect) {
+    Machine m(atari::create(atari::Model::Atari800XL));
+    ASSERT(m != nullptr);
+    ASSERT(runUntil(*m, "READY", 8.0));
+    IVideoInspect* vi = gfx::findVideoInspect(m.get());
+    ASSERT(vi != nullptr);
+    ASSERT_EQ(vi->spriteCount(), 5);
+    IBus* b = bus(*m);
+    // BASIC's screen: a mode 2 display list; CHBASE $E0 (the ROM set)
+    IVideoInspect::CharsetInfo ci;
+    ASSERT(vi->charsetInfo(ci));
+    ASSERT(ci.antic && !ci.multicolor);
+    ASSERT_EQ((int)ci.addr, 0xE000);
+    ASSERT_EQ((int)ci.bg[0], (int)b->peek8(0x2C6));                       // COLOR2 -> COLPF2
+    ASSERT_EQ(ci.fg, (b->peek8(0x2C6) & 0xF0) | (b->peek8(0x2C5) & 0x0E)); // COLOR1's luminance
+
+    // Players: PMBASE $30 double-line -> player 1 at $3280, missiles at $3180
+    b->write8(0xD407, 0x30);
+    b->write8(0xD400, 0x3E & ~0x10);                // DMA on, double-line
+    b->write8(0xD013, 0x46);                        // COLPM1
+    IVideoInspect::SpriteInfo si;
+    ASSERT(vi->spriteInfo(1, si));
+    ASSERT(si.playerMissile && si.enabled);
+    ASSERT_EQ((int)si.dataAddr, 0x3280);
+    ASSERT_EQ(si.height, 128);
+    ASSERT_EQ((int)si.color, 0x46);
+    ASSERT(vi->spriteInfo(4, si));
+    ASSERT_EQ((int)si.dataAddr, 0x3180);
+    b->write8(0xD400, 0x3E);                        // single-line: player 1 at $3500
+    ASSERT(vi->spriteInfo(1, si));
+    ASSERT_EQ((int)si.dataAddr, 0x3500);
+    ASSERT_EQ(si.height, 256);
+    ASSERT(!vi->spriteInfo(5, si));
+
+    // The view picks the player format and colour
+    b->write8(0x3500, 0x81);
+    gfx::ViewRequest req;
+    req.source = gfx::Source::Sprite;
+    req.sprite = 1;
+    gfx::View v = gfx::buildView(req, b, vi);
+    ASSERT(v.error.empty());
+    ASSERT(v.format == gfx::Format::Player);
+    ASSERT_EQ((int)v.start, 0x3500);
+    auto px = [&](int x, int y) { return v.sheet.argb[(size_t)(v.sheet.gap + y) * v.sheet.width + v.sheet.gap + x] & 0xFFFFFF; };
+    ASSERT_EQ(px(0, 0), vi->paletteColor(0x46) & 0xFFFFFF);    // $81: pixels 0 and 7 lit
+    ASSERT_EQ(px(7, 0), vi->paletteColor(0x46) & 0xFFFFFF);
+    ASSERT(px(1, 0) != (vi->paletteColor(0x46) & 0xFFFFFF));
 }
