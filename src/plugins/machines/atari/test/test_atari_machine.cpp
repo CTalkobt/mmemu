@@ -350,3 +350,12 @@ TEST_CASE(atari800xl_pal_boots) {
     for (int i = 0; i < 400; ++i) { runCycles(*m, 114); maxV = std::max(maxV, (int)b->peek8(0xD40B)); }
     ASSERT_EQ(maxV, 155);                                           // 312 lines
 }
+
+// The Atari's hardware panes: no VIC graphics viewer, tape or SID scope
+TEST_CASE(atari_ui_panes) {
+    Machine m(atari::create(atari::Model::Atari800XL));
+    ASSERT(m != nullptr);
+    ASSERT(m->uiPanesSet);
+    ASSERT(m->hasPane("drive") && m->hasPane("cartridge"));
+    ASSERT(!m->hasPane("graphics-vic") && !m->hasPane("tape") && !m->hasPane("sidscope"));
+}

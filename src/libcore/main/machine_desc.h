@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 
 #include "icore.h"
 #include "libmem/main/ibus.h"
@@ -93,6 +94,27 @@ struct MachineDescriptor {
      *  RESTORE key but whose NMI line can be triggered (the PET: owners often
      *  wired a pushbutton to it). Empty if none. Frontends show a button. */
     std::string nmiButtonKey;
+
+    /**
+     * Debugger panes that depend on this machine's hardware, by GUI pane id:
+     * "graphics-vic" (VIC-I/II/IV sprites and characters), "sidscope",
+     * "cartridge", "tape", "drive", "mega65". Panes
+     * that suit any machine (console, CPU, memory, ...) are always shown.
+     * Unset (uiPanesSet false): every pane, for machines that do not say.
+     * Machine JSON: "ui": {"panes": [...]}.
+     */
+    std::vector<std::string> uiPanes;
+    bool uiPanesSet = false;
+    bool hasPane(const std::string& id) const {
+        return !uiPanesSet || std::find(uiPanes.begin(), uiPanes.end(), id) != uiPanes.end();
+    }
+    /**
+     * VIC graphics formats for the "graphics-vic" pane, CLI gfx and MCP
+     * render_graphics (gfx format ids, e.g. "char", "sprite-mc"), in menu
+     * order; empty = all formats. None at all without "graphics-vic".
+     * Machine JSON: "ui": {"graphicsFormats": [...]}.
+     */
+    std::vector<std::string> graphicsFormats;
 
     /** Joystick injection hook.
      *  @param port     Joystick port index (0 or 1).

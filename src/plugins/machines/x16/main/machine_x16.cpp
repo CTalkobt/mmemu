@@ -308,6 +308,9 @@ MachineDescriptor* create(std::string* err) {
 
     auto* desc = new MachineDescriptor();
     desc->machineId = "x16";
+    // No VIC graphics viewer; a VERA one (sprites, tiles) is to come
+    desc->uiPanesSet = true;
+    desc->uiPanes = {"drive"};
     desc->displayName = "Commander X16";
     desc->licenseClass = "open";
 

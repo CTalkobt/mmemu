@@ -37,6 +37,7 @@ This document defines the JSON schema used to describe and reconstruct the vario
 | `ramExpansions` | RamSpec[] | Optional/Expansion RAM blocks |
 | `signals` | SignalSpec[] | Interrupt and internal signal line definitions |
 | `kbdWiring` | KbdWireSpec | Keyboard matrix port mapping |
+| `ui` | UiSpec | Debugger panes for this machine's hardware and its VIC graphics formats |
 | `plaWiring` | PlaWireSpec | (C64 specific) PLA banking signal mapping |
 | `joystick` | JoySpec or [JoySpec] | Joystick port(s) `{device, port}` (switches on bits 0-4), or `{lines: [{device, port, up, down, left, right, fire}]}` to put each switch on a chosen bit of one or more ports (the VIC-20); array index = joystick port. A port shared with the keyboard reads both. |
 | `joystickPrimary` | int | The joystick port most software reads (a host's first controller goes here) |
@@ -115,6 +116,18 @@ At run time: `intercept [list]`, `intercept on|off <name>`, `intercept set <name
 - `type`: `"simple"`, `"shared"`, `"latch"`, `"nmi"` or `"sharedNmi"`.
 - `sources`: Array of device names or `Device.Line` identifiers that drive this signal.
 - `"sharedNmi"`: a wired-OR NMI (edge-triggered at the CPU). A source `"DEV"` (or `"DEV.irqA"`/`"DEV.irqB"`) is a chip's interrupt output wired to NMI, as with the VIC-20's VIA1 and the C64's CIA2; `"DEV.nmi"` is a device's own NMI output. `lines`: names of extra inputs, e.g. `["restore"]` for a RESTORE key wired straight to NMI (see `kbdWiring.restore`).
+
+### UiSpec (ui)
+Which hardware-dependent debugger panes the GUI shows for this machine (others, such as the console, CPU and memory panes, are always shown). A machine without `ui` gets every pane.
+- `panes`: pane ids: `graphics-vic` (VIC-I/II/IV sprites and characters), `sidscope`, `cartridge`, `tape`, `drive`, `mega65` (MEGA65 Status).
+- `graphicsFormats`: the `graphics-vic` formats the video chip has (`gfx formats` ids), in menu order; omitted = all. The CLI `gfx` and MCP `render_graphics` accept only these.
+
+```json
+"ui": { "panes": ["tape", "cartridge", "graphics-vic"],
+        "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"] }
+```
+
+C++ machines set `MachineDescriptor::uiPanes` (with `uiPanesSet = true`) and `graphicsFormats`.
 
 ### KbdWireSpec (kbdWiring)
 Wires a keyboard matrix device to I/O ports.

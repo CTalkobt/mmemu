@@ -1,10 +1,10 @@
-# Graphics Viewer (sprites and characters)
+# Graphics Viewer (VIC sprites and characters)
 
 Issue #28. Decodes sprite and character graphics from memory. It is available
 in three places, which all use the same code (`src/libtoolchain/main/gfx_decode.*`
 for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 
-- **GUI**: View > Graphics (a side pane)
+- **GUI**: View > Graphics (VIC) (a side pane, id `graphics-vic`)
 - **CLI**: `gfx`
 - **MCP**: `render_graphics`
 
@@ -21,6 +21,22 @@ for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 | `char-mc`   | Character, multicolour                 | 4x8 (double-wide pixels) | 8 |
 | `char-fcm`  | VIC-IV full-colour character           | 8x8, 1 byte per pixel | 64 |
 | `char-ncm`  | VIC-IV nybl-colour character           | 16x8, 4 bits per pixel | 64 |
+| `char16`    | VIC-I double-height character          | 8x16   | 16             |
+| `char16-mc` | VIC-I double-height character, multicolour | 4x16 (double-wide pixels) | 16 |
+
+### Formats per machine
+
+It is a viewer for the VIC family. Each machine lists the formats its video chip
+has (`"ui": {"graphicsFormats": [...]}` in the machine JSON,
+`MachineDescriptor::graphicsFormats`), and the GUI, `gfx formats` and
+`render_graphics` offer only those:
+
+| Machine | Video chip | Formats |
+|---------|------------|---------|
+| VIC-20  | VIC-I      | `char`, `char-mc`, `char16`, `char16-mc` (no sprites) |
+| C64     | VIC-II     | `sprite`, `sprite-mc`, `char`, `char-mc` |
+| MEGA65  | VIC-IV     | every format (it declares no list) |
+| PET, Atari, X16 | CRTC / ANTIC+GTIA / VERA | none: the pane is hidden. Atari (player/missile, ANTIC modes) and VERA (sprites, tiles) viewers are planned as their own panes. |
 
 The stride (bytes from one item to the next) defaults to the size above and can
 be changed, e.g. to view sprites packed at 63-byte intervals.

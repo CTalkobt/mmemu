@@ -487,6 +487,10 @@ MachineDescriptor* create(Model model, std::string* err, bool pal) {
     if (!loadRom("roms/atari/basic.bin", 8192, basic, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
+    // No VIC graphics viewer; an ANTIC/GTIA one (player/missile, character
+    // modes) is to come
+    desc->uiPanesSet = true;
+    desc->uiPanes = {"drive", "cartridge"};
     switch (model) {
         case Model::Atari800:   desc->machineId = "atari800";   desc->displayName = "Atari 800"; break;
         case Model::Atari800XL: desc->machineId = "atari800xl"; desc->displayName = "Atari 800XL"; break;

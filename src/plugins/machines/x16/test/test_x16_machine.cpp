@@ -103,3 +103,14 @@ TEST_CASE(cpu65c02_vector_pull_hook_before_irq_vector) {
     ASSERT_EQ(pulls, 1);
     ASSERT_EQ((int)cpu.pc(), 0x4000);                                           // vector read after the hook
 }
+
+// The X16's hardware panes: drives only (no VIC graphics, tape, cartridge or SID)
+TEST_CASE(x16_ui_panes) {
+    std::string err;
+    MachineDescriptor* m = x16::create(&err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    ASSERT(m->uiPanesSet);
+    ASSERT(m->hasPane("drive"));
+    ASSERT(!m->hasPane("graphics-vic") && !m->hasPane("tape") && !m->hasPane("cartridge") && !m->hasPane("sidscope"));
+    delete m;
+}

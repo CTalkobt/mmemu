@@ -3,6 +3,8 @@
 
     {
       "id": "c64",
+      "ui": { "panes": ["tape", "drive", "cartridge", "sidscope", "graphics-vic"],
+              "graphicsFormats": ["sprite", "sprite-mc", "char", "char-mc"] },
       "displayName": "Commodore 64",
       "licenseClass": "proprietary",
       "clockHz": 985248,

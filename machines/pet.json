@@ -3,6 +3,7 @@
 
     {
       "id": "pet2001",
+      "ui": { "panes": ["tape"] },
       "displayName": "Commodore PET 2001",
       "licenseClass": "proprietary",
       "clockHz": 1000000,
@@ -65,6 +66,7 @@
 
     {
       "id": "pet4032",
+      "ui": { "panes": ["tape"] },
       "displayName": "Commodore PET 4032",
       "licenseClass": "proprietary",
       "clockHz": 1000000,
@@ -129,6 +131,7 @@
 
     {
       "id": "pet8032",
+      "ui": { "panes": ["tape"] },
       "displayName": "Commodore PET 8032",
       "licenseClass": "proprietary",
       "clockHz": 1000000,

@@ -480,7 +480,7 @@ Json handleDescribe() {
         };
         props.oVal["source"] = prop("string", "address (default), sprite (follow a VIC sprite) or charset (the VIC's current character set)");
         props.oVal["address"] = prop("string", "Start address for source=address (number or expression, e.g. \"$2000\")");
-        props.oVal["format"] = prop("string", "For source=address: sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm");
+        props.oVal["format"] = prop("string", "For source=address (default: the machine's first): sprite, sprite-mc, sprite64, sprite16, sprite16-6, char, char-mc, char-fcm, char-ncm, char16, char16-mc. Each machine accepts only its video chip's formats (VIC-20: char, char-mc, char16, char16-mc; C64: sprite, sprite-mc, char, char-mc; MEGA65: all)");
         props.oVal["sprite"] = prop("number", "Sprite number 0-7 for source=sprite");
         props.oVal["count"] = prop("number", "Number of items (default 1; 256 for charset)");
         props.oVal["columns"] = prop("number", "Items per row in the PNG (default 8; 16 for charset)");
@@ -491,7 +491,7 @@ Json handleDescribe() {
         schema.oVal["properties"] = props;
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
-        addTool("render_graphics", "Decode sprites or characters from memory (C64/MEGA65 formats) as ASCII art or a PNG sheet.", schema);
+        addTool("render_graphics", "Decode VIC-family sprites or characters from memory (VIC-20, C64, MEGA65) as ASCII art or a PNG sheet.", schema);
     }
 
     {
@@ -1959,8 +1959,17 @@ Json handleToolsCall(const Json& params) {
                 req.source = gfx::Source::Charset;
                 req.count = 256; req.columns = 16; req.videoView = true;
             } else if (source == "address") {
-                std::string fmt = args.contains("format") ? args["format"].sVal : "sprite";
+                auto mf = gfx::machineFormats(ms->machine);
+                std::string fmt = args.contains("format") ? args["format"].sVal
+                                : (mf.empty() ? std::string("sprite") : std::string(mf.front()->id));
                 if (!gfx::formatById(fmt, req.format)) { ok = false; err = "Unknown format '" + fmt + "'"; }
+                else if (!gfx::machineHasFormat(ms->machine, req.format)) {
+                    std::string list;
+                    for (const auto* f : gfx::machineFormats(ms->machine)) list += (list.empty() ? "" : ", ") + std::string(f->id);
+                    ok = false;
+                    err = list.empty() ? "This machine has no VIC graphics formats"
+                                       : "Format '" + fmt + "' is not one this machine's video chip has (" + list + ")";
+                }
                 else if (!args.contains("address")) { ok = false; err = "address is required for source=address"; }
                 else if (!resolveAddrWithDiagnostic(args["address"], ms->dbg, req.addr, err)) ok = false;
             } else { ok = false; err = "source must be address, sprite or charset"; }

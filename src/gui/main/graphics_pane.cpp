@@ -121,10 +121,8 @@ GraphicsPane::GraphicsPane(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
     m_addr = new wxTextCtrl(this, wxID_ANY, "$2000", wxDefaultPosition, wxSize(110, -1), wxTE_PROCESS_ENTER);
     m_addr->SetToolTip("Start address: any expression ($2000, label, *$FB:16 ...). Enter to apply.");
 
-    wxArrayString fmts;
-    for (const auto& f : gfx::formats()) fmts.Add(f.label);
-    m_format = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, fmts);
-    m_format->SetSelection(0);
+    m_format = new wxChoice(this, wxID_ANY);
+    fillFormats(nullptr);
 
     // A fixed pixel width narrower than GTK3's entry + "-" + "+" buttons makes
     // GTK log "gtk_box_gadget_distribute: assertion 'size >= 0' failed in
@@ -188,7 +186,21 @@ GraphicsPane::GraphicsPane(wxWindow* parent) : wxPanel(parent, wxID_ANY) {
     m_start = 0x2000;
 }
 
+void GraphicsPane::fillFormats(const MachineDescriptor* desc) {
+    // Only the formats this machine's video hardware has (#28 follow-up)
+    gfx::Format keep = m_formatList.empty() ? gfx::Format::SpriteHires : SelectedFormat();
+    m_formatList.clear();
+    m_format->Clear();
+    for (const auto* f : gfx::machineFormats(desc)) {
+        m_formatList.push_back(f->format);
+        m_format->Append(f->label);
+    }
+    m_format->SetSelection(0);
+    SelectFormat(keep);         // stays on the previous format if this machine has it
+}
+
 void GraphicsPane::SetMachine(MachineDescriptor* desc, IBus* cpuBus, DebugContext* dbg) {
+    fillFormats(desc);
     m_bus = cpuBus;
     m_dbg = dbg;
     m_video = gfx::findVideoInspect(desc);
@@ -209,14 +221,13 @@ void GraphicsPane::SetMachine(MachineDescriptor* desc, IBus* cpuBus, DebugContex
 
 gfx::Format GraphicsPane::SelectedFormat() const {
     int sel = m_format->GetSelection();
-    const auto& all = gfx::formats();
-    return (sel >= 0 && sel < (int)all.size()) ? all[sel].format : gfx::Format::SpriteHires;
+    if (sel >= 0 && sel < (int)m_formatList.size()) return m_formatList[sel];
+    return m_formatList.empty() ? gfx::Format::SpriteHires : m_formatList.front();
 }
 
 void GraphicsPane::SelectFormat(gfx::Format f) {
-    const auto& all = gfx::formats();
-    for (size_t i = 0; i < all.size(); ++i)
-        if (all[i].format == f) m_format->SetSelection((int)i);
+    for (size_t i = 0; i < m_formatList.size(); ++i)
+        if (m_formatList[i] == f) m_format->SetSelection((int)i);
 }
 
 void GraphicsPane::OnSettingChanged() {

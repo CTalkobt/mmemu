@@ -23,6 +23,8 @@ enum class Format {
     CharMulti,     ///< VIC-II multicolour character, 4x8 double-wide pixels, 2 bpp
     CharFCM,       ///< VIC-IV full-colour character, 8x8, 8 bpp (64 bytes)
     CharNCM,       ///< VIC-IV nybl-colour character, 16x8, 4 bpp (64 bytes)
+    Char16,        ///< VIC-I double-height character, 8x16, 1 bpp
+    Char16Multi,   ///< VIC-I double-height multicolour character, 4x16 double-wide pixels, 2 bpp
 };
 
 struct FormatInfo {

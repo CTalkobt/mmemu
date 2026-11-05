@@ -1497,16 +1497,22 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                          "        gfx vic-sprite <0-7> [file.png]\n"
                          "        gfx vic-charset [count] [columns] [file.png]\n"
                          "  vic = read memory as the video chip sees it; swap = swap nibble order\n");
-            m_output("Formats:\n");
-            for (const auto& f : gfx::formats()) {
+            auto fmts = gfx::machineFormats(m_ctx.machine);
+            if (fmts.empty()) { m_output("This machine has no VIC graphics formats.\n"); return; }
+            m_output(m_ctx.machine ? "Formats for this machine:\n" : "Formats:\n");
+            for (const auto* f : fmts) {
                 std::ostringstream os;
-                os << "  " << std::left << std::setw(12) << f.id << f.label << " (" << f.width << "x"
-                   << f.height << ", " << f.stride << " bytes)\n";
+                os << "  " << std::left << std::setw(12) << f->id << f->label << " (" << f->width << "x"
+                   << f->height << ", " << f->stride << " bytes)\n";
                 m_output(os.str());
             }
             return;
         }
         if (!m_ctx.machine || !m_ctx.bus) { m_output("No machine created.\n"); return; }
+        if (gfx::machineFormats(m_ctx.machine).empty()) {
+            m_output("This machine has no VIC graphics viewer (gfx shows VIC-I/II/IV sprites and characters).\n");
+            return;
+        }
 
         gfx::ViewRequest req;
         size_t next = 1;
@@ -1525,6 +1531,10 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             req.columns = 16;
         } else {
             if (!gfx::formatById(args[0], req.format)) { m_output("Unknown format '" + args[0] + "' (see 'gfx formats').\n"); return; }
+            if (!gfx::machineHasFormat(m_ctx.machine, req.format)) {
+                m_output("Format '" + args[0] + "' is not one this machine's video chip has (see 'gfx formats').\n");
+                return;
+            }
             if (args.size() < 2 || !parseAddr(args[1], req.addr)) { m_output("Missing or bad address.\n"); return; }
             next = 2;
         }

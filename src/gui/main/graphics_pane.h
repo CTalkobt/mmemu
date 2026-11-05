@@ -52,6 +52,8 @@ private:
     wxChoice*   m_source = nullptr;
     wxTextCtrl* m_addr = nullptr;
     wxChoice*   m_format = nullptr;
+    std::vector<gfx::Format> m_formatList;   // the machine's formats, in m_format's order
+    void fillFormats(const MachineDescriptor* desc);
     wxSpinCtrl* m_count = nullptr;
     wxSpinCtrl* m_cols = nullptr;
     wxSpinCtrl* m_stride = nullptr;
