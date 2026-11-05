@@ -121,6 +121,7 @@ At run time: `intercept [list]`, `intercept on|off <name>`, `intercept set <name
 Which hardware-dependent debugger panes the GUI shows for this machine (others, such as the console, CPU and memory panes, are always shown). A machine without `ui` gets every pane.
 - `panes`: pane ids: `graphics-vic` (VIC-I/II/IV sprites and characters), `sidscope`, `cartridge`, `tape`, `drive`, `mega65` (MEGA65 Status).
 - `graphicsFormats`: the `graphics-vic` formats the video chip has (`gfx formats` ids), in menu order; omitted = all. The CLI `gfx` and MCP `render_graphics` accept only these.
+- `screenButtons`: buttons under **Capture Keyboard** on the GUI screen pane, `[{ "label", "keys", "tooltip" }]`. A button holds its `keys` (onKey names, pressed in order, released in reverse) while it is held, and for at least 150 ms after a click so the machine sees it. The C64 and VIC-20 have **RUN/STOP + RESTORE** (`["run_stop", "restore"]`) and **RESTORE**; the PET **Trigger NMI** (`["nmi"]`). C++ machines set `MachineDescriptor::screenButtons` (the MEGA65 has the same two as the C64).
 
 ```json
 "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
@@ -134,7 +135,7 @@ Wires a keyboard matrix device to I/O ports.
 - `device`: Name of the keyboard device instance.
 - `colPort`: `{ "device": "...", "port": "A" or "B" }`
 - `rowPort`: `{ "device": "...", "port": "A" or "B" }`
-- `nmiKey` (optional): a plain NMI button for a machine with no RESTORE key (the PET): `{ "key": "nmi", "line": "<signal>" }`, same `line` forms as `restore`. Sets `MachineDescriptor::nmiButtonKey`, which makes the GUI show a **Trigger NMI** button.
+- `nmiKey` (optional): a plain NMI button for a machine with no RESTORE key (the PET): `{ "key": "nmi", "line": "<signal>" }`, same `line` forms as `restore`. Its GUI button is declared in `ui.screenButtons`.
 - `restore` (optional): the RESTORE key, outside the matrix. `{ "line": "<signal>" }` (a `sharedNmi` line, asserted while held) or `{ "line": "DEV.pin", "activeLow": true }` (e.g. the VIC-20's `VIA1.ca1`). `onKey("restore", down)` drives it.
 
 ### PlaWireSpec (plaWiring)

@@ -448,13 +448,20 @@ static void onScreenMachineLoad(void* paneHandle, MachineDescriptor* desc, void*
     pane->SetVideoOutput(vid);
     if (desc && desc->onMouse) pane->SetMouseHandler(desc->onMouse);
     else pane->SetMouseHandler(nullptr);
-    if (desc && desc->onKey && !desc->nmiButtonKey.empty()) {
+    // The machine's buttons under Capture Keyboard (RUN/STOP + RESTORE, ...):
+    // keys pressed in order while held, released in reverse
+    std::vector<ScreenPane::KeyButton> buttons;
+    if (desc && desc->onKey) {
         auto onKey = desc->onKey;
-        std::string key = desc->nmiButtonKey;
-        pane->SetNmiHandler([onKey, key](bool down) { (void)onKey(key, down); });
-    } else {
-        pane->SetNmiHandler(nullptr);
+        for (const auto& sb : desc->screenButtons) {
+            auto keys = sb.keys;
+            buttons.push_back({sb.label, sb.tooltip, [onKey, keys](bool down) {
+                if (down) for (const auto& k : keys) (void)onKey(k, true);
+                else      for (auto it = keys.rbegin(); it != keys.rend(); ++it) (void)onKey(*it, false);
+            }});
+        }
     }
+    pane->SetKeyButtons(std::move(buttons));
 }
 
 static void refreshScreenPane(void* paneHandle, uint64_t /*cycles*/, void* /*ctx*/) {

@@ -3,7 +3,10 @@
 
     {
       "id": "pet2001",
-      "ui": { "panes": ["tape"] },
+      "ui": { "panes": ["tape"],
+              "screenButtons": [
+                { "label": "Trigger NMI", "keys": ["nmi"],
+                  "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
       "displayName": "Commodore PET 2001",
       "licenseClass": "proprietary",
       "clockHz": 1000000,
@@ -66,7 +69,10 @@
 
     {
       "id": "pet4032",
-      "ui": { "panes": ["tape"] },
+      "ui": { "panes": ["tape"],
+              "screenButtons": [
+                { "label": "Trigger NMI", "keys": ["nmi"],
+                  "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
       "displayName": "Commodore PET 4032",
       "licenseClass": "proprietary",
       "clockHz": 1000000,
@@ -131,7 +137,10 @@
 
     {
       "id": "pet8032",
-      "ui": { "panes": ["tape"] },
+      "ui": { "panes": ["tape"],
+              "screenButtons": [
+                { "label": "Trigger NMI", "keys": ["nmi"],
+                  "tooltip": "Pulls the CPU's NMI line low while held, like the NMI pushbutton owners often added. The PET had no RESTORE key, so programs for a stock PET will not expect an NMI. The ROM sends it to BASIC's warm start." } ] },
       "displayName": "Commodore PET 8032",
       "licenseClass": "proprietary",
       "clockHz": 1000000,

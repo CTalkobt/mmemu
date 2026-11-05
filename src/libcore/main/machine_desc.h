@@ -90,10 +90,19 @@ struct MachineDescriptor {
      */
     std::function<bool(const std::string& keyName, bool down)> onKey;
 
-    /** Key name (for onKey) of a plain NMI button, for machines that have no
-     *  RESTORE key but whose NMI line can be triggered (the PET: owners often
-     *  wired a pushbutton to it). Empty if none. Frontends show a button. */
-    std::string nmiButtonKey;
+    /**
+     * Buttons under the screen (GUI): each holds its keys (onKey names, pressed
+     * in order, released in reverse) while it is held. E.g. RUN/STOP + RESTORE
+     * and RESTORE on the C64, VIC-20 and MEGA65; the PET's NMI button (it had
+     * no RESTORE key). Machine JSON: "ui": {"screenButtons": [{"label",
+     * "keys", "tooltip"}]}.
+     */
+    struct ScreenButton {
+        std::string label;
+        std::vector<std::string> keys;
+        std::string tooltip;
+    };
+    std::vector<ScreenButton> screenButtons;
 
     /**
      * Debugger panes that depend on this machine's hardware, by GUI pane id:
