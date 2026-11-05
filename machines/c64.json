@@ -43,7 +43,7 @@
       "symbolFiles": [ "roms/c64/kernal.sym", "roms/c64/basic.sym" ],
       "signals": [
         { "name": "irq", "type": "shared", "sources": ["VIC-II", "CIA1"] },
-        { "name": "nmi", "type": "nmi",    "sources": ["CIA2"] }
+        { "name": "nmi", "type": "sharedNmi", "sources": ["CIA2"], "lines": ["restore"] }
       ],
       "plaWiring": {
         "device": "PLA",
@@ -65,7 +65,8 @@
       "kbdWiring": {
         "device": "Keyboard",
         "colPort": { "device": "CIA1", "port": "A" },
-        "rowPort": { "device": "CIA1", "port": "B" }
+        "rowPort": { "device": "CIA1", "port": "B" },
+        "restore": { "line": "restore" }
       },
       "iecWiring": {
         "device": "Drive8",

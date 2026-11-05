@@ -407,3 +407,34 @@ TEST_CASE(vic20_tape_lines) {
     ASSERT_EQ(rd(via2, 0x912D) & 0x02, 0x02);
     delete desc;
 }
+
+// RESTORE reaches the CPU's NMI: on the VIC-20 through VIA1 CA1 (VIA1's
+// interrupt output is NMI, VIA2's is IRQ), on the C64 straight to NMI. The
+// KERNAL's NMI handler jumps through $0318; point it at a counter.
+static void restoreGivesNmi(const std::string& id) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine(id);
+    ASSERT(desc != nullptr && !desc->cpus.empty());
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 3000000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->cpus[0].dataBus;
+    // $02A1 (free in both): INC $02A0 ; JMP $FEBC/$FF56 (KERNAL "restore registers, RTI")
+    uint16_t exitNmi = id == "c64" ? 0xFEBC : 0xFF56;
+    const uint8_t code[] = {0xEE, 0xA0, 0x02, 0x4C, (uint8_t)exitNmi, (uint8_t)(exitNmi >> 8)};
+    bus->write8(0x02A0, 0);
+    for (size_t i = 0; i < sizeof code; i++) bus->write8(0x02A1 + (uint32_t)i, code[i]);
+    bus->write8(0x0318, 0xA1);
+    bus->write8(0x0319, 0x02);
+
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(0x02A0), 0);          // the jiffy IRQ is not an NMI
+    ASSERT(desc->onKey("restore", true));
+    for (uint64_t c = 0; c < 20000;) c += desc->schedulerStep(*desc);
+    ASSERT(desc->onKey("restore", false));
+    for (uint64_t c = 0; c < 100000;) c += desc->schedulerStep(*desc);
+    ASSERT_EQ((int)bus->peek8(0x02A0), 1);          // one press, one NMI
+    delete desc;
+}
+
+TEST_CASE(vic20_restore_is_nmi) { restoreGivesNmi("vic20"); }
+TEST_CASE(c64_restore_is_nmi)   { restoreGivesNmi("c64"); }

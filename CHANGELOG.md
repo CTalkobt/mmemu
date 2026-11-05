@@ -7,6 +7,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Commodore Fixes (NMI and RESTORE)
+- **VIC-20 NMI**: VIA1 now drives the CPU's NMI and VIA2 alone drives IRQ, as on the real machine; both were on IRQ.
+- **C64 NMI**: CIA2's interrupt output now reaches NMI. The machine file named it as an NMI source, but the loader attached it to a device NMI output the CIA does not have, so it was not connected.
+- **RESTORE key** on the VIC-20 (pulls VIA1 CA1 low) and C64 (straight to NMI): key name `restore`, GUI Page Up as in VICE. RUN/STOP+RESTORE warm-starts BASIC on both, checked in the CLI.
+- Loader: new `sharedNmi` signal type (wired-OR NMI, chip interrupt outputs as sources, extra named `lines`) and `kbdWiring.restore`. A plain `nmi` line now fires only on a rising edge.
+- Tests: `vic20_restore_is_nmi`, `c64_restore_is_nmi`.
+
 ### Commodore Fixes (tape)
 - **VIC-20 tape** now saves and loads: `SAVE` to the datasette, then `LOAD` and `RUN` from the recorded `.tap`, checked from BASIC. The lines were wired to the wrong pins; now they match VICE and the KERNAL: sense on VIA1 PA6 (was PB6, which the KERNAL never reads), motor on VIA1 CA2 (was VIA2 PB3), write on VIA2 PB3 (was PB7), read pulses on VIA2 CA1 (was VIA1 CA1, the RESTORE line). New VIA input-pin lines `pa0`-`pa7` let a peripheral hold a port A pin.
 - **Datasette recording** stored every edge of the write line as a pulse, so a recorded `.tap` held half-cycles at twice the count. It now stores one pulse per cycle, from one 0→1 transition to the next, as VICE does. A C64 `SAVE` to tape loads back (checked from BASIC; not tried with the old recorder); the PET's recording uses the same code but was not tried.

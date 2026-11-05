@@ -15,6 +15,7 @@ std::string wxKeyToVic20Name(int code) {
         case WXK_LEFT:             return "left";
         case WXK_RIGHT:            return "right";
         case WXK_HOME:             return "home";
+        case WXK_PAGEUP:           return "restore";    // as in VICE
         case WXK_DELETE:
         case WXK_BACK:             return "delete";
         case WXK_ESCAPE:           return "run_stop";

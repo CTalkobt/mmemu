@@ -15,6 +15,7 @@ The VIC-20 machine plugin acts as the composition layer that integrates individu
 - **CPU**: Instantiates a MOS 6502 core.
 - **Video**: Instantiates a MOS 6560 VIC-I chip.
 - **I/O**: Instantiates two MOS 6522 VIA chips.
+- **Interrupts** (as on the real machine and in VICE): VIA2 (`$9120`, keyboard, jiffy timer, tape read) drives IRQ; VIA1 (`$9110`, RESTORE, RS-232, joystick) drives NMI. RESTORE (`restore` key, GUI Page Up) pulls VIA1 CA1 low.
 - **Memory**: Configures a 64 KB address space with appropriate mappings for RAM, ROM, and I/O windows.
 
 ### 2.2 Memory Map
