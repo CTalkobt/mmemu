@@ -7,6 +7,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Debugger
+- **Panes per machine**: each machine lists the debugger panes its hardware supports (`"ui": {"panes": [...]}`, `MachineDescriptor::uiPanes`), and the GUI hides the rest: `graphics-vic`, `sidscope`, `cartridge`, `tape`, `drive`, `mega65`. Panes for any machine (console, CPU, memory, ...) always show. Control > Attach/Eject Cartridge are disabled on machines without a cartridge port. A machine that lists nothing gets every pane.
+  - PET: Tape. VIC-20: Tape, Cartridge, Graphics (VIC). C64: Tape, Drive, Cartridge, SID Scope, Graphics (VIC). MEGA65: Drive, Cartridge, SID Scope, MEGA65 Status, Graphics (VIC). Atari: Drive, Cartridge. X16: Drive.
+  - The PET and VIC-20 have no Drive pane: their disk access goes through the KERNAL intercept, with no drive device to show.
+- **Graphics (VIC)**: the sprite/character viewer is now named for what it shows (pane id `graphics-vic`; a saved layout that had "Graphics" open shows it closed once). It offers only the formats of the machine's video chip (`"ui": {"graphicsFormats": [...]}`): VIC-20 characters, C64 VIC-II sprites and characters, every format on the MEGA65; none on the PET, Atari or X16, which do not have a VIC. CLI `gfx formats` lists the machine's formats and `gfx`/MCP `render_graphics` reject others (MCP defaults to the machine's first format). New VIC-I formats `char16` and `char16-mc` (8x16 double-height characters). Atari (player/missile, ANTIC modes) and VERA (sprites, tiles) viewers are to follow as their own panes.
+- Tests: `machine_ui_capabilities`, `atari_ui_panes`, `x16_ui_panes`, `gfx_vic1_double_height_characters`.
+
 ### Commodore Fixes (PET)
 - **PET NMI button**: the PET has no RESTORE key and nothing drives its NMI line, but its ROMs send an NMI to BASIC's warm start through `$0094`, and owners often added a pushbutton for it. mmemu models that button, not a RESTORE key: the GUI's **Trigger NMI** button below **Capture Keyboard** on the screen pane (PET only), or the key name `nmi` in the CLI and MCP. It breaks a running `10 GOTO 10` into `READY.` on the 2001 and 4032 (checked in the CLI). New `kbdWiring.nmiKey` and `MachineDescriptor::nmiButtonKey`. Test `pet_nmi_button`.
 - **PET typing**: the CLI's `type` and MCP's `type_string` sent capitals as SHIFT+letter, which is a graphics character on a PET, so typed BASIC came out as graphics. Capitals are now plain key presses. Unknown key names (such as `restore`) are now rejected instead of silently accepted.

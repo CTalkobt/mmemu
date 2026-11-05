@@ -8,6 +8,26 @@
 
 namespace gfx {
 
+std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc) {
+    std::vector<const FormatInfo*> out;
+    if (desc && !desc->hasPane("graphics-vic")) return out;
+    if (desc && !desc->graphicsFormats.empty()) {
+        for (const auto& id : desc->graphicsFormats) {
+            Format f;
+            if (formatById(id, f)) out.push_back(&info(f));
+        }
+    } else {
+        for (const auto& f : formats()) out.push_back(&f);
+    }
+    return out;
+}
+
+bool machineHasFormat(const MachineDescriptor* desc, Format f) {
+    for (const auto* fi : machineFormats(desc))
+        if (fi->format == f) return true;
+    return false;
+}
+
 IVideoInspect* findVideoInspect(MachineDescriptor* desc) {
     if (!desc || !desc->ioRegistry) return nullptr;
     std::vector<IOHandler*> handlers;

@@ -2,6 +2,7 @@
 
 #include "libtoolchain/main/gfx_decode.h"
 #include <string>
+#include <vector>
 
 class IBus;
 class IVideoInspect;
@@ -37,6 +38,13 @@ struct View {
     int         paletteBase = 0;
     std::string error;              ///< non-empty on failure
 };
+
+/** The formats a machine offers (MachineDescriptor::graphicsFormats), in its
+ *  order; all formats when it lists none or desc is null; none when its
+ *  panes leave out the VIC graphics viewer ("graphics-vic"). */
+std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc);
+/** True if the machine offers this format. */
+bool machineHasFormat(const MachineDescriptor* desc, Format f);
 
 /** First IOHandler of the machine that implements IVideoInspect, or nullptr. */
 IVideoInspect* findVideoInspect(MachineDescriptor* desc);

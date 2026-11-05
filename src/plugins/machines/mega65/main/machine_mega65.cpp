@@ -252,6 +252,8 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* desc = new MachineDescriptor();
 
     desc->machineId    = "mega65";
+    desc->uiPanesSet   = true;      // every graphics format (VIC-II and VIC-IV)
+    desc->uiPanes      = {"drive", "cartridge", "sidscope", "mega65", "graphics-vic"};
     desc->displayName  = "MEGA65";
     desc->licenseClass = "proprietary";
 

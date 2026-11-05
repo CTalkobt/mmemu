@@ -3,6 +3,7 @@
 #include "libcore/main/machines/machine_registry.h"
 #include "libcore/main/core_registry.h"
 #include "libcore/main/json_machine_loader.h"
+#include "libdebug/main/gfx_view.h"
 #include "libdevices/main/device_registry.h"
 #include "libdevices/main/ivideo_output.h"
 #include "libmem/main/memory_bus.h"
@@ -472,4 +473,37 @@ TEST_CASE(pet_nmi_button) {
         ASSERT(m->nmiButtonKey.empty());
         delete m;
     }
+}
+
+// Each machine declares its hardware panes and VIC graphics formats
+// ("ui" in the machine JSON); gfx::machineFormats follows them.
+TEST_CASE(machine_ui_capabilities) {
+    ensureRegistriesAndLoad();
+    auto ids = [](const MachineDescriptor* m) {
+        std::string s;
+        for (const auto* f : gfx::machineFormats(m)) s += std::string(s.empty() ? "" : ",") + f->id;
+        return s;
+    };
+    auto* pet = MachineRegistry::instance().createMachine("pet4032");
+    ASSERT(pet && pet->uiPanesSet);
+    ASSERT(pet->hasPane("tape"));
+    ASSERT(!pet->hasPane("graphics-vic") && !pet->hasPane("cartridge") && !pet->hasPane("sidscope") && !pet->hasPane("drive"));
+    ASSERT_EQ(ids(pet), std::string(""));           // no VIC graphics at all
+    delete pet;
+
+    auto* vic = MachineRegistry::instance().createMachine("vic20+8k");
+    ASSERT(vic && vic->hasPane("graphics-vic") && vic->hasPane("cartridge") && !vic->hasPane("sidscope"));
+    ASSERT_EQ(ids(vic), std::string("char,char-mc,char16,char16-mc"));   // VIC-I: no sprites
+    ASSERT(!gfx::machineHasFormat(vic, gfx::Format::SpriteHires));
+    delete vic;
+
+    auto* c64 = MachineRegistry::instance().createMachine("c64");
+    ASSERT(c64 && c64->hasPane("sidscope") && c64->hasPane("drive") && !c64->hasPane("mega65"));
+    ASSERT_EQ(ids(c64), std::string("sprite,sprite-mc,char,char-mc"));    // VIC-II
+    delete c64;
+
+    MachineDescriptor undeclared;                   // a machine that says nothing: everything
+    ASSERT(undeclared.hasPane("sidscope"));
+    ASSERT_EQ((int)gfx::machineFormats(&undeclared).size(), (int)gfx::formats().size());
+    ASSERT_EQ((int)gfx::machineFormats(nullptr).size(), (int)gfx::formats().size());
 }

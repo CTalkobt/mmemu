@@ -172,6 +172,8 @@ private:
     bool m_swapJoysticks = false;
     void pollHostPads();
     void releaseHostPads();
+    /** Show only the hardware panes this machine has (MachineDescriptor::uiPanes). */
+    void applyPaneAvailability();
 
     RegisterPane*   m_regPane;
     wxAuiNotebook*  m_memNotebook = nullptr;
@@ -794,7 +796,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("cartridge",   "Cartridge",        m_cartPane,             Area::Side,   false);
     m_dock->addPane("mega65",      "MEGA65 Status",    m_mega65StatusPane,     Area::Side,   false);
     m_dock->addPane("source",      "Source",           m_sourcePane,           Area::Side,   false);
-    m_dock->addPane("graphics",    "Graphics",         m_graphicsPane,         Area::Side,   false);
+    m_dock->addPane("graphics-vic", "Graphics (VIC)",  m_graphicsPane,         Area::Side,   false);
     m_dock->addPane("sidscope",    "SID Scope",        m_sidScopePane,         Area::Side,   false);
     m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
     m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
@@ -806,6 +808,7 @@ MmemuFrame::MmemuFrame()
             if (std::string(info.paneId) == "screen") { m_dock->setCenter(win); return; }
             m_dock->addPane(info.paneId, info.displayName ? info.displayName : info.paneId,
                             win, DockLayout::Area::Bottom, false);
+            applyPaneAvailability();    // tape/drive panes arrive after the machine
             rebuildViewMenu();
         },
         [this](const PluginPaneInfo& info, wxWindow*) {
@@ -1316,7 +1319,12 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     {
         bool isMega65 = (id.find("mega65") != std::string::npos);
         if (isMega65) m_mega65StatusPane->SetMachine(m_machine, m_cpu);
-        m_dock->setAvailable("mega65", isMega65);
+        applyPaneAvailability();
+        bool carts = m_machine->hasPane("cartridge");
+        if (auto* mb = GetMenuBar()) {
+            mb->Enable(ID_ATTACH_CART, carts);
+            mb->Enable(ID_EJECT_CART, carts);
+        }
         // Enable Reset to Monitor menu only for MEGA65
         if (m_resetToMonitorItem) {
             m_resetToMonitorItem->Enable(isMega65);
@@ -2255,6 +2263,15 @@ void MmemuFrame::OnRenameMemView(wxCommandEvent&) {
     wxString name = wxGetTextFromUser("Enter a name for this memory view:", "Rename Memory View", current, this);
     if (!name.IsEmpty())
         m_memNotebook->SetPageText(sel, name);
+}
+
+void MmemuFrame::applyPaneAvailability() {
+    if (!m_machine || !m_dock) return;
+    for (const char* pane : {"graphics-vic", "sidscope", "cartridge", "tape", "drive"})
+        if (m_dock->hasPane(pane)) m_dock->setAvailable(pane, m_machine->hasPane(pane));
+    // The MEGA65 Status pane also needs a MEGA65
+    bool isMega65 = m_machine->machineId.find("mega65") != std::string::npos;
+    m_dock->setAvailable("mega65", isMega65 && m_machine->hasPane("mega65"));
 }
 
 void MmemuFrame::releaseHostPads() {

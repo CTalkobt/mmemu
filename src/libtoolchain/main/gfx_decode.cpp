@@ -16,6 +16,8 @@ const std::vector<FormatInfo>& formats() {
         {Format::CharMulti,   "char-mc",    "Character (multicolour)",     4,  8, 2, 2, 1,    8,  false, false},
         {Format::CharFCM,     "char-fcm",   "Character FCM (VIC-IV)",      8,  8, 1, 8, 8,   64,  false, false},
         {Format::CharNCM,     "char-ncm",   "Character NCM (VIC-IV)",     16,  8, 1, 4, 8,   64,  false, true},
+        {Format::Char16,      "char16",     "Character 8x16 (VIC-I)",      8, 16, 1, 1, 1,   16,  false, false},
+        {Format::Char16Multi, "char16-mc",  "Character 8x16 multicolour (VIC-I)", 4, 16, 2, 2, 1, 16, false, false},
     };
     return s;
 }

@@ -2,6 +2,7 @@
   "machines": [
     {
       "id": "rawMega65",
+      "ui": { "panes": ["sidscope", "graphics-vic"] },
       "displayName": "Raw MEGA65 (45GS02 / RAM only)",
       "_note": "No ROMs are loaded, so $E000-$FFFF is flat RAM. If a MapMmu is used, its default C64 banking ($01=$37, HIRAM set) will translate $E000-$FFFF to $002E000+ (KERNAL ROM space). All frontends must read/write through the CPU data bus (not the physical bus) to ensure consistent address translation.",
       "assembler": "ca45",
@@ -17,6 +18,7 @@
     },
     {
       "id": "rawMega65_io",
+      "ui": { "panes": ["sidscope", "graphics-vic"] },
       "displayName": "Raw MEGA65 with I/O (45GS02 + VIC-IV/SID/CIA hardware)",
       "_note": "Minimal MEGA65 configuration for hardware register testing. Includes VIC-IV, SID, CIA1/CIA2, DMA, and math accelerator at standard I/O addresses. No ROMs, KERNAL, or bootloader. Suitable for cc45 compiler hardware tests.",
       "assembler": "ca45",

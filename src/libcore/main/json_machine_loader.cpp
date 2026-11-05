@@ -724,6 +724,17 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Phase 3 Step 21 — Joystick wiring
     // -----------------------------------------------------------------------
+    // "ui": the hardware-dependent debugger panes and graphics formats
+    if (spec.contains("ui") && spec["ui"].is_object()) {
+        const auto& ui = spec["ui"];
+        if (ui.contains("panes")) {
+            desc->uiPanesSet = true;
+            for (const auto& p : ui["panes"]) desc->uiPanes.push_back(p.get<std::string>());
+        }
+        if (ui.contains("graphicsFormats"))
+            for (const auto& f : ui["graphicsFormats"]) desc->graphicsFormats.push_back(f.get<std::string>());
+    }
+
     // "joystick": one port {device, port} or an array of them (port index =
     // array index); "joystickPrimary" names the port most software reads.
     // A port that already has a device (a keyboard matrix) shares the pins,

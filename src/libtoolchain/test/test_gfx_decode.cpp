@@ -121,3 +121,25 @@ TEST_CASE(gfx_render_sheet_layout_and_colors) {
     ASSERT_EQ(s16.argb[0], 0xFF000023u);
     ASSERT_EQ(s16.argb[1], 0xFF00FF00u);   // nibble 0 is transparent
 }
+
+// VIC-I double-height characters: 8x16 (16 bytes) and 4x16 multicolour
+TEST_CASE(gfx_vic1_double_height_characters) {
+    gfx::Format f;
+    ASSERT(gfx::formatById("char16", f));
+    ASSERT(f == gfx::Format::Char16);
+    ASSERT_EQ(gfx::info(f).stride, 16u);
+    ASSERT_EQ(gfx::info(f).height, 16);
+    Mem mem;
+    mem.m[0x1000 + 15] = 0x81;                      // last row: leftmost and rightmost pixels
+    auto px = gfx::decode(f, mem.fn(), 0x1000);
+    ASSERT_EQ((int)px.size(), 8 * 16);
+    ASSERT_EQ((int)px[15 * 8 + 0], 1);
+    ASSERT_EQ((int)px[15 * 8 + 7], 1);
+    ASSERT_EQ((int)px[14 * 8 + 0], 0);
+    ASSERT(gfx::formatById("char16-mc", f));
+    mem.m[0x2000 + 15] = 0x1B;                      // 00 01 10 11
+    px = gfx::decode(f, mem.fn(), 0x2000);
+    ASSERT_EQ((int)px.size(), 4 * 16);
+    ASSERT_EQ((int)px[15 * 4 + 0], 0);
+    ASSERT_EQ((int)px[15 * 4 + 3], 3);
+}
