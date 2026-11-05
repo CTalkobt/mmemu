@@ -175,6 +175,9 @@ PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 	src/plugins/devices/pia6520/main/plugin_init.cpp
 
+PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
+	src/plugins/machines/plus4/main/plugin_init.cpp
+
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
@@ -387,6 +390,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/x16/test/test_x16_hostfs.cpp \
 	src/plugins/devices/ieee488/test/test_ieee488_bus.cpp \
 	src/plugins/devices/keyboard/test/test_keyboard_matrix_pet.cpp \
+	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
 	src/plugins/6502/test/test_assembler6502.cpp \
@@ -478,6 +482,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/cbm_host_dos.o \
 	src/plugins/devices/ieee488/main/ieee488_bus.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
+	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \
@@ -605,6 +610,7 @@ PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o) \
 PLUGIN_C64_GUI_OBJS  = src/plugins/machines/c64/main/plugin_init.o
 PLUGIN_PIA6520_OBJS  = $(PLUGIN_PIA6520_SRCS:.cpp=.o)
 PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
+PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -661,6 +667,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-c64.so \
 	$(LIBDIR)/mmemu-plugin-pia6520.so \
 	$(LIBDIR)/mmemu-plugin-ieee488.so \
+	$(LIBDIR)/mmemu-plugin-plus4.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -776,6 +783,9 @@ $(LIBDIR)/mmemu-plugin-pia6520.so: $(PLUGIN_PIA6520_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-ieee488.so: $(PLUGIN_IEEE488_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-plus4.so: $(PLUGIN_PLUS4_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
