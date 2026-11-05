@@ -112,14 +112,16 @@ At run time: `intercept [list]`, `intercept on|off <name>`, `intercept set <name
 
 ### SignalSpec
 - `name`: Unique signal identifier.
-- `type`: `"simple"`, `"shared"`, `"latch"`, or `"nmi"`.
+- `type`: `"simple"`, `"shared"`, `"latch"`, `"nmi"` or `"sharedNmi"`.
 - `sources`: Array of device names or `Device.Line` identifiers that drive this signal.
+- `"sharedNmi"`: a wired-OR NMI (edge-triggered at the CPU). A source `"DEV"` (or `"DEV.irqA"`/`"DEV.irqB"`) is a chip's interrupt output wired to NMI, as with the VIC-20's VIA1 and the C64's CIA2; `"DEV.nmi"` is a device's own NMI output. `lines`: names of extra inputs, e.g. `["restore"]` for a RESTORE key wired straight to NMI (see `kbdWiring.restore`).
 
 ### KbdWireSpec (kbdWiring)
 Wires a keyboard matrix device to I/O ports.
 - `device`: Name of the keyboard device instance.
 - `colPort`: `{ "device": "...", "port": "A" or "B" }`
 - `rowPort`: `{ "device": "...", "port": "A" or "B" }`
+- `restore` (optional): the RESTORE key, outside the matrix. `{ "line": "<signal>" }` (a `sharedNmi` line, asserted while held) or `{ "line": "DEV.pin", "activeLow": true }` (e.g. the VIC-20's `VIA1.ca1`). `onKey("restore", down)` drives it.
 
 ### PlaWireSpec (plaWiring)
 - `device`: Name of the PLA instance.

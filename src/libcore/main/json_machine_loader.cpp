@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "json_machine_loader.h"
 #include "util/path_util.h"
 #include "libcore/main/machine_desc.h"
@@ -51,8 +52,9 @@ public:
     bool get()  const override { return m_level; }
     void pulse() override { if (m_cpu) m_cpu->triggerNmi(); }
     void set(bool level) override {
+        bool rising = level && !m_level;    // NMI is edge-triggered
         m_level = level;
-        if (level && m_cpu) m_cpu->triggerNmi();
+        if (rising && m_cpu) m_cpu->triggerNmi();
     }
 private:
     ICore* m_cpu;
@@ -567,6 +569,31 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 continue;
             }
 
+            // Wired-OR NMI: each source is a chip's interrupt output ("DEV",
+            // "DEV.irqA", "DEV.irqB") or its NMI output ("DEV.nmi"), as on the
+            // VIC-20 (VIA1) and C64 (CIA2). "lines" names extra inputs, e.g.
+            // "restore" for a RESTORE key wired straight to NMI.
+            if (sigType == "sharedNmi" && cpu) {
+                auto* mgr = new SharedNmiManager(cpu);
+                desc->deleters.push_back([mgr]() { delete mgr; });
+                for (const auto& srcEntry : sigSpec.value("sources", nlohmann::json::array())) {
+                    std::string srcStr = srcEntry.get<std::string>();
+                    auto dot = srcStr.find('.');
+                    std::string devName = srcStr.substr(0, dot);
+                    std::string subPin  = dot == std::string::npos ? "" : srcStr.substr(dot + 1);
+                    if (!devPtrs.count(devName)) continue;
+                    IOHandler* dev = devPtrs[devName];
+                    ISignalLine* line = mgr->createLine();
+                    if      (subPin == "irqA") dev->setIrqALine(line);
+                    else if (subPin == "irqB") dev->setIrqBLine(line);
+                    else if (subPin == "nmi")  dev->setNmiLine(line);
+                    else                       dev->setIrqLine(line);
+                }
+                for (const auto& l : sigSpec.value("lines", nlohmann::json::array()))
+                    signalMap[l.get<std::string>()] = mgr->createLine();
+                continue;
+            }
+
             // Phase 3 Step 13: shared wired-OR IRQ
             if (sigType == "shared" && cpu) {
                 auto* mgr = new SharedIrqManager(cpu);
@@ -656,6 +683,33 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 desc->onKey = [kbd](const std::string& keyName, bool down) {
                     return kbd->pressKeyByName(keyName, down);
                 };
+                // RESTORE is not in the matrix: {"line": "<signal>"} (asserted
+                // while held) or {"line": "DEV.pin", "activeLow": true}, e.g.
+                // the VIC-20's VIA1 CA1.
+                if (kw.contains("restore")) {
+                    const auto& rw = kw["restore"];
+                    std::string src = rw.value("line", "");
+                    bool activeLow = rw.value("activeLow", false);
+                    ISignalLine* line = nullptr;
+                    auto dot = src.find('.');
+                    if (dot != std::string::npos) {
+                        std::string devName = src.substr(0, dot);
+                        if (devPtrs.count(devName))
+                            line = devPtrs[devName]->getSignalLine(src.substr(dot + 1).c_str());
+                    } else if (signalMap.count(src)) {
+                        line = signalMap[src];
+                    }
+                    if (line) {
+                        if (activeLow) line->set(true);
+                        auto keys = desc->onKey;
+                        desc->onKey = [keys, line, activeLow](const std::string& keyName, bool down) {
+                            std::string n = keyName;
+                            std::transform(n.begin(), n.end(), n.begin(), ::tolower);
+                            if (n == "restore") { line->set(activeLow ? !down : down); return true; }
+                            return keys(keyName, down);
+                        };
+                    }
+                }
             }
         }
     }

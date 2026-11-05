@@ -60,7 +60,7 @@ The machine factory installs a CIA2 Port A write callback that updates `VIC2::se
 
 ### 2.5 Interrupt Wiring
 - **IRQ** (shared open-collector): VIC-II raster IRQ and CIA1 timer/TOD underflow both feed the CPU IRQ line.
-- **NMI**: CIA2 fires CPU NMI (used for the Restore key on real hardware).
+- **NMI** (wired-OR, edge-triggered): CIA2's interrupt output and the RESTORE key (`restore`, GUI Page Up). RUN/STOP+RESTORE warm-starts BASIC.
 
 ### 2.6 Keyboard Matrix
 CIA1 Port A drives columns (output, active-low); CIA1 Port B reads rows (input, active-low). The KERNAL scans by writing `\$FE`, `\$FD`, … to Port A and reading Port B.
