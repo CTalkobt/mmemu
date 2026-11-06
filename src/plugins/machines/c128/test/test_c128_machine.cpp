@@ -5,6 +5,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libmem/main/ibus.h"
+#include "libdevices/main/ivideo_output.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -134,5 +135,39 @@ TEST_CASE(c128_vic_iie) {
     bus->write8(0xD02F, 0x07);
     EXPECT_EQ(bus->peek8(0xDC01), 0xFF);
     m->onKey("help", false);
+    delete m;
+}
+
+// With 40/80 down at reset the editor uses the VDC: the banner is in VDC
+// RAM (screen at $0000) and the display shows the VDC's frame
+TEST_CASE(c128_boots_80_columns) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    m->onKey("40_80", true);
+    m->onKey("40_80", false);
+    m->onReset(*m);
+    run(m, 3000000);
+    auto* vdc = dynamic_cast<Vdc8563*>(m->ioRegistry->findHandler("VDC"));
+    ASSERT(vdc != nullptr);
+    const std::string want = "COMMODORE BASIC V7.0";
+    bool found = false;
+    for (uint16_t a = 0; a < 2000 && !found; ++a) {
+        bool ok = true;
+        for (size_t i = 0; i < want.size() && ok; ++i) {
+            char c = want[i];
+            ok = vdc->ramByte((uint16_t)(a + i)) == (uint8_t)(c >= 'A' && c <= 'Z' ? c - 'A' + 1 : c);
+        }
+        found = ok;
+    }
+    ASSERT(found);
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    IVideoOutput* screen = nullptr;
+    for (auto* h : hs) if ((screen = dynamic_cast<IVideoOutput*>(h))) break;
+    ASSERT(screen != nullptr && dynamic_cast<Vdc8563*>(screen) == nullptr);   // the display, not a chip
+    std::vector<uint32_t> f((size_t)Vdc8563::FRAME_W * Vdc8563::FRAME_H);
+    screen->renderFrame(f.data());
+    EXPECT_EQ(f[0], Vdc8563::palette(0));                      // the VDC's black, not the VIC's border
     delete m;
 }

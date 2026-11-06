@@ -53,3 +53,60 @@ TEST_CASE(vdc_memory_fill_copy) {
     reg(v, 18, 0x40); reg(v, 19, 0x00); reg(v, 31, 0x77);
     EXPECT_EQ(v.ramByte(0x0000), 0x77);
 }
+
+namespace {
+// 80 x 25 text with the KERNAL's layout: screen $0000, attributes $0800,
+// characters $2000 (16 bytes each), 8 x 8 cells
+void setupText(Vdc8563& v) {
+    const uint8_t regs[][2] = {{0, 126}, {1, 80}, {4, 32}, {6, 25}, {9, 7}, {12, 0x00}, {13, 0x00},
+                               {20, 0x08}, {21, 0x00}, {22, 0x78}, {23, 8}, {24, 0x00}, {25, 0x47},
+                               {26, 0xE0}, {27, 0}, {28, 0x20}, {10, 0x20}, {11, 7}, {14, 0xFF}, {15, 0xFF}};
+    for (auto& r : regs) reg(v, r[0], r[1]);
+    // Character 1: a left column of dots on every line; character 2: all set
+    for (int y = 0; y < 8; ++y) {
+        reg(v, 18, 0x20); reg(v, 19, (uint8_t)(0x10 + y)); reg(v, 31, 0x80);
+        reg(v, 18, 0x20); reg(v, 19, (uint8_t)(0x20 + y)); reg(v, 31, 0xFF);
+    }
+}
+uint32_t px(const std::vector<uint32_t>& f, int x, int line) { return f[(size_t)(line * 2) * Vdc8563::FRAME_W + x]; }
+}  // namespace
+
+// Text mode with attributes: the cell's colour, reverse, R26 background;
+// the picture is centred (640 x 200 in 768 x 272)
+TEST_CASE(vdc_render_text) {
+    Vdc8563 v;
+    setupText(v);
+    reg(v, 18, 0x00); reg(v, 19, 0x00); reg(v, 31, 1); reg(v, 31, 2);   // screen: chars 1, 2
+    reg(v, 18, 0x08); reg(v, 19, 0x00); reg(v, 31, 0x07); reg(v, 31, 0x4D);   // cyan; reverse yellow
+    std::vector<uint32_t> f((size_t)Vdc8563::FRAME_W * Vdc8563::FRAME_H);
+    v.renderFrame(f.data());
+    const int x0 = (768 - 640) / 2, y0 = (272 - 200) / 2;
+    EXPECT_EQ(px(f, x0, y0), Vdc8563::palette(7));            // char 1, first dot
+    EXPECT_EQ(px(f, x0 + 1, y0), Vdc8563::palette(0));        // background (R26 low)
+    EXPECT_EQ(px(f, x0 + 8, y0), Vdc8563::palette(0));        // char 2 reversed: all background
+    EXPECT_EQ(px(f, x0 - 1, y0), Vdc8563::palette(0));        // border
+    EXPECT_EQ(f[(size_t)(y0 * 2 + 1) * 768 + x0], Vdc8563::palette(7));   // each line drawn twice
+    // Monochrome (R25 bit 6 off): R26 colours for all
+    reg(v, 25, 0x07);
+    v.renderFrame(f.data());
+    EXPECT_EQ(px(f, x0, y0), Vdc8563::palette(14));
+    EXPECT_EQ(px(f, x0 + 8, y0), Vdc8563::palette(14));       // no reverse without attributes
+}
+
+// Bitmap mode: a byte per 8 dots a line; attribute low nibble foreground,
+// high nibble background (vdc-draw.c draw_std_bitmap)
+TEST_CASE(vdc_render_bitmap) {
+    Vdc8563 v;
+    setupText(v);
+    reg(v, 25, 0xC7);                                          // bitmap + attributes
+    reg(v, 18, 0x00); reg(v, 19, 0x00); reg(v, 31, 0xF0);      // line 0, first 8 dots
+    reg(v, 18, 0x00); reg(v, 19, 80); reg(v, 31, 0x0F);        // line 1
+    reg(v, 18, 0x08); reg(v, 19, 0x00); reg(v, 31, 0x2D);      // fg 13, bg 2
+    std::vector<uint32_t> f((size_t)Vdc8563::FRAME_W * Vdc8563::FRAME_H);
+    v.renderFrame(f.data());
+    const int x0 = 64, y0 = 36;
+    EXPECT_EQ(px(f, x0, y0), Vdc8563::palette(13));
+    EXPECT_EQ(px(f, x0 + 4, y0), Vdc8563::palette(2));
+    EXPECT_EQ(px(f, x0, y0 + 1), Vdc8563::palette(2));
+    EXPECT_EQ(px(f, x0 + 7, y0 + 1), Vdc8563::palette(13));
+}

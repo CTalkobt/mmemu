@@ -1,6 +1,6 @@
 # mmemu-plugin-c128: Commodore 128
 
-The Commodore 128 in C128 mode, with the 40-column VIC-IIe screen (#22).
+The Commodore 128 in C128 mode, with the 40-column VIC-IIe and 80-column VDC screens (#22).
 Memory map, MMU and keyboard after VICE (`src/c128/c128mem.c`,
 `c128meminit.c`, `c128mmu.c`, `data/C128/gtk3_sym.vkm`).
 
@@ -25,8 +25,8 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
   character set at $x1000-$x1FFF of every 16 KB unless 8502 port bit 2 is
   set.
 - **VDC** (8563) at `$D600`: registers, RAM (16 KB), auto-increment, block
-  fill and copy, the status register. The KERNAL's screen editor sets it up
-  at reset. The 80-column display itself is not emulated yet.
+  fill and copy, the status register (vertical blank from the frame timing),
+  and the 80-column display: see below.
 - **Sound**: 6581 SID at `$D400`.
 - **CIAs**: CIA1 `$DC00` (keyboard, joysticks, IRQ, tape read on FLAG),
   CIA2 `$DD00` (VIC bank, serial bus, NMI with RESTORE).
@@ -36,6 +36,36 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
   current folder or `disk mount 8 <folder or image>`; LOAD, SAVE and
   DIRECTORY run through the real KERNAL (no 1571 fast serial yet).
 - **Datasette** on the 8502 port (motor, write, sense) and CIA1 FLAG.
+
+## Screens: 40 and 80 columns
+
+The frontends (GUI screen, CLI `screenshot`, MCP) show one screen, picked by
+the **40/80 key** as VICE's single-window builds do: up shows the VIC-II's 40
+columns, down the VDC's 80. The key locks, and the screen editor reads it at
+reset to choose where BASIC prints: press it (`key 40_80 1`, or the GUI's
+40/80 button) and reset for an 80-column start. Both screens are 768 x 544:
+the VIC-II's frame doubled, the VDC's 768-dot lines drawn twice.
+
+The VDC display follows VICE (`vdc-draw.c`, `vdc.c`), drawn a frame at a
+time from the registers:
+
+- Text: R1 columns of (R22 >> 4) + 1 dots, doubled in 40-column mode (R25
+  bit 4), R6 rows of (R9 & 31) + 1 lines, character data on lines 0-R23;
+  the screen at R12/R13, the character set at R28 bits 5-7 (16 or 32 bytes a
+  character), R27 extra bytes a row.
+- Attributes (R25 bit 6) at R20/R21: colour (bits 0-3), alternate character
+  set (7), reverse (6), underline on line R29 (5), blink (4, rate R24 bit
+  5). Without attributes R26 gives both colours (foreground high nibble).
+- Bitmap mode (R25 bit 7): a byte per 8 dots a line; with attributes the
+  low nibble is the foreground and the high nibble the background.
+- The cursor at R14/R15, lines R10-R11, solid / off / blinking (R10 bits
+  5-6); reverse screen (R24 bit 6); semigraphics (R25 bit 5); the R22
+  displayed width; smooth scroll (R24 and R25 low bits).
+- The 16 RGBI colours; the frame lasts (R4 + 1) x ((R9 & 31) + 1) + R5 lines
+  of (R0 + 1) x 8 dots at 16 MHz.
+
+Not drawn: interlace, register changes in mid-frame, the sync and
+display-enable window (R2, R3, R7, R34, R35).
 
 ## Memory map (C128 mode)
 
@@ -84,7 +114,7 @@ Key names: the C64's (`run_stop`, `cbm`, `ctrl`, `crsr_right`...), and
 `right` (the separate cursor keys). As in VICE: F9 = ESC, F10 = TAB,
 F11 = ALT, End = HELP, Page Down = LINE FEED, F12 = CAPS LOCK. CAPS LOCK
 (`caps_lock`) and 40/80 (`40_80`) lock: each press toggles them. RESTORE is
-`restore` (Page Up in the GUI).
+`restore` (Page Up in the GUI). The GUI's screen buttons: 40/80, RUN/STOP + RESTORE, RESTORE.
 
 ## ROMs
 
@@ -98,7 +128,7 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 
 ## Not yet emulated
 
-- The VDC's 80-column display (the 40/80 key down at reset selects it)
+- VDC interlace and mid-frame register changes (raster effects)
 - C64 mode (`GO64`, the C= key held at reset)
 - The Z80 and CP/M: the machine starts on the 8502, where the Z80 boot
   BIOS would hand over
