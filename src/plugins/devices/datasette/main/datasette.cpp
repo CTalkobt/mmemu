@@ -12,10 +12,14 @@ void Datasette::reset() {
     m_playing = false;
     m_motorOn = false;
     m_buttonPressed = false;
+    if (m_senseLine) m_senseLine->set(true);  // no button down
     m_recording = false;
     m_lastWriteLevel = true;
     m_writePulseStart = 0;
     m_totalCycles = 0;
+    m_readLevel = true;
+    m_secondHalf = false;
+    m_fullGap = 0;
 }
 
 bool Datasette::mount(const std::string& path) {
@@ -23,6 +27,7 @@ bool Datasette::mount(const std::string& path) {
     if (ok) {
         m_offset = 0;
         m_pulseRemaining = 0;
+        m_secondHalf = false;
         m_playing = true;
         m_buttonPressed = true;
         if (m_senseLine) m_senseLine->set(false); // Sense low = button pressed
@@ -43,6 +48,17 @@ void Datasette::stop() {
 void Datasette::rewind() {
     m_offset = 0;
     m_pulseRemaining = 0;
+    m_secondHalf = false;
+}
+
+uint32_t Datasette::nextHalfWave() {
+    if (m_tape.version() >= 2) return m_tape.nextPulse(m_offset) * 2;   // one half-wave per value
+    if (!m_secondHalf) {                        // a full wave: two equal halves
+        m_fullGap = m_tape.nextPulse(m_offset);
+        if (m_fullGap == 0) return 0;
+    }
+    m_secondHalf = !m_secondHalf;
+    return m_fullGap;
 }
 
 bool Datasette::startRecord() {
@@ -84,7 +100,19 @@ void Datasette::tick(uint64_t cycles) {
     // there). A TAP file stores these; playback gives one read edge each.
     if (m_recording && m_motorOn && m_writeLine) {
         bool level = m_writeLine->get();
-        if (level != m_lastWriteLevel) {
+        if (level != m_lastWriteLevel && m_halfWave) {
+            // C16 TAP v2: every edge ends a half-wave (stored as cycles / 2:
+            // the value is cycles / 16, a long one cycles / 2 in 24 bits)
+            // A wave starts on a falling edge of the write line (VICE also
+            // measures waves from one to the next); playback begins with the
+            // read line going low, so the first half-wave stored is the one
+            // after a falling edge
+            if (m_haveWriteEdge)
+                m_tape.appendPulse((uint32_t)(m_totalCycles - m_writePulseStart) / 2);
+            m_writePulseStart = m_totalCycles;
+            m_haveWriteEdge = m_haveWriteEdge || !level;
+            m_lastWriteLevel = level;
+        } else if (level != m_lastWriteLevel) {
             if (level) {
                 if (m_haveWriteEdge)
                     m_tape.appendPulse((uint32_t)(m_totalCycles - m_writePulseStart));
@@ -100,7 +128,7 @@ void Datasette::tick(uint64_t cycles) {
     m_pulseRemaining -= (uint32_t)cycles;
 
     if (m_pulseRemaining <= 0) {
-        uint32_t pulse = m_tape.nextPulse(m_offset);
+        uint32_t pulse = m_halfWave ? nextHalfWave() : m_tape.nextPulse(m_offset);
         if (pulse == 0) {
             m_playing = false;
             m_buttonPressed = false;
@@ -109,8 +137,10 @@ void Datasette::tick(uint64_t cycles) {
         }
         m_pulseRemaining += (int32_t)pulse;
 
-        // Trigger negative edge on CIA FLAG pin
-        if (m_readPulseLine) {
+        if (m_halfWave) {                       // Plus/4: the read level flips
+            m_readLevel = !m_readLevel;
+            if (m_readPulseLine) m_readPulseLine->set(m_readLevel);
+        } else if (m_readPulseLine) {           // a negative edge on the CIA's FLAG pin
             m_readPulseLine->set(false);
             m_readPulseLine->set(true);
         }

@@ -8,7 +8,8 @@ bool TapArchive::load(const std::string& path) {
     if (!f.is_open()) return false;
 
     f.read(m_header.signature, 12);
-    if (std::strncmp(m_header.signature, "C64-TAPE-RAW", 12) != 0) return false;
+    m_c16 = std::strncmp(m_header.signature, "C16-TAPE-RAW", 12) == 0;
+    if (!m_c16 && std::strncmp(m_header.signature, "C64-TAPE-RAW", 12) != 0) return false;
 
     f.read((char*)&m_header.version, 1);
     f.read((char*)m_header.reserved, 3);
@@ -45,13 +46,13 @@ bool TapArchive::saveRecording(const std::string& path) const {
     std::ofstream f(path, std::ios::binary);
     if (!f.is_open()) return false;
 
-    // Header: 12-byte signature
-    f.write("C64-TAPE-RAW", 12);
-    // Version 1
-    uint8_t ver = 1;
+    // Header: 12-byte signature, version (C64: 1; C16: 2, half-waves),
+    // platform and video standard (C16: 2, 0 PAL / 1 NTSC), a reserved byte
+    f.write(m_recC16 ? "C16-TAPE-RAW" : "C64-TAPE-RAW", 12);
+    uint8_t ver = m_recC16 ? 2 : 1;
     f.write((const char*)&ver, 1);
-    // 3 reserved bytes
     uint8_t reserved[3] = {0, 0, 0};
+    if (m_recC16) { reserved[0] = 2; reserved[1] = m_recNtsc ? 1 : 0; }
     f.write((const char*)reserved, 3);
     // Data size (little-endian 32-bit)
     uint32_t sz = (uint32_t)m_recordBuf.size();

@@ -3,6 +3,7 @@
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
+#include "libdevices/main/device_info.h"
 #include "libmem/main/ibus.h"
 #include <cstdio>
 #include <cstdlib>
@@ -97,5 +98,34 @@ TEST_CASE(plus4_iec_drive_save_load) {
 
     remove(path.c_str());
     rmdir(dir);
+    delete m;
+}
+
+// The cassette port: the sense switch on $FD10 bit 2 and the motor on $01 bit 3
+TEST_CASE(plus4_tape_port_lines) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::Plus4, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+    IOHandler* tape = m->ioRegistry->findHandler("Tape");
+    ASSERT(tape != nullptr);
+    bus->write8(0xFD10, 0xFF);
+    ASSERT(bus->read8(0xFD10) & 0x04);                       // no button down
+    tape->controlTape("play");
+    ASSERT(!(bus->read8(0xFD10) & 0x04));                    // PLAY: sense low
+    auto motorOn = [&]() {
+        DeviceInfo info;
+        tape->getDeviceInfo(info);
+        for (auto& kv : info.state) if (kv.first == "Motor On") return kv.second == "yes";
+        return false;
+    };
+    bus->write8(0x00, 0x0F);
+    bus->write8(0x01, 0x08);                                 // bit 3 high: motor off
+    tape->tick(1);
+    ASSERT(!motorOn());
+    bus->write8(0x01, 0x00);                                 // low: motor on
+    tape->tick(1);
+    ASSERT(motorOn());
     delete m;
 }

@@ -82,9 +82,31 @@ Units 9 and up go to the `kernal-fileio` intercept
 RAM under the ROM, so the machine supplies `MachineDescriptor::readRam` and
 the KERNAL HLE reads file names and SAVE data through it.
 
+## Tape
+
+A 1531 datasette (device `Tape`) sits on the cassette port: motor on $01
+bit 3 (low = running), write on bit 1 (shared with the serial CLK output),
+read on bit 4, and the sense switch on the 6529 at $FD10 bit 2 (low = a
+button down).
+
+```
+tape mount game.tap      # insert and press PLAY, then LOAD
+tape record              # press RECORD & PLAY, then SAVE"NAME"
+tape stoprecord
+tape save out.tap        # write what was recorded
+```
+
+The read line is a level that flips on each half-wave, as in VICE's C16 tape
+behaviour. A `C16-TAPE-RAW` version 2 TAP holds one half-wave per value
+(value x 16 TED cycles); version 0/1 TAPs (C16 or C64 headers) hold full
+waves, played as two equal halves. Recordings are saved as C16 version 2
+TAPs (VICE writes version 1 for the Plus/4), starting on a falling edge of
+the write line, the start of a wave.
+
 ## Not yet emulated
 
-- 6551 ACIA and tape (1531)
+- 6551 ACIA
+- Tape fast-forward/rewind timing, wobble and the motor's run-down delay
 - Fast-loaders and drive code (`M-E`/`M-W`): the drive is a DOS, not an emulated 1541 CPU
 - Cartridges
 - C116 and the 4 KB / 32 KB RAM variants
