@@ -177,6 +177,16 @@ bool CbmSectorDisk::writeSector(int track, int sector, const uint8_t* data) {
     return static_cast<bool>(f);
 }
 
+bool CbmSectorDisk::formatSectors() {
+    if (!m_writable) return false;
+    const size_t n = std::min(m_data.size(), m_geom.baseSize());
+    for (size_t off = 0; off < n; off += 256) {
+        m_data[off] = 0x4B;
+        std::fill(m_data.begin() + (long)off + 1, m_data.begin() + (long)off + 256, 0x01);
+    }
+    return flushAll();
+}
+
 uint32_t CbmSectorDisk::getSectorOffset(int track, int sector) const {
     if (track < 1 || track > m_geom.totalTracks) return 0xFFFFFFFF;
     if (sector < 0 || sector >= m_geom.sectorsPerTrack[track - 1]) return 0xFFFFFFFF;

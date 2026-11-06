@@ -88,16 +88,28 @@ shifts the byte; the listener pulls DATA to acknowledge), and:
   reads the file and sends each 254-byte block after a status byte (`$00`),
   the last after `$1F` and a count, a byte for each CLK toggle of the C128;
   `$02` for a missing file.
-- **Burst commands** (`U0` + bytes; Commodore's burst command set): inquire
-  disk (status `$10`: GCR, 256-byte sectors), read (a status and 256 bytes a
-  sector, a byte for each CLK toggle of the computer), write (a byte for
-  each CLK toggle of the drive, the status when the computer pulls CLK).
-  Several sectors go 5 on round the track, the order the C128's CP/M lays a
-  track out in (its Z80 ROM's tables). Format and query answer `$1E`
-  (unsupported); a host folder answers `$0F` (no disk).
+- **Burst commands** (`U0` + bytes; the 1571 User's Guide, Appendix G):
+  - **inquire disk** (status `$10`: GCR, 256-byte sectors) and **query disk
+    format** (a GCR disk answers its status byte only) log the disk in;
+  - **read** (a status and 256 bytes a sector, a byte for each CLK toggle of
+    the computer; T=1 sends the statuses only) and **write** (a byte for each
+    CLK toggle of the drive, the status when the computer pulls CLK);
+  - **format GCR** (no directory) fills every sector of the image as the
+    drive formats it (`$4B`, then 255 `$01`); MFM format is a format error
+    (`$16`) on a GCR image; write-protected images give `$18`;
+  - **inquire status** reads or sets the last status (C=1 before a log-in:
+    `$1B`, disk change); **sector interleave** reads or sets the soft
+    interleave of multi-sector reads and writes;
+  - the **CHGUTL** utilities (`U0>S`, `R`, `T`, `M`, `H`: OK; `U0>` + a device
+    number 4-30 changes the unit).
+
+  Several sectors go 5 on round the track by default, the order the C128's
+  CP/M lays a track out in (its Z80 ROM's tables). A host folder answers
+  `$0F` (no disk).
 
 CP/M uses inquire, read and write, and boots about four times faster than
-over slow serial. C64 mode never announces itself, so it stays slow (as on a
+over slow serial. Its FORMAT program formats C128 disks with the burst
+format (checked: "C128 Double Sided" on a blank D71, then DIR on it). C64 mode never announces itself, so it stays slow (as on a
 real C128). The Plus/4 and C16 drives are not 1571s.
 
 ## Function ROMs and cartridges
@@ -242,5 +254,5 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
 - The Z80 in C64 mode beyond the C64 memory map
-- Bank-switching C128 cartridges, the burst
-  format and query commands, MFM disks, the VIC-IIe's 2 MHz effect on the display
+- Bank-switching C128 cartridges, MFM disks (and burst MFM format/query),
+  the VIC-IIe's 2 MHz effect on the display

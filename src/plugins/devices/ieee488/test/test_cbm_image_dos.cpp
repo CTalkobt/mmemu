@@ -140,3 +140,59 @@ TEST_CASE(image_dos_burst_commands) {
     ASSERT(dos.takeFastload(name) && name == "PROG");
     std::remove(path.c_str());
 }
+
+// Burst format (GCR, no directory), query disk format, inquire status,
+// sector interleave and the CHGUTL utilities (1571 User's Guide, Appendix G)
+TEST_CASE(image_dos_burst_format_query) {
+    std::string path = makeD64();
+    CbmImageDos dos;
+    ASSERT(dos.open(path));
+    auto cmd = [&](std::string bytes) { send(dos, 0xFF, std::string("U0") + bytes); };
+    // INQUIRE STATUS, C=1 W=1 before a log-in: disk change ($B)
+    cmd(std::string("\xCC", 1));
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x1B);
+    // QUERY DISK FORMAT: a GCR disk, the status byte only; it logs the disk in
+    cmd(std::string("\x8A", 1));
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x10);
+    cmd(std::string("\xCC", 1));
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x10);
+    // INQUIRE STATUS W=0: set it; W=1 reads it back
+    cmd(std::string("\x0C\x17", 2));
+    EXPECT_EQ((int)dos.burstOut().size(), 0);
+    cmd(std::string("\x8C", 1));
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x17);
+    // SECTOR INTERLEAVE: read 5, set 3; a 2-sector read then goes 1/0, 1/3
+    cmd(std::string("\x88", 1));
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 5);
+    cmd(std::string("\x08\x03", 2));
+    cmd(std::string("\x88", 1));
+    EXPECT_EQ(dos.burstOut().front(), 3);
+    // READ with T=1 (no transfer): status bytes only
+    cmd(std::string("\x80\x01\x00\x02", 4));
+    EXPECT_EQ((int)dos.burstOut().size(), 2);
+    // CHGUTL: "U0>M1" (1571 mode) answers OK on the error channel
+    cmd(">M1");
+    EXPECT_EQ(dos.burstOut().size(), (size_t)0);
+    // FORMAT GCR (M=0, ID "AB"): every sector $4B, $01...; no output
+    cmd(std::string("\x06\x00" "AB", 4));
+    EXPECT_EQ((int)dos.burstOut().size(), 0);
+    cmd(std::string("\xCC", 1));                                  // to be logged in again
+    EXPECT_EQ(dos.burstOut().front(), 0x1B);
+    cmd(std::string("\x04", 1));
+    cmd(std::string("\x00\x12\x00\x01", 4));                   // 18/0
+    ASSERT_EQ((int)dos.burstOut().size(), 257);
+    EXPECT_EQ(dos.burstOut()[1], 0x4B);
+    EXPECT_EQ(dos.burstOut()[2], 0x01);
+    EXPECT_EQ(dos.burstOut()[256], 0x01);
+    {
+        std::ifstream f(path, std::ios::binary);                   // on the file too
+        std::vector<uint8_t> img((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        EXPECT_EQ(img[0x16500], 0x4B);                             // 18/0
+        EXPECT_EQ(img[683 * 256 - 1], 0x01);
+    }
+    // FORMAT MFM on a GCR image: format error
+    cmd(std::string("\x06\x80", 2));
+    cmd(std::string("\x8C", 1));
+    EXPECT_EQ(dos.burstOut().front(), 0x16);
+    std::remove(path.c_str());
+}
