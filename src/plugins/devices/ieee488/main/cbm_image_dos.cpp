@@ -34,6 +34,10 @@ void CbmImageDos::reset() {
     m_listening = m_talking = m_opening = m_active = false;
     m_name.clear();
     m_cmd.clear();
+    m_bwLeft = 0;
+    m_burstLast = 0x10;
+    m_loggedIn = false;
+    m_burstInterleave = 5;
     setError(0, " OK");
 }
 
@@ -178,7 +182,7 @@ void CbmImageDos::openChannel(int ch, const std::string& spec) {
 }
 
 void CbmImageDos::command(const std::string& raw) {
-    if (raw.size() > 2 && raw[0] == 'U' && raw[1] == '0' && raw[2] != '>') { burst(raw.substr(2)); return; }
+    if (raw.size() > 2 && raw[0] == 'U' && raw[1] == '0') { burst(raw.substr(2)); return; }
     std::string cmd = raw;
     while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n')) cmd.pop_back();
     if (cmd.empty()) return;
@@ -310,15 +314,18 @@ uint8_t CbmImageDos::burstStatus(int controller) const {
     return (uint8_t)(0x10 | (controller & 0x0F));
 }
 
-// The next sector of a multi-sector burst on a GCR track: 5 on, round the
-// track, the order of the C128's CP/M (its Z80 ROM's tables at $0FB5:
-// 0 5 10 15 20 4 9 ... on a 21-sector track)
+// The next sector of a multi-sector burst on a GCR track: the soft
+// interleave on (5 by default), round the track: the order of the C128's
+// CP/M (its Z80 ROM's tables at $0FB5: 0 5 10 15 20 4 9 ... on a 21-sector
+// track)
 int CbmImageDos::nextBurstSector(int track, int sector) const {
     int spt = 0;
     while (spt < 64 && m_disk->sectorOffset(track, spt) != 0xFFFFFFFFu) ++spt;
-    return spt ? (sector + 5) % spt : 0;
+    return spt ? (sector + m_burstInterleave) % spt : 0;
 }
 
+// Byte 0 (the 1571 User's Guide, Appendix G): bits 3-1 the command, bit 0
+// the drive number; the switches above
 void CbmImageDos::burst(const std::string& b) {
     m_burstOut.clear();
     m_bwLeft = 0;
@@ -326,37 +333,87 @@ void CbmImageDos::burst(const std::string& b) {
     const uint8_t c = (uint8_t)b[0];
     auto at = [&](size_t i, int def) { return i < b.size() ? (int)(uint8_t)b[i] : def; };
     switch ((c >> 1) & 7) {
-        case 0: {                                // read: track, sector, count
+        case 0: {                                // READ: T E B S 0 0 0 N, track, sector, count
+            const bool noTransfer = c & 0x80;
             int t = at(1, 1), s = at(2, 0), n = at(3, 1);
             for (int i = 0; i < n; ++i, s = nextBurstSector(t, s)) {
                 uint32_t off = m_disk->sectorOffset(t, s);
                 if (off == 0xFFFFFFFFu || off + 256 > m_disk->data().size()) {
-                    m_burstOut.push_back(burstStatus(0x02));   // header not found
+                    m_burstOut.push_back(m_burstLast = burstStatus(0x02));   // sector not found
                     break;
                 }
-                m_burstOut.push_back(burstStatus(0));
-                m_burstOut.insert(m_burstOut.end(), m_disk->data().begin() + off, m_disk->data().begin() + off + 256);
+                m_burstOut.push_back(m_burstLast = burstStatus(0));
+                if (!noTransfer)
+                    m_burstOut.insert(m_burstOut.end(), m_disk->data().begin() + off, m_disk->data().begin() + off + 256);
             }
             break;
         }
-        case 1:                                  // write: the host sends each sector
+        case 1:                                  // WRITE: the host sends each sector
             m_bwTrack = at(1, 1);
             m_bwSector = at(2, 0);
             m_bwLeft = at(3, 1);
             m_bwBuf.clear();
             break;
-        case 2:                                  // inquire disk
-            m_burstOut.push_back(burstStatus(0));
+        case 2:                                  // INQUIRE DISK: logs it in
+            m_loggedIn = true;
+            m_burstOut.push_back(m_burstLast = burstStatus(0));
             break;
-        case 7:                                  // fastload ($1F + the file name)
-            m_fastload = b.substr(1);
-            m_fastloadPending = true;
+        case 3:                                  // FORMAT: byte 1 bit 7 M (1 MFM, 0 GCR)
+            // GCR (no directory): every sector as the 1571 formats it; no
+            // output, the status is kept for INQUIRE STATUS. MFM cannot go
+            // on a GCR image: format error.
+            if (at(1, 0) & 0x80) m_burstLast = burstStatus(0x06);
+            else if (!m_disk->writable()) m_burstLast = burstStatus(0x08);   // write protect
+            else m_burstLast = burstStatus(m_disk->formatSectors() ? 0 : 0x06);
+            m_loggedIn = false;                  // to be logged in again
             break;
-        default:                                 // format, query, ...: not here
-            m_burstOut.push_back(burstStatus(0x0E));
+        case 4:                                  // SECTOR INTERLEAVE: W X X 0 0 1 0 0 N
+            if (c & 0x80) m_burstOut.push_back((uint8_t)m_burstInterleave);
+            else m_burstInterleave = at(1, m_burstInterleave);
+            break;
+        case 5:                                  // QUERY DISK FORMAT: a GCR disk answers its status only
+            m_loggedIn = true;
+            m_burstOut.push_back(m_burstLast = burstStatus(0));
+            break;
+        case 6:                                  // INQUIRE STATUS: W C X 0 1 1 0 N
+            if (!(c & 0x80)) {                   // write: the new status; C logs the disk in
+                if (b.size() > 1) m_burstLast = (uint8_t)b[1];
+                if (c & 0x40) m_loggedIn = true;
+            } else if ((c & 0x40) && !m_loggedIn) {
+                m_burstOut.push_back(burstStatus(0x0B));      // disk change: not logged in
+            } else {
+                m_burstOut.push_back(m_burstLast);
+            }
+            break;
+        case 7:
+            if ((c & 0x1F) == 0x1F) {            // FASTLOAD: P X X 1 1 1 1 1 + the file name
+                m_fastload = b.substr(1);
+                m_fastloadPending = true;
+            } else if (c & 0x10) {               // CHGUTL: X X X 1 1 1 1 0 ('>' + the utility)
+                burstUtility(b.substr(1));
+                return;
+            } else {                             // BACKUP DISK: undocumented
+                m_burstOut.push_back(burstStatus(0x0E));
+            }
             break;
     }
     setError(0, " OK");
+}
+
+// The CHGUTL utilities ("U0>S" + interleave, "U0>R" + retries, "U0>T" ROM
+// test, "U0>M0/1" 1541/1571 mode, "U0>H0/1" head, "U0>" + device number):
+// the image has nothing to change but the device number
+void CbmImageDos::burstUtility(const std::string& a) {
+    if (a.empty()) { setError(31, "SYNTAX ERROR"); return; }
+    const uint8_t u = (uint8_t)a[0];
+    if (u == 'S' || u == 'R' || u == 'T' || u == 'M' || u == 'H') {
+        setError(0, " OK");
+    } else if (u >= 4 && u <= 30) {
+        m_unit = u;
+        setError(0, " OK");
+    } else {
+        setError(31, "SYNTAX ERROR");
+    }
 }
 
 bool CbmImageDos::burstWriteByte(uint8_t b) {
@@ -371,7 +428,7 @@ void CbmImageDos::burstFinishSector() {
     if (m_bwBuf.size() < 256 || m_disk->sectorOffset(m_bwTrack, m_bwSector) == 0xFFFFFFFFu) status = 0x02;
     else if (!m_disk->writable()) status = 0x08;                   // write protect on
     else if (!m_disk->writeSector(m_bwTrack, m_bwSector, m_bwBuf.data())) status = 0x07;
-    m_burstOut.push_back(burstStatus(status));
+    m_burstOut.push_back(m_burstLast = burstStatus(status));
     m_bwBuf.clear();
     m_bwSector = nextBurstSector(m_bwTrack, m_bwSector);
     if (--m_bwLeft < 0 || status) m_bwLeft = 0;

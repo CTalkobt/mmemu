@@ -40,7 +40,9 @@ public:
     void reset() override;
     bool active() const override { return m_active; }
 
-    // Burst commands (read, write, inquire disk), on GCR images as a 1571
+    // Burst commands (read, write, inquire disk, format GCR, query disk
+    // format, inquire status, sector interleave, utilities), on GCR images
+    // as a 1571
     bool burstWriting() const override { return m_bwLeft > 0; }
     bool burstWriteByte(uint8_t b) override;
     void burstFinishSector() override;
@@ -69,6 +71,7 @@ private:
     void blockWrite(const std::string& args, bool u2);
     void closeChannel(int ch);
     void burst(const std::string& bytes);
+    void burstUtility(const std::string& args);
     uint8_t burstStatus(int controller) const;
     int nextBurstSector(int track, int sector) const;
     void dosResult(int code, int track = 0);
@@ -88,5 +91,11 @@ private:
     // A burst write in progress: sectors left, where, the bytes so far
     int m_bwLeft = 0, m_bwTrack = 0, m_bwSector = 0;
     std::vector<uint8_t> m_bwBuf;
+    // The drive's burst state: the last status byte, the disk logged in
+    // (INQUIRE DISK / QUERY DISK FORMAT), the soft interleave of
+    // multi-sector READ and WRITE
+    uint8_t m_burstLast = 0x10;
+    bool m_loggedIn = false;
+    int m_burstInterleave = 5;
     size_t m_errorPos = 0;
 };

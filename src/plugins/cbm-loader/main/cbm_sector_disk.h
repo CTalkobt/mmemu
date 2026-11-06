@@ -48,6 +48,12 @@ public:
      * written (it stays changed in memory only).
      */
     bool writeSector(int track, int sector, const uint8_t* data);
+    /**
+     * A low-level format: every sector of the image as a freshly formatted
+     * 1541/1571 data block ($4B, then 255 x $01), written back to the file.
+     * No directory (the host writes one). False if the file is read-only.
+     */
+    bool formatSectors();
     /** The file is writable (not read-only on the host). */
     bool writable() const { return m_writable; }
 
