@@ -58,6 +58,8 @@ These devices are compiled into the machine plugins but are documented separatel
 | Device | Description | Documentation |
 |--------|-------------|---------------|
 | Datasette | Cassette tape drive model — playback, recording, `.tap` file I/O. | [README-DATASETTE.md](README-DATASETTE.md) |
+| TIA | Atari 2600 Television Interface Adaptor: video, collisions, inputs, sound (in the 2600 plugin). | [README-A2600.md](README-A2600.md) |
+| RIOT 6532 | MOS 6532 RAM, I/O and timer (in the 2600 plugin). | [README-A2600.md](README-A2600.md) |
 
 ### 1.3 Machine Plugins (Presets)
 Plugins that implement `MachineDescriptor` factories.
@@ -68,6 +70,7 @@ Plugins that implement `MachineDescriptor` factories.
 | `lib/mmemu-plugin-c64.so` | Commodore 64 — full chip set and banking. | [README-C64.md](README-C64.md) |
 | `lib/mmemu-plugin-c128.so` | Commodore 128 — 8502, MMU, VIC-IIe, SID, CIAs, VDC (C128 mode). | [README-C128.md](README-C128.md) |
 | `lib/mmemu-plugin-pet.so` | Commodore PET Series (2001, 4032, 8032). | [README-PET.md](README-PET.md) |
+| `lib/mmemu-plugin-atari2600.so` | Atari 2600 (6507, TIA, RIOT 6532, bank-switched cartridges), NTSC and PAL. | [README-A2600.md](README-A2600.md) |
 | `lib/mmemu-plugin-x16.so` | Commander X16 (65C02, VERA, VIAs, I2C SMC/RTC, banked RAM/ROM). | [README-X16.md](README-X16.md) |
 
 | Note | The `rawMega65` machine is defined via JSON in `machines/rawMega65.json` and uses the `45gs02` core and `hyper_serial` / `exit_trap` devices. | [README-RAW-MEGA65.md](README-RAW-MEGA65.md) |

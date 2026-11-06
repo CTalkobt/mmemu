@@ -120,6 +120,13 @@ PLUGIN_6502_SRCS = src/plugins/6502/main/cpu6502.cpp \
 	src/plugins/6502/main/kickassembler.cpp \
 	src/plugins/6502/main/plugin_init.cpp
 
+PLUGIN_A2600_SRCS = src/plugins/machines/atari2600/main/machine_a2600.cpp \
+	src/plugins/devices/tia/main/tia.cpp \
+	src/plugins/devices/tia/main/tia_objects.cpp \
+	src/plugins/devices/tia/main/tia_palette.cpp \
+	src/plugins/devices/riot6532/main/riot6532.cpp \
+	src/plugins/machines/atari2600/main/plugin_init.cpp
+
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/z80/main/plugin_init.cpp
@@ -430,6 +437,9 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/machines/c128/test/test_c128_machine.cpp \
 	src/plugins/z80/test/test_z80.cpp \
+	src/plugins/devices/riot6532/test/test_riot6532.cpp \
+	src/plugins/devices/tia/test/test_tia.cpp \
+	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -527,6 +537,11 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/machines/c128/main/machine_c128.o \
 	src/plugins/z80/main/cpu_z80.o \
+	src/plugins/devices/riot6532/main/riot6532.o \
+	src/plugins/devices/tia/main/tia.o \
+	src/plugins/devices/tia/main/tia_objects.o \
+	src/plugins/devices/tia/main/tia_palette.o \
+	src/plugins/machines/atari2600/main/machine_a2600.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
@@ -664,6 +679,7 @@ PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
 PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_C128_OBJS   = $(PLUGIN_C128_SRCS:.cpp=.o)
 PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
+PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -724,6 +740,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-plus4.so \
 	$(LIBDIR)/mmemu-plugin-c128.so \
 	$(LIBDIR)/mmemu-plugin-z80.so \
+	$(LIBDIR)/mmemu-plugin-atari2600.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -849,6 +866,9 @@ $(LIBDIR)/mmemu-plugin-c128.so: $(PLUGIN_C128_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
