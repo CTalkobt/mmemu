@@ -69,7 +69,9 @@ Commodore's 28 May 87 boot disk boots to `A>` and runs DIR (checked with
 is included: Commodore and Digital Research hold the copyrights and the
 images carry no distribution terms. Disk access goes through the 8502 and
 the KERNAL's serial routines (no 1571 fast serial yet), so loading CP/M takes
-about a minute of machine time, as with a 1541; disk images are read-only.
+about a minute of machine time, as with a 1541. CP/M writes its sectors with
+`U2`, which go straight to the image file (`REN`, `ERA`, `PIP` and saving
+work; use a copy of a disk you want to keep unchanged).
 
 ## Screens: 40 and 80 columns
 
@@ -182,7 +184,7 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - VDC interlace and mid-frame register changes (raster effects)
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- Writing to disk images (CP/M's writes report WRITE PROTECT ON)
+- SAVE / OPEN for writing files on disk images (BASIC); CP/M's block writes work
 - The Z80 in C64 mode beyond the C64 memory map
 - Function ROMs, cartridges, 1571 fast serial, the VIC-IIe's 2 MHz effect
   on the display

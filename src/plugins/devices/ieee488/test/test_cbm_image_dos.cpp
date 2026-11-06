@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <unistd.h>
+#include <sys/stat.h>
 
 namespace {
 // A blank D64 with a marked track 1 sector 0 and track 18 sector 0
@@ -65,7 +66,41 @@ TEST_CASE(image_dos_direct_access) {
     // Out of range, and writes
     send(dos, 0x6F, "U1:8 0 40 0\r");
     EXPECT_EQ(readBytes(dos, 15, 2), std::string("66"));
-    send(dos, 0x6F, "U2:8 0 01 00\r");
-    EXPECT_EQ(readBytes(dos, 15, 2), std::string("26"));
+    std::remove(path.c_str());
+}
+
+// U2 / B-W write the buffer to the image file; a read-only file is write
+// protected
+TEST_CASE(image_dos_block_write) {
+    std::string path = makeD64();
+    {
+        CbmImageDos dos;
+        ASSERT(dos.open(path));
+        send(dos, 0xF8, "#");
+        send(dos, 0xFF, "B-P 8 0\r");
+        send(dos, 0x68, std::string("HELLO"));                     // into the buffer
+        send(dos, 0x6F, "U2:8 0 02 03\r");
+        EXPECT_EQ(readBytes(dos, 15, 2), std::string("00"));
+        send(dos, 0x6F, "B-P 8 0\r");
+        send(dos, 0x68, std::string("ABC"));
+        send(dos, 0x6F, "B-W 8 0 02 04\r");                        // byte 0 = pointer (3)
+        EXPECT_EQ(readBytes(dos, 15, 2), std::string("00"));
+        send(dos, 0x6F, "U1:8 0 02 03\r");
+        EXPECT_EQ(readBytes(dos, 8, 5), std::string("HELLO"));
+    }
+    std::ifstream f(path, std::ios::binary);
+    std::vector<char> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const size_t t2 = 21 * 256;                                    // track 2 starts after 21 sectors
+    EXPECT_EQ(std::string(&d[t2 + 3 * 256], 5), std::string("HELLO"));
+    EXPECT_EQ((int)d[t2 + 4 * 256], 3);
+    EXPECT_EQ(std::string(&d[t2 + 4 * 256 + 1], 2), std::string("BC"));
+    // Read-only on the host: WRITE PROTECT ON
+    chmod(path.c_str(), 0444);
+    CbmImageDos ro;
+    ASSERT(ro.open(path));
+    send(ro, 0xF8, "#");
+    send(ro, 0xFF, "U2:8 0 02 03\r");
+    EXPECT_EQ(readBytes(ro, 15, 2), std::string("26"));
+    chmod(path.c_str(), 0644);
     std::remove(path.c_str());
 }
