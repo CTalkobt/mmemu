@@ -13,6 +13,7 @@ VIC2::VIC2(const std::string& name, uint32_t baseAddr)
 
 void VIC2::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
+    m_keyLines = 0x07; m_d030 = 0;      // VIC-IIe: no K line selected, 1 MHz
     // Power-on state: display enabled, 25 rows, 40 cols, standard text
     m_regs[SCR1] = SCR1_DEN | SCR1_RSEL | 0x03; // scroll Y = 3
     m_regs[SCR2] = SCR2_CSEL | 0x08;             // scroll X = 0, CSEL=1
@@ -149,6 +150,8 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 
     uint8_t reg = addr & 0x3F;
 
+    if (m_vicIIe && reg == 0x2F) { *val = 0xF8 | m_keyLines; return true; }   // VICE vicii-mem.c
+    if (m_vicIIe && reg == 0x30) { *val = 0xFC | m_d030; return true; }
     if (reg > 0x2E) {
         // $D02F–$D03F: unused, read as $FF
         *val = 0xFF;
@@ -197,6 +200,8 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x3F;
+    if (m_vicIIe && reg == 0x2F) { m_keyLines = val & 0x07; return true; }
+    if (m_vicIIe && reg == 0x30) { m_d030 = val & 0x03; return true; }
     if (reg > 0x2E) return true; // writes to unused regs are ignored
 
     switch (reg) {
@@ -301,7 +306,8 @@ void VIC2::renderBackground(uint32_t* buf) {
     // On C64, character generator ROM is always seen by the VIC at bank 
     // offsets $1000-$1FFF and $9000-$9FFF BUT only in Banks 0 and 2.
     bool isBank0or2 = (m_bankBase == 0x0000 || m_bankBase == 0x8000);
-    bool useCharRom = !bmm && isBank0or2 && (cbBase == 0x1000);
+    // Without a character ROM of its own (the C128 maps it in its DMA bus) every fetch goes through the bus
+    bool useCharRom = m_charRom && !bmm && isBank0or2 && (cbBase == 0x1000);
 
     // Logging for debug
     static int frameCounter = 0;

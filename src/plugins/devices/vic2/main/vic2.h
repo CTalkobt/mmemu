@@ -98,6 +98,15 @@ public:
      *  bypasses the DMA bus so CPU banking / overlays don't affect rendering. */
     void setColorRam(const uint8_t* data) override { m_colorRam = data; }
 
+    /** The C128's 8564/8566 VIC-IIe: $D02F drives the extra keyboard lines
+     *  K0-K2 (bits 0-2, low = selected), $D030 bit 0 selects 2 MHz and bit 1
+     *  the test mode; unused bits read 1 (VICE vicii-mem.c). */
+    void setVicIIe(bool on) { m_vicIIe = on; }
+    /** $D02F bits 0-2: the K0-K2 outputs (low = that line selected). */
+    uint8_t keyboardLines() const { return m_vicIIe ? m_keyLines : 0x07; }
+    /** $D030 bit 0: the CPU runs at 2 MHz. */
+    bool fastMode() const { return m_vicIIe && (m_d030 & 1); }
+
     /** 16 KB VIC bank base address in system memory (0x0000/0x4000/0x8000/0xC000). */
     void setBankBase(uint32_t base) override { m_bankBase = base & 0xC000; }
 
@@ -273,6 +282,8 @@ protected:
     uint32_t        m_bankBase   = 0x0000;
     const uint8_t*  m_charRom    = nullptr;
     const uint8_t*  m_ultimaxRomh = nullptr;
+    bool            m_vicIIe = false;
+    uint8_t         m_keyLines = 0x07, m_d030 = 0;
     uint32_t        m_ultimaxRomhSize = 0;
     bool            m_ultimax = false;
     uint32_t        m_charRomSize = 0;

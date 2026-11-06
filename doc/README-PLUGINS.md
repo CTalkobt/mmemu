@@ -65,6 +65,7 @@ Plugins that implement `MachineDescriptor` factories.
 |-------------|-------------|---------------|
 | `lib/mmemu-plugin-vic20.so` | Commodore VIC-20 (stock and RAM expansions). | [README-VIC20.md](README-VIC20.md) |
 | `lib/mmemu-plugin-c64.so` | Commodore 64 — full chip set and banking. | [README-C64.md](README-C64.md) |
+| `lib/mmemu-plugin-c128.so` | Commodore 128 — 8502, MMU, VIC-IIe, SID, CIAs, VDC (C128 mode). | [README-C128.md](README-C128.md) |
 | `lib/mmemu-plugin-pet.so` | Commodore PET Series (2001, 4032, 8032). | [README-PET.md](README-PET.md) |
 | `lib/mmemu-plugin-x16.so` | Commander X16 (65C02, VERA, VIAs, I2C SMC/RTC, banked RAM/ROM). | [README-X16.md](README-X16.md) |
 
