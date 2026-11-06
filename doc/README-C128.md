@@ -1,6 +1,6 @@
 # mmemu-plugin-c128: Commodore 128
 
-The Commodore 128 in C128 mode, with the 40-column VIC-IIe and 80-column VDC screens (#22).
+The Commodore 128 in C128 mode, with the 40-column VIC-IIe and 80-column VDC screens, and in C64 mode (#22).
 Memory map, MMU and keyboard after VICE (`src/c128/c128mem.c`,
 `c128meminit.c`, `c128mmu.c`, `data/C128/gtk3_sym.vkm`).
 
@@ -67,6 +67,22 @@ time from the registers:
 Not drawn: interlace, register changes in mid-frame, the sync and
 display-enable window (R2, R3, R7, R34, R35).
 
+## C64 mode
+
+`GO64` (and Y), or C= held while the machine resets, sets MCR bit 6 and the
+C128 becomes a C64 until the next reset (which returns to C128 mode; keys
+held through a reset stay down). As in VICE (`c128mem.c`, `c128mmu.c`):
+
+- The memory map is the C64's, from the 8502 port's LORAM/HIRAM/CHAREN
+  (VICE's configurations 0-7; no cartridge): BASIC 64 at $A000, KERNAL 64 at
+  $E000, I/O or the C64 character set at $D000, RAM elsewhere.
+- RAM is the bank CR held at the switch; RCR's shared areas come from bank 0.
+- There is no MMU: `$D500-$D5FF` read open bus and `$FF00` is plain ROM/RAM.
+  The VDC stays at `$D600`, and the VIC-IIe keeps `$D02F`/`$D030` (2 MHz
+  works in C64 mode).
+- Colour RAM is the first 1 KB for both CPU and VIC-II; the VIC-II sees the
+  C64 character set at $1000 and $9000 (banks 0 and 2), as on the C64.
+
 ## Memory map (C128 mode)
 
 The configuration register CR is at `$FF00` (always) and `$D500` (with I/O):
@@ -124,12 +140,14 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - `kernal.318020-05.bin` - screen editor ($C000), Z80 boot BIOS ($D000),
   KERNAL ($E000)
 - `characters.390059-01.bin` - the C64 character set, then the C128 one
-- `c128_c64part.325182-01.bin` - BASIC and KERNAL for C64 mode (not used yet)
+- `c64.251913-01.bin` - BASIC and KERNAL for C64 mode: the first half of
+  `complete.318023-02.bin`, identical to the C64's 901226-01 / 901227-03
 
 ## Not yet emulated
 
 - VDC interlace and mid-frame register changes (raster effects)
-- C64 mode (`GO64`, the C= key held at reset)
+- Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
+  corner cases
 - The Z80 and CP/M: the machine starts on the 8502, where the Z80 boot
   BIOS would hand over
 - Function ROMs, cartridges, 1571 fast serial, the VIC-IIe's 2 MHz effect

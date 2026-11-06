@@ -171,3 +171,58 @@ TEST_CASE(c128_boots_80_columns) {
     EXPECT_EQ(f[0], Vdc8563::palette(0));                      // the VDC's black, not the VIC's border
     delete m;
 }
+
+// C64 mode: GO64 from BASIC, and C= held through a reset; a reset goes back
+// to C128 mode
+TEST_CASE(c128_c64_mode) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* kbd = dynamic_cast<IKeyboardMatrix*>(m->ioRegistry->findHandler("Keyboard"));
+    kbd->enqueueText("GO64\nY\n");
+    run(m, 4000000);
+    ASSERT(screenHas(m, "**** COMMODORE 64 BASIC V2 ****"));
+    ASSERT(screenHas(m, "38911 BASIC BYTES FREE"));
+    kbd->enqueueText("PRINT 6*7;PEEK(53296)\n");               // ';' via the US C64 KERNAL's table
+    run(m, 3000000);
+    ASSERT(screenHas(m, " 42  252"));
+    m->onReset(*m);
+    run(m, 3000000);
+    ASSERT(screenHas(m, "COMMODORE BASIC V7.0"));
+    m->onKey("cbm", true);
+    m->onReset(*m);
+    run(m, 8000000);                                           // C128 reset, then the C64 KERNAL's RAM test
+    m->onKey("cbm", false);
+    ASSERT(screenHas(m, "**** COMMODORE 64 BASIC V2 ****"));
+    delete m;
+}
+
+// The C64 map in C64 mode: $01 banks BASIC/KERNAL/I/O/character ROM, no MMU
+// at $D500 or $FF00, the VDC still at $D600, the C64 character set
+TEST_CASE(c128_c64_mode_memory) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xD505, 0xF1);                                 // MCR: C64 mode
+    EXPECT_EQ(bus->peek8(0xA000), 0x94);                       // BASIC 64 ($E394 cold start)
+    EXPECT_EQ(bus->peek8(0xFFFC), 0xE2);                       // KERNAL 64 reset vector $FCE2
+    EXPECT_EQ(bus->peek8(0xD505), 0xFF);                       // no MMU
+    bus->write8(0xFF00, 0x3F);                                 // $FF00: just ROM/RAM
+    EXPECT_EQ(bus->peek8(0xA000), 0x94);
+    bus->write8(0xD600, 1);
+    bus->write8(0xD601, 80);
+    uint8_t v = bus->peek8(0xD601);
+    EXPECT_EQ(v, 80);                                          // the VDC (columns) is still there
+    IBus* cpuBus = m->cpus[0].cpu->getDataBus();               // the 8502 port is on the CPU's bus
+    cpuBus->write8(0x0000, 0x2F);
+    cpuBus->write8(0x0001, 0x33);                              // character ROM in
+    EXPECT_EQ(bus->peek8(0xD008), 0x18);                       // C64 'A' (character 1), first line
+    cpuBus->write8(0x0001, 0x34);                              // all RAM
+    bus->write8(0xA000, 0x5A);
+    EXPECT_EQ(bus->peek8(0xA000), 0x5A);
+    cpuBus->write8(0x0001, 0x37);
+    EXPECT_EQ(bus->peek8(0xA000), 0x94);
+    delete m;
+}
