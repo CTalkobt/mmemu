@@ -31,7 +31,14 @@ public:
     MOS6510();
     ~MOS6510() override;
 
-    const char* variantName() const override { return "MOS 6510"; }
+    const char* variantName() const override { return m_pinMask & 0x40 ? "MOS 8502" : "MOS 6510"; }
+
+    /**
+     * The 8502 (C128): a seventh port pin, bit 6, whose input level comes
+     * from `bit6` (the C128's CAPS LOCK / ASCII-DIN key; low = pressed).
+     * Bit 7 still reads 1.
+     */
+    void set8502(ISignalLine* bit6) { m_pinMask = 0x7F; m_bit6 = bit6; }
 
     // Override bus attachment to install the port proxy.
     void setDataBus(IBus* bus) override;
@@ -139,6 +146,8 @@ private:
     // -----------------------------------------------------------------------
     uint8_t     m_ddr     = 0x00; // all inputs on power-up
     uint8_t     m_data    = 0x3F; // C64 pull-ups: bits 0-5 high
+    uint8_t     m_pinMask = 0x3F; // port pins (0x7F on the 8502)
+    ISignalLine* m_bit6   = nullptr;
 
     SignalLine  m_loram;
     SignalLine  m_hiram;

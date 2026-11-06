@@ -58,6 +58,10 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Hardware**: MOS 6510 CPU, 6567/6569 VIC-II Video, 6581 SID Sound, dual 6526 CIAs, PLA banking, keyboard matrix.
 - **Symbols**: Standard KERNAL jump table symbols are auto-loaded from `roms/c64/kernal.sym`.
 
+### Commodore 128
+- **Profiles**: `c128`, `c128-ntsc`.
+- **Hardware**: MOS 8502 CPU (1/2 MHz), 8722 MMU with 128 KB RAM, shared RAM and page relocation, 8564/8566 VIC-IIe 40-column screen, 6581 SID, two 6526 CIAs, 8563 VDC (registers and RAM; the 80-column display is still to come), keyboard with the C128's extra keys, two joysticks, IEC drive on unit 8, datasette. C128 mode only so far. See `doc/README-C128.md`.
+
 ### Commodore PET Series
 - **Profiles**: `pet2001`, `pet4032`, `pet8032`.
 - **Hardware**: MOS 6502 CPU, 6520 PIA, 6522 VIA, 6545 CRTC (for 4032/8032), discrete video logic (for 2001), IEEE-488 bus.

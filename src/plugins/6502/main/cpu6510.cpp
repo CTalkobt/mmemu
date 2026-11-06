@@ -6,7 +6,7 @@ MOS6510::MOS6510() {
     // Standard C64 pull-up state: DDR=0x00, DATA=0x3F.
     // Port only has 6 bits (0-5).
     m_ddr  = 0x00;
-    m_data = 0x3F;
+    m_data = m_pinMask;
     updateSignals();
 }
 
@@ -36,18 +36,19 @@ uint8_t MOS6510::portRead() const {
     // Standard 6510: bits 6-7 of the I/O port don't exist and usually read as 1.
     // Bits 0-5: Output bits (DDR=1) return the register value (DATA).
     //           Input bits (DDR=0) return the logic level on the pins (float high).
-    uint8_t level = (m_data & m_ddr) | (~m_ddr & 0x3F);
+    uint8_t level = (m_data & m_ddr) | (~m_ddr & m_pinMask);
     if (!(m_ddr & 0x10)) { if (!m_cassetteSense.get()) level &= ~0x10; else level |= 0x10; }
-    return level | 0xC0;
+    if ((m_pinMask & 0x40) && !(m_ddr & 0x40) && m_bit6 && !m_bit6->get()) level &= ~0x40;
+    return level | (uint8_t)~m_pinMask;
 }
 
 void MOS6510::ddrWrite(uint8_t val) {
-    m_ddr = val & 0x3F; // only 6 bits exist
+    m_ddr = val & m_pinMask; // 6 pins (7 on the 8502)
     updateSignals();
 }
 
 void MOS6510::dataWrite(uint8_t val) {
-    m_data = val & 0x3F;
+    m_data = val & m_pinMask;
     updateSignals();
 }
 
