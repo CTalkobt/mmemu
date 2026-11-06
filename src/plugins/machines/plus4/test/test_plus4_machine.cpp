@@ -8,7 +8,9 @@
 #include "libdebug/main/gfx_view.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include <set>
+#include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <unistd.h>
 #include <string>
@@ -282,5 +284,112 @@ TEST_CASE(plus4_graphics_viewer) {
     // White background, black characters: '@' (character 0) has both
     std::set<uint32_t> cols(v.sheet.argb.begin(), v.sheet.argb.end());
     ASSERT(cols.count(vi->paletteColor(0x71)) && cols.count(vi->paletteColor(0x00)));
+    delete m;
+}
+
+namespace {
+// A 32 KB cartridge image (C1 low and high). C1 low marks itself for
+// autostart ($8006 = 1 and "CBM" at $8007, which the KERNAL's poll at
+// $FC33-$FC4E checks) and is called at reset with C1 in both banks. It
+// stores $5A at $0FF0 and C1 high's byte at $C123 at $0FF1, then loops at
+// $8015.
+std::vector<uint8_t> testCartridge(bool autostart) {
+    std::vector<uint8_t> img(0x8000, 0xFF);
+    const uint8_t lo[] = {
+        0x78, 0x4C, 0x0A, 0x80, 0x00, 0x00,        // SEI / JMP $800A
+        (uint8_t)(autostart ? 1 : 0), 'C', 'B', 'M',
+        0xA9, 0x5A, 0x8D, 0xF0, 0x0F,              // LDA #$5A / STA $0FF0
+        0xAD, 0x23, 0xC1, 0x8D, 0xF1, 0x0F,        // LDA $C123 / STA $0FF1
+        0x4C, 0x15, 0x80,                          // JMP $8015
+    };
+    std::copy(lo, lo + sizeof lo, img.begin());
+    img[0x4000 + 0x0123] = 0xA7;                   // C1 high, $C123
+    return img;
+}
+
+// The same as a VICE .crt: "PLUS4 CARTRIDGE ", generic, two 16 KB CHIP
+// packets (bank 0 = C1, at $8000 and $C000)
+std::vector<uint8_t> toCrt(const std::vector<uint8_t>& bin) {
+    std::vector<uint8_t> crt(0x40, 0);
+    std::memcpy(crt.data(), "PLUS4 CARTRIDGE ", 16);
+    crt[0x13] = 0x40;                              // header length
+    crt[0x14] = 1;                                 // version 1.0
+    std::memcpy(&crt[0x20], "TEST CART", 9);
+    for (int half = 0; half < 2; ++half) {
+        const uint8_t chip[16] = {'C', 'H', 'I', 'P', 0x00, 0x00, 0x40, 0x10, 0, 0, 0, 0,
+                                  (uint8_t)(half ? 0xC0 : 0x80), 0x00, 0x40, 0x00};
+        crt.insert(crt.end(), chip, chip + 16);
+        crt.insert(crt.end(), bin.begin() + half * 0x4000, bin.begin() + (half + 1) * 0x4000);
+    }
+    return crt;
+}
+}
+
+// A cartridge in the expansion port is ROM bank 2 ($FDD0 + 2 / + 8); the
+// KERNAL finds it at reset and starts it
+TEST_CASE(c16_cartridge_autostart) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::C16, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    ASSERT(plus4::insertCartridge(m, testCartridge(true), "test.bin", err));
+    ASSERT(plus4::cartridgeInfo(m) == "test.bin (32 KB C1 low/high)");
+    run(m, 3000000);
+    ASSERT(bus->peek8(0x0FF0) == 0x5A);
+    ASSERT(bus->peek8(0x0FF1) == 0xA7);            // C1 high at $C000
+    uint32_t pc = m->cpus[0].cpu->pc();
+    ASSERT(pc >= 0x8015 && pc < 0x8018);
+    // Banks by hand: C1 low and C2 (empty, $FF) high
+    bus->write8(0xFDD0 + 0x02 + 0x0C, 0);
+    ASSERT(bus->peek8(0x8007) == 'C');
+    ASSERT(bus->peek8(0xC123) == 0xFF);
+    ASSERT(bus->peek8(0xFC36) == 0x07);            // $FC00-$FCFF: still the KERNAL
+    // Out again: BASIC
+    plus4::removeCartridge(m);
+    ASSERT(plus4::cartridgeInfo(m).empty());
+    run(m, 6000000);
+    ASSERT(screenHas(m, "READY."));
+    delete m;
+}
+
+// Without the autostart mark the KERNAL leaves it alone: BASIC boots
+TEST_CASE(plus4_cartridge_no_autostart) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::Plus4, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    ASSERT(plus4::insertCartridge(m, testCartridge(false), "test.bin", err));
+    run(m, 6000000);
+    ASSERT(screenHas(m, "READY."));
+    ASSERT(m->buses[0].bus->peek8(0x0FF0) != 0x5A);
+    delete m;
+}
+
+// VICE .crt images, 8 KB raw images and things that are not cartridges
+TEST_CASE(plus4_cartridge_formats) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::C16, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    ASSERT(plus4::insertCartridge(m, toCrt(testCartridge(true)), "test.crt", err));
+    ASSERT(plus4::cartridgeInfo(m) == "test.crt (Plus/4 .crt: TEST CART)");
+    run(m, 3000000);
+    ASSERT(bus->peek8(0x0FF0) == 0x5A);
+    ASSERT(bus->peek8(0x0FF1) == 0xA7);
+
+    // 8 KB: C1 low $8000-$9FFF, the rest $FF
+    std::vector<uint8_t> small(0x2000, 0x11);
+    ASSERT(plus4::insertCartridge(m, small, "small.bin", err));
+    ASSERT(plus4::cartridgeInfo(m) == "small.bin (8 KB C1 low)");
+    bus->write8(0xFDD0 + 0x0A, 0);
+    ASSERT(bus->peek8(0x9FFF) == 0x11);
+    ASSERT(bus->peek8(0xA000) == 0xFF);
+    ASSERT(bus->peek8(0xC000) == 0xFF);
+
+    ASSERT(!plus4::insertCartridge(m, std::vector<uint8_t>(1000, 0), "odd.bin", err));
+    ASSERT(err.find("not a Plus/4 cartridge") != std::string::npos);
+    auto crt = toCrt(testCartridge(true));
+    crt[0x17] = 1;                                 // hardware type 1 (Magic Cart)
+    ASSERT(!plus4::insertCartridge(m, crt, "magic.crt", err));
+    ASSERT(err.find("hardware type 1") != std::string::npos);
     delete m;
 }

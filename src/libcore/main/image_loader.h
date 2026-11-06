@@ -88,6 +88,8 @@ public:
 
     /**
      * Register a factory for a cartridge type (indexed by file extension).
+     * Several factories may share an extension (".crt" for the C64 and the
+     * Plus/4): a factory returns nullptr for a file that is not its kind.
      */
     void registerCartridgeHandler(const std::string& extension, std::function<std::unique_ptr<ICartridgeHandler>(const std::string&)> factory);
 
@@ -97,7 +99,8 @@ public:
     IImageLoader* findLoader(const std::string& path);
 
     /**
-     * Create a cartridge handler for the given file extension.
+     * Create a cartridge handler for the given file: the first factory for
+     * its extension, in registration order, that accepts it.
      */
     std::unique_ptr<ICartridgeHandler> createCartridgeHandler(const std::string& path);
 
@@ -124,6 +127,6 @@ public:
 private:
     ImageLoaderRegistry() = default;
     std::vector<std::unique_ptr<IImageLoader>> m_loaders;
-    std::map<std::string, std::function<std::unique_ptr<ICartridgeHandler>(const std::string&)>> m_cartFactories;
+    std::map<std::string, std::vector<std::function<std::unique_ptr<ICartridgeHandler>(const std::string&)>>> m_cartFactories;
     std::map<IBus*, std::unique_ptr<ICartridgeHandler>> m_activeCarts;
 };

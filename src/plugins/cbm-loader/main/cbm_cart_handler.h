@@ -13,13 +13,16 @@ public:
     bool attach(IBus* bus, MachineDescriptor* machine) override;
     void eject(IBus* bus) override;
     CartridgeMetadata metadata() const override;
+    /** The file parsed as a C64 .crt ("C64 CARTRIDGE" header). */
+    bool valid() const { return m_valid; }
 
 private:
     std::string m_path;
     std::string m_displayName;
-    uint16_t m_cartType;
-    uint8_t m_exrom;
-    uint8_t m_game;
+    bool m_valid = false;
+    uint16_t m_cartType = 0;
+    uint8_t m_exrom = 0;
+    uint8_t m_game = 0;
 
     struct Bank {
         uint16_t bankNum;

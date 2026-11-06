@@ -28,13 +28,13 @@ the real machine.
 |-------|----------|
 | $0000-$0001 | 7501 I/O port (tape, IEC, reads `& $DF`) |
 | $0002-$7FFF | RAM (C16: 16 KB mirrored through $0000-$FFFF) |
-| $8000-$BFFF | RAM, or the low ROM bank: BASIC 3.5, 3-plus-1 low, cartridge 1, cartridge 2 |
-| $C000-$FFFF | RAM, or the high ROM bank: KERNAL, 3-plus-1 high, cartridges |
+| $8000-$BFFF | RAM, or the low ROM bank: BASIC 3.5, 3-plus-1 low, C1 low (cartridge port), C2 low |
+| $C000-$FFFF | RAM, or the high ROM bank: KERNAL, 3-plus-1 high, C1 high, C2 high |
 | $FC00-$FCFF | always the KERNAL while ROM is on |
 | $FD00-$FD0F | 6551 ACIA (Plus/4) |
 | $FD10-$FD1F | 6529 user port latch |
 | $FD30-$FD3F | 6529 keyboard row latch |
-| $FDD0-$FDDF | ROM bank select: address bits 0-1 pick the low bank, bits 2-3 the high bank |
+| $FDD0-$FDDF | ROM bank select: address bits 0-1 pick the low bank, bits 2-3 the high bank (0 BASIC/KERNAL, 1 3-plus-1, 2 C1, 3 C2) |
 | $FF00-$FF3F | TED registers ($FF00-$FF1F); a write to $FF3E selects ROM, $FF3F RAM. $FF20-$FF3D, and $FF3E/$FF3F read while ROM is selected, are the RAM or ROM underneath |
 
 The TED fetches screen, colour and character data through the same banking
@@ -141,9 +141,31 @@ MCP show TED characters and bitmaps (`ted-char`, `ted-char-mc`), or follow the
 character set or bitmap the TED is showing (`gfx chip-charset`). See
 [README-graphics-viewer.md](README-graphics-viewer.md).
 
+## Cartridges
+
+`cart <file>` (CLI), File > Attach Cartridge (GUI) or MCP `attach_cartridge`
+plugs a cartridge into the expansion port and resets; `eject` takes it out.
+The Cartridge pane shows what is attached. As in VICE (`plus4cart.c`,
+`plus4-generic.c`):
+
+| Image | Where it goes |
+|-------|---------------|
+| raw `.bin`, 8 or 16 KB | C1 low ($8000, bank 2); an 8 KB image is padded with $FF |
+| raw `.bin`, 32 KB | C1 low and C1 high ($8000 and $C000) |
+| `.crt` with the `PLUS4 CARTRIDGE ` header, hardware type 0 (generic) | each CHIP packet: bank 0 = C1, 1 = C2; load address $8000 = low, $C000 = high; 4, 8 or 16 KB |
+
+A ROM that is not there reads $FF. The KERNAL polls banks 3 to 0 at reset
+($FC20-$FC55): a bank with `CBM` at $8007 is noted, and one with $8006 = 1
+is called at $8000 with that bank in both halves, which is how a game
+cartridge starts itself. `.crt` files with another hardware type (Magic Cart,
+Multi Cart, the 1 MB cartridge, Speedy) are refused.
+
+`.crt` is shared with the C64: the C64 loader takes files with the
+`C64 CARTRIDGE` header and the Plus/4 one those with `PLUS4 CARTRIDGE `.
+
 ## Not yet emulated
 
 - Tape fast-forward/rewind timing, wobble and the motor's run-down delay
 - Fast-loaders and drive code (`M-E`/`M-W`): the drive is a DOS, not an emulated 1541 CPU
-- Cartridges
+- Bank-switching cartridges (Magic Cart, Multi Cart, 1 MB, Speedy) and the internal C2 ROMs
 - C116 and the 4 KB / 32 KB RAM variants

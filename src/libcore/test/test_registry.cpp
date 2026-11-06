@@ -1,6 +1,9 @@
 #include "test_harness.h"
 #include "libcore/main/core_registry.h"
 #include "libcore/main/machines/machine_registry.h"
+#include "libcore/main/image_loader.h"
+#include <memory>
+#include <string>
 
 TEST_CASE(core_registry_basic) {
     auto& reg = CoreRegistry::instance();
@@ -69,4 +72,30 @@ TEST_CASE(machine_registry_basic) {
     bool found = false;
     for (const auto& id : ids) if (id == "test_machine") found = true;
     ASSERT(found);
+}
+
+// Two cartridge factories on one extension (.crt for the C64 and the
+// Plus/4): the first that accepts the file wins, nullptr passes it on
+TEST_CASE(cartridge_factories_share_extension) {
+    struct Cart : ICartridgeHandler {
+        explicit Cart(std::string t) : type(std::move(t)) {}
+        bool attach(IBus*, MachineDescriptor*) override { return true; }
+        void eject(IBus*) override {}
+        CartridgeMetadata metadata() const override { CartridgeMetadata md; md.type = type; return md; }
+        std::string type;
+    };
+    auto& reg = ImageLoaderRegistry::instance();
+    reg.registerCartridgeHandler("tstcrt", [](const std::string& p) -> std::unique_ptr<ICartridgeHandler> {
+        if (p.find("first") == std::string::npos) return nullptr;
+        return std::make_unique<Cart>("first");
+    });
+    reg.registerCartridgeHandler("TSTCRT", [](const std::string& p) -> std::unique_ptr<ICartridgeHandler> {
+        if (p.find("second") == std::string::npos) return nullptr;
+        return std::make_unique<Cart>("second");
+    });
+    auto a = reg.createCartridgeHandler("x/first.tstcrt");
+    auto b = reg.createCartridgeHandler("x/second.TstCrt");
+    ASSERT(a && a->metadata().type == "first");
+    ASSERT(b && b->metadata().type == "second");
+    ASSERT(!reg.createCartridgeHandler("x/neither.tstcrt"));
 }

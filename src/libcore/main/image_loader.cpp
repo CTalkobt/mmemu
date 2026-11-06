@@ -69,7 +69,7 @@ void ImageLoaderRegistry::registerLoader(std::unique_ptr<IImageLoader> loader) {
 void ImageLoaderRegistry::registerCartridgeHandler(const std::string& extension, std::function<std::unique_ptr<ICartridgeHandler>(const std::string&)> factory) {
     std::string ext = extension;
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    m_cartFactories[ext] = factory;
+    m_cartFactories[ext].push_back(std::move(factory));
 }
 
 IImageLoader* ImageLoaderRegistry::findLoader(const std::string& path) {
@@ -86,9 +86,9 @@ std::unique_ptr<ICartridgeHandler> ImageLoaderRegistry::createCartridgeHandler(c
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     auto it = m_cartFactories.find(ext);
-    if (it != m_cartFactories.end()) {
-        return it->second(path);
-    }
+    if (it == m_cartFactories.end()) return nullptr;
+    for (auto& factory : it->second)
+        if (auto handler = factory(path)) return handler;
     return nullptr;
 }
 

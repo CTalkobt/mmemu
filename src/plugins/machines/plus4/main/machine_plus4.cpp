@@ -20,7 +20,9 @@
 #include <functional>
 #include "util/path_util.h"
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -70,6 +72,12 @@ public:
     void setTed(Ted* ted) { m_ted = ted; }
     void setAcia(IOHandler* acia) { m_acia = acia; }
     void setDrive(IecDrive* d) { m_drive = d; }
+
+    /** The cartridge ROMs, C1 low/high (bank 2) and C2 low/high (bank 3),
+     *  16 KB each; an empty one reads $FF (plus4cart.c c1lo/c1hi_read). */
+    using CartRoms = std::array<Rom, 4>;
+    void setCartridge(CartRoms roms, std::string label) { m_cart = std::move(roms); m_cartLabel = std::move(label); }
+    const std::string& cartridgeLabel() const { return m_cartLabel; }
 
     // The cassette port (plus4mem.c mem_proc_port_store/read, plus4pio1.c)
     /** Motor on: port bit 3 low (or an input). */
@@ -140,15 +148,21 @@ private:
             switch (m_banks & 3) {
                 case 0: return m_basic[addr - 0x8000];
                 case 1: return m_funcLo.empty() ? 0xFF : m_funcLo[addr - 0x8000];
-                default: return 0xFF;                       // no cartridge
+                case 2: return cartByte(0, addr);           // C1 low
+                default: return cartByte(2, addr);          // C2 low
             }
         }
         if (addr >= 0xFC00 && addr < 0xFD00) return m_kernal[addr - 0xC000];   // always the KERNAL
         switch ((m_banks >> 2) & 3) {
             case 0: return m_kernal[addr - 0xC000];
             case 1: return m_funcHi.empty() ? 0xFF : m_funcHi[addr - 0xC000];
-            default: return 0xFF;
+            case 2: return cartByte(1, addr);               // C1 high
+            default: return cartByte(3, addr);              // C2 high
         }
+    }
+    uint8_t cartByte(int rom, uint16_t addr) const {
+        const Rom& r = m_cart[rom];
+        return r.empty() ? 0xFF : r[addr & 0x3FFF];
     }
 
     uint8_t read(uint16_t addr, bool peek) {
@@ -222,6 +236,8 @@ private:
     uint16_t m_ramMask;
     uint8_t m_ram[0x10000];
     Rom m_basic, m_kernal, m_funcLo, m_funcHi;
+    CartRoms m_cart;
+    std::string m_cartLabel;
     Ted* m_ted = nullptr;
     IOHandler* m_acia = nullptr;
     IecDrive* m_drive = nullptr;
@@ -361,7 +377,94 @@ private:
     uint64_t m_timer = 0;
 };
 
+/**
+ * A cartridge image into the four 16 KB ROMs, after VICE (plus4cart.c
+ * cartridge_detect, plus4-generic.c generic_bin_attach / generic_crt_attach):
+ * a raw 8 or 16 KB image is C1 low, 32 KB C1 low and high; a .crt has the
+ * header "PLUS4 CARTRIDGE ", hardware type 0 (generic) and CHIP packets with
+ * bank 0 (C1) or 1 (C2) at $8000 (low) or $C000 (high), 4, 8 or 16 KB.
+ * A short ROM is padded with $FF.
+ */
+bool parseCartridge(const std::vector<uint8_t>& img, Plus4Bus::CartRoms& roms, std::string& type, std::string& err) {
+    auto put = [&](int rom, const uint8_t* data, size_t n) {
+        roms[rom].assign(0x4000, 0xFF);
+        std::memcpy(roms[rom].data(), data, std::min<size_t>(n, 0x4000));
+    };
+    auto be16 = [&](size_t o) { return (uint32_t)(img[o] << 8 | img[o + 1]); };
+    auto be32 = [&](size_t o) { return be16(o) << 16 | be16(o + 2); };
+    static const char kSig[] = "PLUS4 CARTRIDGE ";
+    if (img.size() >= 0x40 && std::memcmp(img.data(), kSig, 16) == 0) {
+        if (be16(0x16) != 0) { err = "unsupported .crt hardware type " + std::to_string(be16(0x16)) + " (only generic, 0)"; return false; }
+        size_t o = std::max<uint32_t>(be32(0x10), 0x40);
+        int chips = 0;
+        while (o + 16 <= img.size() && std::memcmp(&img[o], "CHIP", 4) == 0) {
+            uint32_t len = be32(o + 4), bank = be16(o + 10), start = be16(o + 12), size = be16(o + 14);
+            if (len < 16 + size || o + 16 + size > img.size()) { err = "truncated CHIP packet"; return false; }
+            if (bank > 1 || (start != 0x8000 && start != 0xC000) ||
+                (size != 0x1000 && size != 0x2000 && size != 0x4000)) {
+                char msg[96];
+                std::snprintf(msg, sizeof msg, "unsupported CHIP packet (bank %u, $%04X, %u bytes)",
+                              (unsigned)bank, (unsigned)start, (unsigned)size);
+                err = msg;
+                return false;
+            }
+            put((int)bank * 2 + (start == 0xC000), &img[o + 16], size);
+            ++chips;
+            o += len;
+        }
+        if (!chips) { err = "no CHIP packets"; return false; }
+        std::string name(img.begin() + 0x20, img.begin() + 0x40);
+        name = name.substr(0, name.find('\0'));
+        type = "Plus/4 .crt" + (name.empty() ? std::string() : ": " + name);
+        return true;
+    }
+    if (img.size() == 0x2000 || img.size() == 0x4000) {
+        put(0, img.data(), img.size());
+        type = std::to_string(img.size() / 1024) + " KB C1 low";
+        return true;
+    }
+    if (img.size() == 0x8000) {
+        put(0, img.data(), 0x4000);
+        put(1, img.data() + 0x4000, 0x4000);
+        type = "32 KB C1 low/high";
+        return true;
+    }
+    err = "not a Plus/4 cartridge (a raw 8, 16 or 32 KB image, or a .crt with a PLUS4 CARTRIDGE header)";
+    return false;
+}
+
+Plus4Bus* plus4Bus(MachineDescriptor* m) {
+    if (!m) return nullptr;
+    for (auto& b : m->buses)
+        if (auto* p = dynamic_cast<Plus4Bus*>(b.bus)) return p;
+    return nullptr;
+}
+
 } // namespace
+
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
+                     const std::string& label, std::string& err) {
+    auto* bus = plus4Bus(m);
+    if (!bus) { err = "Not a Plus/4, C16 or C116."; return false; }
+    Plus4Bus::CartRoms roms;
+    std::string type;
+    if (!parseCartridge(image, roms, type, err)) return false;
+    bus->setCartridge(std::move(roms), label + " (" + type + ")");
+    if (m->onReset) m->onReset(*m);   // the KERNAL polls the banks at reset
+    return true;
+}
+
+void removeCartridge(MachineDescriptor* m) {
+    auto* bus = plus4Bus(m);
+    if (!bus) return;
+    bus->setCartridge({}, "");
+    if (m->onReset) m->onReset(*m);
+}
+
+std::string cartridgeInfo(MachineDescriptor* m) {
+    auto* bus = plus4Bus(m);
+    return bus ? bus->cartridgeLabel() : "";
+}
 
 MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     Rom basic, kernal, funcLo, funcHi;
@@ -381,7 +484,7 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     if (ntsc) desc->displayName += " (NTSC)";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"graphics-ted"};
+    desc->uiPanes = {"cartridge", "graphics-ted"};
     desc->graphicsFormats = {"ted-char", "ted-char-mc"};
 
     auto* bus = new Plus4Bus(model, std::move(basic), std::move(kernal), std::move(funcLo), std::move(funcHi));

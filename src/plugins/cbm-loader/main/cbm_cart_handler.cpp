@@ -4,7 +4,7 @@
 #include <iostream>
 
 CbmCartridgeHandler::CbmCartridgeHandler(const std::string& path) : m_path(path) {
-    loadCrt();
+    m_valid = loadCrt();
 }
 
 CbmCartridgeHandler::~CbmCartridgeHandler() {

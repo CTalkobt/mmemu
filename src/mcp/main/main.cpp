@@ -756,7 +756,7 @@ Json handleDescribe() {
     acSchema.oVal["properties"] = acProps;
     Json acReq(Json::ARR); acReq.push_back(Json("machine_id")); acReq.push_back(Json("path"));
     acSchema.oVal["required"] = acReq;
-    addTool("attach_cartridge", "Attach a cartridge ROM image (.crt for the C64; .car or 8/16 KB .rom for the Atari) to the machine", acSchema);
+    addTool("attach_cartridge", "Attach a cartridge ROM image (.crt for the C64; .car or 8/16 KB .rom for the Atari; 8/16/32 KB .bin or a PLUS4 CARTRIDGE .crt for the Plus/4, C16 and C116) to the machine", acSchema);
 
     Json ecSchema(Json::OBJ);
     ecSchema.oVal["type"] = Json("object");
