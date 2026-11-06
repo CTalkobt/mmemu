@@ -230,3 +230,93 @@ TEST_CASE(datasette_end_of_tape) {
 
     fs::remove(path);
 }
+
+// Plus/4 / C16 mode: a version 2 C16 TAP gives one half-wave per value
+// (value x 16 cycles) and the read line is a level that flips on each,
+// starting low (as VICE's datasette)
+TEST_CASE(datasette_halfwave_v2_playback) {
+    fs::path p = fs::temp_directory_path() / "mmemu_test_c16.tap";
+    {
+        std::ofstream f(p, std::ios::binary);
+        f.write("C16-TAPE-RAW", 12);
+        uint8_t hdr[8] = {2, 2, 0, 0, 3, 0, 0, 0};          // v2, C16, PAL; 3 bytes
+        f.write((const char*)hdr, 8);
+        uint8_t data[3] = {10, 20, 10};
+        f.write((const char*)data, 3);
+    }
+    MockSignalLine sense, motor, read;
+    motor.m_level = false;
+    Datasette ds;
+    ds.setHalfWaveMode(true);
+    ds.setSenseLine(&sense);
+    ds.setMotorLine(&motor);
+    ds.setReadPulseLine(&read);
+    ASSERT(ds.mount(p.string()));
+    ds.tick(1);
+    ASSERT(!read.m_level);                                   // first edge: low
+    for (int i = 0; i < 158; ++i) ds.tick(1);               // 10 x 16 = 160 cycles
+    ASSERT(!read.m_level);
+    ds.tick(2);
+    ASSERT(read.m_level);                                    // second half-wave: high
+    for (int i = 0; i < 318; ++i) ds.tick(1);               // 20 x 16 = 320
+    ASSERT(read.m_level);
+    ds.tick(2);
+    ASSERT(!read.m_level);
+    fs::remove(p);
+}
+
+// Version 1 TAPs on a Plus/4: each value is a full wave, two equal halves
+TEST_CASE(datasette_halfwave_v1_fullwaves) {
+    auto p = writeTapFile({10, 20});
+    MockSignalLine sense, motor, read;
+    motor.m_level = false;
+    Datasette ds;
+    ds.setHalfWaveMode(true);
+    ds.setSenseLine(&sense);
+    ds.setMotorLine(&motor);
+    ds.setReadPulseLine(&read);
+    ASSERT(ds.mount(p.string()));
+    bool last = read.m_level;
+    std::vector<int> at;
+    for (int t = 0; t < 400; ++t) {
+        ds.tick(1);
+        if (read.m_level != last) { last = read.m_level; at.push_back(t); }
+    }
+    // Edges at 0, 80, 160 (wave 1: 2 x 80), 320 (wave 2: 2 x 160)
+    // (the first edge comes on the first tick, one cycle early)
+    ASSERT(at.size() >= 4);
+    ASSERT(at[2] - at[1] == 80 && at[3] - at[2] == 160);
+    ASSERT(at[1] - at[0] >= 79 && at[1] - at[0] <= 80);
+    fs::remove(p);
+}
+
+// Recording in Plus/4 mode: every edge of the write line ends a half-wave,
+// the first counted from a falling edge, saved as a C16 version 2 TAP
+TEST_CASE(datasette_halfwave_record) {
+    MockSignalLine sense, motor, write;
+    motor.m_level = false;
+    write.m_level = false;
+    Datasette ds;
+    ds.setHalfWaveMode(true);
+    ds.setSenseLine(&sense);
+    ds.setMotorLine(&motor);
+    ds.setWriteLine(&write);
+    ASSERT(ds.startRecord());
+    auto run = [&](int n) { for (int i = 0; i < n; ++i) ds.tick(1); };
+    run(100); write.m_level = true;                          // rising first: not a wave start
+    run(500); write.m_level = false;                         // falling: waves start here
+    run(320); write.m_level = true;                          // 320 / 16 = 20
+    run(320); write.m_level = false;
+    run(640); write.m_level = true;                          // 40
+    run(10);
+    ds.stopRecord();
+    fs::path p = fs::temp_directory_path() / "mmemu_test_c16_rec.tap";
+    ASSERT(ds.saveRecording(p.string()));
+    std::ifstream f(p, std::ios::binary);
+    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    ASSERT(b.size() == 23);
+    ASSERT(std::string(b.begin(), b.begin() + 12) == "C16-TAPE-RAW");
+    ASSERT(b[12] == 2 && b[13] == 2);                        // version 2, C16
+    ASSERT(b[20] == 20 && b[21] == 20 && b[22] == 40);
+    fs::remove(p);
+}

@@ -14,6 +14,9 @@
 #include "plugins/6502/main/cpu6502.h"
 #include "plugins/devices/ted/main/ted.h"
 #include "plugins/devices/iec_drive/main/iec_drive.h"
+#include "plugins/devices/datasette/main/datasette.h"
+#include "libdevices/main/isignal_line.h"
+#include <functional>
 #include "util/path_util.h"
 #include <algorithm>
 #include <cctype>
@@ -41,6 +44,19 @@ bool loadRom(const std::string& rel, Rom& out, std::string* err) {
 // The bus (plus4mem.c)
 // ---------------------------------------------------------------------------
 
+/** A signal line backed by the bus's state. */
+class FnLine : public ISignalLine {
+public:
+    FnLine(std::function<bool()> get, std::function<void(bool)> set = nullptr)
+        : m_get(std::move(get)), m_set(std::move(set)) {}
+    bool get() const override { return m_get ? m_get() : true; }
+    void set(bool level) override { if (m_set) m_set(level); }
+    void pulse() override { set(false); set(true); }
+private:
+    std::function<bool()> m_get;
+    std::function<void(bool)> m_set;
+};
+
 class Plus4Bus : public IBus {
 public:
     Plus4Bus(Model model, Rom basic, Rom kernal, Rom funcLo, Rom funcHi)
@@ -53,6 +69,16 @@ public:
     void setTed(Ted* ted) { m_ted = ted; }
     void setAcia(IOHandler* acia) { m_acia = acia; }
     void setDrive(IecDrive* d) { m_drive = d; }
+
+    // The cassette port (plus4mem.c mem_proc_port_store/read, plus4pio1.c)
+    /** Motor on: port bit 3 low (or an input). */
+    bool tapeMotorOn() const { return !(m_portDir & m_portData & 0x08); }
+    /** The write line: port bit 1 (shared with the serial CLK output). */
+    bool tapeWrite() const { return (~m_portDir | m_portData) & 0x02; }
+    void setTapeRead(bool level) { m_tapeRead = level; }
+    /** The sense switch on the 6529 at $FD10, bit 2 (low = a button down). */
+    void setTapeSense(bool level) { m_tapeSense = level; }
+    bool tapeSense() const { return m_tapeSense; }
 
     // Banking state
     void setRomOn(bool on) { m_romOn = on; }
@@ -131,6 +157,7 @@ private:
             // high = released), cassette read (4), motor and write in (3, 1)
             // idle high; bit 5 absent
             uint8_t input = 0xFF;
+            if (!m_tapeRead) input &= (uint8_t)~0x10;
             if (m_drive) {
                 if (!m_drive->clkLine())  input &= (uint8_t)~0x40;
                 if (!m_drive->dataLine()) input &= (uint8_t)~0x80;
@@ -171,7 +198,10 @@ private:
             return;
         }
         if (addr < 0xFD20) {                                // 6529B user port
-            if (write) m_userPort = *v; else *v = m_userPort;
+            // Quasi-bidirectional: a pin reads low if written low or pulled
+            // low outside (bit 2: the cassette sense switch)
+            if (write) m_userPort = *v;
+            else       *v = (uint8_t)(m_userPort & (m_tapeSense ? 0xFF : ~0x04));
             return;
         }
         if (addr >= 0xFD30 && addr < 0xFD40) {              // 6529B keyboard row latch
@@ -192,6 +222,7 @@ private:
     Ted* m_ted = nullptr;
     IOHandler* m_acia = nullptr;
     IecDrive* m_drive = nullptr;
+    bool m_tapeRead = true, m_tapeSense = true;
     bool m_romOn = true;
     uint8_t m_banks = 0;
     uint8_t m_kbdLatch = 0xFF, m_userPort = 0xFF;
@@ -365,7 +396,23 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     auto* drive = new IecDrive(8);
     drive->setClockHz(Ted::clockHz(ntsc ? Ted::Standard::NTSC : Ted::Standard::PAL));
     io->registerHandler(drive);
-    desc->deleters.push_back([ted, kbd, drive]() { delete ted; delete kbd; delete drive; });
+    // The 1531 datasette on the cassette port (CLI `tape mount|play|record|save`)
+    auto* tape = new Datasette();
+    tape->setName("Tape");
+    tape->setHalfWaveMode(true, ntsc);
+    auto* motorLine = new FnLine([bus]() { return !bus->tapeMotorOn(); });   // low = running
+    auto* writeLine = new FnLine([bus]() { return bus->tapeWrite(); });
+    auto* readLine  = new FnLine(nullptr, [bus](bool l) { bus->setTapeRead(l); });
+    auto* senseLine = new FnLine([bus]() { return bus->tapeSense(); }, [bus](bool l) { bus->setTapeSense(l); });
+    tape->setMotorLine(motorLine);
+    tape->setWriteLine(writeLine);
+    tape->setReadPulseLine(readLine);
+    tape->setSenseLine(senseLine);
+    io->registerHandler(tape);
+    desc->deleters.push_back([ted, kbd, drive, tape, motorLine, writeLine, readLine, senseLine]() {
+        delete ted; delete kbd; delete drive; delete tape;
+        delete motorLine; delete writeLine; delete readLine; delete senseLine;
+    });
     bus->setTed(ted);
     bus->setDrive(drive);
 

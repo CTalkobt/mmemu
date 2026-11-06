@@ -181,6 +181,8 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/devices/ted/main/ted_video.cpp \
 	src/plugins/devices/ted/main/ted_sound.cpp \
 	src/plugins/devices/iec_drive/main/iec_drive.cpp \
+	src/plugins/devices/datasette/main/datasette.cpp \
+	src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \

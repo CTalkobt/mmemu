@@ -33,6 +33,17 @@ public:
     void stopRecord();
     bool saveRecording(const std::string& path);
 
+    /**
+     * Plus/4 and C16 behaviour (VICE's TAPE_BEHAVIOUR_C16): the read line is
+     * a level that flips every half-wave (the 7501 port's cassette input),
+     * not a pulse per wave. A version 2 TAP gives one half-wave per value
+     * (value x 16 cycles of the TED clock), version 0/1 a full wave as two
+     * equal halves (value x 8 each). Recordings are C16 version 2 TAPs of
+     * the write line's half-waves. Cycles are those `tick` counts (the TED's
+     * 1,773,447 Hz on a PAL Plus/4, as in VICE).
+     */
+    void setHalfWaveMode(bool on, bool ntsc = false) { m_halfWave = on; m_tape.setRecordC16(on, ntsc); }
+
     // Wiring
     void setSenseLine(ISignalLine* line) { m_senseLine = line; }
     void setMotorLine(ISignalLine* line) { m_motorLine = line; }
@@ -62,6 +73,8 @@ public:
     }
 
 private:
+    uint32_t nextHalfWave();
+
     TapArchive m_tape;
     uint32_t   m_offset = 0;
     int32_t    m_pulseRemaining = 0;
@@ -69,6 +82,10 @@ private:
     bool       m_playing = false;
     bool       m_motorOn = false;
     bool       m_buttonPressed = false;
+    bool       m_halfWave = false;        // Plus/4 / C16 read and record
+    bool       m_readLevel = true;
+    bool       m_secondHalf = false;      // v0/v1 TAP in half-wave mode: the wave's second half
+    uint32_t   m_fullGap = 0;
 
     bool       m_recording = false;
     bool       m_lastWriteLevel = true;
