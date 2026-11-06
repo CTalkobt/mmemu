@@ -34,8 +34,8 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
   VIC's.
 - **Serial bus**: a line-level drive on unit 8 (CIA2 port A), serving the
   current folder or `disk mount 8 <folder or image>` (images are written
-  back); LOAD, SAVE and
-  DIRECTORY run through the real KERNAL (no 1571 fast serial yet).
+  back); LOAD, SAVE and DIRECTORY run through the real KERNAL. It is a 1571
+  on **fast serial**: see below.
 - **Datasette** on the 8502 port (motor, write, sense) and CIA1 FLAG.
 
 ## The Z80 and CP/M
@@ -70,9 +70,35 @@ Commodore's 28 May 87 boot disk boots to `A>` and runs DIR (checked with
 is included: Commodore and Digital Research hold the copyrights and the
 images carry no distribution terms. Disk access goes through the 8502 and
 the KERNAL's serial routines (no 1571 fast serial yet), so loading CP/M takes
-about a minute of machine time, as with a 1541. CP/M writes its sectors with
-`U2`, which go straight to the image file (`REN`, `ERA`, `PIP` and saving
+about 15 s of machine time on fast serial (a minute on a 1541's slow
+serial). CP/M's sector writes go straight to the image file (`REN`, `ERA`, `PIP` and saving
 work; use a copy of a disk you want to keep unchanged).
+
+## 1571 fast serial
+
+The drive answers the C128 as a 1571 does, on fast serial (CIA1's shift
+register, with SRQ as its clock; MCR bit 3 sets the direction). The C128
+KERNAL shifts a byte out just before asserting ATN; the drive answers with
+a byte when it is ready for the first command byte, and the KERNAL marks it
+fast (`$0A1C` bit 6, `$E3AE`). From then on, outside ATN, data bytes go
+through the shift registers in the usual handshake (the talker pulls CLK and
+shifts the byte; the listener pulls DATA to acknowledge), and:
+
+- **LOAD** uses the burst **fastload** (`U0` `$1F` + name, `$F3A1`): the drive
+  reads the file and sends each 254-byte block after a status byte (`$00`),
+  the last after `$1F` and a count, a byte for each CLK toggle of the C128;
+  `$02` for a missing file.
+- **Burst commands** (`U0` + bytes; Commodore's burst command set): inquire
+  disk (status `$10`: GCR, 256-byte sectors), read (a status and 256 bytes a
+  sector, a byte for each CLK toggle of the computer), write (a byte for
+  each CLK toggle of the drive, the status when the computer pulls CLK).
+  Several sectors go 5 on round the track, the order the C128's CP/M lays a
+  track out in (its Z80 ROM's tables). Format and query answer `$1E`
+  (unsupported); a host folder answers `$0F` (no disk).
+
+CP/M uses inquire, read and write, and boots about four times faster than
+over slow serial. C64 mode never announces itself, so it stays slow (as on a
+real C128). The Plus/4 and C16 drives are not 1571s.
 
 ## Function ROMs and cartridges
 
@@ -210,5 +236,5 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
 - The Z80 in C64 mode beyond the C64 memory map
-- Bank-switching C128 cartridges, an internal function ROM menu, 1571 fast
-  serial, the VIC-IIe's 2 MHz effect on the display
+- Bank-switching C128 cartridges, an internal function ROM menu, the burst
+  format and query commands, MFM disks, the VIC-IIe's 2 MHz effect on the display

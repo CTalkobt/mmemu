@@ -99,6 +99,9 @@ public:
         const Rom& r = sel == 1 ? m_intFunc : m_extFunc;
         return r.empty() ? 0xFF : r[addr & 0x7FFF];
     }
+    /** MCR bit 3: the fast serial direction (set = the C128 sends, through
+     *  CIA1's shift register onto the bus's DATA and SRQ). */
+    bool fastSerialOut() const { return m_mmu[5] & 0x08; }
     /** MCR bit 0 clear: the Z80 runs, the 8502 waits. */
     bool z80Active() const { return !(m_mmu[5] & 0x01); }
 
@@ -853,6 +856,10 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     drive->setClockHz(clock);
     auto* iecPort = new IecPort(drive);
     cia2->setPortADevice(iecPort);
+    // Fast serial: CIA1's shift register to and from a 1571 (MCR bit 3 sets
+    // the direction)
+    cia1->setSerialOut([bus, drive](uint8_t b) { if (bus->fastSerialOut()) drive->fastByteFromHost(b); });
+    drive->setFastSerial([bus, cia1](uint8_t b) { if (!bus->fastSerialOut()) cia1->receiveSerialByte(b); });
 
     // The datasette on the 8502 port (motor, write, sense) and CIA1 FLAG
     auto* tape = new Datasette();

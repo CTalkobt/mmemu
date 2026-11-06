@@ -57,6 +57,16 @@ public:
 
     /** Called after every write to PRA or DDRA with the new (pra, ddra) values.
      *  Useful for CIA2 VIC-II bank switching in the C64 machine factory. */
+    /** The serial port (SDR): `out` gets each byte shifted out (CRA bit 6
+     *  set: output); receiveSerialByte() is a byte shifted in from outside
+     *  (the C128's fast serial), raising the SP interrupt. */
+    void setSerialOut(std::function<void(uint8_t)> out) { m_serialOut = std::move(out); }
+    void receiveSerialByte(uint8_t b) {
+        if (m_cra & 0x40) return;                       // output mode: not listening
+        m_sdr = b;
+        m_icrPending |= ICR_SP;
+        updateIrq();
+    }
     void setPortAWriteCallback(std::function<void(uint8_t pra, uint8_t ddra)> cb) override {
         m_portAWriteCallback = std::move(cb);
     }
@@ -159,6 +169,8 @@ private:
 
     // Control registers
     uint8_t m_cra = 0x00;
+    uint8_t m_sdr = 0x00;
+    std::function<void(uint8_t)> m_serialOut;
     uint8_t m_crb = 0x00;
 
     // TOD clock (BCD)

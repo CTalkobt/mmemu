@@ -139,7 +139,7 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
             *val = m_latchHr;
             break;
 
-        case SDR: *val = 0x00; break; // SDR not implemented
+        case SDR: *val = m_sdr; break;
 
         case ICR: {
             // Read returns pending bits + bit 7 if any; clears all pending bits.
@@ -237,8 +237,10 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // (see mega65-rom-public#169).
             // Only set the flag (don't call updateIrq) — the ROM polls
             // $DC0D to check for completion rather than using interrupts.
+            m_sdr = val;
             if (m_cra & 0x40) {
                 m_icrPending |= ICR_SP;
+                if (m_serialOut) m_serialOut(val);      // the byte goes out (C128 fast serial)
             }
             break;
 

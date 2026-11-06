@@ -4,6 +4,7 @@
 #include "plugins/devices/ieee488/main/cbm_host_dos.h"
 #include "plugins/devices/ieee488/main/cbm_image_dos.h"
 #include <cstdint>
+#include <functional>
 #include <string>
 
 /**
@@ -22,6 +23,18 @@
  * waits up to 1 ms for the listener's acknowledgement, the last byte goes
  * with EOI, and a file that is not there is answered by never sending (the
  * computer's read times out: FILE NOT FOUND).
+ *
+ * With setFastSerial() it is a 1571 on the C128's fast serial bus (the
+ * computer's CIA1 shift register, SRQ as its clock), as the C128 KERNAL
+ * expects ($E33B-$E4D1): a computer that shifts out a byte just before
+ * asserting ATN is fast; the drive answers with a byte of its own when it
+ * is ready for the first command byte, so the KERNAL marks it fast ($0A1C).
+ * Then data bytes outside ATN go through the shift registers in the same
+ * handshake (the talker pulls CLK and shifts the byte; the listener pulls
+ * DATA to acknowledge), and the burst commands ("U0" + bytes: read, write,
+ * inquire disk) move whole sectors: a byte for each CLK toggle of the
+ * computer (read), or for each CLK toggle of the drive (write), the status
+ * when the computer pulls CLK after a written sector.
  */
 class IecDrive : public IOHandler {
 public:
@@ -53,6 +66,13 @@ public:
     bool dataLine() const { return !(m_cData || m_dData); }
     bool atnLine() const  { return !m_cAtn; }
 
+    /** Make it a 1571 on fast serial: `toHost` shifts a byte into the
+     *  computer's serial register. */
+    void setFastSerial(std::function<void(uint8_t)> toHost) { m_fastToHost = std::move(toHost); }
+    /** A byte the computer shifted out on fast serial. */
+    void fastByteFromHost(uint8_t b);
+    /** The computer announced fast serial for the current ATN sequence. */
+    bool hostFast() const { return m_hostFast; }
     /** Load address of a `$` listing (Commodore drives send $0401). */
     void setDirectoryLoadAddress(uint16_t a) { m_host.setDirectoryLoadAddress(a); }
 
@@ -73,6 +93,11 @@ private:
         TxBitValid,      // talker: CLK high, the bit valid
         TxFrame,         // talker: 8 bits out, waiting for DATA low (acknowledge)
         Silent,          // talker with nothing to send / after the last byte
+        BurstArm,        // burst: waiting for the computer to release CLK
+        BurstOut,        // burst read / inquire: a byte for each computer CLK toggle
+        BurstIn,         // burst write: a byte for each drive CLK toggle
+        BurstStatus,     // burst write: sector in, waiting for the computer to pull CLK
+        BurstDone,       // burst write: status sent, waiting for CLK released
     };
 
     void enter(St s) { m_st = s; m_t0 = m_now; }
@@ -115,4 +140,13 @@ private:
     int m_pendingChannel = -1;
     uint8_t m_txByte = 0;
     bool m_txLast = false;
+
+    // Fast serial (1571)
+    std::function<void(uint8_t)> m_fastToHost;
+    bool m_fastAnnounce = false;   // a byte from the computer before this ATN
+    bool m_hostFast = false;       // this ATN sequence is fast
+    bool m_burstClk = false;       // the computer's CLK at the last burst byte
+    bool fast() const { return m_fastToHost && m_hostFast; }
+    void startBurstSector();
+    void fastload(const std::string& name);
 };

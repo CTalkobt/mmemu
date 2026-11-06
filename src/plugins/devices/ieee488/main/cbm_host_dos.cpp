@@ -753,6 +753,17 @@ void CbmHostDos::command(const std::string& cmd) {
                         clearError();
                         return;
                     }
+                    if (cmd.size() > 2 && at(cmd, 2) != '>') {   // a burst command
+                        m_burstOut.clear();
+                        if (((at(cmd, 2) >> 1) & 7) == 7) {     // fastload: the drive reads the file
+                            m_fastload = cmd.substr(3);
+                            m_fastloadPending = true;
+                        } else {
+                            m_burstOut.push_back(0x0F);         // 1111: no disk to read sectors from
+                        }
+                        clearError();
+                        return;
+                    }
             }
             [[fallthrough]];
         default:
@@ -1028,7 +1039,9 @@ int CbmHostDos::ciout(uint8_t a) {
         if (ch.name.size() < CHANNEL_NAME_MAX) ch.name += (char)a;
     } else if (m_channel == 15) {
         // P and T take binary parameters: no CR termination for them
-        if (a == 13 && at(m_cmd, 0) != 'P' && at(m_cmd, 0) != 'T') {
+        // A CR ends a command, except in binary ones (P, T, U0 burst)
+        if (a == 13 && at(m_cmd, 0) != 'P' && at(m_cmd, 0) != 'T' &&
+            !(at(m_cmd, 0) == 'U' && at(m_cmd, 1) == '0' && m_cmd.size() > 2 && at(m_cmd, 2) != '>')) {
             command(m_cmd);
             m_cmd.clear();
         } else if (m_cmd.size() < CMD_MAX) {

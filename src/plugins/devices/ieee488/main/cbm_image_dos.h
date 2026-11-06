@@ -40,6 +40,12 @@ public:
     void reset() override;
     bool active() const override { return m_active; }
 
+    // Burst commands (read, write, inquire disk), on GCR images as a 1571
+    bool burstWriting() const override { return m_bwLeft > 0; }
+    bool burstWriteByte(uint8_t b) override;
+    void burstFinishSector() override;
+    void burstCancel() override { m_burstOut.clear(); m_bwLeft = 0; }
+
     /** The directory as a BASIC program loaded at $0401 (what `LOAD"$",8` reads). */
     std::vector<uint8_t> directory(const std::string& pattern);
     /** CBM wildcard match: `*` ends the comparison, `?` matches one character. */
@@ -62,6 +68,9 @@ private:
     void blockRead(const std::string& args, bool u1);
     void blockWrite(const std::string& args, bool u2);
     void closeChannel(int ch);
+    void burst(const std::string& bytes);
+    uint8_t burstStatus(int controller) const;
+    int nextBurstSector(int track, int sector) const;
     void dosResult(int code, int track = 0);
     void bufferPointer(const std::string& args);
     void setError(int code, const char* text, int track = 0, int sector = 0);
@@ -76,5 +85,8 @@ private:
     std::string m_name, m_cmd;
     Channel m_ch[16];
     std::string m_error;
+    // A burst write in progress: sectors left, where, the bytes so far
+    int m_bwLeft = 0, m_bwTrack = 0, m_bwSector = 0;
+    std::vector<uint8_t> m_bwBuf;
     size_t m_errorPos = 0;
 };

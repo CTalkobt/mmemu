@@ -7,6 +7,9 @@
 #include "libmem/main/ibus.h"
 #include "libdevices/main/ivideo_output.h"
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -288,5 +291,33 @@ TEST_CASE(c128_function_roms) {
     bus->write8(0xFF00, 0x09);
     EXPECT_EQ(bus->peek8(0x8000), 0xFF);           // nothing fitted
     ASSERT(!c128::insertCartridge(m, std::vector<uint8_t>(3000, 0), "x.bin", err));
+    delete m;
+}
+
+// 1571 fast serial: the KERNAL finds the drive fast ($0A1C) and loads a
+// file with the burst fastload
+TEST_CASE(c128_fast_serial_load) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    std::string dir = "/tmp/mmemu_c128_fast_" + std::to_string(getpid());
+    std::filesystem::create_directories(dir);
+    {
+        std::vector<uint8_t> f = {0x00, 0x30};
+        for (int i = 0; i < 1000; ++i) f.push_back((uint8_t)(i * 7 + 3));
+        std::ofstream(dir + "/BIG", std::ios::binary).write((const char*)f.data(), (std::streamsize)f.size());
+    }
+    ASSERT(m->ioRegistry->findHandler("Drive8")->mountDisk(8, dir));
+    m->onReset(*m);
+    run(m, 3000000);
+    auto* kbd = dynamic_cast<IKeyboardMatrix*>(m->ioRegistry->findHandler("Keyboard"));
+    kbd->enqueueText("BLOAD\"BIG\",B0\n");
+    run(m, 8000000);
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xFF00, 0x3F);                                     // bank 0 RAM
+    EXPECT_EQ(bus->peek8(0x0A1C) & 0xC0, 0xC0);                    // a fast drive
+    EXPECT_EQ(bus->peek8(0x3000), 0x03);
+    EXPECT_EQ(bus->peek8(0x3000 + 999), (uint8_t)(999 * 7 + 3));
+    std::filesystem::remove_all(dir);
     delete m;
 }
