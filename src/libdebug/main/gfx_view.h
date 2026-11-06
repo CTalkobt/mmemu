@@ -43,7 +43,7 @@ struct View {
 /** The formats a machine offers (MachineDescriptor::graphicsFormats), in its
  *  order, optionally only one family ("vic", "antic"). A machine (or null)
  *  that lists none gets the VIC family; one whose panes include no graphics
- *  viewer ("graphics-vic", "graphics-antic") gets none. */
+ *  viewer ("graphics-vic", "graphics-antic", "graphics-vera", "graphics-ted") gets none. */
 std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc, const char* family = nullptr);
 /** True if the machine offers this format. */
 bool machineHasFormat(const MachineDescriptor* desc, Format f);

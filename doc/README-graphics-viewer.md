@@ -1,10 +1,10 @@
-# Graphics Viewers (VIC, ANTIC/GTIA and VERA)
+# Graphics Viewers (VIC, ANTIC/GTIA, VERA and TED)
 
 Issue #28. Decodes sprite and character graphics from memory. It is available
 in three places, which all use the same code (`src/libtoolchain/main/gfx_decode.*`
 for decoding, `src/libdebug/main/gfx_view.*` for following the video chip):
 
-- **GUI**: View > Graphics (VIC) (pane id `graphics-vic`) or View > Graphics (ANTIC/GTIA) (`graphics-antic`, Atari 8-bit), or View > Graphics (VERA) (`graphics-vera`, Commander X16), side panes
+- **GUI**: View > Graphics (VIC) (pane id `graphics-vic`) or View > Graphics (ANTIC/GTIA) (`graphics-antic`, Atari 8-bit), View > Graphics (VERA) (`graphics-vera`, Commander X16), or View > Graphics (TED) (`graphics-ted`, Plus/4, C16, C116), side panes
 - **CLI**: `gfx`
 - **MCP**: `render_graphics`
 
@@ -36,6 +36,12 @@ CPU bus. Their leftmost pixel is in the high bits; colour index 0 is
 transparent, and a palette offset (Palette + = 16 x offset) moves indices 1-15
 only, as on VERA.
 
+| `ted-char`    | TED character, or an 8x8 cell of a bitmap | 8x8 | 8 |
+| `ted-char-mc` | TED multicolour character or bitmap cell | 4x8 (double-wide pixels) | 8 |
+
+The TED formats decode as the VIC's `char` and `char-mc`; colours come from
+the TED's 121-colour palette (a colour byte: luminance in bits 4-6, hue in 0-3).
+
 The missiles share one byte per row, 2 bits each (missile 3 in bits 7-6 to
 missile 0 in bits 1-0), so `player` at the missile address shows all four.
 
@@ -53,6 +59,7 @@ has (`"ui": {"graphicsFormats": [...]}` in the machine JSON,
 | MEGA65  | VIC-IV     | every format (it declares no list) |
 | Atari 8-bit | ANTIC + GTIA | `antic2`, `antic4`, `player`, `player-2line` (in the Graphics (ANTIC/GTIA) pane) |
 | Commander X16 | VERA | the 16 `vera-*` formats (in the Graphics (VERA) pane) |
+| Plus/4, C16, C116 | TED | `ted-char`, `ted-char-mc` (in the Graphics (TED) pane; no sprites) |
 | PET | CRTC | none: no viewer pane |
 
 The stride (bytes from one item to the next) defaults to the size above and can
@@ -96,6 +103,16 @@ On the Commander X16 (VERA):
   colour depth; 1 bpp tiles in the map's most common colours (the text colour
   on the KERNAL screen: layer 1, $1F000, white on blue). A layer in bitmap mode
   has no tiles.
+
+On the Plus/4, C16 and C116 (TED):
+
+- **TED character set / bitmap**: in the text modes the character set at
+  $FF13 (bits 2-7), in the bitmap modes the bitmap at $FF12 (bits 3-5);
+  multicolour in multicolour text or bitmap mode. The video chip view reads
+  ROM or RAM as $FF12 bit 2 selects (so the ROM set at $D000 shows whatever the
+  CPU's banking). Colours: $FF15-$FF18, with the first screen cell's colours
+  (attribute byte in the text modes, screen and attribute bytes in the bitmap
+  modes) as the foreground.
 
 ## GUI
 

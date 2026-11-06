@@ -168,3 +168,15 @@ TEST_CASE(gfx_vera_palette_offset) {
     ASSERT_EQ(s.argb[0], 0xFF000000u | 20u);
     ASSERT_EQ(s.argb[1], 0xFF000000u | 37u);
 }
+
+// TED (Plus/4, C16): characters as on the VIC, in their own family
+TEST_CASE(gfx_ted_formats) {
+    gfx::Format f;
+    ASSERT(gfx::formatById("ted-char", f) && f == gfx::Format::TedChar);
+    ASSERT(gfx::formatById("TED-CHAR-MC", f) && f == gfx::Format::TedCharMulti);
+    ASSERT(std::string(gfx::info(gfx::Format::TedChar).family) == "ted");
+    ASSERT(gfx::info(gfx::Format::TedCharMulti).pixelWidth == 2);
+    // A multicolour byte: %00 01 10 11 -> 0, 1, 2, 3
+    auto px = gfx::decode(gfx::Format::TedCharMulti, [](uint32_t) { return (uint8_t)0x1B; }, 0);
+    ASSERT(px.size() == 32 && px[0] == 0 && px[1] == 1 && px[2] == 2 && px[3] == 3);
+}

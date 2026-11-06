@@ -134,6 +134,13 @@ GET#2,A$
 With a far end attached, ST reads 64 after RS-232 I/O: the KERNAL inverts
 the ACIA's DSR bit into ST bit 6 (`EOR #$40` at $EB30).
 
+## Graphics viewer
+
+View > Graphics (TED) in the GUI, `gfx` in the CLI and `render_graphics` over
+MCP show TED characters and bitmaps (`ted-char`, `ted-char-mc`), or follow the
+character set or bitmap the TED is showing (`gfx chip-charset`). See
+[README-graphics-viewer.md](README-graphics-viewer.md).
+
 ## Cartridges
 
 `cart <file>` (CLI), File > Attach Cartridge (GUI) or MCP `attach_cartridge`

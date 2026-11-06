@@ -39,12 +39,15 @@ public:
         /** ANTIC text modes: 2 colours (modes 2/3, 6/7) or 4 (modes 4/5, multicolor);
          *  bg[0..2] then give pixel values 0-2 and fg value 3 (or 1 in 2 colours). */
         bool     antic = false;
+        /** TED: bg[0..3] are $FF15-$FF18 (colour bytes, luminance in bits 4-6);
+         *  multicolour characters use bg[0..2] and the attribute colour (fg). */
+        bool     ted = false;
         int      fg = -1;               ///< foreground palette index; -1 = VIC colour RAM (shown as colour 1)
         int      bitsPerPixel = 0;      ///< VERA tile layer: 1, 2, 4 or 8 (0 for the others)
         int      tileW = 8, tileH = 8;  ///< VERA tile size
     };
 
-    /** Number of palette entries (16 for a VIC-II, 256 for a VIC-III/IV). */
+    /** Number of palette entries (16 for a VIC-II, 256 for a VIC-III/IV, 128 for a TED). */
     virtual int paletteSize() const = 0;
     /** Palette entry as 0xAARRGGBB. */
     virtual uint32_t paletteColor(int index) const = 0;

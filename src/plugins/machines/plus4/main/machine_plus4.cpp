@@ -484,7 +484,8 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     if (ntsc) desc->displayName += " (NTSC)";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"cartridge"};
+    desc->uiPanes = {"cartridge", "graphics-ted"};
+    desc->graphicsFormats = {"ted-char", "ted-char-mc"};
 
     auto* bus = new Plus4Bus(model, std::move(basic), std::move(kernal), std::move(funcLo), std::move(funcHi));
     desc->buses.push_back({"system", bus});

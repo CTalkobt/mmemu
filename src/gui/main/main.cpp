@@ -193,6 +193,7 @@ private:
     GraphicsPane*   m_graphicsPane = nullptr;      // VIC family
     GraphicsPane*   m_anticGraphicsPane = nullptr; // ANTIC/GTIA (Atari)
     GraphicsPane*   m_veraGraphicsPane = nullptr;  // VERA (Commander X16)
+    GraphicsPane*   m_tedGraphicsPane = nullptr;   // TED (Plus/4, C16, C116)
     SidScopePane*   m_sidScopePane = nullptr;
 
     // Makefile project (#148)
@@ -769,8 +770,9 @@ MmemuFrame::MmemuFrame()
     m_graphicsPane = new GraphicsPane(host, GraphicsPane::Family::Vic);
     m_anticGraphicsPane = new GraphicsPane(host, GraphicsPane::Family::Antic);
     m_veraGraphicsPane = new GraphicsPane(host, GraphicsPane::Family::Vera);
+    m_tedGraphicsPane = new GraphicsPane(host, GraphicsPane::Family::Ted);
     m_sidScopePane = new SidScopePane(host);
-    for (auto* gp : {m_graphicsPane, m_anticGraphicsPane, m_veraGraphicsPane}) {
+    for (auto* gp : {m_graphicsPane, m_anticGraphicsPane, m_veraGraphicsPane, m_tedGraphicsPane}) {
         gp->SetStatusCallback([this](const wxString& msg) { SetStatusText(msg); });
         gp->SetMemoryCallback([this](uint32_t addr) {
             if (auto* mp = activeMemPane()) mp->SetAddress(addr);
@@ -812,6 +814,7 @@ MmemuFrame::MmemuFrame()
     m_dock->addPane("graphics-vic", "Graphics (VIC)",  m_graphicsPane,         Area::Side,   false);
     m_dock->addPane("graphics-antic", "Graphics (ANTIC/GTIA)", m_anticGraphicsPane, Area::Side, false);
     m_dock->addPane("graphics-vera", "Graphics (VERA)", m_veraGraphicsPane,  Area::Side,   false);
+    m_dock->addPane("graphics-ted", "Graphics (TED)",   m_tedGraphicsPane,   Area::Side,   false);
     m_dock->addPane("sidscope",    "SID Scope",        m_sidScopePane,         Area::Side,   false);
     m_dock->addPane("output",      "Output",           m_outputPane,           Area::Bottom, false);
     m_dock->addPane("problems",    "Problems",         m_problemsPane,         Area::Bottom, false);
@@ -1325,6 +1328,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
     m_graphicsPane->SetMachine(m_machine, m_bus, m_dbg);
     m_anticGraphicsPane->SetMachine(m_machine, m_bus, m_dbg);
     m_veraGraphicsPane->SetMachine(m_machine, m_bus, m_dbg);
+    m_tedGraphicsPane->SetMachine(m_machine, m_bus, m_dbg);
     m_sidScopePane->SetMachine(m_machine);
     m_tracePane->SetDebugContext(m_dbg);
     m_tracePane->SetCPU(m_cpu);
@@ -2287,7 +2291,7 @@ void MmemuFrame::applyPaneAvailability() {
     for (const char* pane : {"graphics-vic", "sidscope", "cartridge", "tape", "drive"})
         if (m_dock->hasPane(pane)) m_dock->setAvailable(pane, m_machine->hasPane(pane));
     // Chip-specific panes only where the machine lists them
-    for (const char* pane : {"graphics-antic", "graphics-vera"})
+    for (const char* pane : {"graphics-antic", "graphics-vera", "graphics-ted"})
         m_dock->setAvailable(pane, m_machine->uiPanesSet && m_machine->hasPane(pane));
     // The MEGA65 Status pane also needs a MEGA65
     bool isMega65 = m_machine->machineId.find("mega65") != std::string::npos;
@@ -2395,6 +2399,8 @@ void MmemuFrame::OnTimer(wxTimerEvent& event) {
             m_anticGraphicsPane->RefreshValues();
         if (m_veraGraphicsPane)
             m_veraGraphicsPane->RefreshValues();
+        if (m_tedGraphicsPane)
+            m_tedGraphicsPane->RefreshValues();
         if (m_sidScopePane)
             m_sidScopePane->RefreshValues(m_cpu->cycles());   // no-op unless shown and the machine ran
         if (isPaused) {

@@ -492,7 +492,7 @@ Json handleDescribe() {
         schema.oVal["properties"] = props;
         Json req(Json::ARR); req.push_back(Json("machine_id"));
         schema.oVal["required"] = req;
-        addTool("render_graphics", "Decode sprites/players or characters from memory (VIC-20, C64, MEGA65 VIC formats; Atari ANTIC/GTIA formats; X16 VERA sprites and tiles) as ASCII art or a PNG sheet.", schema);
+        addTool("render_graphics", "Decode sprites/players or characters from memory (VIC-20, C64, MEGA65 VIC formats; Atari ANTIC/GTIA formats; X16 VERA sprites and tiles; Plus/4 and C16 TED characters and bitmaps) as ASCII art or a PNG sheet.", schema);
     }
 
     {
