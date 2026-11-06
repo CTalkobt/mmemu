@@ -72,7 +72,8 @@ it through the 7501 port ($01 bit 0 DATA, 1 CLK, 2 ATN out, a 1 pulling the
 line low; bits 7 DATA and 6 CLK in, 1 = released). It serves the current
 directory by default; `disk mount 8 <folder>` serves another folder and
 `disk mount 8 <image>` a D64/D71/D80/D81/D82 image, through the same DOS as
-the PET's IEEE-488 drive. LOAD, SAVE, VERIFY, `DIRECTORY`, `LOAD"$",8`,
+the PET's IEEE-488 drive (images are written back: SAVE, scratch, rename;
+see README-PET.md). LOAD, SAVE, VERIFY, `DIRECTORY`, `LOAD"$",8`,
 OPEN/PRINT#/INPUT# and the error channel (`OPEN 15,8,15`) all work; a missing
 file gives FILE NOT FOUND as on a 1541.
 

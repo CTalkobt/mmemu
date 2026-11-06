@@ -33,7 +33,8 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
 - **Colour RAM**: 2 KB; 8502 port bit 0 picks the CPU's 1 KB half, bit 1 the
   VIC's.
 - **Serial bus**: a line-level drive on unit 8 (CIA2 port A), serving the
-  current folder or `disk mount 8 <folder or image>`; LOAD, SAVE and
+  current folder or `disk mount 8 <folder or image>` (images are written
+  back); LOAD, SAVE and
   DIRECTORY run through the real KERNAL (no 1571 fast serial yet).
 - **Datasette** on the 8502 port (motor, write, sense) and CIA1 FLAG.
 
@@ -184,7 +185,6 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - VDC interlace and mid-frame register changes (raster effects)
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- SAVE / OPEN for writing files on disk images (BASIC); CP/M's block writes work
 - The Z80 in C64 mode beyond the C64 memory map
 - Function ROMs, cartridges, 1571 fast serial, the VIC-IIe's 2 MHz effect
   on the display
