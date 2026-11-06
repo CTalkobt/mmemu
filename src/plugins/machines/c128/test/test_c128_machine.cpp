@@ -254,3 +254,39 @@ TEST_CASE(c128_z80_view) {
     ASSERT(m->cpus[0].active && !m->cpus[1].active);
     delete m;
 }
+
+// Function ROMs (VICE functionrom.c, c128cart.c): a cartridge (external)
+// with "CBM" at $8007 and $01 at $8006 is started by the KERNAL; CR picks
+// internal (1) or external (2) per area; a 16 KB image is mirrored
+TEST_CASE(c128_function_roms) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    std::vector<uint8_t> rom(0x4000, 0xEA);
+    const uint8_t code[] = {0x4C, 0x0A, 0x80, 0, 0, 0, 0x01, 'C', 'B', 'M',
+                            0xA9, 0x5A, 0x8D, 0x00, 0x04, 0x4C, 0x0F, 0x80};   // LDA #$5A, STA $0400, JMP *
+    std::copy(code, code + sizeof code, rom.begin());
+    ASSERT(c128::insertCartridge(m, rom, "t.bin", err));
+    EXPECT_EQ(c128::cartridgeInfo(m), std::string("t.bin (16 KB function ROM)"));
+    run(m, 3000000);
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->peek8(0x0400), 0x5A);
+    EXPECT_EQ(m->cpus[0].cpu->pc(), 0x800F);
+    // CR: $8000 external (bits 2-3 = 2), $C000 internal (bits 4-5 = 1), I/O off
+    std::vector<uint8_t> intRom(0x8000, 0x11);
+    intRom[0x4000] = 0x22;                         // its $C000
+    ASSERT(c128::setInternalFunctionRom(m, intRom, err));
+    bus->write8(0xFF00, 0x19);
+    EXPECT_EQ(bus->peek8(0x8007), 'C');
+    EXPECT_EQ(bus->peek8(0xC000), 0x22);           // $C000 is the internal ROM here
+    bus->write8(0xFF00, 0x29);                     // $C000 external: the 16 KB mirror
+    EXPECT_EQ(bus->peek8(0xC007), 'C');
+    bus->write8(0xFF00, 0x15);                     // $8000 internal, $C000 internal
+    EXPECT_EQ(bus->peek8(0x8000), 0x11);
+    EXPECT_EQ(bus->peek8(0xC000), 0x22);
+    c128::removeCartridge(m);
+    bus->write8(0xFF00, 0x09);
+    EXPECT_EQ(bus->peek8(0x8000), 0xFF);           // nothing fitted
+    ASSERT(!c128::insertCartridge(m, std::vector<uint8_t>(3000, 0), "x.bin", err));
+    delete m;
+}

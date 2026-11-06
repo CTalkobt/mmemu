@@ -85,6 +85,20 @@ public:
         updateColorRam();
     }
     uint8_t mmuReg(int i) const { return m_mmu[i]; }
+
+    /** The function ROMs (VICE functionrom.c, c128cart.c): 32 KB each, the
+     *  low half at $8000-$BFFF, the high half at $C000-$FFFF; internal (the
+     *  socket on the board) when CR picks 1, external (a cartridge) for 2.
+     *  Empty: none fitted (reads $FF). */
+    void setFunctionRom(bool external, Rom rom, std::string label = "") {
+        (external ? m_extFunc : m_intFunc) = std::move(rom);
+        if (external) m_cartLabel = std::move(label);
+    }
+    const std::string& cartridgeLabel() const { return m_cartLabel; }
+    uint8_t funcByte(int sel, uint16_t addr) const {
+        const Rom& r = sel == 1 ? m_intFunc : m_extFunc;
+        return r.empty() ? 0xFF : r[addr & 0x7FFF];
+    }
     /** MCR bit 0 clear: the Z80 runs, the 8502 waits. */
     bool z80Active() const { return !(m_mmu[5] & 0x01); }
 
@@ -104,7 +118,7 @@ public:
         if (a < 0x1400 && !(cr & 0x01)) return (uint8_t)(m_colorRam[(portBit(0) ? 0 : 0x400) + (a & 0x3FF)] | 0xF0);
         if (a >= 0xD000 && a < 0xE000) {
             const int hi = (cr >> 4) & 3;
-            return (hi == 1 || hi == 2) ? 0xFF : m_ram[ramAddr(a)];
+            return (hi == 1 || hi == 2) ? funcByte(hi, a) : m_ram[ramAddr(a)];
         }
         return read(a, peek);
     }
@@ -273,7 +287,7 @@ private:
             switch ((cr >> 2) & 3) {
                 case 0: return m_basic[addr - 0x4000];
                 case 3: return m_ram[ramAddr(addr)];
-                default: return 0xFF;                       // no function ROM
+                default: return funcByte((cr >> 2) & 3, addr);   // internal / external function ROM
             }
         }
         if (addr >= 0xD000 && addr < 0xE000 && !(cr & 0x01)) return io(addr, nullptr, peek);
@@ -282,7 +296,7 @@ private:
                 if (addr >= 0xD000 && addr < 0xE000) return m_chargen[0x1000 + (addr & 0x0FFF)];
                 return m_kernal[addr - 0xC000];             // editor $C000, KERNAL $E000
             case 3: return m_ram[ramAddr(addr)];
-            default: return 0xFF;
+            default: return funcByte((cr >> 4) & 3, addr);
         }
     }
 
@@ -357,6 +371,8 @@ private:
     uint8_t m_ram[0x20000];
     uint8_t m_colorRam[0x800];
     Rom m_basic, m_kernal, m_chargen, m_c64;
+    Rom m_intFunc, m_extFunc;
+    std::string m_cartLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
     bool m_key4080Down = false;
@@ -666,7 +682,98 @@ private:
     std::vector<uint32_t> m_vicFrame;
 };
 
+/**
+ * A function ROM image into 32 KB, as VICE does (c128/cart/generic.c): a raw
+ * image loads the largest power of two from 32 KB down to 1 KB it holds
+ * (after a 2-byte load address if there is one) and is mirrored; a .crt
+ * ("C128 CARTRIDGE  ", generic) has up to two CHIP packets at $8000 and
+ * $C000 of up to 16 KB, each mirrored in its half.
+ */
+bool functionRomImage(const std::vector<uint8_t>& img, Rom& out, std::string& type, std::string& err) {
+    out.assign(0x8000, 0xFF);
+    auto be16 = [&](size_t o) { return (uint32_t)(img[o] << 8 | img[o + 1]); };
+    auto mirror = [&](size_t base, size_t len, size_t span) {
+        for (size_t l = len; l < span; l *= 2) std::copy(out.begin() + (long)base, out.begin() + (long)(base + l), out.begin() + (long)(base + l));
+    };
+    if (img.size() >= 0x40 && std::memcmp(img.data(), "C128 CARTRIDGE  ", 16) == 0) {
+        if (be16(0x16) != 0) { err = "unsupported .crt hardware type " + std::to_string(be16(0x16)) + " (only generic, 0)"; return false; }
+        size_t o = std::max<uint32_t>(be16(0x10) << 16 | be16(0x12), 0x40);
+        int chips = 0;
+        while (o + 16 <= img.size() && std::memcmp(&img[o], "CHIP", 4) == 0 && chips < 2) {
+            uint32_t len = be16(o + 4) << 16 | be16(o + 6), start = be16(o + 12), size = be16(o + 14);
+            if ((start != 0x8000 && start != 0xC000) || !size || size > 0x4000 || o + 16 + size > img.size()) {
+                err = "unsupported CHIP packet";
+                return false;
+            }
+            size_t base = start == 0xC000 ? 0x4000 : 0;
+            std::copy(img.begin() + (long)(o + 16), img.begin() + (long)(o + 16 + size), out.begin() + (long)base);
+            size_t p2 = 1;
+            while (p2 < size) p2 *= 2;
+            mirror(base, p2 == size ? size : p2, 0x4000);
+            ++chips;
+            o += len;
+        }
+        if (!chips) { err = "no CHIP packets"; return false; }
+        std::string name(img.begin() + 0x20, img.begin() + 0x40);
+        name = name.substr(0, name.find('\0'));
+        type = "C128 .crt" + (name.empty() ? std::string() : ": " + name);
+        return true;
+    }
+    for (size_t len = 0x8000; len >= 0x400; len /= 2) {
+        if (img.size() != len && img.size() != len + 2) continue;
+        size_t skip = img.size() - len;
+        std::copy(img.begin() + (long)skip, img.end(), out.begin());
+        mirror(0, len, 0x8000);
+        type = std::to_string(len / 1024) + " KB function ROM";
+        return true;
+    }
+    err = "not a C128 cartridge (a raw 1-32 KB image, or a .crt with a C128 CARTRIDGE header)";
+    return false;
+}
+
+C128Bus* c128Bus(MachineDescriptor* m) {
+    if (!m) return nullptr;
+    for (auto& b : m->buses)
+        if (auto* p = dynamic_cast<C128Bus*>(b.bus)) return p;
+    return nullptr;
+}
+
 }  // namespace
+
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
+                     const std::string& label, std::string& err) {
+    auto* bus = c128Bus(m);
+    if (!bus) { err = "Not a C128."; return false; }
+    Rom rom;
+    std::string type;
+    if (!functionRomImage(image, rom, type, err)) return false;
+    bus->setFunctionRom(true, std::move(rom), label + " (" + type + ")");
+    if (m->onReset) m->onReset(*m);
+    return true;
+}
+
+void removeCartridge(MachineDescriptor* m) {
+    auto* bus = c128Bus(m);
+    if (!bus) return;
+    bus->setFunctionRom(true, {});
+    if (m->onReset) m->onReset(*m);
+}
+
+std::string cartridgeInfo(MachineDescriptor* m) {
+    auto* bus = c128Bus(m);
+    return bus ? bus->cartridgeLabel() : "";
+}
+
+bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err) {
+    auto* bus = c128Bus(m);
+    if (!bus) { err = "Not a C128."; return false; }
+    if (image.empty()) { bus->setFunctionRom(false, {}); return true; }
+    Rom rom;
+    std::string type;
+    if (!functionRomImage(image, rom, type, err)) return false;
+    bus->setFunctionRom(false, std::move(rom));
+    return true;
+}
 
 MachineDescriptor* create(bool ntsc, std::string* err) {
     Rom basicLo, basicHi, kernal, chargen, c64;
@@ -684,7 +791,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     desc->displayName = ntsc ? "Commodore 128 (NTSC)" : "Commodore 128";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"graphics-vic", "sidscope", "tape", "drive"};
+    desc->uiPanes = {"graphics-vic", "sidscope", "tape", "drive", "cartridge"};
     desc->graphicsFormats = {"sprite", "sprite-mc", "char", "char-mc"};
     desc->clockHz = clock;
     desc->screenButtons = {

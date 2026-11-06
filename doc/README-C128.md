@@ -74,6 +74,30 @@ about a minute of machine time, as with a 1541. CP/M writes its sectors with
 `U2`, which go straight to the image file (`REN`, `ERA`, `PIP` and saving
 work; use a copy of a disk you want to keep unchanged).
 
+## Function ROMs and cartridges
+
+The C128 has two 32 KB function ROM slots (VICE `functionrom.c`,
+`c128cart.c`): the **internal** one (a socket on the board) and the
+**external** one (a cartridge). CR shows them where it picks 1 (internal) or
+2 (external): the low 16 KB at `$8000-$BFFF` (bits 2-3), the high 16 KB at
+`$C000-$FFFF` (bits 4-5, `$D000-$DFFF` too while I/O is off). A slot with
+nothing fitted reads `$FF`.
+
+`cart <file>` (CLI), File > Attach Cartridge (GUI) or MCP `attach_cartridge`
+plugs a cartridge in and resets; `eject` takes it out; the Cartridge pane
+shows it. As in VICE (`c128/cart/generic.c`):
+
+| Image | Layout |
+|-------|--------|
+| raw `.bin`, 1 to 32 KB (a 2-byte load address is skipped) | from `$8000`, mirrored up to 32 KB |
+| `.crt` with the `C128 CARTRIDGE  ` header, hardware type 0 | up to two CHIP packets, at `$8000` and `$C000`, up to 16 KB each, mirrored within their 16 KB |
+
+At reset the KERNAL polls the four halves (`$E26B`): one with `CBM` at
+`$xx07` is noted, and one with `$01` at `$xx06` is called at `$xx00` (a
+cartridge that starts itself). `.bin` and `.crt` are shared with the Plus/4
+and the C64: each machine's handler is tried in turn, and the one that fits
+the machine takes it. The internal ROM has no menu yet: `c128::setInternalFunctionRom`.
+
 ## Screens: 40 and 80 columns
 
 The frontends (GUI screen, CLI `screenshot`, MCP) show one screen, picked by
@@ -186,5 +210,5 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
 - The Z80 in C64 mode beyond the C64 memory map
-- Function ROMs, cartridges, 1571 fast serial, the VIC-IIe's 2 MHz effect
-  on the display
+- Bank-switching C128 cartridges, an internal function ROM menu, 1571 fast
+  serial, the VIC-IIe's 2 MHz effect on the display

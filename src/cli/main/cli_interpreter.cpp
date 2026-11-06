@@ -1470,11 +1470,12 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
         std::string path;
         if (ss >> path) {
-            if (auto handler = ImageLoaderRegistry::instance().createCartridgeHandler(path)) {
-                if (handler->attach(m_ctx.bus, m_ctx.machine)) {
+            bool supported = false;
+            ICartridgeHandler* handler = ImageLoaderRegistry::instance().attachCartridge(path, m_ctx.bus, m_ctx.machine, &supported);
+            if (supported) {
+                if (handler) {
                     auto md = handler->metadata();
                     m_output("Attached cartridge: " + md.displayName + " (" + md.type + ")\n");
-                    ImageLoaderRegistry::instance().setActiveCartridge(m_ctx.bus, std::move(handler));
                     // Optional: Trigger reset
                     m_output("Resetting machine...\n");
                     m_ctx.machine->onReset(*m_ctx.machine);
