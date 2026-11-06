@@ -500,6 +500,45 @@ private:
     uint8_t m_pra = 0, m_ddr = 0;
 };
 
+/**
+ * The screen the frontends show: the VIC-II's 40 columns (scaled 2x) or the
+ * VDC's 80, picked by the 40/80 key as VICE's single-window builds do
+ * (c128mmu.c set_column4080_key). Both are 768 x 544 so the window keeps
+ * its size.
+ */
+class C128Display : public IOHandler, public IVideoOutput {
+public:
+    C128Display(VIC2* vic, Vdc8563* vdc, const C128Bus* bus) : m_vic(vic), m_vdc(vdc), m_bus(bus) {}
+    bool showsVdc() const { return m_bus->key4080Down(); }
+
+    VideoDimensions getDimensions() const override { return m_vdc->getDimensions(); }
+    void renderFrame(uint32_t* buffer) override {
+        if (showsVdc()) { m_vdc->renderFrame(buffer); return; }
+        const int w = VIC2::FRAME_W, h = VIC2::FRAME_H;
+        m_vicFrame.resize((size_t)w * h);
+        m_vic->renderFrame(m_vicFrame.data());
+        for (int y = 0; y < Vdc8563::FRAME_H; ++y) {
+            const uint32_t* src = &m_vicFrame[(size_t)std::min(y / 2, h - 1) * w];
+            uint32_t* dst = &buffer[(size_t)y * Vdc8563::FRAME_W];
+            for (int x = 0; x < Vdc8563::FRAME_W; ++x) dst[x] = src[std::min(x / 2, w - 1)];
+        }
+    }
+
+    const char* name() const override { return "Display"; }
+    uint32_t baseAddr() const override { return 0; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override {}
+    void tick(uint64_t) override {}
+
+private:
+    VIC2* m_vic;
+    Vdc8563* m_vdc;
+    const C128Bus* m_bus;
+    std::vector<uint32_t> m_vicFrame;
+};
+
 }  // namespace
 
 MachineDescriptor* create(bool ntsc, std::string* err) {
@@ -521,6 +560,10 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     desc->uiPanes = {"graphics-vic", "sidscope", "tape", "drive"};
     desc->graphicsFormats = {"sprite", "sprite-mc", "char", "char-mc"};
     desc->clockHz = clock;
+    desc->screenButtons = {
+        {"40/80", {"40_80"}, "The 40/80 DISPLAY key (it locks): down shows the VDC's 80 columns, up the VIC-II's 40. The screen editor reads it at reset to pick its screen."},
+        {"RUN/STOP + RESTORE", {"run_stop", "restore"}, "Hold RUN/STOP and press RESTORE: the KERNAL's warm start."},
+        {"RESTORE", {"restore"}, "RESTORE on its own: an NMI."}};
 
     auto* bus = new C128Bus(std::move(basic), std::move(kernal), std::move(chargen), std::move(c64));
     desc->buses.push_back({"system", bus});
@@ -576,7 +619,9 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     tape->setSenseLine(cpu->signalCassetteSense());
     tape->setReadPulseLine(cia1->signalFlag());
 
-    for (IOHandler* h : std::initializer_list<IOHandler*>{vic, sid, cia1, cia2, vdc, kbd, drive, tape})
+    // The display first: the frontends show the first video output
+    auto* display = new C128Display(vic, vdc, bus);
+    for (IOHandler* h : std::initializer_list<IOHandler*>{display, vic, sid, cia1, cia2, vdc, kbd, drive, tape})
         io->registerHandler(h);
 
     auto* irq = new SharedIrqManager(cpu);
@@ -587,7 +632,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     ISignalLine* restore = nmi->createLine();
 
     desc->deleters.push_back([=]() {
-        delete vic; delete sid; delete cia1; delete cia2; delete vdc; delete kbd;
+        delete display; delete vic; delete sid; delete cia1; delete cia2; delete vdc; delete kbd;
         delete drive; delete tape; delete iecPort; delete vicBus; delete capsLine;
         delete irq; delete nmi;
     });
