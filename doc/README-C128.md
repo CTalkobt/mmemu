@@ -122,7 +122,13 @@ At reset the KERNAL polls the four halves (`$E26B`): one with `CBM` at
 `$xx07` is noted, and one with `$01` at `$xx06` is called at `$xx00` (a
 cartridge that starts itself). `.bin` and `.crt` are shared with the Plus/4
 and the C64: each machine's handler is tried in turn, and the one that fits
-the machine takes it. The internal ROM has no menu yet: `c128::setInternalFunctionRom`.
+the machine takes it.
+
+The internal ROM goes in the board's ROM socket `function`: `rom function
+<file>` (CLI; `rom` lists the sockets, `rom function remove` empties it),
+Control > ROM Sockets... (GUI), or MCP `rom_socket`. It takes the same
+images as a cartridge, and the machine resets. It stays fitted through
+resets and cartridge changes.
 
 ## Screens: 40 and 80 columns
 
@@ -236,5 +242,5 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
 - The Z80 in C64 mode beyond the C64 memory map
-- Bank-switching C128 cartridges, an internal function ROM menu, the burst
+- Bank-switching C128 cartridges, the burst
   format and query commands, MFM disks, the VIC-IIe's 2 MHz effect on the display

@@ -767,6 +767,19 @@ Json handleDescribe() {
     ecSchema.oVal["required"] = ecReq;
     addTool("eject_cartridge", "Eject the currently attached cartridge from the machine", ecSchema);
 
+    Json romSockSchema(Json::OBJ);
+    romSockSchema.oVal["type"] = Json("object");
+    Json romSockProps(Json::OBJ);
+    romSockProps.oVal["machine_id"] = midProp;
+    Json romSockSockProp(Json::OBJ); romSockSockProp.oVal["type"] = Json("string"); romSockSockProp.oVal["description"] = Json("Socket name (e.g. 'function' on the C128); omit to list the sockets");
+    romSockProps.oVal["socket"] = romSockSockProp;
+    Json romSockPathProp(Json::OBJ); romSockPathProp.oVal["type"] = Json("string"); romSockPathProp.oVal["description"] = Json("ROM image to fit; 'remove' (or empty) takes the ROM out");
+    romSockProps.oVal["path"] = romSockPathProp;
+    romSockSchema.oVal["properties"] = romSockProps;
+    Json romSockReq(Json::ARR); romSockReq.push_back(Json("machine_id"));
+    romSockSchema.oVal["required"] = romSockReq;
+    addTool("rom_socket", "List the board's optional ROM sockets (the C128's internal function ROM), or fit or remove a ROM in one; the machine resets after a change", romSockSchema);
+
     Json rstSchema(Json::OBJ);
     rstSchema.oVal["type"] = Json("object");
     Json rstProps(Json::OBJ);
@@ -2759,6 +2772,45 @@ Json handleToolsCall(const Json& params) {
                 textItem.oVal["text"] = Json("Error: Unsupported cartridge format");
                 textItem.oVal["isError"] = Json(true);
             }
+        }
+    } else if (name == "rom_socket") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        std::string sockName = args.contains("socket") ? args["socket"].sVal : "";
+        std::string path = args.contains("path") ? args["path"].sVal : "";
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (sockName.empty()) {
+            std::string out;
+            for (auto& sk : ms->machine->romSockets) {
+                std::string info = sk.info ? sk.info() : "";
+                out += sk.name + ": " + (info.empty() ? "(empty)" : info) + " - " + sk.description + "\n";
+            }
+            textItem.oVal["text"] = Json(out.empty() ? std::string("This machine has no ROM sockets.") : out);
+        } else if (auto* sock = ms->machine->romSocket(sockName)) {
+            std::vector<uint8_t> data;
+            std::string label, err;
+            bool ok = true;
+            if (!path.empty() && path != "remove") {
+                std::ifstream f(path, std::ios::binary);
+                data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+                if (data.empty()) { ok = false; err = "cannot read '" + path + "'"; }
+                auto slash = path.find_last_of('/');
+                label = slash == std::string::npos ? path : path.substr(slash + 1);
+            }
+            if (ok) ok = sock->fit(data, label, err);
+            if (ok) {
+                if (ms->machine->onReset) ms->machine->onReset(*ms->machine);
+                std::string info = sock->info ? sock->info() : "";
+                textItem.oVal["text"] = Json(data.empty() ? "ROM socket " + sockName + " emptied; machine reset."
+                                                          : "ROM socket " + sockName + ": " + info + "; machine reset.");
+            } else {
+                textItem.oVal["text"] = Json("Error: " + err);
+                textItem.oVal["isError"] = Json(true);
+            }
+        } else {
+            textItem.oVal["text"] = Json("Error: no ROM socket '" + sockName + "'");
+            textItem.oVal["isError"] = Json(true);
         }
     } else if (name == "eject_cartridge") {
         std::string mid = args["machine_id"].sVal;

@@ -92,9 +92,10 @@ public:
      *  Empty: none fitted (reads $FF). */
     void setFunctionRom(bool external, Rom rom, std::string label = "") {
         (external ? m_extFunc : m_intFunc) = std::move(rom);
-        if (external) m_cartLabel = std::move(label);
+        (external ? m_cartLabel : m_intLabel) = std::move(label);
     }
     const std::string& cartridgeLabel() const { return m_cartLabel; }
+    const std::string& internalFunctionRomLabel() const { return m_intLabel; }
     uint8_t funcByte(int sel, uint16_t addr) const {
         const Rom& r = sel == 1 ? m_intFunc : m_extFunc;
         return r.empty() ? 0xFF : r[addr & 0x7FFF];
@@ -375,7 +376,7 @@ private:
     uint8_t m_colorRam[0x800];
     Rom m_basic, m_kernal, m_chargen, m_c64;
     Rom m_intFunc, m_extFunc;
-    std::string m_cartLabel;
+    std::string m_cartLabel, m_intLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
     bool m_key4080Down = false;
@@ -767,15 +768,21 @@ std::string cartridgeInfo(MachineDescriptor* m) {
     return bus ? bus->cartridgeLabel() : "";
 }
 
-bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err) {
+bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err,
+                            const std::string& label) {
     auto* bus = c128Bus(m);
     if (!bus) { err = "Not a C128."; return false; }
     if (image.empty()) { bus->setFunctionRom(false, {}); return true; }
     Rom rom;
     std::string type;
     if (!functionRomImage(image, rom, type, err)) return false;
-    bus->setFunctionRom(false, std::move(rom));
+    bus->setFunctionRom(false, std::move(rom), label.empty() ? type : label + " (" + type + ")");
     return true;
+}
+
+std::string internalFunctionRomInfo(MachineDescriptor* m) {
+    auto* bus = c128Bus(m);
+    return bus ? bus->internalFunctionRomLabel() : "";
 }
 
 MachineDescriptor* create(bool ntsc, std::string* err) {
@@ -801,6 +808,13 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         {"40/80", {"40_80"}, "The 40/80 DISPLAY key (it locks): down shows the VDC's 80 columns, up the VIC-II's 40. The screen editor reads it at reset to pick its screen."},
         {"RUN/STOP + RESTORE", {"run_stop", "restore"}, "Hold RUN/STOP and press RESTORE: the KERNAL's warm start."},
         {"RESTORE", {"restore"}, "RESTORE on its own: an NMI."}};
+
+    desc->romSockets.push_back({"function",
+        "The internal function ROM socket (U36): 32 KB at $8000-$FFFF when CR picks it; a raw 1-32 KB image or a C128 .crt",
+        [desc](const std::vector<uint8_t>& image, const std::string& label, std::string& err) {
+            return setInternalFunctionRom(desc, image, err, label);
+        },
+        [desc]() { return internalFunctionRomInfo(desc); }});
 
     auto* bus = new C128Bus(std::move(basic), std::move(kernal), std::move(chargen), std::move(c64));
     desc->buses.push_back({"system", bus});

@@ -29,8 +29,8 @@ struct MachineDescriptor;
  *
  * The Z80 starts the machine from its boot BIOS and hands over to the 8502
  * through MCR bit 0 (CP/M switches back and forth). Function ROMs: internal
- * (the board's socket) and external (a cartridge), 32 KB each. Not yet: 1571
- * fast serial, bank-switching cartridges.
+ * (the board's socket) and external (a cartridge), 32 KB each. Not yet:
+ * bank-switching cartridges.
  *
  * ROMs: roms/c128/basic-4000.318018-04.bin, basic-8000.318019-04.bin,
  * kernal.318020-05.bin (editor, Z80 BIOS, KERNAL), characters.390059-01.bin
@@ -53,7 +53,11 @@ void removeCartridge(MachineDescriptor* m);
 /** "<label> (<type>)", or "" with no cartridge. */
 std::string cartridgeInfo(MachineDescriptor* m);
 /** Fit (or with an empty image, remove) the internal function ROM, the
- *  socket on the board (same formats as a cartridge). */
-bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err);
+ *  socket on the board (same formats as a cartridge); the machine's
+ *  "function" ROM socket. */
+bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err,
+                            const std::string& label = "");
+/** "<label> (<type>)" of the internal function ROM, or "" with none. */
+std::string internalFunctionRomInfo(MachineDescriptor* m);
 
 }  // namespace c128
