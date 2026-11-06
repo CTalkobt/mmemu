@@ -1233,11 +1233,19 @@ void MmemuFrame::OnLoadImageDirect(wxCommandEvent& event) {
     std::string path = event.GetString().ToStdString();
     IBus* loadBus = m_machine->buses[0].bus; // physical bus (#79)
     auto* loader = ImageLoaderRegistry::instance().findLoader(path);
-    if (loader) {
-        if (loader->load(path, loadBus, m_machine, 0)) {
-            SetStatusText("Loaded " + path);
-            for (auto* p : m_memPanes) p->RefreshValues();
-        }
+    if (loader && loader->load(path, loadBus, m_machine, 0)) {
+        SetStatusText("Loaded " + path);
+        for (auto* p : m_memPanes) p->RefreshValues();
+        return;
+    }
+    // Not a program or disk this machine loads: a cartridge (-i game.a26)
+    if (ImageLoaderRegistry::instance().attachCartridge(path, m_bus, m_machine)) {
+        if (m_cartPane) m_cartPane->RefreshMetadata();
+        if (m_machine->onReset) m_machine->onReset(*m_machine);
+        m_regPane->RefreshValues();
+        m_disasmPane->RefreshValues(m_cpu->pc());
+        for (auto* p : m_memPanes) p->RefreshValues();
+        SetStatusText("Attached cartridge " + path);
     }
 }
 
