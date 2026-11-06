@@ -32,4 +32,11 @@ private:
     std::vector<Bank> m_banks;
 
     bool loadCrt();
+    bool layOut();
+
+    // On the expansion port (a machine with a PLA): ROML/ROMH and the lines
+    std::vector<uint8_t> m_roml, m_romh;
+    bool m_exromLow = false, m_gameLow = false;
+    bool m_onPort = false;
+    MachineDescriptor* m_machine = nullptr;
 };

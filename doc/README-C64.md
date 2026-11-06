@@ -46,6 +46,19 @@ The 6510 I/O port (DDR at \$00, DATA at \$01) drives three banking signals into 
 
 Power-on state: DDR=\$00 (all inputs), DATA=\$3F → effective port \$3F → LORAM=1, HIRAM=1, CHAREN=1 (BASIC + KERNAL + I/O visible).
 
+The cartridge's EXROM and GAME lines also take part; see [README-C64PLA.md](README-C64PLA.md) for the full map.
+
+### 2.3.1 Cartridges
+`cart <file.crt>` (CLI), File > Attach Cartridge (GUI) or MCP `attach_cartridge` plugs a `.crt` with the `C64 CARTRIDGE` header into the expansion port and resets; `eject` takes it out. Only the generic hardware type (0, plain ROM) is supported. As in VICE (`c64-generic.c`), the CHIP packets decide the mode:
+
+| CHIP packets | Mode | Lines |
+|--------------|------|-------|
+| one at $8000, up to 8 KB | 8 KB game: ROML at $8000 | EXROM low |
+| one at $8000, up to 16 KB | 16 KB game: ROML at $8000, ROMH at $A000 | EXROM and GAME low |
+| one ending at $FFFF, optionally after one at $8000 | Ultimax: ROMH at $E000 (and ROML) | GAME low |
+
+The KERNAL starts an 8 or 16 KB game through the `CBM80` signature at $8004; an Ultimax cartridge starts from its own reset vector.
+
 ### 2.4 VIC-II Bank Selection
 CIA2 Port A bits 1–0 (inverted) select which 16 KB window the VIC-II DMA engine sees:
 

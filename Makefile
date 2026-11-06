@@ -475,6 +475,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/45gs02/test/test_neg_prefix_modes.cpp \
 	src/plugins/45gs02/test/test_ca45_assemble_line.cpp \
 	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
+	src/plugins/devices/c64_pla/test/test_c64_pla.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp \
 	tests/src/test_cross_validation.cpp \
