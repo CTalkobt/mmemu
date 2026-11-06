@@ -24,7 +24,9 @@ struct MachineDescriptor;
  */
 namespace plus4 {
 
-enum class Model { Plus4, C16 };
+/** C116: a C16 in a smaller case with a rubber keyboard; the same board
+ *  logic, ROMs and 16 KB (VICE: "C16/116"). */
+enum class Model { Plus4, C16, C116 };
 
 /** A new machine, or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(Model model, bool ntsc = false, std::string* err = nullptr);

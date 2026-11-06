@@ -237,3 +237,18 @@ TEST_CASE(c16_ram_mirrors) {
     ASSERT(bus->read8(0xA345) == 0xA5 && bus->read8(0xE345) == 0xA5);
     delete m;
 }
+
+// The C116 is a C16 in a smaller case: 16 KB, no ACIA, boots to READY
+TEST_CASE(c116_boots_as_c16) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::C116, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    ASSERT(m->machineId == "c116");
+    ASSERT(m->displayName == "Commodore 116");
+    ASSERT(m->ioRegistry->findHandler("ACIA") == nullptr);
+    m->onReset(*m);
+    run(m, 6000000);
+    ASSERT(screenHas(m, "12277 BYTES FREE"));
+    ASSERT(screenHas(m, "READY."));
+    delete m;
+}

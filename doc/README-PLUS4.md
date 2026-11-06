@@ -14,8 +14,11 @@ for the chip itself. The memory map and ROM banking follow VICE
 | `plus4-ntsc` | Plus/4, NTSC | 64 KB | 1,789,772 Hz |
 | `c16` | C16, PAL | 16 KB (mirrored) | as `plus4` |
 | `c16-ntsc` | C16, NTSC | 16 KB (mirrored) | as `plus4-ntsc` |
+| `c116` | C116, PAL | 16 KB (mirrored) | as `plus4` |
+| `c116-ntsc` | C116, NTSC | 16 KB (mirrored) | as `plus4-ntsc` |
 
-The C16 has no 3-plus-1 ROM and no ACIA. The CPU runs single clock while the
+The C16 has no 3-plus-1 ROM and no ACIA. The C116 is the same machine in a
+smaller case with a rubber keyboard (VICE models it as the C16). The CPU runs single clock while the
 TED fetches the display and stalls on bad lines and attribute lines, as on
 the real machine.
 
