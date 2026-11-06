@@ -10,6 +10,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ### Repository
 - `mmsim.dump` and `xmega65.dump`, written by `tests/45gs02/validate.py` during `make test`, are no longer tracked and are now in `.gitignore` (they had been committed by accident again in #205).
 
+### Commodore 128
+- **C128 internal function ROM socket** (#224): new ROM sockets on the machine (`MachineDescriptor::romSockets`): CLI `rom [socket] [file|remove]`, GUI Control > ROM Sockets..., MCP `rom_socket`. The C128's `function` socket takes the internal function ROM (a raw 1-32 KB image or a C128 `.crt`), and the machine resets. Tests: `c128_function_roms` (now fits it through the socket and empties it).
+
 ### Atari 2600
 - **Atari 2600** (#11): profiles `atari2600` and `atari2600-pal` (new plugin `mmemu-plugin-atari2600.so`), after Stella (GPL-2.0-or-later). The 6507 (the 6502 core with 13 address lines); a port of Stella's TIA (playfield, players, missiles, ball, the delay queue, HMOVE, collisions, fire buttons and paddle readout, sound, NTSC/PAL/SECAM palettes, the VSYNC-driven frame) and RIOT 6532 (`M6532.cxx`: RAM, ports A/B, the interval timer, the PA7 edge flag). The TIA and RIOT are clocked lazily, up to the cycle of each read, with writes applied on the instruction's last cycles; WSYNC holds the CPU to the end of the line. Cartridges `.a26`/`.bin` with Stella's type detection: 2K, 4K, F8/F6/F4, their Superchip variants, E0, 3F, FA. Joysticks on SWCHA/INPT4-5; console switches on F1-F8 as in Stella, GUI buttons RESET and SELECT. See `doc/README-A2600.md`. Tests: `riot6532_*`, `tia_*` (15), `a2600_boot_ram`, `a2600_wsync`, `a2600_f8_banks`, `a2600_inputs`.
 - **GUI: `-i` attaches cartridges**: an image given with `-i` (or File > Load Image) that no image loader takes is now tried as a cartridge for the current machine.

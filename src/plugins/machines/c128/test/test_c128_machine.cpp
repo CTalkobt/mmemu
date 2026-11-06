@@ -278,7 +278,11 @@ TEST_CASE(c128_function_roms) {
     // CR: $8000 external (bits 2-3 = 2), $C000 internal (bits 4-5 = 1), I/O off
     std::vector<uint8_t> intRom(0x8000, 0x11);
     intRom[0x4000] = 0x22;                         // its $C000
-    ASSERT(c128::setInternalFunctionRom(m, intRom, err));
+    auto* sock = m->romSocket("function");           // the internal one, as the frontends fit it
+    ASSERT(sock);
+    EXPECT_EQ(sock->info(), std::string(""));
+    ASSERT(sock->fit(intRom, "int.bin", err));
+    EXPECT_EQ(sock->info(), std::string("int.bin (32 KB function ROM)"));
     bus->write8(0xFF00, 0x19);
     EXPECT_EQ(bus->peek8(0x8007), 'C');
     EXPECT_EQ(bus->peek8(0xC000), 0x22);           // $C000 is the internal ROM here
@@ -290,6 +294,11 @@ TEST_CASE(c128_function_roms) {
     c128::removeCartridge(m);
     bus->write8(0xFF00, 0x09);
     EXPECT_EQ(bus->peek8(0x8000), 0xFF);           // nothing fitted
+    bus->write8(0xFF00, 0x15);
+    EXPECT_EQ(bus->peek8(0x8000), 0x11);
+    ASSERT(sock->fit({}, "", err));                // empty the socket
+    EXPECT_EQ(sock->info(), std::string(""));
+    EXPECT_EQ(bus->peek8(0x8000), 0xFF);
     ASSERT(!c128::insertCartridge(m, std::vector<uint8_t>(3000, 0), "x.bin", err));
     delete m;
 }

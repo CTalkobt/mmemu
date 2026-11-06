@@ -1489,6 +1489,42 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Syntax: cart <path>\n");
         }
+    } else if (cmd == "rom") {
+        // ROM sockets on the board (the C128's internal function ROM):
+        //   rom                      list them and what is fitted
+        //   rom <socket> <path>      fit a ROM image and reset
+        //   rom <socket> remove      take it out and reset
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& sockets = m_ctx.machine->romSockets;
+        std::string name, path;
+        if (!(ss >> name)) {
+            if (sockets.empty()) { m_output("This machine has no ROM sockets.\n"); return; }
+            for (auto& s : sockets) {
+                std::string info = s.info ? s.info() : "";
+                m_output("  " + s.name + ": " + (info.empty() ? "(empty)" : info) + "\n    " + s.description + "\n");
+            }
+            return;
+        }
+        auto* sock = m_ctx.machine->romSocket(name);
+        if (!sock) { m_output("No ROM socket '" + name + "'. Type 'rom' for the list.\n"); return; }
+        if (!(ss >> path)) { m_output("Syntax: rom <socket> <path|remove>\n"); return; }
+        std::vector<uint8_t> data;
+        std::string label;
+        if (path != "remove") {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) { m_output("Cannot open '" + path + "'.\n"); return; }
+            data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            if (data.empty()) { m_output("'" + path + "' is empty.\n"); return; }
+            auto slash = path.find_last_of('/');
+            label = slash == std::string::npos ? path : path.substr(slash + 1);
+        }
+        std::string err;
+        if (!sock->fit(data, label, err)) { m_output("Error: " + err + "\n"); return; }
+        std::string info = sock->info ? sock->info() : "";
+        m_output(data.empty() ? "ROM socket " + name + " emptied.\n" : "ROM socket " + name + ": " + info + "\n");
+        m_output("Resetting machine...\n");
+        if (m_ctx.machine->onReset) m_ctx.machine->onReset(*m_ctx.machine);
+        showRegisters();
     } else if (cmd == "eject") {
         if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
         if (auto* cart = ImageLoaderRegistry::instance().getActiveCartridge(m_ctx.bus)) {
@@ -3371,6 +3407,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  save-vice <path>    - Save current state to VICE snapshot file\n"
                  "  cart <path>         - Attach a cartridge image\n"
                  "  eject               - Eject currently attached cartridge\n"
+                 "  rom [socket] [path|remove] - List the board's ROM sockets, or fit/remove a ROM (C128 function ROM)\n"
                  "  disk mount <unit> <path> - Mount a disk image to drive unit\n"
                  "  disk eject <unit>   - Eject a disk image\n"
                  "  tape mount <path>   - Mount a .tap file for playback\n"

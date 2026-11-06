@@ -131,6 +131,7 @@ private:
     void OnLoadImage(wxCommandEvent& event);
     void OnAttachCart(wxCommandEvent& event);
     void OnEjectCart(wxCommandEvent& event);
+    void OnRomSockets(wxCommandEvent& event);
     void OnKbdFocus(const wxCommandEvent& event);
     void OnViewPane(wxCommandEvent& event);
     void rebuildViewMenu();
@@ -667,6 +668,7 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_LOAD_IMAGE, "Load Image...\tCtrl-I");
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
     menuControl->Append(ID_EJECT_CART, "Eject Cartridge");
+    menuControl->Append(ID_ROM_SOCKETS, "ROM Sockets...", "Fit or remove an optional ROM on the board (the C128's internal function ROM)");
     menuControl->AppendSeparator();
     menuControl->AppendCheckItem(ID_SWAP_JOYSTICKS, "Swap Joystick Ports",
         "Host controllers: the first one goes to the port most software reads (the C64's control port 2); swap the first two");
@@ -925,6 +927,7 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnLoadImage, this, ID_LOAD_IMAGE);
     Bind(wxEVT_MENU, &MmemuFrame::OnAttachCart, this, ID_ATTACH_CART);
     Bind(wxEVT_MENU, &MmemuFrame::OnEjectCart, this, ID_EJECT_CART);
+    Bind(wxEVT_MENU, &MmemuFrame::OnRomSockets, this, ID_ROM_SOCKETS);
     Bind(wxEVT_MENU, &MmemuFrame::OnKbdFocus,   this, ID_KBD_FOCUS);
     Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_SHOW_BP_PANE, ID_SHOW_MEGA65_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_VIEW_PANE_FIRST, ID_VIEW_PANE_LAST);
@@ -1353,6 +1356,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         if (auto* mb = GetMenuBar()) {
             mb->Enable(ID_ATTACH_CART, carts);
             mb->Enable(ID_EJECT_CART, carts);
+            mb->Enable(ID_ROM_SOCKETS, !m_machine->romSockets.empty());
         }
         // Enable Reset to Monitor menu only for MEGA65
         if (m_resetToMonitorItem) {
@@ -2168,6 +2172,50 @@ void MmemuFrame::OnEjectCart(wxCommandEvent&) {
         for (auto* p : m_memPanes) p->RefreshValues();
         SetStatusText("Cartridge ejected.");
     }
+}
+
+void MmemuFrame::OnRomSockets(wxCommandEvent&) {
+    if (!m_machine || m_machine->romSockets.empty()) return;
+    auto& sockets = m_machine->romSockets;
+    size_t pick = 0;
+    if (sockets.size() > 1) {
+        wxArrayString names;
+        for (auto& sk : sockets) {
+            std::string info = sk.info ? sk.info() : "";
+            names.Add(sk.name + ": " + (info.empty() ? "(empty)" : info));
+        }
+        wxSingleChoiceDialog dlg(this, "Socket:", "ROM Sockets", names);
+        if (dlg.ShowModal() != wxID_OK) return;
+        pick = (size_t)dlg.GetSelection();
+    }
+    auto& sock = sockets[pick];
+    std::string info = sock.info ? sock.info() : "";
+    std::vector<uint8_t> data;
+    std::string label;
+    wxArrayString actions;
+    actions.Add("Fit a ROM image...");
+    if (!info.empty()) actions.Add("Remove " + info);
+    wxSingleChoiceDialog act(this, sock.description + "\n\nNow: " + (info.empty() ? "(empty)" : info),
+                             "ROM socket: " + sock.name, actions);
+    if (act.ShowModal() != wxID_OK) return;
+    if (act.GetSelection() == 0) {
+        wxFileDialog fd(this, "Fit ROM: " + sock.name, "", "", "ROM images (*.bin;*.rom;*.crt)|*.bin;*.rom;*.crt|All files|*",
+                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+        if (fd.ShowModal() != wxID_OK) return;
+        std::string path = fd.GetPath().ToStdString();
+        std::ifstream f(path, std::ios::binary);
+        data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        label = fd.GetFilename().ToStdString();
+        if (data.empty()) { wxMessageBox("Cannot read " + path, "Error", wxICON_ERROR); return; }
+    }
+    std::string err;
+    if (!sock.fit(data, label, err)) { wxMessageBox(err, "Error", wxICON_ERROR); return; }
+    if (m_machine->onReset) m_machine->onReset(*m_machine);
+    m_regPane->RefreshValues();
+    m_disasmPane->RefreshValues(m_cpu->pc());
+    for (auto* p : m_memPanes) p->RefreshValues();
+    info = sock.info ? sock.info() : "";
+    SetStatusText(data.empty() ? "ROM socket " + sock.name + " emptied." : "ROM socket " + sock.name + ": " + info);
 }
 
 void MmemuFrame::setKeyCapture(bool active) {

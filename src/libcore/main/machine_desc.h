@@ -104,6 +104,25 @@ struct MachineDescriptor {
     };
     std::vector<ScreenButton> screenButtons;
 
+    /**
+     * ROM sockets on the board that take an optional ROM image (the C128's
+     * internal function ROM): CLI `rom`, the GUI's Control > ROM Sockets,
+     * MCP `rom_socket`. fit() takes the file's bytes (empty removes the ROM)
+     * and returns false with `err` set; the frontends reset after a change.
+     * info() describes what is fitted ("" for nothing).
+     */
+    struct RomSocket {
+        std::string name;
+        std::string description;
+        std::function<bool(const std::vector<uint8_t>& image, const std::string& label, std::string& err)> fit;
+        std::function<std::string()> info;
+    };
+    std::vector<RomSocket> romSockets;
+    RomSocket* romSocket(const std::string& name) {
+        for (auto& s : romSockets) if (s.name == name) return &s;
+        return nullptr;
+    }
+
     /** Memory as RAM, also under ROM, for KERNAL file calls that fetch the
      *  file name and SAVE data from RAM whatever is banked in (the Plus/4's
      *  KERNAL does). Empty: they read through the bus. */
