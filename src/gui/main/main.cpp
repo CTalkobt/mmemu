@@ -2115,7 +2115,7 @@ void MmemuFrame::OnAttachCart(wxCommandEvent& event) {
     std::string path = event.GetString().ToStdString();
     if (path.empty()) {
         wxFileDialog openFileDialog(this, "Attach Cartridge", "", "",
-                           "Cartridge files (*.crt;*.car;*.rom)|*.crt;*.car;*.rom",
+                           "Cartridge files (*.crt;*.car;*.rom;*.bin)|*.crt;*.car;*.rom;*.bin",
                            wxFD_OPEN | wxFD_FILE_MUST_EXIST);
         if (openFileDialog.ShowModal() == wxID_OK) {
             path = openFileDialog.GetPath().ToStdString();

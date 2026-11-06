@@ -16,8 +16,12 @@ static IImageLoader* createDiskLoader() {
     return new DiskImageLoader();
 }
 
+// nullptr for a file that is not a C64 .crt (a Plus/4 one shares the extension)
 static ICartridgeHandler* createCbmCartridge(const char* path) {
-    return new CbmCartridgeHandler(path);
+    auto* h = new CbmCartridgeHandler(path);
+    if (h->valid()) return h;
+    delete h;
+    return nullptr;
 }
 
 static ImageLoaderPluginInfo s_loaders[] = {
