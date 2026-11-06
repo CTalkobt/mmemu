@@ -122,6 +122,12 @@ private:
         void     getWrites(uint32_t* a, uint8_t* b,
                            uint8_t* c, int max)       const override { m_real->getWrites(a,b,c,max); }
         void     clearWriteLog()                            override { m_real->clearWriteLog(); }
+        // Cartridge ROM overlays and halt requests belong to the real bus too
+        // (the CLI, GUI and MCP attach cartridges through the CPU's data bus)
+        void     addRomOverlay(uint32_t base, uint32_t size,
+                               const uint8_t* data)         override { m_real->addRomOverlay(base, size, data); }
+        void     removeRomOverlay(uint32_t base)            override { m_real->removeRomOverlay(base); }
+        bool     isHaltRequested()                          override { return m_real->isHaltRequested(); }
 
     private:
         MOS6510* m_owner;

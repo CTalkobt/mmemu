@@ -32,3 +32,19 @@ TEST_CASE(cpu6510_io_port_logic) {
     EXPECT_EQ(cpu.getSignalLine("hiram")->get(), true);
     EXPECT_EQ(cpu.getSignalLine("charen")->get(), true);
 }
+
+// Cartridges attach through the CPU's data bus (the CLI, GUI and MCP):
+// the 6510's port wrapper passes ROM overlays on to the real bus
+TEST_CASE(cpu6510_port_bus_forwards_rom_overlays) {
+    MOS6510 cpu;
+    FlatMemoryBus bus("system", 16);
+    cpu.setDataBus(&bus);
+    IBus* data = cpu.getDataBus();
+    ASSERT(data != &bus);                          // the wrapper
+    static const uint8_t rom[4] = {0x09, 0x80, 0xC3, 0xC2};
+    data->addRomOverlay(0x8000, sizeof rom, rom);
+    EXPECT_EQ(bus.peek8(0x8002), 0xC3);
+    EXPECT_EQ(data->read8(0x8003), 0xC2);
+    data->removeRomOverlay(0x8000);
+    EXPECT_EQ(bus.peek8(0x8002), 0x00);
+}
