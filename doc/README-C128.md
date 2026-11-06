@@ -1,6 +1,6 @@
 # mmemu-plugin-c128: Commodore 128
 
-The Commodore 128 in C128 mode, with the 40-column VIC-IIe and 80-column VDC screens, and in C64 mode (#22).
+The Commodore 128 in C128 mode, with the 40-column VIC-IIe and 80-column VDC screens, in C64 mode, and with its Z80, booting CP/M 3.0 (#22).
 Memory map, MMU and keyboard after VICE (`src/c128/c128mem.c`,
 `c128meminit.c`, `c128mmu.c`, `data/C128/gtk3_sym.vkm`).
 
@@ -15,7 +15,7 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
 
 ## Hardware
 
-- **CPU**: MOS 8502, a 6510 with a seventh port pin: bit 6 reads the CAPS
+- **CPUs**: Zilog Z80 (boot BIOS, CP/M; see below) and MOS 8502, a 6510 with a seventh port pin: bit 6 reads the CAPS
   LOCK (ASCII/DIN) key. 1 MHz, or 2 MHz while VIC-IIe `$D030` bit 0 is set
   (BASIC `FAST`); time is counted at the 1 MHz clock.
 - **MMU** (8722) with 128 KB RAM in two banks: see below.
@@ -36,6 +36,40 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
   current folder or `disk mount 8 <folder or image>`; LOAD, SAVE and
   DIRECTORY run through the real KERNAL (no 1571 fast serial yet).
 - **Datasette** on the 8502 port (motor, write, sense) and CIA1 FLAG.
+
+## The Z80 and CP/M
+
+The C128 powers on as the real one does: the **Z80** runs first, from its
+boot BIOS (the KERNAL ROM's `$D000-$DFFF`), checks for a C64 cartridge and
+the C= key, points the 8502's RAM vectors at a start-up routine and hands
+over through MCR bit 0; the 8502 then takes its reset vector (as in VICE).
+MCR bit 0 switches between the CPUs at any time (CP/M does it for every disk
+access). The Z80 runs at an effective 2 MHz (its 4 MHz clock waits for the
+VIC-II) and shares /IRQ with the 8502. The CLI's `cpu` lists both CPUs and
+`cpu z80` / `cpu main` picks the one `regs`, `disasm` and `m` show.
+
+The Z80's view (VICE `z80mem.c`, C128 mode): as the 8502's map, except that
+in bank 0 `$0000-$0FFF` reads the BIOS (writes go to RAM at `$D000-$DFFF`),
+with I/O in `$1000-$13FF` is colour RAM, and `$D000-$DFFF` is always RAM
+(no I/O, no character ROM). I/O is reached with IN/OUT: ports `$D000-$DFFF`
+are the chips (the MMU only while CR has I/O in), ports `$0000-$0FFF` RAM at
+`$D000-$DFFF` of bank 0, any other port the memory at that address.
+
+**CP/M 3.0**: mount a C128 CP/M boot disk and reset; the KERNAL finds the
+boot sector ("BOOTING ..."), loads CP/M and starts it on the Z80, in 40 or 80
+columns by the 40/80 key:
+
+```
+disk mount 8 cpm-boot.d64
+reset
+```
+
+Commodore's 28 May 87 boot disk boots to `A>` and runs DIR (checked with
+`28may87-1.d64` from the funet archive, `pub/cpm/sys/c128/system`). No disk
+is included: Commodore and Digital Research hold the copyrights and the
+images carry no distribution terms. Disk access goes through the 8502 and
+the KERNAL's serial routines (no 1571 fast serial yet), so loading CP/M takes
+about a minute of machine time, as with a 1541; disk images are read-only.
 
 ## Screens: 40 and 80 columns
 
@@ -148,7 +182,7 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - VDC interlace and mid-frame register changes (raster effects)
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- The Z80 and CP/M: the machine starts on the 8502, where the Z80 boot
-  BIOS would hand over
+- Writing to disk images (CP/M's writes report WRITE PROTECT ON)
+- The Z80 in C64 mode beyond the C64 memory map
 - Function ROMs, cartridges, 1571 fast serial, the VIC-IIe's 2 MHz effect
   on the display

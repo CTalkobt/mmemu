@@ -291,6 +291,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     return;
                 }
                 if (m_ctx.machine) {
+                    for (auto& slot : m_ctx.machine->cpus) if (slot.cpu) slot.cpu->setObserver(nullptr);
                     if (m_ctx.cpu) m_ctx.cpu->setObserver(nullptr);
                     if (m_ctx.bus) m_ctx.bus->setObserver(nullptr);
                     delete m_ctx.machine;
@@ -315,6 +316,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_ctx.dbg = new DebugContext(m_ctx.cpu, m_ctx.bus);
                 if (md->ioRegistry) m_ctx.dbg->setIoRegistry(md->ioRegistry);
                 m_ctx.cpu->setObserver(m_ctx.dbg);
+                for (auto& slot : md->cpus) if (slot.cpu) slot.cpu->setObserver(m_ctx.dbg);   // breakpoints on every CPU
                 m_ctx.bus->setObserver(m_ctx.dbg);
                 m_ctx.dbg->onMachineLoad(md);
 
@@ -1662,6 +1664,31 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Syntax: setpc <address>\n");
         }
+    } else if (cmd == "cpu") {
+        // `cpu`: list the machine's CPUs; `cpu <n|name>`: show that one in
+        // regs, disasm and m (the C128's 8502 and Z80)
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& cpus = m_ctx.machine->cpus;
+        std::string which;
+        if (!(ss >> which)) {
+            for (size_t i = 0; i < cpus.size(); ++i) {
+                m_output(std::string(cpus[i].cpu == m_ctx.cpu ? "* " : "  ") + std::to_string(i) + " " +
+                         cpus[i].slotName + " (" + cpus[i].cpu->variantName() + ")" +
+                         (cpus[i].active ? " running" : "") + "\n");
+            }
+            return;
+        }
+        int pick = -1;
+        for (size_t i = 0; i < cpus.size(); ++i)
+            if (cpus[i].slotName == which || std::to_string(i) == which) pick = (int)i;
+        if (pick < 0) { m_output("No CPU '" + which + "'.\n"); return; }
+        m_ctx.cpu = cpus[(size_t)pick].cpu;
+        m_ctx.bus = m_ctx.cpu->getDataBus() ? m_ctx.cpu->getDataBus() : m_ctx.machine->buses[0].bus;
+        if (m_ctx.disasm) { delete m_ctx.disasm; m_ctx.disasm = nullptr; }
+        m_ctx.disasm = ToolchainRegistry::instance().createDisassembler(m_ctx.cpu->isaName());
+        if (m_ctx.disasm && m_ctx.dbg) m_ctx.disasm->setSymbolTable(&m_ctx.dbg->symbols());
+        m_output("CPU " + std::to_string(pick) + ": " + cpus[(size_t)pick].slotName + " (" + m_ctx.cpu->variantName() + ")\n");
+        showRegisters();
     } else if (cmd == "regs") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         showRegisters();
@@ -3400,6 +3427,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
     } else if (category == "inspection") {
         m_output("INSPECTION - Memory and Register Inspection:\n"
                  "  regs                - Show all CPU registers\n"
+                 "  cpu [n|name]        - List the CPUs, or pick the one regs/disasm/m show (C128: main, z80)\n"
                  "  regwrite <n> <v>    - Write value V to register N\n"
                  "  m <addr> [len]      - Dump memory (default 16 bytes)\n"
                  "  disasm <addr> [n]   - Disassemble N instructions\n"

@@ -57,7 +57,7 @@ TEST_CASE(c128_basic_banks) {
     auto* kbd = dynamic_cast<IKeyboardMatrix*>(m->ioRegistry->findHandler("Keyboard"));
     ASSERT(kbd != nullptr);
     kbd->enqueueText("BANK 1:POKE 4096,42:A=PEEK(4096):BANK 0:B=PEEK(4096):BANK 15:PRINT A*1000+B\n");
-    run(m, 6000000);
+    run(m, 16000000);                              // ~160 ms a typed key
     ASSERT(screenHas(m, " 42007"));                // $1000 in bank 0 still holds 7
     delete m;
 }
@@ -73,7 +73,7 @@ TEST_CASE(c128_mmu_banking) {
     // Reset: CR 0 = BASIC, KERNAL, I/O
     EXPECT_EQ(bus->peek8(0xFF00), 0x00);
     EXPECT_EQ(bus->peek8(0x4000), 0x4C);           // BASIC low (JMP)
-    EXPECT_EQ(bus->peek8(0xD505) & 0xC1, 0x81);    // 40/80 up, 8502
+    EXPECT_EQ(bus->peek8(0xD505) & 0xC1, 0x80);    // 40/80 up, the Z80 (it runs first)
     EXPECT_EQ(bus->peek8(0xD50B), 0x20);
     // All RAM, bank 0, then bank 1
     bus->write8(0xFF00, 0x3F);
@@ -180,11 +180,11 @@ TEST_CASE(c128_c64_mode) {
     if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
     auto* kbd = dynamic_cast<IKeyboardMatrix*>(m->ioRegistry->findHandler("Keyboard"));
     kbd->enqueueText("GO64\nY\n");
-    run(m, 4000000);
+    run(m, 5000000);
     ASSERT(screenHas(m, "**** COMMODORE 64 BASIC V2 ****"));
     ASSERT(screenHas(m, "38911 BASIC BYTES FREE"));
     kbd->enqueueText("PRINT 6*7;PEEK(53296)\n");               // ';' via the US C64 KERNAL's table
-    run(m, 3000000);
+    run(m, 6000000);
     ASSERT(screenHas(m, " 42  252"));
     m->onReset(*m);
     run(m, 3000000);
@@ -224,5 +224,33 @@ TEST_CASE(c128_c64_mode_memory) {
     EXPECT_EQ(bus->peek8(0xA000), 0x5A);
     cpuBus->write8(0x0001, 0x37);
     EXPECT_EQ(bus->peek8(0xA000), 0x94);
+    delete m;
+}
+
+// The Z80's view (VICE z80mem.c): in bank 0 its $0000-$0FFF is the boot BIOS
+// (KERNAL ROM $D000) and writes land at RAM $D000; $D000-$DFFF is RAM, not
+// I/O; IN/OUT reach the chips; MCR bit 0 picks the CPU
+TEST_CASE(c128_z80_view) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    m->onReset(*m);
+    ASSERT(m->cpus.size() == 2 && m->cpus[1].active);              // the Z80 runs first
+    IBus* zmem = m->cpus[1].dataBus;
+    IBus* zio = m->cpus[1].ioBus;
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(zmem->peek8(0x0000), 0x3E);                          // BIOS: LD A,$3E
+    zmem->write8(0x0100, 0x77);
+    bus->write8(0xFF00, 0x3F);                                     // 8502: all RAM, bank 0
+    EXPECT_EQ(bus->peek8(0xD100), 0x77);
+    bus->write8(0xD020, 0x12);                                     // RAM under I/O
+    EXPECT_EQ(zmem->peek8(0xD020), 0x12);                          // Z80: RAM at $D000
+    bus->write8(0xFF00, 0x00);
+    zio->write8(0xD020, 0x05);                                     // OUT: the VIC-II
+    EXPECT_EQ(bus->peek8(0xD020), 0xF5);
+    EXPECT_EQ(zio->peek8(0xD505) & 0x01, 0x00);                    // MCR via IN: Z80
+    zio->write8(0xD505, 0xB1);                                     // hand over to the 8502
+    m->schedulerStep(*m);
+    ASSERT(m->cpus[0].active && !m->cpus[1].active);
     delete m;
 }
