@@ -63,14 +63,28 @@ with bit 1 low).
 
 ## Loading and saving
 
-The `kernal-fileio` intercept (`intercept set kernal-fileio path DIR`) maps
-device 8 to a host directory, as for the C64 and VIC-20. BASIC 3.5 keeps its
-strings in the RAM under the ROM, so the machine supplies
-`MachineDescriptor::readRam` and the KERNAL HLE reads file names and SAVE
-data through it.
+Unit 8 is a serial-bus (IEC) drive at the line level (`IecDrive`,
+`src/plugins/devices/iec_drive/`): the KERNAL's own serial routines talk to
+it through the 7501 port ($01 bit 0 DATA, 1 CLK, 2 ATN out, a 1 pulling the
+line low; bits 7 DATA and 6 CLK in, 1 = released). It serves the current
+directory by default; `disk mount 8 <folder>` serves another folder and
+`disk mount 8 <image>` a D64/D71/D80/D81/D82 image, through the same DOS as
+the PET's IEEE-488 drive. LOAD, SAVE, VERIFY, `DIRECTORY`, `LOAD"$",8`,
+OPEN/PRINT#/INPUT# and the error channel (`OPEN 15,8,15`) all work; a missing
+file gives FILE NOT FOUND as on a 1541.
+
+Transfers run at the speed of the serial protocol (about 1.4 ms per byte as
+the drive sends), so a 10 KB program takes some 14 s of emulated time;
+`--speed max` runs that in about a second.
+
+Units 9 and up go to the `kernal-fileio` intercept
+(`intercept set kernal-fileio path DIR`). BASIC 3.5 keeps its strings in the
+RAM under the ROM, so the machine supplies `MachineDescriptor::readRam` and
+the KERNAL HLE reads file names and SAVE data through it.
 
 ## Not yet emulated
 
-- 6551 ACIA, tape (1531) and the IEC serial bus (real drives)
+- 6551 ACIA and tape (1531)
+- Fast-loaders and drive code (`M-E`/`M-W`): the drive is a DOS, not an emulated 1541 CPU
 - Cartridges
 - C116 and the 4 KB / 32 KB RAM variants

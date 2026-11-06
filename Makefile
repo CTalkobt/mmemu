@@ -180,6 +180,10 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/devices/ted/main/ted.cpp \
 	src/plugins/devices/ted/main/ted_video.cpp \
 	src/plugins/devices/ted/main/ted_sound.cpp \
+	src/plugins/devices/iec_drive/main/iec_drive.cpp \
+	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
+	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/machines/plus4/main/plugin_init.cpp
 
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
@@ -493,6 +497,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/ieee488_bus.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
 	src/plugins/machines/plus4/main/machine_plus4.o \
+	src/plugins/devices/iec_drive/main/iec_drive.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \

@@ -5,6 +5,8 @@
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libmem/main/ibus.h"
 #include <cstdio>
+#include <cstdlib>
+#include <unistd.h>
 #include <string>
 #include <vector>
 
@@ -56,5 +58,44 @@ TEST_CASE(c16_boots_and_runs_basic) {
     keyboard(m)->enqueueText("PRINT 6*7\n");
     run(m, 4000000);
     ASSERT(screenHas(m, " 42"));
+    delete m;
+}
+
+// SAVE, LOAD and FILE NOT FOUND through the KERNAL's serial bus code to the
+// IEC drive on unit 8 (a host folder)
+TEST_CASE(plus4_iec_drive_save_load) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::C16, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    char dir[] = "/tmp/mmemu-iec-XXXXXX";
+    ASSERT(mkdtemp(dir) != nullptr);
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    bool mounted = false;
+    for (auto* h : hs) mounted = mounted || h->mountDisk(8, dir);
+    ASSERT(mounted);
+
+    m->onReset(*m);
+    run(m, 6000000);
+    keyboard(m)->enqueueText("10 PRINT 40+3\nSAVE\"T\",8\n");
+    run(m, 12000000);
+    std::string path = std::string(dir) + "/T";
+    FILE* f = fopen(path.c_str(), "rb");
+    ASSERT(f != nullptr);
+    uint8_t hdr[2] = {0, 0};
+    ASSERT(fread(hdr, 1, 2, f) == 2);
+    fclose(f);
+    ASSERT(hdr[0] == 0x01 && hdr[1] == 0x10);       // BASIC at $1001
+
+    keyboard(m)->enqueueText("NEW\nLOAD\"T\",8\nRUN\n");
+    run(m, 16000000);
+    ASSERT(screenHas(m, " 43"));
+
+    keyboard(m)->enqueueText("LOAD\"NOPE\",8\n");
+    run(m, 10000000);
+    ASSERT(screenHas(m, "FILE NOT FOUND"));
+
+    remove(path.c_str());
+    rmdir(dir);
     delete m;
 }
