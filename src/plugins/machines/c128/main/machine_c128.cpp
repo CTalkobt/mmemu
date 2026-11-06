@@ -89,14 +89,18 @@ public:
      *  character ROM (bit 2) in C128 mode (mem_update_config). */
     void updateColorRam() {
         if (!m_vic) return;
-        m_vic->setColorRam(&m_colorRam[portBit(1) ? 0 : 0x400]);
+        m_vic->setColorRam(&m_colorRam[c64Mode() || portBit(1) ? 0 : 0x400]);
     }
 
     /** What the VIC-II fetches: its RAM bank (RCR bit 6), and the C128
      *  character set at $x1000-$x1FFF of every 16 KB unless port bit 2 is set. */
     uint8_t vicFetch(uint32_t addr) const {
         addr &= 0xFFFF;
-        if (!portBit(2) && (addr & 0x3000) == 0x1000) return m_chargen[0x1000 + (addr & 0x0FFF)];
+        if (c64Mode()) {                                    // the C64 set at $1000 / $9000
+            if ((addr & 0x7000) == 0x1000) return m_chargen[addr & 0x0FFF];
+        } else if (!portBit(2) && (addr & 0x3000) == 0x1000) {
+            return m_chargen[0x1000 + (addr & 0x0FFF)];
+        }
         return m_ram[(uint32_t)((m_mmu[6] & 0x40) ? 0x10000 : 0) + addr];
     }
 
@@ -188,7 +192,33 @@ private:
         return (uint32_t)(bank() << 16) + a;
     }
 
+    // C64 mode (MCR bit 6): the C64's map from the 8502 port (no cartridge:
+    // VICE's configurations 0-7, c64meminit.c) with BASIC and KERNAL 64 and
+    // the C64 character set; RAM is the bank CR had, shared areas from bank
+    // 0 (mem_initialize_go64_memory_bank); no MMU, the VDC stays at $D600.
+    bool c64Mode() const { return m_mmu[5] & 0x40; }
+    uint32_t c64RamAddr(uint16_t a) const {
+        if (bank() && (bottomShared(a) || topShared(a))) return a;
+        return (uint32_t)(bank() << 16) + a;
+    }
+    bool c64Io() const { return portBit(2) && (portBit(0) || portBit(1)); }
+    uint8_t readC64(uint16_t addr, bool peek) {
+        const bool lo = portBit(0), hi = portBit(1);
+        if (addr >= 0xA000 && addr < 0xC000 && lo && hi) return m_c64[addr - 0xA000];
+        if (addr >= 0xD000 && addr < 0xE000 && (lo || hi)) {
+            if (portBit(2)) return io(addr, nullptr, peek);
+            return m_chargen[addr & 0x0FFF];
+        }
+        if (addr >= 0xE000 && hi) return m_c64[0x2000 + (addr - 0xE000)];
+        return m_ram[c64RamAddr(addr)];
+    }
+    void writeC64(uint16_t addr, uint8_t val) {
+        if (addr >= 0xD000 && addr < 0xE000 && c64Io()) { io(addr, &val, false); return; }
+        m_ram[c64RamAddr(addr)] = val;
+    }
+
     uint8_t read(uint16_t addr, bool peek) {
+        if (c64Mode()) return readC64(addr, peek);
         const uint8_t cr = m_mmu[0];
         if (addr >= 0xFF00 && addr <= 0xFF04) return m_mmu[addr & 0x0F];
         if (addr < 0x4000) return m_ram[ramAddr(addr)];
@@ -211,6 +241,7 @@ private:
     }
 
     void write(uint16_t addr, uint8_t val) {
+        if (c64Mode()) { writeC64(addr, val); return; }
         if (addr >= 0xFF00 && addr <= 0xFF04) {             // mmu_ffxx_store
             mmuStore(0, addr == 0xFF00 ? val : m_mmu[addr & 0x0F]);
             return;
@@ -234,13 +265,14 @@ private:
             case 0xD400:
                 dev(m_sid, 0xD400 | (addr & 0x1F)); break;
             case 0xD500:
+                if (c64Mode()) break;                       // no MMU in C64 mode (open)
                 if (wr) mmuStore(addr & 0xFF, *wr);
                 else v = mmuPeek(addr & 0xFF);
                 break;
             case 0xD600:
                 dev(m_vdc, addr); break;
             case 0xD800: case 0xD900: case 0xDA00: case 0xDB00: {
-                uint8_t* cram = &m_colorRam[portBit(0) ? 0 : 0x400];
+                uint8_t* cram = &m_colorRam[c64Mode() || portBit(0) ? 0 : 0x400];
                 if (wr) cram[addr & 0x3FF] = *wr & 0x0F;
                 else v = (uint8_t)(cram[addr & 0x3FF] | 0xF0);
                 break;
@@ -384,13 +416,19 @@ public:
     uint32_t addrMask() const override { return 0; }
     bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
-    void reset() override { m_queue.clear(); clearKeys(); }
+    // Keys held through a reset stay down (C= for C64 mode); only text being
+    // typed is dropped
+    void reset() override { m_queue.clear(); releaseTyped(); }
     void tick(uint64_t cycles) override {
         if (m_queue.empty()) return;
         if (m_timer > cycles) { m_timer -= cycles; return; }
         auto ev = m_queue.front();
         m_queue.pop_front();
-        if (ev.first.empty()) clearKeys(); else key(ev.first, ev.second);
+        if (ev.first.empty()) releaseTyped();
+        else {
+            key(ev.first, ev.second);
+            if (ev.second) m_typed.push_back(ev.first);
+        }
         m_timer = 25000;                                    // ~25 ms
     }
 
@@ -460,6 +498,12 @@ private:
         return (uint8_t)(v & m_joy[0]);
     }
 
+    /** Release the keys the typing queue pressed (not ones held by the user). */
+    void releaseTyped() {
+        for (const auto& k : m_typed) key(k, false);
+        m_typed.clear();
+    }
+
     void set(const std::string& n, bool down) {
         auto it = m_map.find(n);
         if (it == m_map.end()) return;
@@ -475,6 +519,7 @@ private:
     uint8_t m_joy[2] = {0xFF, 0xFF};
     bool m_capsDown = false, m_4080Down = false;
     std::deque<std::pair<std::string, bool>> m_queue;
+    std::vector<std::string> m_typed;
     uint64_t m_timer = 0;
 };
 
@@ -547,7 +592,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     if (!loadRom("roms/c128/basic-8000.318019-04.bin", 0x4000, basicHi, err)) return nullptr;
     if (!loadRom("roms/c128/kernal.318020-05.bin", 0x4000, kernal, err)) return nullptr;
     if (!loadRom("roms/c128/characters.390059-01.bin", 0x2000, chargen, err)) return nullptr;
-    if (!loadRom("roms/c128/c128_c64part.325182-01.bin", 0x4000, c64, err)) return nullptr;
+    if (!loadRom("roms/c128/c64.251913-01.bin", 0x4000, c64, err)) return nullptr;
     Rom basic = basicLo;
     basic.insert(basic.end(), basicHi.begin(), basicHi.end());
 

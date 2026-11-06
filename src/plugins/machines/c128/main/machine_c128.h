@@ -32,7 +32,7 @@ struct MachineDescriptor;
  *
  * ROMs: roms/c128/basic-4000.318018-04.bin, basic-8000.318019-04.bin,
  * kernal.318020-05.bin (editor, Z80 BIOS, KERNAL), characters.390059-01.bin
- * (C64 set, then the C128 set), c128_c64part.325182-01.bin (C64 mode).
+ * (C64 set, then the C128 set), c64.251913-01.bin (C64 mode).
  */
 namespace c128 {
 

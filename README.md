@@ -60,7 +60,7 @@ A single plugin module can provide multiple resources, which are automatically r
 
 ### Commodore 128
 - **Profiles**: `c128`, `c128-ntsc`.
-- **Hardware**: MOS 8502 CPU (1/2 MHz), 8722 MMU with 128 KB RAM, shared RAM and page relocation, 8564/8566 VIC-IIe 40-column screen, 6581 SID, two 6526 CIAs, 8563 VDC 80-column screen (the 40/80 key picks the screen shown), keyboard with the C128's extra keys, two joysticks, IEC drive on unit 8, datasette. C128 mode only so far. See `doc/README-C128.md`.
+- **Hardware**: MOS 8502 CPU (1/2 MHz), 8722 MMU with 128 KB RAM, shared RAM and page relocation, 8564/8566 VIC-IIe 40-column screen, 6581 SID, two 6526 CIAs, 8563 VDC 80-column screen (the 40/80 key picks the screen shown), keyboard with the C128's extra keys, two joysticks, IEC drive on unit 8, datasette. C128 and C64 modes (GO64, or C= at reset). See `doc/README-C128.md`.
 
 ### Commodore PET Series
 - **Profiles**: `pet2001`, `pet4032`, `pet8032`.
