@@ -129,3 +129,28 @@ TEST_CASE(plus4_tape_port_lines) {
     ASSERT(motorOn());
     delete m;
 }
+
+// RS-232 through the KERNAL: the 6551 at $FD00, looped back (the C16 has none)
+TEST_CASE(plus4_acia_kernal_loopback) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::Plus4, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IOHandler* acia = m->ioRegistry->findHandler("ACIA");
+    ASSERT(acia != nullptr);
+    ASSERT(acia->attachSerial("loopback"));
+    m->onReset(*m);
+    run(m, 6000000);
+    // 1200 bps 8N1, DTR and transmit IRQs (the KERNAL sends from its IRQ)
+    keyboard(m)->enqueueText("10 OPEN2,2,0,CHR$(8)+CHR$(5):PRINT#2,\"HE\"+\"LLO\";\n"
+                             "20 FORI=1TO300:NEXT\n"
+                             "30 GET#2,A$:IFA$<>\"\"THENPRINTA$;:GOTO30\n"
+                             "40 CLOSE2\nRUN\n");
+    run(m, 30000000);
+    ASSERT(screenHas(m, "HELLO"));
+    delete m;
+
+    m = plus4::create(plus4::Model::C16, false, &err);
+    ASSERT(m != nullptr);
+    ASSERT(m->ioRegistry->findHandler("ACIA") == nullptr);
+    delete m;
+}

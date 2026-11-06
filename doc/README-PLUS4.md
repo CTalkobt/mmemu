@@ -28,7 +28,7 @@ the real machine.
 | $8000-$BFFF | RAM, or the low ROM bank: BASIC 3.5, 3-plus-1 low, cartridge 1, cartridge 2 |
 | $C000-$FFFF | RAM, or the high ROM bank: KERNAL, 3-plus-1 high, cartridges |
 | $FC00-$FCFF | always the KERNAL while ROM is on |
-| $FD00-$FD0F | 6551 ACIA (Plus/4; not emulated yet) |
+| $FD00-$FD0F | 6551 ACIA (Plus/4) |
 | $FD10-$FD1F | 6529 user port latch |
 | $FD30-$FD3F | 6529 keyboard row latch |
 | $FDD0-$FDDF | ROM bank select: address bits 0-1 pick the low bank, bits 2-3 the high bank |
@@ -103,9 +103,36 @@ waves, played as two equal halves. Recordings are saved as C16 version 2
 TAPs (VICE writes version 1 for the Plus/4), starting on a falling edge of
 the write line, the start of a wave.
 
+## RS-232 (Plus/4)
+
+A MOS 6551 ACIA (`Acia6551`, `src/plugins/devices/acia6551/`, after VICE's
+`aciacore.c`) at $FD00 on the IRQ: data, status (a write is a programmed
+reset), command and control registers; 50-19200 bps with characters taking
+their real time on the wire; receive-full, overrun and transmit IRQs. The
+C16 has no ACIA.
+
+The far end is set with the CLI `serial` command:
+
+```
+serial loopback          # what is sent comes back
+serial tcp:25232         # a TCP server on 127.0.0.1:25232; one client is the modem
+serial none              # nothing attached (DCD and DSR not asserted)
+```
+
+The KERNAL sends from its IRQ handler, so open the channel with transmit
+IRQs on, e.g. 1200 bps 8N1:
+
+```
+OPEN 2,2,0,CHR$(8)+CHR$(5)      : REM control $08, command $05
+PRINT#2,"HELLO";
+GET#2,A$
+```
+
+With a far end attached, ST reads 64 after RS-232 I/O: the KERNAL inverts
+the ACIA's DSR bit into ST bit 6 (`EOR #$40` at $EB30).
+
 ## Not yet emulated
 
-- 6551 ACIA
 - Tape fast-forward/rewind timing, wobble and the motor's run-down delay
 - Fast-loaders and drive code (`M-E`/`M-W`): the drive is a DOS, not an emulated 1541 CPU
 - Cartridges

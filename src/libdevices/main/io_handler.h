@@ -80,6 +80,9 @@ public:
     virtual bool saveTapeRecording(const std::string& path)  { return false; }
     virtual bool isTapeRecording() const                     { return false; }
     virtual bool isHaltRequested() const                     { return false; }
+    /** A serial port's far end (CLI `serial`): e.g. "loopback", "tcp:PORT",
+     *  "none". False if this device has no serial port or the spec fails. */
+    virtual bool attachSerial(const std::string& /*spec*/)   { return false; }
 
     // -----------------------------------------------------------------------
     // Identity (pure virtual — every device must provide these)

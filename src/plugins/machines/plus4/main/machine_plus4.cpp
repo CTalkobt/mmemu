@@ -15,6 +15,7 @@
 #include "plugins/devices/ted/main/ted.h"
 #include "plugins/devices/iec_drive/main/iec_drive.h"
 #include "plugins/devices/datasette/main/datasette.h"
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include "libdevices/main/isignal_line.h"
 #include <functional>
 #include "util/path_util.h"
@@ -418,6 +419,17 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
 
     auto* irq = new SharedIrqManager(cpu);
     desc->deleters.push_back([irq]() { delete irq; });
+
+    // The Plus/4's RS-232: a 6551 at $FD00 on the IRQ (the C16 has none;
+    // CLI `serial loopback|tcp:PORT|none`)
+    if (model == Model::Plus4) {
+        auto* acia = new Acia6551(0xFD00);
+        acia->setClockHz((uint32_t)Ted::clockHz(ntsc ? Ted::Standard::NTSC : Ted::Standard::PAL));
+        acia->setIrqLine(irq->createLine());
+        io->registerHandler(acia);
+        bus->setAcia(acia);
+        desc->deleters.push_back([acia]() { delete acia; });
+    }
     ted->setIrqLine(irq->createLine());
     ted->setFetch([bus](uint16_t a, bool fromRom) { return bus->tedFetch(a, fromRom); });
     ted->setKeyboardRead([bus, kbd](uint8_t ff08) { return kbd->read(bus->keyboardLatch(), ff08); });

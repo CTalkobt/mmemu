@@ -65,7 +65,7 @@ A single plugin module can provide multiple resources, which are automatically r
 
 ### Commodore Plus/4 and C16
 - **Profiles**: `plus4`, `plus4-ntsc`, `c16`, `c16-ntsc`.
-- **Hardware**: 7501/8501 CPU, MOS 7360/8360 TED video/sound/timers, ROM banking (BASIC 3.5, KERNAL, 3-plus-1), keyboard matrix, two joysticks. See `doc/README-PLUS4.md`.
+- **Hardware**: 7501/8501 CPU, MOS 7360/8360 TED video/sound/timers, ROM banking (BASIC 3.5, KERNAL, 3-plus-1), keyboard matrix, two joysticks, IEC drive on unit 8, 1531 datasette, 6551 ACIA (Plus/4). See `doc/README-PLUS4.md`.
 
 ---
 
