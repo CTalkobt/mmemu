@@ -154,3 +154,86 @@ TEST_CASE(plus4_acia_kernal_loopback) {
     ASSERT(m->ioRegistry->findHandler("ACIA") == nullptr);
     delete m;
 }
+
+namespace {
+std::vector<uint8_t> romFile(const char* path) {
+    std::vector<uint8_t> d;
+    if (FILE* f = fopen(path, "rb")) {
+        int c;
+        while ((c = fgetc(f)) != EOF) d.push_back((uint8_t)c);
+        fclose(f);
+    }
+    return d;
+}
+}
+
+// Banking (plus4mem.c): $FF3E/$FF3F switch the upper 32 KB between ROM and
+// RAM, writes under ROM go to RAM, $FDD0-$FDDF pick the low (A0-A1) and high
+// (A2-A3) ROMs, $FC00-$FCFF is always the KERNAL, and $FF20-$FF3D (and
+// $FF3E/$FF3F with ROM selected) are the RAM or ROM underneath, not the TED
+TEST_CASE(plus4_rom_ram_banking) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::Plus4, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto basic  = romFile("roms/plus4/basic.318006-01.bin");
+    auto kernal = romFile("roms/plus4/kernal.318004-05.bin");
+    auto funcLo = romFile("roms/plus4/3-plus-1.317053-01.bin");
+    auto funcHi = romFile("roms/plus4/3-plus-1.317054-01.bin");
+    ASSERT(basic.size() == 0x4000 && kernal.size() == 0x4000);
+    ASSERT(funcLo.size() == 0x4000 && funcHi.size() == 0x4000);
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+
+    // After reset: BASIC low, KERNAL high
+    bus->write8(0xFF3E, 0);
+    bus->write8(0xFDD0, 0);
+    ASSERT(bus->read8(0x8000) == basic[0] && bus->read8(0xBFFF) == basic[0x3FFF]);
+    ASSERT(bus->read8(0xC000) == kernal[0] && bus->read8(0xFFFC) == kernal[0x3FFC]);
+
+    // Writes under ROM reach RAM; $FF3F shows it, $FF3E hides it again
+    uint8_t v = (uint8_t)~basic[0x0123];
+    bus->write8(0x8123, v);
+    ASSERT(bus->read8(0x8123) == basic[0x0123]);
+    bus->write8(0xFF3F, 0);
+    ASSERT(bus->read8(0x8123) == v);
+    bus->write8(0xFF3E, 0);
+    ASSERT(bus->read8(0x8123) == basic[0x0123]);
+
+    // $FDD5: function ROM low and high; $FC00-$FCFF stays the KERNAL
+    bus->write8(0xFDD5, 0);
+    ASSERT(bus->read8(0x8000) == funcLo[0] && bus->read8(0xA000) == funcLo[0x2000]);
+    ASSERT(bus->read8(0xC000) == funcHi[0] && bus->read8(0xD000) == funcHi[0x1000]);
+    ASSERT(bus->read8(0xFC00) == kernal[0x3C00] && bus->read8(0xFCFF) == kernal[0x3CFF]);
+    bus->write8(0xFDD0, 0);
+    ASSERT(bus->read8(0x8000) == basic[0]);
+
+    // $FF20-$FF3D: ROM underneath with ROM on, RAM with RAM on
+    ASSERT(bus->read8(0xFF20) == kernal[0x3F20]);
+    ASSERT(bus->read8(0xFF3E) == kernal[0x3F3E]);
+    bus->write8(0xFF30, 0x5A);                               // to RAM
+    ASSERT(bus->read8(0xFF30) == kernal[0x3F30]);
+    bus->write8(0xFF3F, 0);
+    ASSERT(bus->read8(0xFF30) == 0x5A);
+    ASSERT(bus->read8(0xFF3E) == 0xFF && bus->read8(0xFF3F) == 0xFF);
+    // ... and $FF00-$FF1F stay the TED either way
+    bus->write8(0xFF15, 0x23);                               // background colour
+    ASSERT((bus->read8(0xFF15) & 0x7F) == 0x23);
+    ASSERT(!(bus->read8(0xFF13) & 0x01));                    // ROM status bit: RAM
+    bus->write8(0xFF3E, 0);
+    ASSERT(bus->read8(0xFF13) & 0x01);
+    delete m;
+}
+
+// The C16's 16 KB repeats through the 64 KB map
+TEST_CASE(c16_ram_mirrors) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::C16, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xFF3F, 0);                                  // RAM in the upper half
+    bus->write8(0x2345, 0xA5);
+    ASSERT(bus->read8(0x6345) == 0xA5);
+    ASSERT(bus->read8(0xA345) == 0xA5 && bus->read8(0xE345) == 0xA5);
+    delete m;
+}

@@ -119,8 +119,8 @@ public:
             else           m_portData = val;
             portChanged();
         }
-        if (addr >= 0xFD00 && addr < 0xFF40) {
-            io(addr, &val, true, false);
+        if (addr >= 0xFD00 && addr < 0xFF40 && io(addr, &val, true, false)) {
+            // an I/O register
         } else {
             m_ram[addr & m_ramMask] = val;                  // writes under ROM go to RAM
         }
@@ -167,8 +167,7 @@ private:
         }
         if (addr >= 0xFD00 && addr < 0xFF40) {
             uint8_t v = 0xFF;
-            io(addr, &v, false, peek);
-            return v;
+            if (io(addr, &v, false, peek)) return v;
         }
         if (addr >= 0x8000 && m_romOn) return romRead(addr);
         return m_ram[addr & m_ramMask];
@@ -182,13 +181,15 @@ private:
         m_drive->setComputerLines(out & 0x04, out & 0x02, out & 0x01);
     }
 
-    void io(uint16_t addr, uint8_t* v, bool write, bool peek) {
+    /** An I/O access at $FD00-$FF3F; false where the TED leaves it to the
+     *  RAM/ROM underneath ($FF20-$FF3D, and reads of $FF3E/$FF3F with ROM
+     *  selected: plus4mem.c ram_ffxx_read / rom_ffxx_read / *_ffxx_store). */
+    bool io(uint16_t addr, uint8_t* v, bool write, bool peek) {
         if (addr >= 0xFF00) {                               // TED
-            if (!m_ted) return;
-            if (write)     m_ted->ioWrite(this, addr, *v);
-            else if (peek) m_ted->ioPeek(this, addr, v);
-            else           m_ted->ioRead(this, addr, v);
-            return;
+            if (!m_ted) return true;
+            if (write)     return m_ted->ioWrite(this, addr, *v);
+            if (peek)      return m_ted->ioPeek(this, addr, v);
+            return m_ted->ioRead(this, addr, v);
         }
         if (addr < 0xFD10) {                                // ACIA (Plus/4 only)
             if (m_acia) {
@@ -196,24 +197,25 @@ private:
                 else if (peek) m_acia->ioPeek(this, addr, v);
                 else           m_acia->ioRead(this, addr, v);
             }
-            return;
+            return true;
         }
         if (addr < 0xFD20) {                                // 6529B user port
             // Quasi-bidirectional: a pin reads low if written low or pulled
             // low outside (bit 2: the cassette sense switch)
             if (write) m_userPort = *v;
             else       *v = (uint8_t)(m_userPort & (m_tapeSense ? 0xFF : ~0x04));
-            return;
+            return true;
         }
         if (addr >= 0xFD30 && addr < 0xFD40) {              // 6529B keyboard row latch
             if (write) m_kbdLatch = *v; else *v = m_kbdLatch;
-            return;
+            return true;
         }
         if (addr >= 0xFDD0 && addr < 0xFDE0) {              // ROM bank select (write only)
             if (write) m_banks = addr & 0x0F;
-            return;
+            return true;
         }
         // $FE00-$FEFF (TCBM drives) and the rest: nothing there
+        return true;
     }
 
     BusConfig m_cfg;

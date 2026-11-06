@@ -32,7 +32,7 @@ the real machine.
 | $FD10-$FD1F | 6529 user port latch |
 | $FD30-$FD3F | 6529 keyboard row latch |
 | $FDD0-$FDDF | ROM bank select: address bits 0-1 pick the low bank, bits 2-3 the high bank |
-| $FF00-$FF3F | TED registers; a write to $FF3E selects ROM, $FF3F RAM |
+| $FF00-$FF3F | TED registers ($FF00-$FF1F); a write to $FF3E selects ROM, $FF3F RAM. $FF20-$FF3D, and $FF3E/$FF3F read while ROM is selected, are the RAM or ROM underneath |
 
 The TED fetches screen, colour and character data through the same banking
 (its "fetch from ROM" bit picks ROM or RAM for character data).
