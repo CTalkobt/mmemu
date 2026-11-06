@@ -3,8 +3,10 @@
 // A Commodore DOS on a disk image (D64, D71, D80, D81, D82), read-only:
 // LOAD, `$` directories as the drive sends them, OPEN/GET#/INPUT# of PRG,
 // SEQ and USR files, the error channel, and direct access: `#` buffer
-// channels with U1 (UA) / B-R block reads and B-P (what the C128's boot
-// sector and CP/M use). Writes (files, U2, B-W) report 26,WRITE PROTECT ON.
+// channels with U1 (UA) / B-R block reads, U2 (UB) / B-W block writes
+// (back to the image file) and B-P (what the C128's boot sector and CP/M
+// use). Writing files (SAVE, OPEN ...,W) reports 26,WRITE PROTECT ON, as do
+// block writes to an image the host will not let us write.
 
 #include "cbm_dos.h"
 #include <cstdint>
@@ -53,6 +55,7 @@ private:
         int ptr = 0, last = 255;
     };
     void blockRead(const std::string& args, bool u1);
+    void blockWrite(const std::string& args, bool u2);
     void bufferPointer(const std::string& args);
     void setError(int code, const char* text, int track = 0, int sector = 0);
     void openChannel(int channel, const std::string& spec);

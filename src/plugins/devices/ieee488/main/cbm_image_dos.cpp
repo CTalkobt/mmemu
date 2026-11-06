@@ -162,8 +162,12 @@ void CbmImageDos::command(const std::string& raw) {
         blockRead(cmd.substr(3), false);
     } else if (cmd.rfind("B-P", 0) == 0) {
         bufferPointer(cmd.substr(3));
-    } else if (c == 'S' || c == 'R' || c == 'N' || c == 'C' || c == 'V' || cmd.rfind("B-W", 0) == 0 ||
-               cmd.rfind("M-W", 0) == 0 || cmd.rfind("U2", 0) == 0) {
+    } else if (cmd.rfind("U2", 0) == 0 || cmd.rfind("UB", 0) == 0) {
+        blockWrite(cmd.substr(2), true);
+    } else if (cmd.rfind("B-W", 0) == 0) {
+        blockWrite(cmd.substr(3), false);
+    } else if (c == 'S' || c == 'R' || c == 'N' || c == 'C' || c == 'V' ||
+               cmd.rfind("M-W", 0) == 0) {
         setError(26, "WRITE PROTECT ON");       // would change the disk
     } else {
         setError(31, "SYNTAX ERROR");
@@ -203,6 +207,21 @@ void CbmImageDos::blockRead(const std::string& args, bool u1) {
     std::copy(m_disk->data().begin() + off, m_disk->data().begin() + off + 256, c.buf);
     if (u1) { c.ptr = 0; c.last = 255; }
     else { c.ptr = 1; c.last = c.buf[0] ? c.buf[0] : 255; }
+    setError(0, " OK");
+}
+
+// U2 writes the buffer as it is; B-W first stores the pointer (the byte
+// count) in the buffer's first byte
+void CbmImageDos::blockWrite(const std::string& args, bool u2) {
+    auto n = numbers(args);
+    if (n.size() < 4) { setError(30, "SYNTAX ERROR"); return; }
+    int ch = n[0], t = n[2], sec = n[3];
+    if (ch < 0 || ch > 14 || !m_ch[ch].buffer) { setError(70, "NO CHANNEL"); return; }
+    Channel& c = m_ch[ch];
+    if (m_disk->sectorOffset(t, sec) == 0xFFFFFFFFu) { setError(66, "ILLEGAL TRACK OR SECTOR", t, sec); return; }
+    if (!m_disk->writable()) { setError(26, "WRITE PROTECT ON", t, sec); return; }
+    if (!u2) c.buf[0] = (uint8_t)c.ptr;
+    if (!m_disk->writeSector(t, sec, c.buf)) { setError(25, "WRITE ERROR", t, sec); return; }
     setError(0, " OK");
 }
 

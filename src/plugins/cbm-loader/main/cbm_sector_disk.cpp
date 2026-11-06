@@ -160,7 +160,21 @@ bool CbmSectorDisk::open(const std::string& path) {
 
     m_data.resize(size);
     file.read(reinterpret_cast<char*>(m_data.data()), size);
+    m_path = path;
+    m_writable = static_cast<bool>(std::fstream(path, std::ios::binary | std::ios::in | std::ios::out));
     return true;
+}
+
+bool CbmSectorDisk::writeSector(int track, int sector, const uint8_t* data) {
+    uint32_t off = getSectorOffset(track, sector);
+    if (off == 0xFFFFFFFF || off + 256 > m_data.size()) return false;
+    std::copy(data, data + 256, m_data.begin() + off);
+    if (!m_writable) return false;
+    std::fstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!f) return false;
+    f.seekp(off);
+    f.write(reinterpret_cast<const char*>(data), 256);
+    return static_cast<bool>(f);
 }
 
 uint32_t CbmSectorDisk::getSectorOffset(int track, int sector) const {

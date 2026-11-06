@@ -42,12 +42,22 @@ public:
     const std::vector<uint8_t>& data() const { return m_data; }
     /** Byte offset of a track/sector, 0xFFFFFFFF if out of range. */
     uint32_t sectorOffset(int track, int sector) const { return getSectorOffset(track, sector); }
+    /**
+     * Write 256 bytes to a track/sector and back to the image file (as
+     * VICE does). False if the sector is out of range or the file cannot be
+     * written (it stays changed in memory only).
+     */
+    bool writeSector(int track, int sector, const uint8_t* data);
+    /** The file is writable (not read-only on the host). */
+    bool writable() const { return m_writable; }
 
     const CbmDiskGeometry& geometry() const { return m_geom; }
 
 protected:
     const CbmDiskGeometry& m_geom;
     std::vector<uint8_t> m_data;
+    std::string m_path;
+    bool m_writable = false;
 
     uint32_t getSectorOffset(int track, int sector) const;
 };
