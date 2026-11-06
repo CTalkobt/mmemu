@@ -292,12 +292,7 @@ bool DebugContext::restoreSnapshot(int index) {
             ImageLoaderRegistry::instance().setActiveCartridge(m_bus, nullptr);
         }
         if (!snap.cartridgePath.empty()) {
-            auto newCart = ImageLoaderRegistry::instance().createCartridgeHandler(snap.cartridgePath);
-            if (newCart) {
-                if (newCart->attach(m_bus, nullptr)) {
-                    ImageLoaderRegistry::instance().setActiveCartridge(m_bus, std::move(newCart));
-                }
-            }
+            ImageLoaderRegistry::instance().attachCartridge(snap.cartridgePath, m_bus, nullptr);
         }
     }
     

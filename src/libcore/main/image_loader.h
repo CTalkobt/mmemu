@@ -105,6 +105,16 @@ public:
     std::unique_ptr<ICartridgeHandler> createCartridgeHandler(const std::string& path);
 
     /**
+     * Attach a cartridge to `machine`: each handler that takes the file's
+     * extension is tried in turn (".bin" is a Plus/4 and a C128 cartridge),
+     * and the first that attaches becomes the bus's active cartridge.
+     * Returns it, or nullptr; `supported` is false when no handler took the
+     * file at all.
+     */
+    ICartridgeHandler* attachCartridge(const std::string& path, IBus* bus, MachineDescriptor* machine,
+                                       bool* supported = nullptr);
+
+    /**
      * List all registered loader names.
      */
     void enumerateLoaders(std::vector<std::string>& out);

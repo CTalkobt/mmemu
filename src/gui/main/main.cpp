@@ -2128,10 +2128,10 @@ void MmemuFrame::OnAttachCart(wxCommandEvent& event) {
         }
     }
     
-    auto handler = ImageLoaderRegistry::instance().createCartridgeHandler(path);
-    if (handler) {
-        if (handler->attach(m_bus, m_machine)) {
-            ImageLoaderRegistry::instance().setActiveCartridge(m_bus, std::move(handler));
+    bool supported = false;
+    ICartridgeHandler* handler = ImageLoaderRegistry::instance().attachCartridge(path, m_bus, m_machine, &supported);
+    if (supported) {
+        if (handler) {
             m_cartPane->RefreshMetadata();
             // Reset machine
             if (m_machine->onReset) m_machine->onReset(*m_machine);

@@ -2744,11 +2744,11 @@ Json handleToolsCall(const Json& params) {
             textItem.oVal["text"] = Json("Error: Invalid machine ID");
             textItem.oVal["isError"] = Json(true);
         } else {
-            auto handler = ImageLoaderRegistry::instance().createCartridgeHandler(path);
-            if (handler) {
-                if (handler->attach(ms->bus, ms->machine)) {
+            bool supported = false;
+            ICartridgeHandler* handler = ImageLoaderRegistry::instance().attachCartridge(path, ms->bus, ms->machine, &supported);
+            if (supported) {
+                if (handler) {
                     auto md = handler->metadata();
-                    ImageLoaderRegistry::instance().setActiveCartridge(ms->bus, std::move(handler));
                     if (doReset && ms->machine->onReset) ms->machine->onReset(*ms->machine);
                     textItem.oVal["text"] = Json("Attached cartridge: " + md.displayName + " (" + md.type + ")");
                 } else {

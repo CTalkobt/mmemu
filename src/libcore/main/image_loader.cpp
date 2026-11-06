@@ -92,6 +92,28 @@ std::unique_ptr<ICartridgeHandler> ImageLoaderRegistry::createCartridgeHandler(c
     return nullptr;
 }
 
+ICartridgeHandler* ImageLoaderRegistry::attachCartridge(const std::string& path, IBus* bus,
+                                                         MachineDescriptor* machine, bool* supported) {
+    if (supported) *supported = false;
+    size_t dot = path.find_last_of('.');
+    if (dot == std::string::npos) return nullptr;
+    std::string ext = path.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    auto it = m_cartFactories.find(ext);
+    if (it == m_cartFactories.end()) return nullptr;
+    for (auto& factory : it->second) {
+        auto handler = factory(path);
+        if (!handler) continue;
+        if (supported) *supported = true;
+        if (handler->attach(bus, machine)) {
+            ICartridgeHandler* h = handler.get();
+            setActiveCartridge(bus, std::move(handler));
+            return h;
+        }
+    }
+    return nullptr;
+}
+
 void ImageLoaderRegistry::enumerateLoaders(std::vector<std::string>& out) {
     for (auto& loader : m_loaders) {
         out.push_back(loader->name());

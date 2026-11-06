@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 struct MachineDescriptor;
 
@@ -26,9 +27,10 @@ struct MachineDescriptor;
  * VDC ($D600), 2 KB colour RAM (the 8502 port picks the CPU's and the VIC's
  * 1 KB halves), CIA1, CIA2.
  *
- * The machine starts with the 8502 (MCR bit 0 set), where the Z80 boot BIOS
- * would hand over. Not yet: the VDC's 80-column display, C64 mode (GO64),
- * the Z80 and CP/M, function ROMs, 1571 fast serial.
+ * The Z80 starts the machine from its boot BIOS and hands over to the 8502
+ * through MCR bit 0 (CP/M switches back and forth). Function ROMs: internal
+ * (the board's socket) and external (a cartridge), 32 KB each. Not yet: 1571
+ * fast serial, bank-switching cartridges.
  *
  * ROMs: roms/c128/basic-4000.318018-04.bin, basic-8000.318019-04.bin,
  * kernal.318020-05.bin (editor, Z80 BIOS, KERNAL), characters.390059-01.bin
@@ -38,5 +40,20 @@ namespace c128 {
 
 /** A new C128 (PAL, or NTSC), or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(bool ntsc = false, std::string* err = nullptr);
+
+/**
+ * Plug a cartridge (an external function ROM) in and reset: a raw 1-32 KB
+ * image or a VICE .crt ("C128 CARTRIDGE  ", generic). The KERNAL starts it
+ * if it has "CBM" at $8007 (or $C007) and $01 at $8006. False with `err`.
+ */
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
+                     const std::string& label, std::string& err);
+/** Take the cartridge out and reset. */
+void removeCartridge(MachineDescriptor* m);
+/** "<label> (<type>)", or "" with no cartridge. */
+std::string cartridgeInfo(MachineDescriptor* m);
+/** Fit (or with an empty image, remove) the internal function ROM, the
+ *  socket on the board (same formats as a cartridge). */
+bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, std::string& err);
 
 }  // namespace c128

@@ -99,3 +99,29 @@ TEST_CASE(cartridge_factories_share_extension) {
     ASSERT(b && b->metadata().type == "second");
     ASSERT(!reg.createCartridgeHandler("x/neither.tstcrt"));
 }
+
+// attachCartridge tries each handler for the extension until one attaches
+// (".bin" is a Plus/4 and a C128 cartridge)
+TEST_CASE(cartridge_attach_tries_each_handler) {
+    struct Cart : ICartridgeHandler {
+        Cart(std::string t, bool ok) : type(std::move(t)), ok(ok) {}
+        bool attach(IBus*, MachineDescriptor*) override { return ok; }
+        void eject(IBus*) override {}
+        CartridgeMetadata metadata() const override { CartridgeMetadata md; md.type = type; return md; }
+        std::string type;
+        bool ok;
+    };
+    auto& reg = ImageLoaderRegistry::instance();
+    reg.registerCartridgeHandler("tstbin", [](const std::string&) -> std::unique_ptr<ICartridgeHandler> {
+        return std::make_unique<Cart>("other machine", false);
+    });
+    reg.registerCartridgeHandler("tstbin", [](const std::string&) -> std::unique_ptr<ICartridgeHandler> {
+        return std::make_unique<Cart>("this machine", true);
+    });
+    bool supported = false;
+    ICartridgeHandler* h = reg.attachCartridge("x.tstbin", nullptr, nullptr, &supported);
+    ASSERT(supported && h && h->metadata().type == "this machine");
+    ASSERT(reg.getActiveCartridge(nullptr) == h);
+    reg.setActiveCartridge(nullptr, nullptr);
+    ASSERT(!reg.attachCartridge("x.nothing", nullptr, nullptr, &supported) && !supported);
+}
