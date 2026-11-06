@@ -16,6 +16,7 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/isignal_line.h"
+#include "libdevices/main/ivideo_inspect.h"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -45,7 +46,7 @@
  * are reads of $FF3E/$FF3F while ROM is selected; with RAM selected those
  * two read $FF.
  */
-class Ted : public IOHandler, public IVideoOutput, public IAudioOutput {
+class Ted : public IOHandler, public IVideoOutput, public IAudioOutput, public IVideoInspect {
 public:
     enum class Standard { PAL, NTSC };
 
@@ -170,8 +171,23 @@ public:
     // ------------------------------------------------------------------
     // State access (tests, debugger)
     // ------------------------------------------------------------------
-    /** Palette entry for a TED colour byte (luminance bits 6-4, hue 3-0), 0xFFRRGGBB. */
-    uint32_t paletteColor(uint8_t colorByte) const { return m_palette[colorByte & 0x7F]; }
+    // ------------------------------------------------------------------
+    // IVideoInspect (the graphics viewer, #208)
+    // ------------------------------------------------------------------
+    /** 128 entries: a colour byte's luminance (bits 6-4) and hue (3-0); 121 distinct colours. */
+    int paletteSize() const override { return 128; }
+    /** Palette entry for a TED colour byte, 0xFFRRGGBB. */
+    uint32_t paletteColor(int colorByte) const override { return m_palette[colorByte & 0x7F]; }
+    /** A byte as TED fetches character/bitmap data: ROM or RAM per $FF12 bit 2. */
+    uint8_t peekVideo(uint32_t addr) const override { return fetchChar((uint16_t)addr); }
+    /**
+     * The character set ($FF13) in the text modes, the bitmap ($FF12) in the
+     * bitmap modes; multicolour in multicolour text / bitmap. bg[] is
+     * $FF15-$FF18; fg is the attribute colour of the first screen cell (or a
+     * contrasting colour when that matches the background).
+     */
+    bool charsetInfo(CharsetInfo& out) const override;
+
     uint16_t rasterLine() const { return m_rasterCounter; }
     int      rasterCycle() const { return m_cycle; }
     uint16_t rasterCompare() const { return m_rasterIrqLine; }

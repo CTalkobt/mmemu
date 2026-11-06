@@ -575,3 +575,46 @@ TEST_CASE(ted_device_info) {
     ASSERT(!info.state.empty());
     ASSERT_EQ(t.t.deviceAliases()[0], std::string("TED"));
 }
+
+// IVideoInspect (#208): the character set or bitmap TED is showing, its
+// colours, and memory as TED fetches it (ROM or RAM per $FF12 bit 2)
+TEST_CASE(ted_video_inspect) {
+    T x;
+    x.textSetup();
+    x.ram[0x2008] = 0x18;
+    x.rom[0xD008] = 0x3C;
+    x.ram[0x0800] = 0x32;                   // first cell's attribute
+    IVideoInspect& vi = x.t;
+    ASSERT(vi.paletteSize() == 128);
+    ASSERT(vi.paletteColor(0x32) == x.col(0x32));
+    IVideoInspect::CharsetInfo ci;
+    ASSERT(vi.charsetInfo(ci));
+    ASSERT(ci.ted && !ci.bitmap && !ci.multicolor);
+    ASSERT(ci.addr == 0x2000 && ci.bg[0] == 0x11 && ci.fg == 0x32);
+    ASSERT(vi.peekVideo(0x2008) == 0x18);   // RAM
+    x.w(0x12, 0x04);                        // characters from ROM
+    x.w(0x13, 0xD0);
+    ASSERT(vi.charsetInfo(ci) && ci.addr == 0xD000);
+    ASSERT(vi.peekVideo(0xD008) == 0x3C);
+    ASSERT(vi.peekVideo(0x2008) == 0x00);   // ROM below $8000: open (zeros, as VICE)
+
+    // Multicolour text: bg[0..2] = $FF15-$FF17, fg without bit 3
+    x.w(0x07, 0x18);
+    x.w(0x16, 0x45); x.w(0x17, 0x56);
+    x.ram[0x0800] = 0x3A;
+    ASSERT(vi.charsetInfo(ci) && ci.multicolor && !ci.bitmap);
+    ASSERT(ci.bg[1] == 0x45 && ci.bg[2] == 0x56 && ci.fg == 0x32);
+
+    // Hires bitmap at $FF12 bits 3-5: the cell's colours from screen + attributes
+    x.w(0x06, 0x3B); x.w(0x07, 0x08);
+    x.w(0x12, 0x08);                        // bitmap $2000, RAM
+    x.ram[0x0C00] = 0x27;                   // screen: fg hue 2, bg hue 7
+    x.ram[0x0800] = 0x53;                   // attributes: bg luminance 5, fg luminance 3
+    ASSERT(vi.charsetInfo(ci) && ci.bitmap && !ci.multicolor && ci.addr == 0x2000);
+    ASSERT(ci.fg == 0x32 && ci.bg[0] == 0x57);
+
+    // Multicolour bitmap: {$FF15, cell, cell, $FF16}
+    x.w(0x07, 0x18);
+    ASSERT(vi.charsetInfo(ci) && ci.bitmap && ci.multicolor);
+    ASSERT(ci.bg[0] == 0x11 && ci.bg[1] == 0x32 && ci.bg[2] == 0x57 && ci.fg == 0x45);
+}

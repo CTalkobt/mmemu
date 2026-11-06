@@ -41,6 +41,9 @@ const std::vector<FormatInfo>& formats() {
         {Format::VeraTile16x2, "vera-tile16-2", "Tile 16x16, 2 bpp (VERA)", 16, 16, 1, 2, 4, 64, false, false, "vera"},
         {Format::VeraTile16x4, "vera-tile16-4", "Tile 16x16, 4 bpp (VERA)", 16, 16, 1, 4, 8, 128, false, false, "vera"},
         {Format::VeraTile16x8, "vera-tile16-8", "Tile 16x16, 8 bpp (VERA)", 16, 16, 1, 8, 16, 256, false, false, "vera"},
+        // TED (Plus/4, C16): characters as on the VIC; a bitmap is shown as 8x8 cells
+        {Format::TedChar,      "ted-char",    "Character / bitmap cell (TED)", 8, 8, 1, 1, 1, 8, false, false, "ted"},
+        {Format::TedCharMulti, "ted-char-mc", "Character / bitmap cell, multicolour (TED)", 4, 8, 2, 2, 1, 8, false, false, "ted"},
     };
     return s;
 }

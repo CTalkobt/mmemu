@@ -1510,7 +1510,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             if (args.empty())
                 m_output("Syntax: gfx <format> <addr> [count] [columns] [vic] [swap] [file.png]\n"
                          "        gfx chip-sprite <n> [file.png]     (VIC sprite 0-7; Atari player 0-3, 4 = missiles; VERA 0-127)\n"
-                         "        gfx chip-charset [count] [columns] [file.png]\n"
+                         "        gfx chip-charset [count] [columns] [file.png]   (TED: the bitmap in the bitmap modes)\n"
                          "        gfx chip-layer <n> [count] [columns] [file.png]   (VERA tile layer 0/1)\n"
                          "  vic = read memory as the video chip sees it; swap = swap nibble order\n"
                          "  vic-sprite / vic-charset are the same as chip-sprite / chip-charset\n");
@@ -1527,7 +1527,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         }
         if (!m_ctx.machine || !m_ctx.bus) { m_output("No machine created.\n"); return; }
         if (gfx::machineFormats(m_ctx.machine).empty()) {
-            m_output("This machine has no graphics viewer (gfx shows VIC-I/II/IV and ANTIC/GTIA graphics).\n");
+            m_output("This machine has no graphics viewer (gfx shows VIC-I/II/IV, ANTIC/GTIA, VERA and TED graphics).\n");
             return;
         }
 
