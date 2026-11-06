@@ -639,6 +639,35 @@ uint16_t Ted::charBase() const {
     return (uint16_t)((m_regs[0x13] & mask) << 8);
 }
 
+bool Ted::charsetInfo(CharsetInfo& out) const {
+    const int mode = videoMode();
+    out.ted = true;
+    out.bitmap = mode == 2 || mode == 3;
+    out.multicolor = mode == 1 || mode == 3;
+    out.addr = out.bitmap ? bitmapBase() : charBase();
+    for (int i = 0; i < 4; ++i) out.bg[i] = m_regs[0x15 + i] & 0x7F;
+    // The colours of the first screen cell, as drawGraphics() forms them
+    // (screen and attribute fetches see ROM only at $8000 and up while ROM
+    // is selected)
+    auto vid = [this](uint16_t addr) { return fetchVideo(addr, addr >= 0x8000 && romSelected()); };
+    const uint8_t attr = vid(attributeBase()), scr = vid(screenBase());
+    if (mode == 2) {                                        // hires bitmap: both from the cell
+        out.bg[0] = (uint8_t)((attr & 0x70) | (scr & 0x0F));
+        out.fg = ((attr & 0x07) << 4) | (scr >> 4);
+        return true;
+    }
+    if (mode == 3) {                                        // multicolour bitmap: {$FF15, cell, cell, $FF16}
+        out.bg[1] = (uint8_t)((scr >> 4) | ((attr & 0x07) << 4));
+        out.bg[2] = (uint8_t)((scr & 0x0F) | (attr & 0x70));
+        out.fg = m_regs[0x16] & 0x7F;
+        return true;
+    }
+    uint8_t fg = attr & (mode == 1 ? 0x77 : 0x7F);          // multicolour text: bit 3 picks multicolour
+    if (fg == out.bg[0]) fg = (out.bg[0] & 0x70) >= 0x40 ? 0x00 : 0x71;   // black or white
+    out.fg = fg;
+    return true;
+}
+
 void Ted::getDeviceInfo(DeviceInfo& out) const {
     out.name = name();
     out.baseAddr = baseAddr();

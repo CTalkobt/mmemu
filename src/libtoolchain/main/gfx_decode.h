@@ -35,6 +35,8 @@ enum class Format {
     VeraSprite8x8, VeraSprite16x8, VeraSprite32x8, VeraSprite64x8,
     VeraTile8x1, VeraTile8x2, VeraTile8x4, VeraTile8x8,
     VeraTile16x1, VeraTile16x2, VeraTile16x4, VeraTile16x8,
+    TedChar,       ///< TED character (or bitmap cell), 8x8, 1 bpp
+    TedCharMulti,  ///< TED multicolour character, 4x8 double-wide pixels, 2 bpp
 };
 
 struct FormatInfo {
@@ -49,7 +51,7 @@ struct FormatInfo {
     uint32_t stride;           ///< default bytes from one item to the next
     bool isSprite;
     bool lowNibbleFirst;       ///< 4 bpp: low nibble is the left pixel
-    const char* family;        ///< video chip family: "vic" (VIC-I/II/IV), "antic" (ANTIC/GTIA), "vera"
+    const char* family;        ///< video chip family: "vic" (VIC-I/II/IV), "antic" (ANTIC/GTIA), "vera", "ted"
 };
 
 /** VERA sprite (width 8/16/32/64, 4 or 8 bpp) or tile (width 8/16, 1/2/4/8 bpp) format. */
@@ -78,7 +80,8 @@ struct Colors {
     /**
      * 1 bpp: slot[0] = background, slot[1] = foreground.
      * 2 bpp: slot[value] (sprite: 0 bg, 1 MC0, 2 sprite colour, 3 MC1;
-     *        char: 0 bg0, 1 bg1, 2 bg2, 3 colour RAM).
+     *        char: 0 bg0, 1 bg1, 2 bg2, 3 colour RAM; TED: 0 $FF15,
+     *        1 $FF16, 2 $FF17, 3 the attribute colour).
      */
     uint32_t slot[4] = {0xFF000000, 0xFFFFFFFF, 0xFF888888, 0xFFCCCCCC};
     /** 4/8 bpp: palette lookup; 4 bpp adds paletteBase. */

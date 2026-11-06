@@ -5,6 +5,9 @@
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/device_info.h"
 #include "libmem/main/ibus.h"
+#include "libdebug/main/gfx_view.h"
+#include "libdevices/main/ivideo_inspect.h"
+#include <set>
 #include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
@@ -250,5 +253,34 @@ TEST_CASE(c116_boots_as_c16) {
     run(m, 6000000);
     ASSERT(screenHas(m, "12277 BYTES FREE"));
     ASSERT(screenHas(m, "READY."));
+    delete m;
+}
+
+// The graphics viewer (#208): the Plus/4 offers the TED formats and follows
+// the character set the TED is using (the ROM set at $D000 after boot)
+TEST_CASE(plus4_graphics_viewer) {
+    std::string err;
+    MachineDescriptor* m = plus4::create(plus4::Model::Plus4, false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto fmts = gfx::machineFormats(m);
+    ASSERT(fmts.size() == 2 && fmts[0]->format == gfx::Format::TedChar);
+    ASSERT(gfx::machineFormats(m, "vic").empty());
+    m->onReset(*m);
+    run(m, 6000000);
+    IVideoInspect* vi = gfx::findVideoInspect(m);
+    ASSERT(vi != nullptr);
+    gfx::ViewRequest req;
+    req.source = gfx::Source::Charset;
+    req.count = 2;
+    req.columns = 2;
+    gfx::View v = gfx::buildView(req, m->buses[0].bus, vi);
+    ASSERT(v.error.empty());
+    ASSERT(v.format == gfx::Format::TedChar && v.start == 0xD000);
+    auto kernal = romFile("roms/plus4/kernal.318004-05.bin");
+    ASSERT(kernal.size() == 0x4000);
+    for (int i = 0; i < 16; ++i) ASSERT(vi->peekVideo(0xD000 + i) == kernal[0x1000 + i]);
+    // White background, black characters: '@' (character 0) has both
+    std::set<uint32_t> cols(v.sheet.argb.begin(), v.sheet.argb.end());
+    ASSERT(cols.count(vi->paletteColor(0x71)) && cols.count(vi->paletteColor(0x00)));
     delete m;
 }

@@ -88,7 +88,8 @@ private:
 wxString GraphicsPane::sourceName(int src) const {
     if (src == SRC_ADDRESS) return "Address";
     if (m_family == Family::Vera) return src == SRC_SPRITE0 ? wxString("Sprite") : wxString::Format("Layer %d tiles", src - m_srcCharset);
-    if (src == m_srcCharset) return m_family == Family::Antic ? "Character set (CHBASE)" : "VIC character set";
+    if (src == m_srcCharset) return m_family == Family::Antic ? "Character set (CHBASE)"
+                                  : m_family == Family::Ted ? "TED character set / bitmap" : "VIC character set";
     int n = src - SRC_SPRITE0;
     if (m_family == Family::Antic) return n < 4 ? wxString::Format("Player %d", n) : wxString("Missiles");
     return wxString::Format("VIC sprite %d", n);
@@ -96,7 +97,7 @@ wxString GraphicsPane::sourceName(int src) const {
 
 GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     : wxPanel(parent, wxID_ANY), m_family(family),
-      m_sprites(family == Family::Antic ? 5 : family == Family::Vera ? 1 : 8),
+      m_sprites(family == Family::Antic ? 5 : family == Family::Vera ? 1 : family == Family::Ted ? 0 : 8),
       m_srcCharset(SRC_SPRITE0 + m_sprites), m_layers(family == Family::Vera ? 2 : 1) {
     auto* top = new wxBoxSizer(wxVERTICAL);
     auto label = [this](const wxString& s) { return new wxStaticText(this, wxID_ANY, s); };
@@ -181,8 +182,8 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     }
     addRow({{label("Count"), 3}, {m_count, 6}, {label("Columns"), 3}, {m_cols, 6},
             {label("Stride"), 3}, {m_stride, 6}, {label("Zoom"), 3}, {m_zoom, 0}});
-    if (m_family == Family::Antic) {
-        // No palette offset or 4-bit formats on ANTIC/GTIA: those controls stay hidden
+    if (m_family == Family::Antic || m_family == Family::Ted) {
+        // No palette offset or 4-bit formats on ANTIC/GTIA or the TED: those controls stay hidden
         m_palBase->Hide();
         m_swap->Hide();
         addRow({{m_memSel, 6}, {m_live, 6}, {exportBtn, 0}});
@@ -212,8 +213,9 @@ GraphicsPane::GraphicsPane(wxWindow* parent, Family family)
     exportBtn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { OnExport(); });
 
     // VIC: $2000, a common place for sprites; Atari: the ROM character set;
-    // X16: the KERNAL's character set in VRAM
-    m_start = m_family == Family::Antic ? 0xE000 : m_family == Family::Vera ? 0x1F000 : 0x2000;
+    // X16: the KERNAL's character set in VRAM; Plus/4: the ROM character set
+    m_start = m_family == Family::Antic ? 0xE000 : m_family == Family::Vera ? 0x1F000
+            : m_family == Family::Ted ? 0xD000 : 0x2000;
     m_addr->ChangeValue(wxString::Format("$%X", m_start));
 }
 

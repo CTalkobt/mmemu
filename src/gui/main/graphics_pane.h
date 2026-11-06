@@ -23,7 +23,7 @@ struct MachineDescriptor;
 class GraphicsPane : public wxPanel {
 public:
     /** The video chip family the pane is for: its sources and formats. */
-    enum class Family { Vic, Antic, Vera };
+    enum class Family { Vic, Antic, Vera, Ted };
     explicit GraphicsPane(wxWindow* parent, Family family = Family::Vic);
 
     /** Attach to a machine (nullptr detaches). */
@@ -38,13 +38,14 @@ private:
     class Canvas;
     enum Source { SRC_ADDRESS = 0, SRC_SPRITE0 = 1 };   // then the sprites, then the character set
     Family m_family;
-    int    m_sprites;          // sprite sources: 8 VIC, 4 players + missiles (ANTIC), 1 + a number (VERA)
+    int    m_sprites;          // sprite sources: 8 VIC, 4 players + missiles (ANTIC), 1 + a number (VERA), none (TED)
     int    m_srcCharset;       // the (first) character-set / tile-layer source's index
     int    m_layers;           // tile layers: 1, or 2 on VERA
     wxSpinCtrl* m_spriteNum = nullptr;   // VERA: which of the 128 sprites
     wxString sourceName(int src) const;
     const char* familyId() const {
-        return m_family == Family::Antic ? "antic" : m_family == Family::Vera ? "vera" : "vic";
+        return m_family == Family::Antic ? "antic" : m_family == Family::Vera ? "vera"
+             : m_family == Family::Ted ? "ted" : "vic";
     }
 
     void Rebuild();

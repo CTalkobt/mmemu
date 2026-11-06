@@ -12,7 +12,7 @@ std::vector<const FormatInfo*> machineFormats(const MachineDescriptor* desc, con
     std::vector<const FormatInfo*> out;
     auto want = [family](const FormatInfo& f) { return !family || std::string(f.family) == family; };
     if (desc && !desc->hasPane("graphics-vic") && !desc->hasPane("graphics-antic") &&
-        !desc->hasPane("graphics-vera")) return out;
+        !desc->hasPane("graphics-vera") && !desc->hasPane("graphics-ted")) return out;
     if (desc && !desc->graphicsFormats.empty()) {
         for (const auto& id : desc->graphicsFormats) {
             Format f;
@@ -99,7 +99,8 @@ View buildView(const ViewRequest& req, IBus* cpuBus, IVideoInspect* video) {
             if (!stride) stride = (uint32_t)(info(fmt).bytesPerRow * ci.tileH);
         }
         else
-        fmt = ci.antic     ? (ci.multicolor ? Format::AnticChar4 : Format::AnticChar)
+        fmt = ci.ted       ? (ci.multicolor ? Format::TedCharMulti : Format::TedChar)
+            : ci.antic     ? (ci.multicolor ? Format::AnticChar4 : Format::AnticChar)
             : ci.fullColor ? Format::CharFCM : ci.multicolor ? Format::CharMulti : Format::CharHires;
         int fg = ci.fg >= 0 ? ci.fg : 1;
         colors.slot[0] = color(ci.bg[0]);
