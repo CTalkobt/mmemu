@@ -61,7 +61,7 @@ private:
 class Plus4Bus : public IBus {
 public:
     Plus4Bus(Model model, Rom basic, Rom kernal, Rom funcLo, Rom funcHi)
-        : m_ramMask(model == Model::C16 ? 0x3FFF : 0xFFFF),
+        : m_ramMask(model == Model::Plus4 ? 0xFFFF : 0x3FFF),
           m_basic(std::move(basic)), m_kernal(std::move(kernal)),
           m_funcLo(std::move(funcLo)), m_funcHi(std::move(funcHi)) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
@@ -374,8 +374,10 @@ MachineDescriptor* create(Model model, bool ntsc, std::string* err) {
     }
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = model == Model::C16 ? (ntsc ? "c16-ntsc" : "c16") : (ntsc ? "plus4-ntsc" : "plus4");
-    desc->displayName = model == Model::C16 ? "Commodore 16" : "Commodore Plus/4";
+    const char* id = model == Model::C16 ? "c16" : model == Model::C116 ? "c116" : "plus4";
+    desc->machineId = std::string(id) + (ntsc ? "-ntsc" : "");
+    desc->displayName = model == Model::C16  ? "Commodore 16"
+                      : model == Model::C116 ? "Commodore 116" : "Commodore Plus/4";
     if (ntsc) desc->displayName += " (NTSC)";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;

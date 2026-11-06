@@ -34,5 +34,7 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("plus4-ntsc", plus4::Model::Plus4, true, "Commodore Plus/4 (NTSC)");
     reg("c16", plus4::Model::C16, false, "Commodore 16 (PAL)");
     reg("c16-ntsc", plus4::Model::C16, true, "Commodore 16 (NTSC)");
+    reg("c116", plus4::Model::C116, false, "Commodore 116 (PAL)");
+    reg("c116-ntsc", plus4::Model::C116, true, "Commodore 116 (NTSC)");
     return &s_manifest;
 }
