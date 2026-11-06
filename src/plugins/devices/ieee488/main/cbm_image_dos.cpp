@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 
 CbmImageDos::CbmImageDos() { setError(0, " OK"); }
 CbmImageDos::~CbmImageDos() = default;
@@ -177,6 +178,7 @@ void CbmImageDos::openChannel(int ch, const std::string& spec) {
 }
 
 void CbmImageDos::command(const std::string& raw) {
+    if (raw.size() > 2 && raw[0] == 'U' && raw[1] == '0' && raw[2] != '>') { burst(raw.substr(2)); return; }
     std::string cmd = raw;
     while (!cmd.empty() && (cmd.back() == '\r' || cmd.back() == '\n')) cmd.pop_back();
     if (cmd.empty()) return;
@@ -297,6 +299,84 @@ void CbmImageDos::closeChannel(int ch) {
     c = Channel{};
 }
 
+// ---------------------------------------------------------------------------
+// Burst commands (Commodore's burst command instruction set, as the 1571
+// answers them on fast serial; byte 0: bits 1-3 the command, bit 0 the drive)
+// ---------------------------------------------------------------------------
+
+// The status byte: bit 7 foreign format, bits 5-4 sector size (01 = 256
+// bytes), bits 3-0 the controller status (0 OK)
+uint8_t CbmImageDos::burstStatus(int controller) const {
+    return (uint8_t)(0x10 | (controller & 0x0F));
+}
+
+// The next sector of a multi-sector burst on a GCR track: 5 on, round the
+// track, the order of the C128's CP/M (its Z80 ROM's tables at $0FB5:
+// 0 5 10 15 20 4 9 ... on a 21-sector track)
+int CbmImageDos::nextBurstSector(int track, int sector) const {
+    int spt = 0;
+    while (spt < 64 && m_disk->sectorOffset(track, spt) != 0xFFFFFFFFu) ++spt;
+    return spt ? (sector + 5) % spt : 0;
+}
+
+void CbmImageDos::burst(const std::string& b) {
+    m_burstOut.clear();
+    m_bwLeft = 0;
+    if (b.empty()) { m_burstOut.push_back(burstStatus(0x0E)); return; }
+    const uint8_t c = (uint8_t)b[0];
+    auto at = [&](size_t i, int def) { return i < b.size() ? (int)(uint8_t)b[i] : def; };
+    switch ((c >> 1) & 7) {
+        case 0: {                                // read: track, sector, count
+            int t = at(1, 1), s = at(2, 0), n = at(3, 1);
+            for (int i = 0; i < n; ++i, s = nextBurstSector(t, s)) {
+                uint32_t off = m_disk->sectorOffset(t, s);
+                if (off == 0xFFFFFFFFu || off + 256 > m_disk->data().size()) {
+                    m_burstOut.push_back(burstStatus(0x02));   // header not found
+                    break;
+                }
+                m_burstOut.push_back(burstStatus(0));
+                m_burstOut.insert(m_burstOut.end(), m_disk->data().begin() + off, m_disk->data().begin() + off + 256);
+            }
+            break;
+        }
+        case 1:                                  // write: the host sends each sector
+            m_bwTrack = at(1, 1);
+            m_bwSector = at(2, 0);
+            m_bwLeft = at(3, 1);
+            m_bwBuf.clear();
+            break;
+        case 2:                                  // inquire disk
+            m_burstOut.push_back(burstStatus(0));
+            break;
+        case 7:                                  // fastload ($1F + the file name)
+            m_fastload = b.substr(1);
+            m_fastloadPending = true;
+            break;
+        default:                                 // format, query, ...: not here
+            m_burstOut.push_back(burstStatus(0x0E));
+            break;
+    }
+    setError(0, " OK");
+}
+
+bool CbmImageDos::burstWriteByte(uint8_t b) {
+    if (m_bwLeft <= 0) return false;
+    m_bwBuf.push_back(b);
+    return m_bwBuf.size() >= 256;
+}
+
+void CbmImageDos::burstFinishSector() {
+    if (m_bwLeft <= 0) return;
+    int status = 0;
+    if (m_bwBuf.size() < 256 || m_disk->sectorOffset(m_bwTrack, m_bwSector) == 0xFFFFFFFFu) status = 0x02;
+    else if (!m_disk->writable()) status = 0x08;                   // write protect on
+    else if (!m_disk->writeSector(m_bwTrack, m_bwSector, m_bwBuf.data())) status = 0x07;
+    m_burstOut.push_back(burstStatus(status));
+    m_bwBuf.clear();
+    m_bwSector = nextBurstSector(m_bwTrack, m_bwSector);
+    if (--m_bwLeft < 0 || status) m_bwLeft = 0;
+}
+
 void CbmImageDos::bufferPointer(const std::string& args) {
     auto n = numbers(args);
     if (n.size() < 2) { setError(30, "SYNTAX ERROR"); return; }
@@ -348,7 +428,8 @@ int CbmImageDos::ciout(uint8_t a) {
     if (m_opening) {
         if (m_name.size() < 80) m_name += (char)a;
     } else if (m_channel == 15) {
-        if (a == '\r') { command(m_cmd); m_cmd.clear(); }
+        const bool binary = m_cmd.size() >= 2 && m_cmd[0] == 'U' && m_cmd[1] == '0';   // burst: run at UNLISTEN
+        if (a == '\r' && !binary) { command(m_cmd); m_cmd.clear(); }
         else if (m_cmd.size() < 80) m_cmd += (char)a;
     } else if (m_ch[m_channel].writing) {
         m_ch[m_channel].data.push_back(a);      // into the file being written

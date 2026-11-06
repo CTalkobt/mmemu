@@ -104,3 +104,39 @@ TEST_CASE(image_dos_block_write) {
     chmod(path.c_str(), 0644);
     std::remove(path.c_str());
 }
+
+// 1571 burst commands ("U0" + bytes): inquire disk, a two-sector read (5
+// sectors on, as the C128's CP/M lays out a track), a write, fastload
+TEST_CASE(image_dos_burst_commands) {
+    std::string path = makeD64();
+    CbmImageDos dos;
+    ASSERT(dos.open(path));
+    auto cmd = [&](std::string bytes) { send(dos, 0xFF, std::string("U0") + bytes); };
+    cmd(std::string("\x04", 1));                                   // inquire disk
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x10);   // GCR, 256 bytes, OK
+    cmd(std::string("\x00\x01\x00\x02", 4));                       // read 1/0, 2 sectors
+    auto& q = dos.burstOut();
+    ASSERT_EQ((int)q.size(), 2 * 257);
+    EXPECT_EQ(q[0], 0x10);
+    EXPECT_EQ(q[1], 0x00);                                         // 1/0 starts 0, 1, 2...
+    EXPECT_EQ(q[2 + 255], 0x10);                                   // the second status
+    // the second sector is 1/5
+    cmd(std::string("\x00\x01\x0D\x01", 4));                       // track 1 sector 13 ($0D is not a CR here)
+    EXPECT_EQ((int)dos.burstOut().size(), 257);
+    cmd(std::string("\x00\x01\x30\x01", 4));                       // no sector 48: header not found
+    ASSERT(dos.burstOut().size() == 1 && dos.burstOut().front() == 0x12);
+    // Write 2/3: 256 bytes, then the status
+    cmd(std::string("\x02\x02\x03\x01", 4));
+    ASSERT(dos.burstWriting());
+    for (int i = 0; i < 255; ++i) ASSERT(!dos.burstWriteByte((uint8_t)i));
+    ASSERT(dos.burstWriteByte(0xEE));
+    dos.burstFinishSector();
+    ASSERT(!dos.burstWriting() && dos.burstOut().back() == 0x10);
+    cmd(std::string("\x00\x02\x03\x01", 4));
+    EXPECT_EQ(dos.burstOut()[256], 0xEE);
+    // Fastload: the drive reads the file itself
+    cmd(std::string("\x1F" "PROG", 5));
+    std::string name;
+    ASSERT(dos.takeFastload(name) && name == "PROG");
+    std::remove(path.c_str());
+}

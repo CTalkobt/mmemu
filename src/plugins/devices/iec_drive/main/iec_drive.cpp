@@ -1,6 +1,8 @@
 #include "iec_drive.h"
 #include "libdevices/main/device_info.h"
 #include <sys/stat.h>
+#include <algorithm>
+#include <vector>
 
 // Bit phases the drive holds as talker. The Plus/4 KERNAL polls CLK every
 // 10-15 us and a TED bad line can stall it ~45 us more, so each phase is
@@ -48,6 +50,10 @@ void IecDrive::tick(uint64_t cycles) {
 // ---------------------------------------------------------------------------
 
 void IecDrive::atnStart() {
+    // A fast computer shifted a byte out just before ATN; a burst stops
+    m_hostFast = m_fastToHost && m_fastAnnounce;
+    m_fastAnnounce = false;
+    m_dos->burstCancel();
     // Every device listens under ATN: release CLK, pull DATA (present)
     m_dClk = false;
     m_dData = true;
@@ -58,6 +64,14 @@ void IecDrive::atnStart() {
 
 void IecDrive::atnEnd() {
     m_underAtn = false;
+    // A burst command (run at UNLISTEN): sectors and status on fast serial
+    std::string name;
+    if (m_fastToHost && m_dos->takeFastload(name)) fastload(name);
+    if (m_fastToHost && (!m_dos->burstOut().empty() || m_dos->burstWriting())) {
+        m_dClk = m_dData = false;
+        enter(St::BurstArm);
+        return;
+    }
     if (m_talker) {
         enter(St::Turnaround);                  // still holding DATA (the last ack)
     } else if (m_listener) {
@@ -93,6 +107,7 @@ void IecDrive::step() {
             m_dData = false;                    // ready for data
             m_eoi = false;
             enter(St::RxWaitStart);
+            if (fast()) m_fastToHost(0x00);     // 1571: tell the C128 we are fast
         }
         break;
     case St::RxWaitStart:
@@ -124,6 +139,40 @@ void IecDrive::step() {
             uint8_t b = m_byte;
             enter(St::RxWaitReady);
             if (m_underAtn) command(b); else received(b);
+        }
+        break;
+
+    // --- Burst (1571) --------------------------------------------------------
+    case St::BurstArm:
+        m_dClk = m_dData = false;
+        if (!m_cClk) {                          // the computer has let CLK go
+            m_burstClk = false;
+            if (m_dos->burstWriting()) startBurstSector();
+            else enter(St::BurstOut);
+        }
+        break;
+    case St::BurstOut:
+        if (m_cClk != m_burstClk) {             // a toggle: the next byte
+            m_burstClk = m_cClk;
+            auto& q = m_dos->burstOut();
+            if (!q.empty()) { m_fastToHost(q.front()); q.pop_front(); }
+        }
+        break;
+    case St::BurstIn:
+        break;                                  // bytes arrive in fastByteFromHost
+    case St::BurstStatus:
+        if (m_cClk) {                           // the computer wants the status
+            m_dos->burstFinishSector();
+            auto& q = m_dos->burstOut();
+            if (!q.empty()) { m_fastToHost(q.front()); q.pop_front(); }
+            enter(St::BurstDone);
+        }
+        break;
+    case St::BurstDone:
+        m_dClk = false;
+        if (!m_cClk) {
+            if (m_dos->burstWriting()) startBurstSector();   // the next sector
+            else enter(St::Silent);
         }
         break;
 
@@ -163,14 +212,20 @@ void IecDrive::step() {
     case St::TxWaitListener:
         if (!busData()) {                       // the listener is ready
             m_bits = 0;
-            enter(m_txLast ? St::TxEoiWait : St::TxBitSetup);
+            if (m_txLast) enter(St::TxEoiWait);
+            else if (fast()) { m_dClk = true; m_fastToHost(m_txByte); enter(St::TxFrame); }
+            else enter(St::TxBitSetup);
         }
         break;
     case St::TxEoiWait:
         if (busData()) enter(St::TxEoiRelease); // EOI acknowledged
         break;
     case St::TxEoiRelease:
-        if (!busData()) { m_bits = 0; enter(St::TxBitSetup); }
+        if (!busData()) {
+            m_bits = 0;
+            if (fast()) { m_dClk = true; m_dData = false; m_fastToHost(m_txByte); enter(St::TxFrame); }
+            else enter(St::TxBitSetup);
+        }
         break;
     case St::TxBitSetup:
         m_dClk = true;
@@ -208,6 +263,70 @@ void IecDrive::step() {
         }
         break;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fast serial (1571)
+// ---------------------------------------------------------------------------
+
+void IecDrive::fastByteFromHost(uint8_t b) {
+    if (!m_fastToHost) return;
+    if (m_st == St::BurstIn) {                  // burst write data
+        if (m_dos->burstWriteByte(b)) enter(St::BurstStatus);
+        else m_dClk = !m_dClk;                  // ask for the next byte
+        return;
+    }
+    if (m_hostFast && !m_cAtn && m_listener && (m_st == St::RxWaitStart || m_st == St::RxBits)) {
+        m_dData = true;                         // a data byte: acknowledge it
+        enter(St::RxWaitReady);
+        received(b);
+        return;
+    }
+    m_fastAnnounce = true;                      // the C128 says it is fast (before ATN)
+}
+
+// Burst fastload (the C128 KERNAL's LOAD from a 1571, $F3A1): the file read
+// through the DOS, then for each 254-byte block status 0 and the bytes; the
+// last block status $1F, a count and the bytes (in a one-block file the
+// count leaves out the load address, which comes first); no file: status 2
+void IecDrive::fastload(const std::string& name) {
+    const int u = m_dos->unit();
+    std::vector<uint8_t> data;
+    m_dos->listen((uint8_t)(0x20 | u));
+    m_dos->second(0xF0);                        // OPEN on channel 0
+    for (char c : name) m_dos->ciout((uint8_t)c);
+    m_dos->unlsn();
+    m_dos->talk((uint8_t)(0x40 | u));
+    m_dos->tksa(0x60);
+    for (size_t guard = 0; guard < (1u << 24); ++guard) {
+        uint8_t b = 0;
+        int st = m_dos->acptr(&b);
+        if (st < 0 || (st & 0x02)) break;       // nothing there
+        data.push_back(b);
+        if (st & 0x40) break;                   // EOI: the last byte
+    }
+    m_dos->untlk();
+    m_dos->listen((uint8_t)(0x20 | u));
+    m_dos->second(0xE0);                        // CLOSE
+    m_dos->unlsn();
+    auto& q = m_dos->burstOut();
+    q.clear();
+    if (data.size() < 2) { q.push_back(0x02); return; }   // file not found
+    for (size_t at = 0; at < data.size(); at += 254) {
+        size_t n = std::min<size_t>(254, data.size() - at);
+        if (at + n >= data.size()) {            // the last block
+            q.push_back(0x1F);
+            q.push_back((uint8_t)(at == 0 ? n - 2 : n));
+        } else {
+            q.push_back(0x00);
+        }
+        q.insert(q.end(), data.begin() + (long)at, data.begin() + (long)(at + n));
+    }
+}
+
+void IecDrive::startBurstSector() {
+    m_dClk = true;                              // ask for the first byte
+    enter(St::BurstIn);
 }
 
 void IecDrive::command(uint8_t b) {

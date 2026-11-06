@@ -5,6 +5,8 @@
 // folder (CbmHostDos) and a disk image (CbmImageDos) implement it.
 
 #include <cstdint>
+#include <deque>
+#include <string>
 
 class ICbmDos {
 public:
@@ -28,4 +30,29 @@ public:
     virtual bool ensureInit() { return true; }
     /** Busy: the drive's activity LED. */
     virtual bool active() const = 0;
+
+    // 1571 burst commands ("U0" + binary bytes, Commodore's burst command
+    // set): the bytes the drive sends on fast serial (status, sector data),
+    // and a burst write: bytes from the host until a sector is complete,
+    // then its status.
+    std::deque<uint8_t>& burstOut() { return m_burstOut; }
+    virtual bool burstWriting() const { return false; }
+    /** A byte of burst write data; true when the sector's 256 are in. */
+    virtual bool burstWriteByte(uint8_t) { return false; }
+    /** Write the sector just received and queue its status. */
+    virtual void burstFinishSector() {}
+    virtual void burstCancel() { m_burstOut.clear(); m_fastloadPending = false; }
+    /** A burst fastload ("U0" $1F + name) to serve: the drive reads the
+     *  file through the DOS and sends it (IecDrive). */
+    bool takeFastload(std::string& name) {
+        if (!m_fastloadPending) return false;
+        m_fastloadPending = false;
+        name = m_fastload;
+        return true;
+    }
+
+protected:
+    std::deque<uint8_t> m_burstOut;
+    std::string m_fastload;
+    bool m_fastloadPending = false;
 };
