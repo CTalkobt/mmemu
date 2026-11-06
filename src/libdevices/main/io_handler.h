@@ -68,6 +68,16 @@ public:
     virtual void setBasicRom(const uint8_t*, uint32_t) {}
     virtual void setKernalRom(const uint8_t*, uint32_t) {}
     virtual void setRamData  (const uint8_t*)           {}
+    /**
+     * The C64 expansion port: the cartridge's ROML ($8000) and ROMH ($A000,
+     * or $E000 in Ultimax mode) images and its EXROM/GAME lines (true = the
+     * cartridge pulls the line low). All null/false: no cartridge. The PLA
+     * maps them; the VIC-II uses ROMH in Ultimax mode. True if the device
+     * took them.
+     */
+    virtual bool setCartridgePort(const uint8_t* /*roml*/, uint32_t /*romlSize*/,
+                                  const uint8_t* /*romh*/, uint32_t /*romhSize*/,
+                                  bool /*exrom*/, bool /*game*/) { return false; }
 
     // Generic device-to-device link by role name (e.g. "crtc" → CRTC6545*).
     // Allows the JSON loader to wire companion devices without machine-specific casts.

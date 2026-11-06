@@ -1,76 +1,82 @@
 #include "c64_pla.h"
 
+// The memory map of each of the 32 configurations (LORAM | HIRAM << 1 |
+// CHAREN << 2 | EXROM << 3 | GAME << 4), one bit per configuration, from
+// VICE's c64meminit.c / c64mem.c (GPL-2.0-or-later, VICE team).
+namespace {
+constexpr uint32_t KERNAL  = 0xCC00CCCC;  // 2,3,6,7, 10,11,14,15, 26,27,30,31
+constexpr uint32_t BASIC   = 0x00008888;  // 3,7, 11,15
+constexpr uint32_t CHARROM = 0x0C000E0E;  // 1,2,3, 9,10,11, 26,27
+constexpr uint32_t IO      = 0xE0FFE0E0;  // 5,6,7, 13,14,15, 16-23 (Ultimax), 29,30,31
+constexpr uint32_t ROML    = 0x88FF8800;  // 11,15, 16-23, 27,31
+constexpr uint32_t ROMH_A  = 0xCC000000;  // 26,27,30,31: ROMH at $A000
+constexpr uint32_t ULTIMAX = 0x00FF0000;  // 16-23: ROMH at $E000, open areas
+
+inline bool in(uint32_t set, int config) { return (set >> config) & 1; }
+inline uint8_t romByte(const uint8_t* rom, uint32_t size, uint32_t off) {
+    return rom && off < size ? rom[off] : 0xFF;
+}
+}  // namespace
+
 void C64PLA::reset() {
-    // Standard C64 reset logic: bits 0-2 of 6510 port float high (LORAM=1, HIRAM=1, CHAREN=1)
-    // The CPU core should handle this via signal lines, but we ensure consistent initial state here.
+    // The port lines float high at reset (LORAM=HIRAM=CHAREN=1) through the
+    // 6510's pull-ups; the cartridge lines stay as the cartridge wires them.
 }
 
 bool C64PLA::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
-    // -----------------------------------------------------------------------
-    // KERNAL ROM: $E000–$FFFF  active when HIRAM=1
-    // -----------------------------------------------------------------------
-    if (addr >= 0xE000 && addr <= 0xFFFF) {
-        if (m_ram || m_kernalRom) {
-            if (hiram() && m_kernalRom) {
-                uint32_t off = addr - 0xE000;
-                *val = (off < m_kernalSize) ? m_kernalRom[off] : 0xFF;
-            } else {
-                *val = m_ram ? m_ram[addr & 0xFFFF] : 0x00;
-            }
-            return true;  // always claim — prevents overlay serving ROM when banked out
-        }
-        return false;
-    }
+    addr &= 0xFFFF;
+    if (addr < 0x1000) return false;
+    const int c = config();
+    const bool ultimax = in(ULTIMAX, c);
+    auto ram = [&]() -> bool {
+        if (!m_ram) return false;
+        *val = m_ram[addr];
+        return true;
+    };
 
-    // -----------------------------------------------------------------------
-    // $D000–$DFFF: Char ROM (CHAREN=0) or I/O (CHAREN=1).
-    // Both require HIRAM=1; when HIRAM=0 the area is plain RAM.
-    // -----------------------------------------------------------------------
-    if (addr >= 0xD000 && addr <= 0xDFFF) {
-        if (hiram()) {
-            if (!charen() && m_charRom) {
-                // Character ROM: 4 KB, $D000–$DFFF (the 4 KB image repeats).
-                uint32_t off = (addr - 0xD000) & (m_charSize - 1);
-                *val = m_charRom[off];
-                return true;
-            }
-            if (!charen() && m_ram) {
-                // Char ROM banked out but no char data — serve flat RAM.
-                *val = m_ram[addr & 0xFFFF];
-                return true;
-            }
-            // I/O mode (CHAREN=1): return false so the IORegistry dispatches
-            // to the VIC-II / SID / CIA / color-RAM handlers next.
-        } else if (m_ram) {
-            // HIRAM=0: flat RAM visible here.
-            *val = m_ram[addr & 0xFFFF];
+    if (addr < 0x8000) {
+        if (ultimax) { *val = 0xFF; return true; }         // open
+        return ram();
+    }
+    if (addr < 0xA000) {
+        if (in(ROML, c)) { *val = romByte(m_roml, m_romlSize, addr - 0x8000); return true; }
+        return ram();
+    }
+    if (addr < 0xC000) {
+        if (in(BASIC, c))  { *val = romByte(m_basicRom, m_basicSize, addr - 0xA000); return true; }
+        if (in(ROMH_A, c)) { *val = romByte(m_romh, m_romhSize, addr - 0xA000); return true; }
+        if (ultimax) { *val = 0xFF; return true; }
+        return ram();
+    }
+    if (addr < 0xD000) {
+        if (ultimax) { *val = 0xFF; return true; }
+        return ram();
+    }
+    if (addr < 0xE000) {
+        if (in(IO, c)) return false;                        // the I/O chips answer
+        if (in(CHARROM, c) && m_charRom) {
+            *val = m_charRom[(addr - 0xD000) & (m_charSize - 1)];
             return true;
         }
-        return false;
+        return ram();
     }
-
-    // -----------------------------------------------------------------------
-    // BASIC ROM: $A000–$BFFF  active when HIRAM=1 && LORAM=1
-    // -----------------------------------------------------------------------
-    if (addr >= 0xA000 && addr <= 0xBFFF) {
-        if (m_ram || m_basicRom) {
-            if (hiram() && loram() && m_basicRom) {
-                uint32_t off = addr - 0xA000;
-                *val = (off < m_basicSize) ? m_basicRom[off] : 0xFF;
-            } else {
-                *val = m_ram ? m_ram[addr & 0xFFFF] : 0x00;
-            }
-            return true;  // always claim — prevents overlay serving ROM when banked out
-        }
-        return false;
-    }
-
-    return false;
+    if (in(KERNAL, c)) { *val = romByte(m_kernalRom, m_kernalSize, addr - 0xE000); return true; }
+    if (ultimax) { *val = romByte(m_romh, m_romhSize, addr - 0xE000); return true; }
+    return ram();
 }
 
-bool C64PLA::ioWrite(IBus* /*bus*/, uint32_t /*addr*/, uint8_t /*val*/) {
-    // All writes fall through to the underlying flat RAM or to the I/O device
-    // handlers (CIA, VIC-II, SID) that follow the PLA in the dispatch chain.
-    // ROM areas accept writes to the underlying RAM; the PLA only shadows reads.
-    return false;
+bool C64PLA::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
+    addr &= 0xFFFF;
+    if (addr < 0x1000) return false;
+    const int c = config();
+    if (in(ULTIMAX, c)) {
+        // Only $0000-$0FFF and the I/O are there; ROML/ROMH writes go to the
+        // cartridge (nothing for a plain ROM one)
+        return !(addr >= 0xD000 && addr < 0xE000);
+    }
+    if (addr >= 0xD000 && addr < 0xE000 && !in(IO, c) && m_ram) {
+        m_ram[addr] = val;                                  // RAM under the character ROM
+        return true;
+    }
+    return false;                                           // to RAM, or the I/O chips
 }

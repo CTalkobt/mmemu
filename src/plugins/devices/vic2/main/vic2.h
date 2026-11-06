@@ -81,6 +81,17 @@ public:
     /** Pointer to the 4 KB character ROM image (always visible at VIC bank
      *  offsets $1000–$1FFF and $9000–$9FFF regardless of CPU banking). */
     void setCharRom(const uint8_t* data, uint32_t size) override { m_charRom = data; m_charRomSize = size; }
+    /** In Ultimax mode (GAME low, EXROM high) the VIC-II sees the cartridge's
+     *  ROMH ($F000-$FFFF half) at $3000-$3FFF of each bank, and no character
+     *  ROM (VICE c64mem.c). */
+    bool setCartridgePort(const uint8_t*, uint32_t, const uint8_t* romh, uint32_t romhSize,
+                          bool exrom, bool game) override {
+        const bool ultimax = game && !exrom;
+        m_ultimaxRomh = ultimax ? romh : nullptr;
+        m_ultimaxRomhSize = ultimax ? romhSize : 0;
+        m_ultimax = ultimax;
+        return true;
+    }
 
     /** Direct pointer to the 1 KB × 4-bit color RAM (1024 bytes, lower nibble
      *  used).  Mirrors the real VIC-II's dedicated 4-bit color RAM connection —
@@ -219,6 +230,7 @@ protected:
     // Rendering helpers
     uint32_t palette(uint8_t index) const;
     uint8_t  charRomByte(uint32_t offset) const;
+    uint8_t  ultimaxPeek(uint32_t addr) const;   // the VIC's view in Ultimax mode
 
     virtual uint32_t screenBase() const;
     virtual uint32_t charBitmapBase() const;
@@ -260,6 +272,9 @@ protected:
     IBus*           m_dmaBus     = nullptr;
     uint32_t        m_bankBase   = 0x0000;
     const uint8_t*  m_charRom    = nullptr;
+    const uint8_t*  m_ultimaxRomh = nullptr;
+    uint32_t        m_ultimaxRomhSize = 0;
+    bool            m_ultimax = false;
     uint32_t        m_charRomSize = 0;
     const uint8_t*  m_colorRam   = nullptr;  // direct 4-bit color RAM connection
 

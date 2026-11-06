@@ -58,6 +58,7 @@ uint32_t VIC2::palette(uint8_t index) const {
 uint8_t VIC2::dmaPeek(uint32_t offset) const {
     if (!m_dmaBus) return 0xFF;
     offset &= 0x3FFF; // 14-bit internal VIC-II address
+    if (m_ultimax) return ultimaxPeek((m_bankBase + offset) & 0xFFFF);
 
     // Character ROM shadow: bank offsets $1000-$1FFF.
     // On a real C64, this shadow is ONLY visible in banks 0 and 2
@@ -75,9 +76,18 @@ uint8_t VIC2::peekVideo(uint32_t addr) const {
     if (!m_dmaBus) return 0xFF;
     addr &= 0xFFFF;
     uint32_t bank = addr & 0xC000, offset = addr & 0x3FFF;
+    if (m_ultimax) return ultimaxPeek(addr);
     // Character ROM shadow at $1000-$1FFF of banks 0 and 2 (see dmaPeek)
     if (m_charRom && (bank == 0x0000 || bank == 0x8000) && offset >= 0x1000 && offset <= 0x1FFF)
         return m_charRom[offset & 0x0FFF];
+    return m_dmaBus->peek8(addr);
+}
+
+uint8_t VIC2::ultimaxPeek(uint32_t addr) const {
+    if ((addr & 0x3000) == 0x3000) {                       // ROMH $1000-$1FFF
+        uint32_t off = addr & 0x1FFF;
+        return m_ultimaxRomh && off < m_ultimaxRomhSize ? m_ultimaxRomh[off] : 0xFF;
+    }
     return m_dmaBus->peek8(addr);
 }
 

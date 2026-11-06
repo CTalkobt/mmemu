@@ -5,26 +5,30 @@
 #include <string>
 
 /**
- * C64 PLA (Programmable Logic Array) — Banking Controller.
+ * C64 PLA (Programmable Logic Array): the banking controller.
  *
- * Monitors the three 6510 I/O port signal lines (LORAM, HIRAM, CHAREN) and
- * decides which of the following is visible at each banking region on every
- * memory read:
+ * The memory configuration is the 6510 port's LORAM (bit 0), HIRAM (1) and
+ * CHAREN (2) plus the expansion port's EXROM (3) and GAME (4), each of those
+ * two set while the cartridge pulls the line low. What each of the 32
+ * configurations maps follows VICE (c64meminit.c, c64mem.c):
  *
- *   $A000–$BFFF  BASIC ROM    when HIRAM=1 && LORAM=1;  else flat RAM
- *   $D000–$DFFF  Char ROM     when HIRAM=1 && CHAREN=0; else I/O or flat RAM
- *   $D000–$DFFF  I/O devices  when HIRAM=1 && CHAREN=1  (other handlers respond)
- *   $E000–$FFFF  KERNAL ROM   when HIRAM=1;              else flat RAM
+ *   $8000-$9FFF  ROML          8 KB/16 KB game with LORAM and HIRAM; Ultimax
+ *   $A000-$BFFF  BASIC         LORAM and HIRAM, no cartridge or 8 KB game
+ *                ROMH          16 KB game with HIRAM
+ *   $D000-$DFFF  I/O           CHAREN and LORAM or HIRAM (any cartridge
+ *                              mode but Ultimax); always in Ultimax
+ *                character ROM no CHAREN and LORAM or HIRAM (16 KB game: HIRAM)
+ *   $E000-$FFFF  KERNAL        HIRAM (not Ultimax)
+ *                ROMH          Ultimax
+ *   Ultimax:     $1000-$7FFF, $A000-$CFFF are open (read $FF here; VICE
+ *                returns the VIC's last fetch) and drop writes
  *
- * Writes always fall through to the underlying flat RAM (ROM areas are
- * read-only by hardware convention, not by bus protection) or to the I/O
- * device handlers registered in the IORegistry.
+ * Everything else is RAM. Writes under ROM go to RAM; writes to $D000-$DFFF
+ * reach the I/O chips only while I/O is mapped there.
  *
- * The PLA registers itself in the IORegistry with baseAddr 0xA000 so the
- * sort-by-base-address ordering guarantees it is called before the I/O device
- * handlers at $D000–$DFFF. When it returns false the IORegistry continues to
- * the next handler (CIA, VIC-II, SID, etc.), which is the correct behaviour
- * for the I/O-visible state.
+ * The PLA registers at $1000 so it sees every access it may have to
+ * redirect; it answers RAM reads in that range itself. When it returns false
+ * for $D000-$DFFF the IORegistry goes on to the VIC-II, SID, CIAs...
  *
  * Usage (machine factory):
  *   auto* pla = new C64PLA();
@@ -34,6 +38,7 @@
  *   pla->setBasicRom (basicBuf,  8192);
  *   pla->setKernalRom(kernalBuf, 8192);
  *   pla->setCharRom  (charBuf,   4096);
+ *   pla->setRamData  (ram);
  *   ioRegistry->registerHandler(pla);
  */
 class C64PLA : public IOHandler {
@@ -44,7 +49,6 @@ public:
     // -----------------------------------------------------------------------
     // Configuration (call before registering in IORegistry)
     // -----------------------------------------------------------------------
-
     void setSignals(ISignalLine* loram, ISignalLine* hiram, ISignalLine* charen) {
         m_loram  = loram;
         m_hiram  = hiram;
@@ -63,17 +67,31 @@ public:
     void setKernalRom(const uint8_t* data, uint32_t size) override { m_kernalRom = data; m_kernalSize = size; }
     void setCharRom  (const uint8_t* data, uint32_t size) override { m_charRom   = data; m_charSize   = size; }
 
-    /** Pointer to the flat system RAM (64 KB).  When set, the PLA always claims
-     *  its banking regions and returns flat RAM content when ROM is banked out,
-     *  preventing bus overlays from serving stale ROM data through peek8(). */
-    void setRamData(const uint8_t* ram) override { m_ram = ram; }
+    /** The flat system RAM (64 KB): what the PLA serves where no ROM or I/O
+     *  is mapped, and where it puts writes that must not reach the I/O chips. */
+    void setRamData(const uint8_t* ram) override { m_ram = const_cast<uint8_t*>(ram); }
+
+    /** The expansion port (see IOHandler::setCartridgePort). */
+    bool setCartridgePort(const uint8_t* roml, uint32_t romlSize,
+                          const uint8_t* romh, uint32_t romhSize,
+                          bool exrom, bool game) override {
+        m_roml = roml; m_romlSize = romlSize;
+        m_romh = romh; m_romhSize = romhSize;
+        m_exrom = exrom; m_game = game;
+        return true;
+    }
+
+    /** The current memory configuration, 0-31 (VICE's mem_config). */
+    int config() const {
+        return (loram() ? 1 : 0) | (hiram() ? 2 : 0) | (charen() ? 4 : 0) |
+               (m_exrom ? 8 : 0) | (m_game ? 16 : 0);
+    }
 
     // -----------------------------------------------------------------------
     // IOHandler interface
     // -----------------------------------------------------------------------
-
     const char* name()     const override { return "C64PLA"; }
-    uint32_t    baseAddr() const override { return 0xA000; }  // sort before $D000 devices
+    uint32_t    baseAddr() const override { return 0x1000; }  // sort before $D000 devices
     uint32_t    addrMask() const override { return 0xFFFF; }  // range checked internally
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
@@ -89,7 +107,10 @@ private:
     const uint8_t* m_basicRom  = nullptr;  uint32_t m_basicSize  = 0;
     const uint8_t* m_kernalRom = nullptr;  uint32_t m_kernalSize = 0;
     const uint8_t* m_charRom   = nullptr;  uint32_t m_charSize   = 0;
-    const uint8_t* m_ram       = nullptr;
+    const uint8_t* m_roml      = nullptr;  uint32_t m_romlSize   = 0;
+    const uint8_t* m_romh      = nullptr;  uint32_t m_romhSize   = 0;
+    uint8_t*       m_ram       = nullptr;
+    bool m_exrom = false, m_game = false;
 
     bool hiram()  const { return m_hiram  ? m_hiram->get()  : true; }
     bool loram()  const { return m_loram  ? m_loram->get()  : true; }
