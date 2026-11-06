@@ -13,6 +13,7 @@
 #include "libdebug/main/execution_observer.h"
 #include "libmem/main/ibus.h"
 #include "plugins/6502/main/cpu6510.h"
+#include "plugins/z80/main/cpu_z80.h"
 #include "plugins/devices/vic2/main/vic2.h"
 #include "plugins/devices/sid6581/main/sid6581.h"
 #include "plugins/devices/cia6526/main/cia6526.h"
@@ -79,11 +80,56 @@ public:
     void resetMmu() {
         std::memset(m_mmu, 0, sizeof m_mmu);
         m_mmu[9] = 1;                                       // page 1 at $0100
-        m_mmu[5] = 0x31;                                    // the 8502 (as after the Z80 BIOS: $B1)
+        m_mmu[5] = 0x30;                                    // the Z80 runs first (mmu_reset)
         m_p0hLatch = m_p1hLatch = 0;
         updateColorRam();
     }
     uint8_t mmuReg(int i) const { return m_mmu[i]; }
+    /** MCR bit 0 clear: the Z80 runs, the 8502 waits. */
+    bool z80Active() const { return !(m_mmu[5] & 0x01); }
+
+    // -----------------------------------------------------------------------
+    // The Z80's view (z80mem.c, C128 mode): as the 8502's map, except that in
+    // bank 0 $0000-$0FFF reads the Z80 BIOS (the KERNAL ROM's $D000-$DFFF)
+    // and writes RAM at $D000-$DFFF; with I/O in, $1000-$13FF is colour RAM;
+    // $D000-$DFFF is never I/O (and the character ROM is not visible: RAM).
+    // I/O is reached with IN/OUT: ports $D000-$DFFF are the chips (the MMU
+    // only with I/O in), $0000-$0FFF RAM at $D000-$DFFF of bank 0, any other
+    // port the memory at that address.
+    // -----------------------------------------------------------------------
+    uint8_t z80Read(uint16_t a, bool peek) {
+        if (c64Mode()) return readC64(a, peek);
+        const uint8_t cr = m_mmu[0];
+        if (a < 0x1000) return bank() ? m_ram[ramAddr(a)] : m_kernal[0x1000 + a];
+        if (a < 0x1400 && !(cr & 0x01)) return (uint8_t)(m_colorRam[(portBit(0) ? 0 : 0x400) + (a & 0x3FF)] | 0xF0);
+        if (a >= 0xD000 && a < 0xE000) {
+            const int hi = (cr >> 4) & 3;
+            return (hi == 1 || hi == 2) ? 0xFF : m_ram[ramAddr(a)];
+        }
+        return read(a, peek);
+    }
+    void z80Write(uint16_t a, uint8_t v) {
+        if (c64Mode()) { writeC64(a, v); return; }
+        const uint8_t cr = m_mmu[0];
+        if (a < 0x1000 && !bank()) { m_ram[0xD000 | a] = v; return; }
+        if (a >= 0x1000 && a < 0x1400 && !(cr & 0x01)) { m_colorRam[(portBit(0) ? 0 : 0x400) + (a & 0x3FF)] = v & 0x0F; return; }
+        if (a >= 0xD000 && a < 0xE000) { m_ram[ramAddr(a)] = v; return; }
+        write(a, v);
+    }
+    uint8_t z80In(uint16_t port, bool peek) {
+        const uint8_t hi = port >> 8;
+        if (hi < 0x10) return bank() ? z80Read(port, peek) : m_ram[0xD000 | (port & 0x0FFF)];
+        if (hi == 0xD5) return (m_mmu[0] & 0x01) ? 0 : mmuPeek(port & 0xFF);
+        if (hi >= 0xD0 && hi <= 0xDF) return io(port, nullptr, peek);
+        return z80Read(port, peek);
+    }
+    void z80Out(uint16_t port, uint8_t v) {
+        const uint8_t hi = port >> 8;
+        if (hi < 0x10) { if (bank()) z80Write(port, v); else m_ram[0xD000 | (port & 0x0FFF)] = v; return; }
+        if (hi == 0xD5) { if (!(m_mmu[0] & 0x01)) mmuStore(port & 0xFF, v); return; }
+        if (hi >= 0xD0 && hi <= 0xDF) { io(port, &v, false); return; }
+        z80Write(port, v);
+    }
 
     /** The CPU port changed: colour RAM halves (bits 0 and 1) and the VIC's
      *  character ROM (bit 2) in C128 mode (mem_update_config). */
@@ -298,7 +344,7 @@ private:
     void mmuStore(uint8_t r, uint8_t v) {
         if (r >= 0x0B) return;
         switch (r) {
-            case 5: m_mmu[5] = (v & 0x7F) | 0x30; break;   // CPU switch / GO64: not yet
+            case 5: m_mmu[5] = (v & 0x7F) | 0x30; break;   // bit 0: the CPU (z80Active), bit 6: C64 mode
             case 8: m_p0hLatch = v; break;                  // committed by a P0L write
             case 10: m_p1hLatch = v; break;
             case 7: m_mmu[7] = v; m_mmu[8] = m_p0hLatch; break;
@@ -323,6 +369,40 @@ private:
 };
 
 /** The VIC-II's view of memory (its DMA bus). */
+/** A view of the C128 bus for the Z80: its memory (`io` false) or its
+ *  IN/OUT ports (`io` true). */
+class Z80Bus : public IBus {
+public:
+    Z80Bus(C128Bus* bus, bool io) : m_bus(bus), m_io(io) { m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF}; }
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return m_io ? "z80io" : "z80"; }
+    uint8_t read8(uint32_t a) override { return m_io ? m_bus->z80In((uint16_t)a, false) : m_bus->z80Read((uint16_t)a, false); }
+    uint8_t peek8(uint32_t a) override { return m_io ? m_bus->z80In((uint16_t)a, true) : m_bus->z80Read((uint16_t)a, true); }
+    void write8(uint32_t a, uint8_t v) override { if (m_io) m_bus->z80Out((uint16_t)a, v); else m_bus->z80Write((uint16_t)a, v); }
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+private:
+    C128Bus* m_bus;
+    bool m_io;
+    BusConfig m_cfg;
+};
+
+/** One device output wired to both CPUs' interrupt inputs. */
+class FanoutLine : public ISignalLine {
+public:
+    FanoutLine(ISignalLine* a, ISignalLine* b) : m_a(a), m_b(b) {}
+    bool get() const override { return m_a->get(); }
+    void set(bool level) override { m_a->set(level); m_b->set(level); }
+    void pulse() override { m_a->pulse(); m_b->pulse(); }
+private:
+    ISignalLine* m_a;
+    ISignalLine* m_b;
+};
+
 class VicBus : public IBus {
 public:
     explicit VicBus(C128Bus* bus) : m_bus(bus) { m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF}; }
@@ -429,7 +509,9 @@ public:
             key(ev.first, ev.second);
             if (ev.second) m_typed.push_back(ev.first);
         }
-        m_timer = 25000;                                    // ~25 ms
+        // A press is held ~100 ms (CP/M's keyboard scan misses shorter ones),
+        // a release ~30 ms
+        m_timer = ev.second ? 100000 : 30000;
     }
 
     // IKeyboardMatrix
@@ -617,6 +699,15 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     cpu->setCodeBus(bus);
     bus->setCpu(cpu);
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
+    // The Z80: it runs first, from its boot BIOS, and hands over to the
+    // 8502 through MCR bit 0 (CP/M switches back and forth)
+    auto* z80 = new Z80();
+    auto* z80Mem = new Z80Bus(bus, false);
+    auto* z80Io = new Z80Bus(bus, true);
+    z80->setDataBus(z80Mem);
+    z80->setIoBus(z80Io);
+    desc->cpus.push_back({"z80", z80, z80Mem, z80Mem, z80Io, false, 1});
+    desc->deleters.push_back([z80Mem, z80Io]() { delete z80Mem; delete z80Io; });   // the CPU is the descriptor's
 
     auto* io = new IORegistry();
     desc->ioRegistry = io;
@@ -669,9 +760,14 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     for (IOHandler* h : std::initializer_list<IOHandler*>{display, vic, sid, cia1, cia2, vdc, kbd, drive, tape})
         io->registerHandler(h);
 
+    // /IRQ goes to both CPUs
     auto* irq = new SharedIrqManager(cpu);
-    vic->setIrqLine(irq->createLine());
-    cia1->setIrqLine(irq->createLine());
+    auto* irqZ80 = new SharedIrqManager(z80);
+    auto* vicIrq = new FanoutLine(irq->createLine(), irqZ80->createLine());
+    auto* ciaIrq = new FanoutLine(irq->createLine(), irqZ80->createLine());
+    vic->setIrqLine(vicIrq);
+    cia1->setIrqLine(ciaIrq);
+    desc->deleters.push_back([irqZ80, vicIrq, ciaIrq]() { delete irqZ80; delete vicIrq; delete ciaIrq; });
     auto* nmi = new SharedNmiManager(cpu);
     cia2->setIrqLine(nmi->createLine());
     ISignalLine* restore = nmi->createLine();
@@ -692,23 +788,43 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     desc->primaryJoystickPort = 1;
     desc->onJoystick = [kbd](int port, uint8_t bits) { kbd->setJoystick(port, bits); };
 
-    desc->onReset = [bus, io, cpu](MachineDescriptor&) {
+    // Reset: the Z80 starts at $0000 (its BIOS); the 8502 takes its reset
+    // vector when it first runs, after the BIOS has pointed the RAM vectors
+    // at its start-up code (VICE's 8502 does the same)
+    auto* fresh8502 = new bool(true);
+    desc->deleters.push_back([fresh8502]() { delete fresh8502; });
+    desc->onReset = [bus, io, cpu, z80, fresh8502, desc](MachineDescriptor&) {
         bus->resetMmu();
         io->resetAll();
-        cpu->reset();
+        z80->reset();
+        *fresh8502 = true;
         bus->updateColorRam();
+        desc->cpus[0].active = false;
+        desc->cpus[1].active = true;
     };
 
-    // 1 or 2 MHz ($D030 bit 0): time is counted at the 1 MHz clock
+    // The 8502 at 1 or 2 MHz ($D030 bit 0), the Z80 at an effective 2 MHz
+    // (its 4 MHz clock waits for the VIC-II); time is counted at 1 MHz
     auto* half = new int(0);
     desc->deleters.push_back([half]() { delete half; });
-    desc->schedulerStep = [io, cpu, vic, bus, half](MachineDescriptor&) -> int {
-        int c = cpu->step();
-        bus->updateColorRam();
-        if (vic->fastMode()) {
-            *half += c;
+    desc->schedulerStep = [io, cpu, z80, vic, bus, half, fresh8502](MachineDescriptor& d) -> int {
+        int c;
+        const bool z = bus->z80Active();
+        d.cpus[0].active = !z;
+        d.cpus[1].active = z;
+        if (z) {
+            *half += z80->step();
             c = *half / 2;
             *half %= 2;
+        } else {
+            if (*fresh8502) { *fresh8502 = false; cpu->reset(); }
+            c = cpu->step();
+            bus->updateColorRam();
+            if (vic->fastMode()) {
+                *half += c;
+                c = *half / 2;
+                *half %= 2;
+            }
         }
         if (c) io->tickAll((uint64_t)c);
         return c;

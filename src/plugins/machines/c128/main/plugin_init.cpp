@@ -3,7 +3,7 @@
 #include "libcore/main/machines/machine_registry.h"
 #include "util/logging.h"
 
-static const char* s_deps[] = { "6502", nullptr };
+static const char* s_deps[] = { "6502", "z80", nullptr };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,

@@ -109,6 +109,14 @@ void CbmImageDos::openChannel(int ch, const std::string& spec) {
         if (!spec.empty()) command(spec);
         return;
     }
+    if (!spec.empty() && spec[0] == '#') {      // a direct-access buffer ("#", "#n")
+        c.open = true;
+        c.buffer = true;
+        c.ptr = 1;
+        c.last = 255;
+        setError(0, " OK");
+        return;
+    }
     // "0:NAME,S,R" -> drive prefix off, then the name and its options
     std::string s = spec;
     if (s.size() >= 2 && s[1] == ':' && std::isdigit((unsigned char)s[0])) s = s.substr(2);
@@ -148,12 +156,64 @@ void CbmImageDos::command(const std::string& raw) {
     char c = cmd[0];
     if (c == 'I' || cmd.rfind("UJ", 0) == 0 || cmd.rfind("UI", 0) == 0 || cmd.rfind("U9", 0) == 0) {
         setError(0, " OK");                     // initialise / reset
+    } else if (cmd.rfind("U1", 0) == 0 || cmd.rfind("UA", 0) == 0) {
+        blockRead(cmd.substr(2), true);
+    } else if (cmd.rfind("B-R", 0) == 0) {
+        blockRead(cmd.substr(3), false);
+    } else if (cmd.rfind("B-P", 0) == 0) {
+        bufferPointer(cmd.substr(3));
     } else if (c == 'S' || c == 'R' || c == 'N' || c == 'C' || c == 'V' || cmd.rfind("B-W", 0) == 0 ||
                cmd.rfind("M-W", 0) == 0 || cmd.rfind("U2", 0) == 0) {
         setError(26, "WRITE PROTECT ON");       // would change the disk
     } else {
         setError(31, "SYNTAX ERROR");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Direct access (1541 DOS: U1 reads the whole block with the pointer at 0;
+// B-R takes the byte count from the block's first byte, pointer at 1)
+// ---------------------------------------------------------------------------
+
+namespace {
+// "ch dr t s" with spaces, commas or a colon between the numbers
+std::vector<int> numbers(const std::string& s) {
+    std::vector<int> v;
+    int cur = -1;
+    for (char ch : s) {
+        if (std::isdigit((unsigned char)ch)) cur = (cur < 0 ? 0 : cur * 10) + (ch - '0');
+        else if (cur >= 0) { v.push_back(cur); cur = -1; }
+    }
+    if (cur >= 0) v.push_back(cur);
+    return v;
+}
+}  // namespace
+
+void CbmImageDos::blockRead(const std::string& args, bool u1) {
+    auto n = numbers(args);
+    if (n.size() < 4) { setError(30, "SYNTAX ERROR"); return; }
+    int ch = n[0], t = n[2], sec = n[3];
+    if (ch < 0 || ch > 14 || !m_ch[ch].buffer) { setError(70, "NO CHANNEL"); return; }
+    uint32_t off = m_disk->sectorOffset(t, sec);
+    if (off == 0xFFFFFFFFu || off + 256 > m_disk->data().size()) {
+        setError(66, "ILLEGAL TRACK OR SECTOR", t, sec);
+        return;
+    }
+    Channel& c = m_ch[ch];
+    std::copy(m_disk->data().begin() + off, m_disk->data().begin() + off + 256, c.buf);
+    if (u1) { c.ptr = 0; c.last = 255; }
+    else { c.ptr = 1; c.last = c.buf[0] ? c.buf[0] : 255; }
+    setError(0, " OK");
+}
+
+void CbmImageDos::bufferPointer(const std::string& args) {
+    auto n = numbers(args);
+    if (n.size() < 2) { setError(30, "SYNTAX ERROR"); return; }
+    int ch = n[0];
+    if (ch < 0 || ch > 14 || !m_ch[ch].buffer) { setError(70, "NO CHANNEL"); return; }
+    m_ch[ch].ptr = n[1] & 0xFF;
+    m_ch[ch].last = 255;
+    setError(0, " OK");
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +259,10 @@ int CbmImageDos::ciout(uint8_t a) {
     } else if (m_channel == 15) {
         if (a == '\r') { command(m_cmd); m_cmd.clear(); }
         else if (m_cmd.size() < 80) m_cmd += (char)a;
+    } else if (m_ch[m_channel].buffer) {
+        Channel& c = m_ch[m_channel];           // into the buffer (for B-W / U2)
+        c.buf[c.ptr] = a;
+        c.ptr = (c.ptr + 1) & 0xFF;
     } else {
         setError(26, "WRITE PROTECT ON");       // data written to a file
     }
@@ -230,6 +294,12 @@ int CbmImageDos::acptr(uint8_t* a) {
         return 0;
     }
     Channel& c = m_ch[m_channel];
+    if (c.buffer) {                             // EOI with the last byte, then wrap
+        *a = c.buf[c.ptr];
+        bool eoi = c.ptr == c.last;
+        c.ptr = (c.ptr + 1) & 0xFF;
+        return eoi ? 0x40 : 0;
+    }
     if (!c.open || c.pos >= c.data.size()) { *a = 0; return 0x42; }
     *a = c.data[c.pos++];
     if (c.pos == c.data.size()) return 0x40;    // EOI with the last byte
