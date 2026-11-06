@@ -40,3 +40,7 @@ roms/mega65
 
 # Commander X16 ROM (R49 release image, downloaded; see doc/README-X16.md)
 roms/x16
+
+# Written by tests/45gs02/validate.py (make test)
+/mmsim.dump
+/xmega65.dump
