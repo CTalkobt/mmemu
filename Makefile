@@ -181,6 +181,7 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/devices/ted/main/ted_video.cpp \
 	src/plugins/devices/ted/main/ted_sound.cpp \
 	src/plugins/devices/iec_drive/main/iec_drive.cpp \
+	src/plugins/devices/acia6551/main/acia6551.cpp \
 	src/plugins/devices/datasette/main/datasette.cpp \
 	src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
@@ -372,6 +373,7 @@ MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cp
 
 # Test Sources
 TEST_SRCS = tests/src/test_main.cpp \
+	src/plugins/devices/acia6551/test/test_acia6551.cpp \
 	tests/src/test_c64_tape.cpp \
 	tests/src/test_tape_roundtrip.cpp \
 	src/cli/test/test_cli.cpp \
@@ -500,6 +502,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
 	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
+	src/plugins/devices/acia6551/main/acia6551.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \

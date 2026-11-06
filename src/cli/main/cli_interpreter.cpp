@@ -1356,6 +1356,21 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         } else {
             m_output("Usage: sym <add|del|list|search|load|load-c64ide|load-o45|clear>\n");
         }
+    } else if (cmd == "serial") {
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        std::string spec;
+        if (!(ss >> spec)) { m_output("Usage: serial <loopback|tcp:PORT|none>\n"); return; }
+        std::vector<IOHandler*> handlers;
+        if (m_ctx.machine->ioRegistry) m_ctx.machine->ioRegistry->enumerate(handlers);
+        bool done = false;
+        for (auto* h : handlers) {
+            if (h->attachSerial(spec)) {
+                m_output(std::string(h->name()) + ": serial " + spec + "\n");
+                done = true;
+                break;
+            }
+        }
+        if (!done) m_output("No serial port took '" + spec + "' (none in this machine, or the port is in use).\n");
     } else if (cmd == "tape") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string sub;
@@ -3337,6 +3352,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape record         - Press Record button\n"
                  "  tape stoprecord     - Release Record button\n"
                  "  tape save <path>    - Write captured buffer to .tap file\n"
+                 "  serial <spec>       - RS-232 far end: loopback, tcp:PORT (a TCP server), none\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
                  "  sid voices [chip]   - Show each SID voice: waveform, frequency/note, PW, ADSR, envelope\n"
                  "  sid scope <file>    - Save the SID oscilloscope as .png, or .gif with 'frames N'\n"
