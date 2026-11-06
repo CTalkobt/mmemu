@@ -10,6 +10,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ### Repository
 - `mmsim.dump` and `xmega65.dump`, written by `tests/45gs02/validate.py` during `make test`, are no longer tracked and are now in `.gitignore` (they had been committed by accident again in #205).
 
+### Commodore 64
+- **C64 cartridges were never mapped**: `cart` reported "Attached" but the ROM never appeared, because the 6510's port wrapper (`MOS6510::PortBus`, the CPU's data bus, which the CLI, GUI and MCP hand to cartridge handlers) did not pass `addRomOverlay`/`removeRomOverlay` (or `isHaltRequested`) on to the system bus. An 8 KB cartridge at $8000 now shows and autostarts through CBM80. Still not emulated: the PLA's GAME/EXROM lines, so 16 KB cartridges (ROMH at $A000) and Ultimax ones don't map, and ROML stays visible whatever LORAM/HIRAM say.
+
 ### Commodore Plus/4 and C16
 - **TED (MOS 7360/8360)** (#9), the Plus/4 and C16 video, sound, timer and keyboard-latch chip, ported from VICE (`ted*.c`, palette from `ted-color.c`/`video-color.c`): new plugin `mmemu-plugin-ted.so`, device type `ted`, for the Plus/4/C16 machine to come.
 - **Plus/4 and C16 machines** (#9): profiles `plus4`, `plus4-ntsc`, `c16` and `c16-ntsc` (new plugin `mmemu-plugin-plus4.so`). The 7501 CPU runs on the TED clock, single clock during the display and stalled on bad lines; ROM banking through $FDD0 and $FF3E/$FF3F as in VICE (BASIC 3.5, KERNAL, 3-plus-1); keyboard through the $FD30 latch and $FF08; both joysticks. Both machines boot to READY and run BASIC; F1 starts 3-plus-1 on the Plus/4. See `doc/README-PLUS4.md`.
