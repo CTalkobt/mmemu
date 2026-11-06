@@ -265,8 +265,10 @@ TEST_CASE(ieee488_disk_image_directory_as_the_drive_sends_it) {
     fs::remove(img);
 }
 
+// An image file the host will not let us write is write protected
 TEST_CASE(ieee488_disk_image_is_write_protected) {
     std::string img = makeD64("wp");
+    fs::permissions(img, fs::perms::owner_read | fs::perms::group_read | fs::perms::others_read);
     Pet pet(".");
     ASSERT(pet.bus.mountDisk(8, img));
     pet.open(1, "NEW");                             // SAVE opens channel 1
@@ -285,5 +287,94 @@ TEST_CASE(ieee488_disk_image_is_write_protected) {
     pet.untalk();
     pet.bus.ejectDisk(8);                           // back to the host folder
     ASSERT(pet.bus.getMountedDiskPath(8) != img);
+    fs::permissions(img, fs::perms::owner_read | fs::perms::owner_write);
+    fs::remove(img);
+}
+
+namespace {
+// makeD64's image with real BAM bitmaps (it sets only the counts): every
+// sector free except 1/0, 1/1 (the two files) and 18/0, 18/1
+void fillBam(const std::string& img) {
+    static const int spt[35] = {21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,21,
+                                19,19,19,19,19,19,19,18,18,18,18,18,18,17,17,17,17,17};
+    std::fstream f(img, std::ios::binary | std::ios::in | std::ios::out);
+    size_t h = 0;
+    for (int i = 1; i < 18; ++i) h += spt[i - 1];
+    h *= 256;
+    for (int t = 1; t <= 35; ++t) {
+        uint32_t bits = (1u << spt[t - 1]) - 1;
+        if (t == 1 || t == 18) bits &= ~3u;
+        uint8_t b[3] = {(uint8_t)bits, (uint8_t)(bits >> 8), (uint8_t)(bits >> 16)};
+        f.seekp((std::streamoff)(h + 4 + (t - 1) * 4 + 1));
+        f.write((const char*)b, 3);
+    }
+}
+std::string errorChannel(Pet& pet) {
+    pet.talk(15);
+    auto msg = pet.receiveAll();
+    pet.untalk();
+    return std::string(msg.begin(), msg.end());
+}
+void saveFile(Pet& pet, int sa, const std::string& name, const std::vector<uint8_t>& data) {
+    pet.open(sa, name);
+    pet.command({0x28, (uint8_t)(0x60 | sa)});
+    pet.atn(false);
+    for (size_t i = 0; i < data.size(); ++i) pet.send(data[i], i + 1 == data.size());
+    pet.command({0x3F});
+    pet.atn(false);
+    pet.close(sa);
+}
+std::vector<uint8_t> loadFile(Pet& pet, const std::string& name) {
+    pet.open(0, name);
+    pet.talk(0);
+    auto bytes = pet.receiveAll();
+    pet.untalk();
+    pet.close(0);
+    return bytes;
+}
+}  // namespace
+
+// SAVE and OPEN for writing on an image, as CBM DOS: blocks allocated from
+// the BAM (first next to the directory track), a directory entry, the free
+// count; @: replaces, ,A appends, S: scratches, R: renames
+TEST_CASE(ieee488_disk_image_writes_files) {
+    std::string img = makeD64("write");
+    fillBam(img);
+    Pet pet(".");
+    ASSERT(pet.bus.mountDisk(8, img));
+    std::vector<uint8_t> prog = {0x01, 0x04};
+    for (int i = 0; i < 600; ++i) prog.push_back((uint8_t)i);   // 3 blocks
+    saveFile(pet, 1, "BIG", prog);
+    ASSERT_EQ(errorChannel(pet), std::string("00, OK,00,00\r"));
+    ASSERT(loadFile(pet, "BIG") == prog);
+    saveFile(pet, 1, "BIG", {1, 4, 9});
+    ASSERT_EQ(errorChannel(pet), std::string("63,FILE EXISTS,00,00\r"));
+    saveFile(pet, 1, "@0:BIG", {1, 4, 9});                     // replace
+    ASSERT_EQ(errorChannel(pet), std::string("00, OK,00,00\r"));
+    ASSERT(loadFile(pet, "BIG") == std::vector<uint8_t>({1, 4, 9}));
+    saveFile(pet, 2, "LOG,S,W", {'A', 'B'});                    // a SEQ file, then append
+    saveFile(pet, 2, "LOG,A", {'C'});
+    ASSERT(loadFile(pet, "LOG") == std::vector<uint8_t>({'A', 'B', 'C'}));
+    // The directory and the BAM: 664 - 2 (HELLO, NOTES) - 1 (BIG) - 1 (LOG)
+    pet.open(0, "$");
+    pet.talk(0);
+    auto dir = pet.receiveAll();
+    pet.untalk();
+    pet.close(0);
+    std::string text(dir.begin(), dir.end());
+    ASSERT(text.find("\"BIG\"") != std::string::npos);
+    ASSERT(text.find("SEQ") != std::string::npos);
+    size_t free = text.find("BLOCKS FREE");
+    ASSERT(free != std::string::npos);
+    ASSERT_EQ((int)(uint8_t)dir[free - 2] | (int)(uint8_t)dir[free - 1] << 8, 660);   // the line number
+    // Rename and scratch
+    pet.open(15, "R0:NEW=BIG");
+    ASSERT_EQ(errorChannel(pet), std::string("00, OK,00,00\r"));
+    ASSERT(loadFile(pet, "NEW") == std::vector<uint8_t>({1, 4, 9}));
+    pet.open(15, "S0:NEW,LO*");
+    ASSERT_EQ(errorChannel(pet), std::string("01,FILES SCRATCHED,02,00\r"));
+    pet.open(0, "NEW");
+    ASSERT_EQ(errorChannel(pet), std::string("62,FILE NOT FOUND,00,00\r"));
+    pet.bus.ejectDisk(8);
     fs::remove(img);
 }

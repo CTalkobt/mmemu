@@ -133,10 +133,37 @@ void CbmImageDos::openChannel(int ch, const std::string& spec) {
     std::string name = s, opts;
     size_t comma = s.find(',');
     if (comma != std::string::npos) { name = s.substr(0, comma); opts = s.substr(comma); }
-    bool write = ch == 1 || opts.find(",W") != std::string::npos || opts.find(",A") != std::string::npos ||
-                 (!name.empty() && name[0] == '@');
-    if (write) {                                // SAVE (channel 1) or a write: read-only
-        setError(26, "WRITE PROTECT ON");
+    bool append = opts.find(",A") != std::string::npos;
+    bool write = ch == 1 || opts.find(",W") != std::string::npos || append || (!name.empty() && name[0] == '@');
+    if (write) {                                // SAVE (channel 1) or OPEN for writing
+        if (!m_disk->writable()) { setError(26, "WRITE PROTECT ON"); return; }
+        bool replace = false;
+        if (!name.empty() && name[0] == '@') {  // "@0:NAME" / "@:NAME"
+            replace = true;
+            name = name.substr(1);
+            if (name.size() >= 2 && name[1] == ':' && std::isdigit((unsigned char)name[0])) name = name.substr(2);
+            else if (!name.empty() && name[0] == ':') name = name.substr(1);
+        }
+        int type = ch == 1 ? 2 : 1;             // SAVE: PRG; OPEN default: SEQ
+        if (opts.find(",P") != std::string::npos) type = 2;
+        if (opts.find(",U") != std::string::npos) type = 3;
+        if (opts.find(",S") != std::string::npos) type = 1;
+        c.open = true;
+        c.writing = true;
+        c.replace = replace || append;
+        c.wname = name;
+        c.wtype = type;
+        if (append) {
+            if (!m_disk->readFile(name, c.data)) { c = Channel{}; setError(62, "FILE NOT FOUND"); return; }
+        } else {
+            for (const auto& e : m_disk->getDirectory())
+                if (e.filename == name && (e.type & 0x07) && !replace) {
+                    c = Channel{};
+                    setError(63, "FILE EXISTS");
+                    return;
+                }
+        }
+        setError(0, " OK");
         return;
     }
     for (const auto& e : m_disk->getDirectory()) {
@@ -166,7 +193,31 @@ void CbmImageDos::command(const std::string& raw) {
         blockWrite(cmd.substr(2), true);
     } else if (cmd.rfind("B-W", 0) == 0) {
         blockWrite(cmd.substr(3), false);
-    } else if (c == 'S' || c == 'R' || c == 'N' || c == 'C' || c == 'V' ||
+    } else if ((c == 'S' || c == 'R') && cmd.find(':') != std::string::npos && cmd.rfind("S-", 0) != 0) {
+        std::string arg = cmd.substr(cmd.find(':') + 1);
+        if (!m_disk->writable()) { setError(26, "WRITE PROTECT ON"); return; }
+        if (c == 'S') {                         // S0:PAT1,PAT2...
+            int total = 0;
+            size_t start = 0;
+            while (start <= arg.size()) {
+                size_t comma = arg.find(',', start);
+                std::string pat = arg.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (pat.size() >= 2 && pat[1] == ':' && std::isdigit((unsigned char)pat[0])) pat = pat.substr(2);
+                int n = 0;
+                if (!pat.empty()) m_disk->scratch(pat, n);
+                total += n;
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+            dosResult(1, total);
+        } else {                                // R0:NEW=OLD
+            size_t eq = arg.find('=');
+            if (eq == std::string::npos) { setError(30, "SYNTAX ERROR"); return; }
+            std::string from = arg.substr(eq + 1);
+            if (from.size() >= 2 && from[1] == ':' && std::isdigit((unsigned char)from[0])) from = from.substr(2);
+            dosResult(m_disk->rename(arg.substr(0, eq), from));
+        }
+    } else if (c == 'N' || c == 'C' || c == 'V' ||
                cmd.rfind("M-W", 0) == 0) {
         setError(26, "WRITE PROTECT ON");       // would change the disk
     } else {
@@ -225,6 +276,27 @@ void CbmImageDos::blockWrite(const std::string& args, bool u2) {
     setError(0, " OK");
 }
 
+void CbmImageDos::dosResult(int code, int track) {
+    switch (code) {
+        case 0: setError(0, " OK"); break;
+        case 1: setError(1, "FILES SCRATCHED", track); break;
+        case 25: setError(25, "WRITE ERROR"); break;
+        case 26: setError(26, "WRITE PROTECT ON"); break;
+        case 33: setError(33, "SYNTAX ERROR"); break;
+        case 62: setError(62, "FILE NOT FOUND"); break;
+        case 63: setError(63, "FILE EXISTS"); break;
+        case 72: setError(72, "DISK FULL"); break;
+        default: setError(code, "ERROR"); break;
+    }
+}
+
+// CLOSE: a file being written goes to the disk
+void CbmImageDos::closeChannel(int ch) {
+    Channel& c = m_ch[ch];
+    if (c.writing) dosResult(m_disk->writeFile(c.wname, c.wtype, c.data, c.replace));
+    c = Channel{};
+}
+
 void CbmImageDos::bufferPointer(const std::string& args) {
     auto n = numbers(args);
     if (n.size() < 2) { setError(30, "SYNTAX ERROR"); return; }
@@ -258,7 +330,7 @@ int CbmImageDos::second(uint8_t a) {
     m_channel = a & 0x0F;
     m_opening = false;
     switch (a & 0xF0) {
-        case 0xE0: m_ch[m_channel] = Channel{}; break;          // CLOSE
+        case 0xE0: closeChannel(m_channel); break;             // CLOSE
         case 0xF0: m_opening = true; m_name.clear(); break;     // OPEN: the name follows
         default: break;                                         // $6x: data
     }
@@ -278,13 +350,15 @@ int CbmImageDos::ciout(uint8_t a) {
     } else if (m_channel == 15) {
         if (a == '\r') { command(m_cmd); m_cmd.clear(); }
         else if (m_cmd.size() < 80) m_cmd += (char)a;
+    } else if (m_ch[m_channel].writing) {
+        m_ch[m_channel].data.push_back(a);      // into the file being written
     } else if (m_ch[m_channel].buffer) {
         Channel& c = m_ch[m_channel];           // into the buffer (for B-W / U2)
         c.buf[c.ptr] = a;
         c.ptr = (c.ptr + 1) & 0xFF;
-    } else {
+    } else if (!m_disk->writable()) {
         setError(26, "WRITE PROTECT ON");       // data written to a file
-    }
+    }                                           // else not open: dropped, the open's error stays
     return 0;
 }
 

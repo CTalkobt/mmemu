@@ -4,9 +4,10 @@
 // LOAD, `$` directories as the drive sends them, OPEN/GET#/INPUT# of PRG,
 // SEQ and USR files, the error channel, and direct access: `#` buffer
 // channels with U1 (UA) / B-R block reads, U2 (UB) / B-W block writes
-// (back to the image file) and B-P (what the C128's boot sector and CP/M
-// use). Writing files (SAVE, OPEN ...,W) reports 26,WRITE PROTECT ON, as do
-// block writes to an image the host will not let us write.
+// and B-P (what the C128's boot sector and CP/M use), and writing files:
+// SAVE, OPEN ...,S/P/U,W (written when the channel closes), @: to replace,
+// ,A to append, S: scratch, R: rename. Changes go back to the image file;
+// an image the host will not let us write reports 26,WRITE PROTECT ON.
 
 #include "cbm_dos.h"
 #include <cstdint>
@@ -51,11 +52,17 @@ private:
         bool open = false;
         // A `#` buffer channel: 256 bytes, the pointer, the last byte to send
         bool buffer = false;
+        // A file being written: its name and type (1 SEQ, 2 PRG, 3 USR)
+        bool writing = false, replace = false;
+        std::string wname;
+        int wtype = 2;
         uint8_t buf[256] = {};
         int ptr = 0, last = 255;
     };
     void blockRead(const std::string& args, bool u1);
     void blockWrite(const std::string& args, bool u2);
+    void closeChannel(int ch);
+    void dosResult(int code, int track = 0);
     void bufferPointer(const std::string& args);
     void setError(int code, const char* text, int track = 0, int sector = 0);
     void openChannel(int channel, const std::string& spec);

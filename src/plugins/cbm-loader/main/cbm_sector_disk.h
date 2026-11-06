@@ -51,6 +51,23 @@ public:
     /** The file is writable (not read-only on the host). */
     bool writable() const { return m_writable; }
 
+    // -----------------------------------------------------------------------
+    // Writing files, as CBM DOS does (allocation after VICE vdrive-bam.c).
+    // Each returns a DOS error code (0 = OK) and writes the changed image
+    // back to its file.
+    // -----------------------------------------------------------------------
+    /** Write a file (type 1 SEQ, 2 PRG, 3 USR); `replace` scratches an
+     *  existing one (`@:`) after the new one is written. 63 FILE EXISTS,
+     *  72 DISK FULL, 26 WRITE PROTECT ON. */
+    int writeFile(const std::string& name, int type, const std::vector<uint8_t>& data, bool replace = false);
+    /** Scratch the files matching `pattern` (CBM wildcards); `count` gets
+     *  how many. */
+    int scratch(const std::string& pattern, int& count);
+    /** Rename `oldName` to `newName`: 62 FILE NOT FOUND, 63 FILE EXISTS. */
+    int rename(const std::string& newName, const std::string& oldName);
+    /** Whether a track/sector is free in the BAM (false if outside it). */
+    bool isFree(int track, int sector);
+
     const CbmDiskGeometry& geometry() const { return m_geom; }
 
 protected:
@@ -60,4 +77,19 @@ protected:
     bool m_writable = false;
 
     uint32_t getSectorOffset(int track, int sector) const;
+
+    // BAM: the entry for a track (count byte, bitmap), allocation
+    bool bamEntry(int track, uint8_t*& count, uint8_t*& bits);
+    bool allocate(int track, int sector);
+    bool release(int track, int sector);
+    int  interleave() const;
+    int  allocTracks() const;                // tracks the BAM covers
+    bool allocFirst(int& track, int& sector);
+    bool allocNext(int& track, int& sector, int interleave);
+    bool allocOnTrack(int track, int& sector);
+    int  sectorsOn(int track) const;
+    // The directory: a free slot (allocating a sector if the chain is full)
+    bool findSlot(uint32_t& entryOffset);
+    bool findEntry(const std::string& name, uint32_t& entryOffset) const;
+    bool flushAll();
 };

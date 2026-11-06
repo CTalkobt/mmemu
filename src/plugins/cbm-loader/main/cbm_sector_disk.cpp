@@ -383,3 +383,318 @@ uint16_t CbmSectorDisk::getFreeBlocks() const {
     }
     return (uint16_t)std::min(total, 65535);
 }
+
+
+// ---------------------------------------------------------------------------
+// Writing files (CBM DOS). BAM layouts and allocation after VICE
+// (src/vdrive/vdrive-bam.c, GPL-2.0-or-later): a set bit = a free sector.
+// ---------------------------------------------------------------------------
+
+namespace {
+// The name as stored: PETSCII, padded with $A0 to 16 bytes
+void storeName(uint8_t* at, const std::string& name) {
+    for (int i = 0; i < 16; ++i) at[i] = i < (int)name.size() ? (uint8_t)name[(size_t)i] : 0xA0;
+}
+std::string entryName(const uint8_t* e) {
+    std::string n;
+    for (int i = 0; i < 16 && e[5 + i] != 0xA0; ++i) n += (char)e[5 + i];
+    return n;
+}
+bool wildMatch(const std::string& pattern, const std::string& name) {
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        if (pattern[i] == '*') return true;
+        if (i >= name.size()) return false;
+        if (pattern[i] != '?' && pattern[i] != name[i]) return false;
+    }
+    return pattern.size() == name.size();
+}
+}  // namespace
+
+int CbmSectorDisk::sectorsOn(int track) const {
+    return (track >= 1 && track <= m_geom.totalTracks) ? m_geom.sectorsPerTrack[track - 1] : 0;
+}
+
+int CbmSectorDisk::interleave() const {
+    std::string k = m_geom.name;
+    if (k == "D71") return 6;
+    if (k == "D81") return 1;
+    if (k == "D80") return 6;
+    if (k == "D82") return 5;
+    return 10;                                              // 1541
+}
+
+int CbmSectorDisk::allocTracks() const {
+    std::string k = m_geom.name;
+    if (k == "D64") return 35;                              // the standard BAM
+    return m_geom.totalTracks;
+}
+
+bool CbmSectorDisk::bamEntry(int track, uint8_t*& count, uint8_t*& bits) {
+    auto sec = [this](int t, int s) -> uint8_t* {
+        uint32_t o = getSectorOffset(t, s);
+        return (o == 0xFFFFFFFF || o + 256 > m_data.size()) ? nullptr : &m_data[o];
+    };
+    std::string k = m_geom.name;
+    if (track < 1 || track > allocTracks()) return false;
+    if (k == "D64" || (k == "D71" && track <= 35)) {
+        uint8_t* b = sec(18, 0);
+        if (!b) return false;
+        count = &b[4 + (track - 1) * 4];
+        bits = count + 1;
+        return true;
+    }
+    if (k == "D71") {                                       // side 2: counts in 18/0, bits in 53/0
+        uint8_t* b = sec(18, 0);
+        uint8_t* b2 = sec(53, 0);
+        if (!b || !b2) return false;
+        count = &b[0xDD + (track - 36)];
+        bits = &b2[(track - 36) * 3];
+        return true;
+    }
+    if (k == "D81") {
+        uint8_t* b = sec(40, track <= 40 ? 1 : 2);
+        if (!b) return false;
+        count = &b[0x10 + 6 * ((track - 1) % 40)];
+        bits = count + 1;
+        return true;
+    }
+    // D80 / D82: BAM blocks chained on track 38, each covering [b4, b5)
+    int t = 38, s = 0;
+    for (int guard = 0; t == 38 && guard < 8; ++guard) {
+        uint8_t* b = sec(t, s);
+        if (!b) return false;
+        if (track >= b[4] && track < b[5]) {
+            count = &b[6 + 5 * (track - b[4])];
+            bits = count + 1;
+            return true;
+        }
+        t = b[0];
+        s = b[1];
+    }
+    return false;
+}
+
+bool CbmSectorDisk::isFree(int track, int sector) {
+    uint8_t *c, *b;
+    if (!bamEntry(track, c, b) || sector < 0 || sector >= sectorsOn(track)) return false;
+    return b[sector >> 3] & (1 << (sector & 7));
+}
+
+bool CbmSectorDisk::allocate(int track, int sector) {
+    uint8_t *c, *b;
+    if (!isFree(track, sector) || !bamEntry(track, c, b)) return false;
+    b[sector >> 3] &= (uint8_t)~(1 << (sector & 7));
+    --*c;
+    return true;
+}
+
+bool CbmSectorDisk::release(int track, int sector) {
+    uint8_t *c, *b;
+    if (!bamEntry(track, c, b) || sector < 0 || sector >= sectorsOn(track) || isFree(track, sector)) return false;
+    b[sector >> 3] |= (uint8_t)(1 << (sector & 7));
+    ++*c;
+    return true;
+}
+
+// vdrive_bam_alloc_worker: the first free sector on a track from `sector`
+bool CbmSectorDisk::allocOnTrack(int track, int& sector) {
+    const int n = sectorsOn(track);
+    if (!n) return false;
+    int s = sector % n;
+    for (int i = 0; i < n; ++i) {
+        if (allocate(track, s)) { sector = s; return true; }
+        if (++s >= n) s = 0;
+    }
+    return false;
+}
+
+// vdrive_bam_alloc_first_free_sector: outward from the directory track
+bool CbmSectorDisk::allocFirst(int& track, int& sector) {
+    const int dir = m_geom.dirTrack, n = allocTracks();
+    for (int d = 1; d <= n; ++d) {
+        int s = 0;
+        if (dir - d >= 1 && allocOnTrack(dir - d, s)) { track = dir - d; sector = s; return true; }
+        s = 0;
+        if (dir + d <= n && allocOnTrack(dir + d, s)) { track = dir + d; sector = s; return true; }
+    }
+    return false;
+}
+
+// vdrive_bam_alloc_next_free_sector_interleave: the same track at the
+// interleave, then away from the directory track, then the other side
+bool CbmSectorDisk::allocNext(int& track, int& sector, int il) {
+    const int split = m_geom.dirTrack, n = allocTracks();
+    auto addIl = [this, il](int t, int s) {
+        int max = sectorsOn(t);
+        if (!max) return 0;
+        if (s >= max) s = 0;
+        s += il;
+        if (s >= max) { s -= max; if (s) --s; }
+        return s;
+    };
+    int s = addIl(track, sector);
+    if (allocOnTrack(track, s)) { sector = s; return true; }
+    int t = track, cur = sector;
+    for (int pass = 0; pass < 3; ++pass) {
+        if (t > 0 && t < split) {
+            for (int tt = t; tt >= 1; --tt) {
+                int ss = addIl(tt, cur);
+                if (allocOnTrack(tt, ss)) { track = tt; sector = ss; return true; }
+            }
+            t = split + 1;
+        } else {
+            for (int tt = t; tt <= n; ++tt) {
+                if (tt == split) continue;
+                int ss = addIl(tt, cur);
+                if (allocOnTrack(tt, ss)) { track = tt; sector = ss; return true; }
+            }
+            t = split - 1;
+        }
+        cur = 0;
+    }
+    return false;
+}
+
+bool CbmSectorDisk::findEntry(const std::string& name, uint32_t& entryOffset) const {
+    int t = m_geom.dirTrack, s = m_geom.dirSector;
+    for (int guard = 0; t != 0 && guard < 200; ++guard) {
+        uint32_t o = getSectorOffset(t, s);
+        if (o == 0xFFFFFFFF || o + 256 > m_data.size()) return false;
+        for (int i = 0; i < 8; ++i) {
+            const uint8_t* e = &m_data[o + (uint32_t)i * 32];
+            if ((e[2] & 0x07) && entryName(e) == name) { entryOffset = o + (uint32_t)i * 32; return true; }
+        }
+        t = m_data[o];
+        s = m_data[o + 1];
+    }
+    return false;
+}
+
+// A free directory entry; a full chain gets a new sector on the directory
+// track (3 sectors on, 1 on the 1581)
+bool CbmSectorDisk::findSlot(uint32_t& entryOffset) {
+    int t = m_geom.dirTrack, s = m_geom.dirSector;
+    uint32_t last = 0;
+    for (int guard = 0; t != 0 && guard < 200; ++guard) {
+        uint32_t o = getSectorOffset(t, s);
+        if (o == 0xFFFFFFFF || o + 256 > m_data.size()) return false;
+        for (int i = 0; i < 8; ++i)
+            if (m_data[o + (uint32_t)i * 32 + 2] == 0) { entryOffset = o + (uint32_t)i * 32; return true; }
+        last = o;
+        t = m_data[o];
+        s = m_data[o + 1];
+    }
+    const int dir = m_geom.dirTrack, n = sectorsOn(dir), step = std::string(m_geom.name) == "D81" ? 1 : 3;
+    int lastSector = 0;
+    for (int i = 0; i < n; ++i)
+        if (getSectorOffset(dir, i) == last) lastSector = i;
+    for (int i = 1; i <= n; ++i) {
+        int cand = (lastSector + step * i) % n;
+        if (allocate(dir, cand)) {
+            uint32_t o = getSectorOffset(dir, cand);
+            std::fill(m_data.begin() + o, m_data.begin() + o + 256, 0);
+            m_data[o + 1] = 0xFF;
+            m_data[last] = (uint8_t)dir;
+            m_data[last + 1] = (uint8_t)cand;
+            entryOffset = o;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CbmSectorDisk::flushAll() {
+    if (!m_writable) return false;
+    std::ofstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(m_data.data()), (std::streamsize)m_data.size());
+    return static_cast<bool>(f);
+}
+
+int CbmSectorDisk::writeFile(const std::string& name, int type, const std::vector<uint8_t>& data, bool replace) {
+    if (!m_writable) return 26;
+    if (name.empty() || name.size() > 16 || name.find_first_of("*?,:=") != std::string::npos) return 33;
+    uint32_t existing = 0;
+    const bool exists = findEntry(name, existing);
+    if (exists && !replace) return 63;
+    const std::vector<uint8_t> backup = m_data;            // undone on DISK FULL
+    const int blocks = data.empty() ? 1 : (int)((data.size() + 253) / 254);
+    uint32_t slot = 0;
+    if (!findSlot(slot)) { m_data = backup; return 72; }
+    std::vector<std::pair<int, int>> chain;
+    int t = 0, s = 0;
+    for (int i = 0; i < blocks; ++i) {
+        bool ok = i == 0 ? allocFirst(t, s) : allocNext(t, s, interleave());
+        if (!ok) { m_data = backup; return 72; }
+        chain.push_back({t, s});
+    }
+    for (int i = 0; i < blocks; ++i) {
+        uint32_t o = getSectorOffset(chain[(size_t)i].first, chain[(size_t)i].second);
+        std::fill(m_data.begin() + o, m_data.begin() + o + 256, 0);
+        size_t from = (size_t)i * 254, len = std::min<size_t>(254, data.size() > from ? data.size() - from : 0);
+        std::copy(data.begin() + (long)from, data.begin() + (long)(from + len), m_data.begin() + o + 2);
+        if (i + 1 < blocks) {
+            m_data[o] = (uint8_t)chain[(size_t)i + 1].first;
+            m_data[o + 1] = (uint8_t)chain[(size_t)i + 1].second;
+        } else {
+            m_data[o] = 0;
+            m_data[o + 1] = (uint8_t)(len + 1);             // index of the last byte used
+        }
+    }
+    if (exists) {                                           // @: the old file goes
+        uint8_t* e = &m_data[existing];
+        for (int tt = e[3], ss = e[4], guard = 0; tt && guard < 10000; ++guard) {
+            uint32_t o = getSectorOffset(tt, ss);
+            if (o == 0xFFFFFFFF) break;
+            release(tt, ss);
+            int nt = m_data[o], ns = m_data[o + 1];
+            tt = nt; ss = ns;
+        }
+        e[2] = 0;
+    }
+    uint8_t* e = &m_data[slot];
+    std::fill(e + 2, e + 32, 0);
+    e[2] = (uint8_t)(0x80 | (type & 0x07));
+    e[3] = (uint8_t)chain[0].first;
+    e[4] = (uint8_t)chain[0].second;
+    storeName(e + 5, name);
+    e[30] = (uint8_t)(blocks & 0xFF);
+    e[31] = (uint8_t)(blocks >> 8);
+    return flushAll() ? 0 : 25;
+}
+
+int CbmSectorDisk::scratch(const std::string& pattern, int& count) {
+    count = 0;
+    if (!m_writable) return 26;
+    int t = m_geom.dirTrack, s = m_geom.dirSector;
+    for (int guard = 0; t != 0 && guard < 200; ++guard) {
+        uint32_t o = getSectorOffset(t, s);
+        if (o == 0xFFFFFFFF || o + 256 > m_data.size()) break;
+        for (int i = 0; i < 8; ++i) {
+            uint8_t* e = &m_data[o + (uint32_t)i * 32];
+            if (!(e[2] & 0x07) || (e[2] & 0x40) || !wildMatch(pattern, entryName(e))) continue;   // locked: kept
+            for (int ft = e[3], fs = e[4], g = 0; ft && g < 10000; ++g) {
+                uint32_t fo = getSectorOffset(ft, fs);
+                if (fo == 0xFFFFFFFF) break;
+                release(ft, fs);
+                int nt = m_data[fo], ns = m_data[fo + 1];
+                ft = nt; fs = ns;
+            }
+            e[2] = 0;
+            ++count;
+        }
+        t = m_data[o];
+        s = m_data[o + 1];
+    }
+    return flushAll() || !count ? 1 : 25;                   // 01,FILES SCRATCHED
+}
+
+int CbmSectorDisk::rename(const std::string& newName, const std::string& oldName) {
+    if (!m_writable) return 26;
+    uint32_t o = 0, dummy = 0;
+    if (findEntry(newName, dummy)) return 63;
+    if (!findEntry(oldName, o)) return 62;
+    if (newName.empty() || newName.size() > 16) return 33;
+    storeName(&m_data[o + 5], newName);
+    return flushAll() ? 0 : 25;
+}
