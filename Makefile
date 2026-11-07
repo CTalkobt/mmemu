@@ -128,6 +128,7 @@ PLUGIN_A2600_SRCS = src/plugins/machines/atari2600/main/machine_a2600.cpp \
 	src/plugins/machines/atari2600/main/plugin_init.cpp
 
 PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
+	src/plugins/machines/apple2/main/disk2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
 
@@ -449,6 +450,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/tia/test/test_tia.cpp \
 	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
+	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
@@ -555,6 +557,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/tia/main/tia_palette.o \
 	src/plugins/machines/atari2600/main/machine_a2600.o \
 	src/plugins/machines/apple2/main/machine_apple2.o \
+	src/plugins/machines/apple2/main/disk2.o \
 	src/plugins/devices/apple2_video/main/apple2_video.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \

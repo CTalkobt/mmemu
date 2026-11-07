@@ -4,7 +4,7 @@ The Apple II family (#12), after AppleWin (GPL-2.0-or-later): the memory
 map and soft switches (`Memory.cpp`), the language card
 (`LanguageCard.cpp`), the keyboard (`Keyboard.cpp`), the speaker
 (`Speaker.cpp`), paddles and buttons (`Joystick.cpp`) and the video (a port
-of `NTSC.cpp`, see below).
+of `NTSC.cpp`, see below) and the Disk II (`Disk.cpp`).
 
 ## Profiles
 
@@ -107,8 +107,45 @@ happened.
 Left out: the other monitor types (idealised colour, RGB, monochrome),
 50 Hz, the clones' character sets.
 
+## Disk II
+
+The Disk II interface card in slot 6 with two drives, after AppleWin's
+`Disk.cpp` (its "authentic" path for `.dsk` and `.nib` images):
+
+| Address | |
+|---------|--|
+| `$C600-$C6FF` | the boot ROM (P5, 16 sectors: `roms/apple2/DISK2.rom`) |
+| `$C0E0-$C0E7` | stepper phases 0-3 off / on |
+| `$C0E8` / `$C0E9` | motor off / on (it runs on for a second after off) |
+| `$C0EA` / `$C0EB` | drive 1 / 2 |
+| `$C0EC` | read or write a nibble (the data latch) |
+| `$C0ED` | load the latch (write mode); sense write protect (`$FF` protected) |
+| `$C0EE` / `$C0EF` | read / write mode |
+
+Even addresses read the latch; odd ones the floating bus. The head moves
+toward an adjacent magnet that is on, a half track at a time, 10 cycles
+after the change (two adjacent magnets turned off within that time leave it
+where it is). The disk passes a nibble every 32 cycles; a read within 6
+cycles of the last sees part of the nibble; an empty drive reads noise.
+
+The II+ autostart ROM boots slot 6 at power-on; with no disk in drive 1 it
+waits, as the real machine does: RESET gives Applesoft. The `apple2`
+(original monitor) does not boot by itself: `C600G` or `PR#6`.
+
+Images (AppleWin `DiskImageHelper.cpp`):
+
+- `.dsk`, `.do` (DOS 3.3 sector order), `.po` (ProDOS order); a `.dsk`'s
+  order is found from its catalog. 35 tracks of 16 × 256 bytes (up to 40);
+  each track is nibblized as DOS 3.3 formats it (volume 254, 6-and-2
+  encoding, each track starting 768 nibbles on) and written back into the
+  file when the head leaves a written track or the drive stops.
+- `.nib`: 6656 nibbles a track, as recorded.
+
+Disks go in units 1 and 2: CLI `disk mount 1 dos33.dsk`, the GUI drive pane,
+MCP `mount_disk`. A read-only file is a write-protected disk.
+
 ## Not yet emulated
 
-- The Disk II controller (slot 6) and disk images (#12, next).
+- WOZ images, 13-sector (DOS 3.2) disks; `.zip`/`.gz` images (#233).
 - The IIe and IIc (auxiliary memory, 80 columns, double hi-res), the IIgs.
 - Cassette input and output.

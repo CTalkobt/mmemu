@@ -37,14 +37,19 @@ template <typename T> T* find(MachineDescriptor* m) {
 }
 }  // namespace
 
-// The II+ boots through its autostart monitor into Applesoft: "APPLE ][" at
-// the top and the "]" prompt; a typed line runs
+// The II+ autostart monitor shows "APPLE ][" and boots the Disk II in slot
+// 6, which waits for a disk; RESET gives Applesoft's "]" prompt; a typed
+// line runs
 TEST_CASE(apple2_boots_applesoft) {
     std::string err;
     MachineDescriptor* m = apple2::create(apple2::Model::IIPlus, &err);
     if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
     run(m, 2000000);
     ASSERT(screenHas(m, "APPLE ]["));
+    EXPECT_EQ(m->cpus[0].cpu->pc() & 0xFF00, 0xC600);     // the boot ROM, no disk
+    m->onKey("reset", true);
+    m->onKey("reset", false);
+    run(m, 1000000);
     ASSERT(screenHas(m, "]"));
     auto* kbd = find<IKeyboardMatrix>(m);
     ASSERT(kbd);

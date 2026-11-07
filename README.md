@@ -73,7 +73,7 @@ A single plugin module can provide multiple resources, which are automatically r
 
 ### Apple II
 - **Profiles**: `apple2` (Integer BASIC), `apple2plus` (Applesoft).
-- **Hardware**: MOS 6502 at 1.02 MHz, 48 KB RAM and a 16 KB language card, the soft switches, keyboard latch, speaker, paddles and buttons, the floating bus, and the NTSC video (text, lo-res, hi-res, mixed) after AppleWin. See `doc/README-APPLE2.md`.
+- **Hardware**: MOS 6502 at 1.02 MHz, 48 KB RAM and a 16 KB language card, the soft switches, keyboard latch, speaker, paddles and buttons, the floating bus, the NTSC video (text, lo-res, hi-res, mixed) and the Disk II (slot 6, two drives, `.dsk`/`.do`/`.po`/`.nib`, read and write) after AppleWin. See `doc/README-APPLE2.md`.
 
 ### Atari 2600
 - **Profiles**: `atari2600`, `atari2600-pal`.

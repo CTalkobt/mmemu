@@ -13,6 +13,7 @@
 #include "libmem/main/ibus.h"
 #include "plugins/6502/main/cpu6502.h"
 #include "plugins/devices/apple2_video/main/apple2_video.h"
+#include "disk2.h"
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -200,8 +201,9 @@ private:
 // ---------------------------------------------------------------------------
 class Apple2Bus : public IBus {
 public:
-    Apple2Bus(std::vector<uint8_t> rom, Apple2Video* video, Apple2Keyboard* kbd, Apple2Speaker* spk)
-        : m_rom(std::move(rom)), m_video(video), m_kbd(kbd), m_spk(spk) {
+    Apple2Bus(std::vector<uint8_t> rom, Apple2Video* video, Apple2Keyboard* kbd, Apple2Speaker* spk,
+              Disk2Card* disk)
+        : m_rom(std::move(rom)), m_video(video), m_kbd(kbd), m_spk(spk), m_disk(disk) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x10000, 0);
         m_lc.assign(0x4000, 0);
@@ -242,6 +244,7 @@ public:
         uint8_t v;
         if (a < 0xC000) v = m_ram[a];
         else if (a < 0xC100) v = io(a, nullptr, at);
+        else if (a >= 0xC600 && a < 0xC700) v = m_disk->rom((uint8_t)a);      // slot 6: the Disk II
         else if (a < 0xD000) { syncVideo(at); v = m_video->floatingBus(); }   // empty slots
         else v = m_lcReadRam ? m_lc[lcIndex(a)] : m_rom[a - 0xD000];
         if (m_observer) m_observer->onMemoryRead(this, a, v);
@@ -251,6 +254,7 @@ public:
         const uint16_t a = addr & 0xFFFF;
         if (a < 0xC000) return m_ram[a];
         if (a < 0xC010) return m_kbd->data();
+        if (a >= 0xC600 && a < 0xC700) return m_disk->rom((uint8_t)a);
         if (a < 0xD000) return m_video->floatingBus();
         return m_lcReadRam ? m_lc[lcIndex(a)] : m_rom[a - 0xD000];
     }
@@ -357,7 +361,11 @@ private:
                 if (!wr) { m_lcLastRead = a; m_lcLastInstr = m_instr; }
                 return wr ? 0 : floating(at);
             }
-            default:                                    // slots 1-7: empty
+            case 0xE: {                                 // slot 6: the Disk II
+                const int r = m_disk->io(a, wr, at);
+                return wr ? 0 : r < 0 ? floating(at) : (uint8_t)r;
+            }
+            default:                                    // the other slots: empty
                 return wr ? 0 : floating(at);
         }
     }
@@ -367,6 +375,7 @@ private:
     Apple2Video* m_video;
     Apple2Keyboard* m_kbd;
     Apple2Speaker* m_spk;
+    Disk2Card* m_disk;
     uint32_t m_vf = Apple2Video::VF_TEXT;
     uint64_t m_cycles = 0, m_videoCycle = 0, m_instr = 0, m_ptrig = 0;
     int m_access = 0;
@@ -382,16 +391,17 @@ private:
 
 MachineDescriptor* create(Model model, std::string* err) {
     const bool plus = model == Model::IIPlus;
-    std::vector<uint8_t> rom, chars;
+    std::vector<uint8_t> rom, chars, disk2;
     if (!loadFile(plus ? "roms/apple2/Apple2_Plus.rom" : "roms/apple2/Apple2.rom", 0x3000, rom, err)) return nullptr;
     if (!loadFile("roms/apple2/Apple2_Video.rom", 0x800, chars, err)) return nullptr;
+    if (!loadFile("roms/apple2/DISK2.rom", 0x100, disk2, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
     desc->machineId = plus ? "apple2plus" : "apple2";
     desc->displayName = plus ? "Apple ][+" : "Apple ][";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {};
+    desc->uiPanes = {"drive"};
     desc->clockHz = CPU_HZ;
 
     auto* video = new Apple2Video(plus ? Apple2Video::Model::IIPlus : Apple2Video::Model::II);
@@ -399,7 +409,8 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* kbd = new Apple2Keyboard();
     auto* spk = new Apple2Speaker();
     auto* display = new Apple2Display(video);
-    auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk);
+    auto* disk = new Disk2Card(std::move(disk2));
+    auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk, disk);
     desc->buses.push_back({"system", bus});
     auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
@@ -411,11 +422,15 @@ MachineDescriptor* create(Model model, std::string* err) {
     io->registerHandler(display);
     io->registerHandler(kbd);
     io->registerHandler(spk);
-    desc->deleters.push_back([video, display, kbd, spk]() { delete display; delete video; delete kbd; delete spk; });
+    io->registerHandler(disk);
+    desc->deleters.push_back([video, display, kbd, spk, disk]() {
+        delete display; delete video; delete kbd; delete spk; delete disk;
+    });
 
-    // The RESET key: the CPU only (the language card keeps its state on a
-    // II/II+, AppleWin LanguageCardManager::Reset)
-    kbd->onReset = [cpu]() { cpu->reset(); };
+    // The RESET key: the CPU and the cards' RESET line (the Disk II's
+    // switches off); the language card keeps its state on a II/II+
+    // (AppleWin CtrlReset, LanguageCardManager::Reset)
+    kbd->onReset = [cpu, disk]() { disk->reset(false); cpu->reset(); };
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"RESET", {"reset"}, "The RESET key: the CPU restarts (Applesoft's autostart monitor warm-starts)."}};
 
@@ -435,10 +450,11 @@ MachineDescriptor* create(Model model, std::string* err) {
         io->resetAll();
         cpu->reset();
     };
-    desc->schedulerStep = [bus, cpu, io](MachineDescriptor&) -> int {
+    desc->schedulerStep = [bus, cpu, io, disk](MachineDescriptor&) -> int {
         bus->begin();
         const int c = cpu->step();
         bus->end(c);
+        disk->update(bus->cycles(), (uint64_t)c);
         io->tickAll((uint64_t)c);
         return c;
     };

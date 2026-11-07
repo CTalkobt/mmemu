@@ -20,8 +20,12 @@ DriveStatusPane::DriveStatusPane(wxWindow* parent)
 }
 
 namespace {
-/** "Unit 8: IDLE T:18 S:00"; Atari drives (units 1-4) as "D1: IDLE S:0001". */
+bool s_apple2 = false;     // the Apple II's Disk II drives (units 1, 2)
+
+/** "Unit 8: IDLE T:18 S:00"; Atari drives (units 1-4) as "D1: IDLE S:0001";
+ *  the Apple II's as "S6,D1: IDLE T:17". */
 wxString unitLabel(int unit, const char* state, int t, int s) {
+    if (s_apple2) return wxString::Format("S6,D%d: %s T:%02d", unit, state, t);
     if (unit < 8) return wxString::Format("D%d: %s S:%04d", unit, state, s);
     return wxString::Format("Unit %d: %s T:%02d S:%02d", unit, state, t, s);
 }
@@ -29,6 +33,7 @@ wxString unitLabel(int unit, const char* state, int t, int s) {
 
 void DriveStatusPane::SetMachine(MachineDescriptor* md) {
     m_md = md;
+    s_apple2 = md && md->machineId.rfind("apple2", 0) == 0;
     m_drives.clear();
     m_mainSizer->Clear(true);
 
@@ -123,7 +128,9 @@ void DriveStatusPane::RefreshStatus() {
 void DriveStatusPane::OnMount(wxCommandEvent& event) {
     int unit = event.GetId();
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
-                       unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
+                       s_apple2 ? "Apple II disk images (*.dsk;*.do;*.po;*.nib)|"
+                                  "*.dsk;*.do;*.po;*.nib;*.DSK;*.DO;*.PO;*.NIB"
+                       : unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
                                 : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg)|"
                                   "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg;"
                                   "*.D64;*.D71;*.D80;*.D81;*.D82;*.G64;*.IMD;*.IMG;*.PRG",
