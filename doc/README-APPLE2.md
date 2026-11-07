@@ -1,0 +1,114 @@
+# mmemu-plugin-apple2: Apple II and II+
+
+The Apple II family (#12), after AppleWin (GPL-2.0-or-later): the memory
+map and soft switches (`Memory.cpp`), the language card
+(`LanguageCard.cpp`), the keyboard (`Keyboard.cpp`), the speaker
+(`Speaker.cpp`), paddles and buttons (`Joystick.cpp`) and the video (a port
+of `NTSC.cpp`, see below).
+
+## Profiles
+
+| Profile | Machine |
+|---------|---------|
+| `apple2` | Apple ][: Integer BASIC and the original monitor (starts at the `*` prompt) |
+| `apple2plus` | Apple ][+: Applesoft and the autostart monitor (starts at the `]` prompt) |
+
+Both have 48 KB of RAM and a 16 KB language card in slot 0. The CPU is an
+NMOS 6502 at 1.020484 MHz (14.318181 MHz / 14 with a long cycle every 65).
+
+ROMs (AppleWin's resource images, in `roms/apple2/`): `Apple2.rom`,
+`Apple2_Plus.rom` (12 KB at `$D000-$FFFF`), `Apple2_Video.rom` (the
+character generator).
+
+## Memory map
+
+| Address | |
+|---------|--|
+| `$0000-$BFFF` | RAM (text page 1 `$0400`, page 2 `$0800`; hi-res page 1 `$2000`, page 2 `$4000`) |
+| `$C000-$C0FF` | soft switches and slot I/O |
+| `$C100-$CFFF` | slot ROMs (empty slots: the floating bus) |
+| `$D000-$FFFF` | ROM, or the language card's RAM |
+
+## Soft switches
+
+| Address | |
+|---------|--|
+| `$C000` | keyboard: the last key's ASCII code, bit 7 set until `$C010` |
+| `$C010` | clear the keyboard strobe |
+| `$C030` | toggle the speaker |
+| `$C050` / `$C051` | graphics / text |
+| `$C052` / `$C053` | full screen / mixed (4 lines of text) |
+| `$C054` / `$C055` | page 1 / page 2 |
+| `$C056` / `$C057` | lo-res / hi-res |
+| `$C058-$C05F` | annunciators 0-3 off / on |
+| `$C061-$C063` | buttons 0-2 (bit 7) |
+| `$C064-$C067` | paddles 0-3: bit 7 set until the paddle's timer runs out |
+| `$C070` | start the paddle timers (a position takes 2816/255 = 11.04 cycles a step) |
+| `$C080-$C08F` | the language card |
+
+Reads of switches that have no data, and of empty slots, return the
+**floating bus**: the byte the video is fetching at that cycle (AppleWin's
+`MemReadFloatingBus`). Accesses happen on their own cycle within an
+instruction (the bus counts them), so the video and the speaker see them
+where they occur.
+
+### Language card
+
+As AppleWin (`LanguageCardUnit::IO`, after *Understanding the Apple IIe*,
+5-23): bit 3 picks bank 1 (`$C088-$C08F`) or bank 2 (`$C080-$C087`) of the
+4 KB at `$D000`; reads come from RAM when address bits 0 and 1 are equal
+(`$C080`, `$C083`, ...); an odd address read twice in a row (or written by
+a read-modify-write instruction after its read) write-enables the RAM, an
+even one write-protects it. At power-on: ROM read, bank 2, write enabled.
+The RESET key leaves it alone (on a II/II+ the card does not see RESET).
+
+## Keyboard
+
+The II and II+ keyboards give upper case only. Keys come from the frontends
+by name (US layout; Shift and Control are tracked: `Ctrl`+letter gives the
+control code), or as typed text (CLI `type`, MCP). Return is `$0D`, the
+left arrow and Backspace `$08`, the right arrow `$15`, Esc `$1B`. The
+**RESET** screen button (`key reset`) restarts the CPU.
+
+## Speaker
+
+Each access to `$C030` flips the cone; the level is averaged over each
+44.1 kHz sample and run through a DC-blocking filter.
+
+## Paddles and buttons
+
+Joystick port 0 drives paddles 0 (left/right) and 1 (up/down) and button
+0; port 1 paddles 2/3 and button 1: the paddle reads 0 or 255 with the
+stick pushed, 127 when centred.
+
+## Video
+
+`Apple2Video` (`src/plugins/devices/apple2_video/`) is a port of AppleWin's
+NTSC renderer (`NTSC.cpp`, `NTSC_CharSet.cpp`; William S Simms, Michael
+Pohoreski, Tom Charlesworth): AppleWin's default monitor, "Color (TV)" with
+50% scan lines. Its chroma, luma and signal filters and colour tables match
+AppleWin's (checked entry by entry). The beam runs 65 cycles a line, 262
+lines a frame (17030 cycles, 60 Hz), and every line is drawn as the beam
+passes it, so a mode switch in mid-frame or mid-line shows where it
+happened.
+
+- Text (40 columns; flashing characters every 16 frames, inverse), lo-res
+  (16 colours), hi-res (280 x 192 with the composite colours and fringes,
+  the high bit's half-dot delay), mixed mode (text from line 160), page 2.
+  The IIe modes (80 columns, double lo-res and hi-res, the alternate set
+  with MouseText) are in the port for the IIe stage.
+- The picture is 560 x 384: 40 columns of 14 dots, 192 lines each drawn
+  twice, the second at half brightness (AppleWin's 50% scan lines); no
+  border.
+- The floating bus is the byte the video fetches one cycle behind the beam
+  (AppleWin's `NTSC_VideoGetScannerAddress`), from main RAM; the II/II+
+  scanner adds `$1000` during horizontal blanking as the hardware does.
+
+Left out: the other monitor types (idealised colour, RGB, monochrome),
+50 Hz, the clones' character sets.
+
+## Not yet emulated
+
+- The Disk II controller (slot 6) and disk images (#12, next).
+- The IIe and IIc (auxiliary memory, 80 columns, double hi-res), the IIgs.
+- Cassette input and output.
