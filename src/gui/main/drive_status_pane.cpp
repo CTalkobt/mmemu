@@ -124,9 +124,9 @@ void DriveStatusPane::OnMount(wxCommandEvent& event) {
     int unit = event.GetId();
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
                        unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
-                                : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.img;*.prg)|"
-                                  "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.img;*.prg;"
-                                  "*.D64;*.D71;*.D80;*.D81;*.D82;*.G64;*.IMG;*.PRG",
+                                : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg)|"
+                                  "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg;"
+                                  "*.D64;*.D71;*.D80;*.D81;*.D82;*.G64;*.IMD;*.IMG;*.PRG",
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (openFileDialog.ShowModal() == wxID_OK) {
         std::string path = openFileDialog.GetPath().ToStdString();

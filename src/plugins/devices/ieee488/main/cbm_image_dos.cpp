@@ -4,6 +4,7 @@
 #include "plugins/cbm-loader/main/d80_parser.h"
 #include "plugins/cbm-loader/main/d81_parser.h"
 #include "plugins/cbm-loader/main/d82_parser.h"
+#include "imd_disk.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -15,6 +16,15 @@ CbmImageDos::~CbmImageDos() = default;
 bool CbmImageDos::open(const std::string& path) {
     std::string ext = path.size() > 4 ? path.substr(path.size() - 3) : "";
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    if (ext == "imd") {                          // an MFM disk
+        auto m = std::make_unique<ImdDisk>();
+        if (!m->open(path)) return false;
+        m_mfm = std::move(m);
+        m_disk.reset();
+        m_path = path;
+        reset();
+        return true;
+    }
     std::unique_ptr<CbmSectorDisk> d;
     if      (ext == "d64") d.reset(new D64Parser());
     else if (ext == "d71") d.reset(new D71Parser());
@@ -24,6 +34,7 @@ bool CbmImageDos::open(const std::string& path) {
     else return false;
     if (!d->open(path)) return false;
     m_disk = std::move(d);
+    m_mfm.reset();
     m_path = path;
     reset();
     return true;
@@ -78,6 +89,7 @@ std::vector<uint8_t> CbmImageDos::directory(const std::string& pattern) {
         out.push_back(0);
         addr = next;
     };
+    if (!m_disk) return out;
     std::string name = m_disk->getDiskName();
     name.resize(16, ' ');
     line(0, std::string("\x12\"") + name + "\" " + m_disk->getDiskId() + " " + m_disk->getDosType());
@@ -112,6 +124,10 @@ void CbmImageDos::openChannel(int ch, const std::string& spec) {
     c = Channel{};
     if (ch == 15) {                             // OPEN 15,8,15,"command"
         if (!spec.empty()) command(spec);
+        return;
+    }
+    if (!m_disk && (spec.empty() || spec[0] != '#')) {   // an MFM disk: no Commodore files
+        setError(74, "DRIVE NOT READY");
         return;
     }
     if (!spec.empty() && spec[0] == '#') {      // a direct-access buffer ("#", "#n")
@@ -189,6 +205,8 @@ void CbmImageDos::command(const std::string& raw) {
     char c = cmd[0];
     if (c == 'I' || cmd.rfind("UJ", 0) == 0 || cmd.rfind("UI", 0) == 0 || cmd.rfind("U9", 0) == 0) {
         setError(0, " OK");                     // initialise / reset
+    } else if (!m_disk) {                       // an MFM disk: no Commodore DOS on it
+        setError(74, "DRIVE NOT READY");
     } else if (cmd.rfind("U1", 0) == 0 || cmd.rfind("UA", 0) == 0) {
         blockRead(cmd.substr(2), true);
     } else if (cmd.rfind("B-R", 0) == 0) {
@@ -329,7 +347,17 @@ int CbmImageDos::nextBurstSector(int track, int sector) const {
 void CbmImageDos::burst(const std::string& b) {
     m_burstOut.clear();
     m_bwLeft = 0;
+    m_bwSize = 256;
     if (b.empty()) { m_burstOut.push_back(burstStatus(0x0E)); return; }
+    // READ and WRITE need the disk logged in (INQUIRE DISK, QUERY DISK
+    // FORMAT) since it was put in: until then, disk change ($B)
+    if (((b[0] >> 1) & 7) <= 1 && !m_loggedIn) {
+        const uint8_t st = m_mfm ? mfmStatus(0, 0, 0x0B) : burstStatus(0x0B);
+        m_burstOut.push_back(m_burstLast = st);
+        setError(0, " OK");
+        return;
+    }
+    if (m_mfm && mfmBurst(b)) { setError(0, " OK"); return; }
     const uint8_t c = (uint8_t)b[0];
     auto at = [&](size_t i, int def) { return i < b.size() ? (int)(uint8_t)b[i] : def; };
     switch ((c >> 1) & 7) {
@@ -416,14 +444,128 @@ void CbmImageDos::burstUtility(const std::string& a) {
     }
 }
 
+// MFM disks (an .imd): the 1571 User's Guide, Appendix G, as the C128's
+// CP/M uses them (cxdisk.asm, fast8502.asm): READ/WRITE `U0` $00/$02 (+$10
+// side 1), the cylinder (from 0), the sector number as in its header, the
+// count; QUERY DISK FORMAT `U0` $8A + the track to look at. The status
+// byte: bit 7 MFM, bits 5-4 the sector size, bits 3-0 the controller
+// status (2 sector not found, 3 no address mark, 5 data CRC, 6 format,
+// 8 write protect).
+uint8_t CbmImageDos::mfmStatus(int cyl, int side, int controller) {
+    ImdDisk::Track* t = m_mfm->track(cyl, side);
+    if (!t && !controller) controller = 0x03;                    // nothing there: no address mark
+    return (uint8_t)(0x80 | ((t ? t->sizeCode & 3 : 1) << 4) | (controller & 0x0F));
+}
+
+bool CbmImageDos::mfmBurst(const std::string& b) {
+    const uint8_t c = (uint8_t)b[0];
+    auto at = [&](size_t i, int def) { return i < b.size() ? (int)(uint8_t)b[i] : def; };
+    const int side = (c >> 4) & 1;
+    switch ((c >> 1) & 7) {
+        case 0: {                                // READ: T E B S 0 0 0 N, cylinder, sector, count
+            const bool noTransfer = c & 0x80, ignoreError = c & 0x40;
+            int t = at(1, 0), s = at(2, 1), n = at(3, 1);
+            for (int i = 0; i < n; ++i, ++s) {
+                ImdDisk::Sector* sec = m_mfm->sector(t, side, s);
+                if (!sec || sec->type == 0) {
+                    m_burstOut.push_back(m_burstLast = mfmStatus(t, side, m_mfm->track(t, side) ? 0x02 : 0x03));
+                    break;
+                }
+                const bool crc = sec->type >= 5;
+                m_burstOut.push_back(m_burstLast = mfmStatus(t, side, crc ? 0x05 : 0));
+                if (crc && !ignoreError) break;
+                if (!noTransfer) m_burstOut.insert(m_burstOut.end(), sec->data.begin(), sec->data.end());
+            }
+            return true;
+        }
+        case 1: {                                // WRITE: the host sends each sector
+            m_bwTrack = at(1, 0);
+            m_bwSector = at(2, 1);
+            m_bwLeft = at(3, 1);
+            m_bwSide = side;
+            const int size = m_mfm->sectorSize(m_bwTrack, side);
+            m_bwSize = size ? (size_t)size : 256;
+            m_bwBuf.clear();
+            return true;
+        }
+        case 2:                                  // INQUIRE DISK: logs it in
+            m_loggedIn = true;
+            m_burstOut.push_back(m_burstLast = mfmStatus(0, side, 0));
+            return true;
+        case 3: {                                // FORMAT: byte 1 bit 7 M (1 MFM), bit 6 T (a sector table)
+            const int b1 = at(1, 0x80);
+            if (!(b1 & 0x80)) { m_burstLast = mfmStatus(0, side, 0x06); return true; }   // GCR on an MFM image
+            if (!m_mfm->writable()) { m_burstLast = mfmStatus(0, side, 0x08); return true; }
+            const int sizeCode = at(3, 1) & 3;
+            static const int DEFSECTORS[4] = {26, 16, 9, 5};
+            std::vector<uint8_t> table;
+            const int sectors = at(5, DEFSECTORS[sizeCode]);
+            if (b1 & 0x40)
+                for (int i = 0; i < sectors && 9 + (size_t)i < b.size(); ++i) table.push_back((uint8_t)b[9 + (size_t)i]);
+            const bool ok = m_mfm->format(at(4, 39), sectors, sizeCode, b1 & 0x3F, at(2, 0), at(6, 0), at(7, 0),
+                                          (uint8_t)at(8, 0xE5), c & 0x20, side, table);
+            m_burstLast = mfmStatus(0, side, ok ? 0 : 0x06);
+            m_loggedIn = false;
+            return true;
+        }
+        case 5: {                                // QUERY DISK FORMAT: F X X S 1 0 1 N, the track (F)
+            m_loggedIn = true;
+            const int cyl = (c & 0x80) ? at(1, 0) : 0;
+            const uint8_t st0 = mfmStatus(0, side, 0);
+            m_burstOut.push_back(m_burstLast = st0);
+            if (st0 & 0x0E) return true;
+            ImdDisk::Track* t = m_mfm->track(cyl, side);
+            const uint8_t st = mfmStatus(cyl, side, (t && !t->sectors.empty()) ? 0 : 0x03);
+            m_burstOut.push_back(m_burstLast = st);
+            if (st & 0x0E) return true;
+            // sectors, the track number in the headers, the lowest and highest
+            // sector numbers, the interleave (physical steps from one sector
+            // number to the next)
+            int lo = 255, hi = 0, plo = 0, pnext = -1;
+            for (size_t i = 0; i < t->sectors.size(); ++i) {
+                if (t->sectors[i].id < lo) { lo = t->sectors[i].id; plo = (int)i; }
+                hi = std::max<int>(hi, t->sectors[i].id);
+            }
+            for (size_t i = 0; i < t->sectors.size(); ++i)
+                if (t->sectors[i].id == lo + 1) pnext = (int)i;
+            const int n = (int)t->sectors.size();
+            const int interleave = pnext < 0 ? 1 : (pnext - plo + n) % n;
+            m_burstOut.push_back((uint8_t)n);
+            m_burstOut.push_back(t->sectors[0].cyl);
+            m_burstOut.push_back((uint8_t)lo);
+            m_burstOut.push_back((uint8_t)hi);
+            m_burstOut.push_back((uint8_t)interleave);
+            return true;
+        }
+        default:
+            return false;                        // interleave, status, utilities: as on GCR
+    }
+}
+
 bool CbmImageDos::burstWriteByte(uint8_t b) {
     if (m_bwLeft <= 0) return false;
     m_bwBuf.push_back(b);
-    return m_bwBuf.size() >= 256;
+    return m_bwBuf.size() >= m_bwSize;
 }
 
 void CbmImageDos::burstFinishSector() {
     if (m_bwLeft <= 0) return;
+    if (m_mfm) {                                // an MFM sector, by its number on the cylinder and side
+        int status = 0;
+        ImdDisk::Sector* sec = m_mfm->sector(m_bwTrack, m_bwSide, m_bwSector);
+        if (!sec || m_bwBuf.size() < m_bwSize) status = 0x02;
+        else if (!m_mfm->writable()) status = 0x08;
+        else {
+            sec->data = m_bwBuf;
+            if (sec->type == 0) sec->type = 1;
+            if (!m_mfm->save()) status = 0x07;
+        }
+        m_burstOut.push_back(m_burstLast = mfmStatus(m_bwTrack, m_bwSide, status));
+        m_bwBuf.clear();
+        ++m_bwSector;
+        if (--m_bwLeft < 0 || status) m_bwLeft = 0;
+        return;
+    }
     int status = 0;
     if (m_bwBuf.size() < 256 || m_disk->sectorOffset(m_bwTrack, m_bwSector) == 0xFFFFFFFFu) status = 0x02;
     else if (!m_disk->writable()) status = 0x08;                   // write protect on
@@ -494,7 +636,7 @@ int CbmImageDos::ciout(uint8_t a) {
         Channel& c = m_ch[m_channel];           // into the buffer (for B-W / U2)
         c.buf[c.ptr] = a;
         c.ptr = (c.ptr + 1) & 0xFF;
-    } else if (!m_disk->writable()) {
+    } else if (m_disk && !m_disk->writable()) {
         setError(26, "WRITE PROTECT ON");       // data written to a file
     }                                           // else not open: dropped, the open's error stays
     return 0;

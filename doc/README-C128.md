@@ -94,7 +94,9 @@ shifts the byte; the listener pulls DATA to acknowledge), and:
   `$02` for a missing file.
 - **Burst commands** (`U0` + bytes; the 1571 User's Guide, Appendix G):
   - **inquire disk** (status `$10`: GCR, 256-byte sectors) and **query disk
-    format** (a GCR disk answers its status byte only) log the disk in;
+    format** (a GCR disk answers its status byte only) log the disk in; until
+    then **read** and **write** answer `$1B`, disk change (CP/M then logs
+    the disk in again: swapping disks works);
   - **read** (a status and 256 bytes a sector, a byte for each CLK toggle of
     the computer; T=1 sends the statuses only) and **write** (a byte for each
     CLK toggle of the drive, the status when the computer pulls CLK);
@@ -115,6 +117,38 @@ CP/M uses inquire, read and write, and boots about four times faster than
 over slow serial. Its FORMAT program formats C128 disks with the burst
 format (checked: "C128 Double Sided" on a blank D71, then DIR on it). C64 mode never announces itself, so it stays slow (as on a
 real C128). The Plus/4 and C16 drives are not 1571s.
+
+## MFM disks (CP/M formats)
+
+The 1571 also reads and writes MFM disks, the formats of other CP/M
+machines, through the burst commands; the C128's CP/M recognises Epson
+QX10, IBM-8 SS/DS, KayPro II/IV, Osborne DD, Slicer and Epson Euro disks
+(its `MFM$table`). They come as **ImageDisk** files (`.imd`, Dave
+Dunfield's format: each track's cylinder, head, sector size, sector numbers
+and data), mounted like any disk image (`disk mount 8 disk.imd`):
+
+- **inquire disk**: status `$80` + the sector size in bits 5-4 (`$A0` for
+  512-byte sectors);
+- **query disk format** (`U0` `$8A` + a track, as CP/M asks for track 4):
+  the status of track 0 and of that track, then the number of sectors, the
+  track number in the sector headers, the lowest and highest sector numbers
+  and the interleave (physical steps from one sector number to the next);
+- **read** / **write** (`U0` `$00` / `$02`, `+$10` for side 1): the
+  cylinder from 0, the sector by the number in its header, the count;
+  sector-size bytes after each status (sector not found `$x2`, nothing on
+  that side `$x3`, a data error recorded in the image `$x5`). Writes go back
+  to the `.imd` file;
+- **format MFM** (byte 1 bit 7 set): the sector size, last track, sectors,
+  first sector number, interleave, logical first track, track offset, fill
+  byte, both sides (D) or one (S), an optional sector table; the tracks are
+  rebuilt and the file written. An empty `.imd` (just its header) is a blank
+  disk to format.
+
+Commodore DOS commands on an MFM disk (LOAD, `$`, OPEN) answer `74,DRIVE
+NOT READY`. Checked with CP/M: a Kaypro II disk (when CP/M offers KayPro
+IV / II, the arrow keys pick and RETURN takes) lists with DIR, TYPE shows a
+file, REN writes its directory; FORMAT "KAYPRO II" formats a blank `.imd`
+(40 tracks of 10 x 512-byte sectors, 0-9).
 
 ## Function ROMs and cartridges
 
@@ -281,6 +315,7 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
   when it is drawn), the light pen
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- MFM disks (and burst MFM format/query); cartridges in C64 mode; saving a
-  GMod2's flash and EEPROM
+- MFM disks in other image formats (raw `.img`, `.dsk`); ImageDisk tracks
+  with mixed sector sizes; cartridges in C64 mode; saving a GMod2's flash
+  and EEPROM
 - Sprite DMA cycle stealing (only badlines stop the 8502)

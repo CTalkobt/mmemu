@@ -197,6 +197,7 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/devices/ieee488/main/imd_disk.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/machines/plus4/main/plugin_init.cpp
 
@@ -213,12 +214,14 @@ PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
 	src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/devices/ieee488/main/imd_disk.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/machines/c128/main/plugin_init.cpp
 
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/devices/ieee488/main/imd_disk.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/devices/ieee488/main/plugin_init.cpp
 
@@ -535,6 +538,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/cbm_host_dos.o \
 	src/plugins/devices/ieee488/main/ieee488_bus.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
+	src/plugins/devices/ieee488/main/imd_disk.o \
 	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/machines/c128/main/machine_c128.o \
 	src/plugins/machines/c128/main/c128_carts.o \
