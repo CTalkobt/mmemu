@@ -20,8 +20,11 @@ def assemble(src_path):
     # Ensure output directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # Compile with ca45
-    cmd = [CA45, src_path, "-o", output_path]
+    # Compile with ca45, unoptimised: the tests check instruction sequences
+    # as written. ca45's default -O2 removes stores and loads around INW/DEW
+    # (its redundant-load/dead-store passes don't see them write memory),
+    # which broke advanced.s.
+    cmd = [CA45, "-O0", src_path, "-o", output_path]
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     if result.returncode == 0 and os.path.exists(output_path):
