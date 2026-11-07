@@ -7,6 +7,8 @@
 #include "libmem/main/ibus.h"
 #include "libdevices/main/ivideo_output.h"
 #include <cstdio>
+#include <cstring>
+#include <tuple>
 #include <filesystem>
 #include <fstream>
 #include <unistd.h>
@@ -357,5 +359,143 @@ TEST_CASE(c128_badlines_and_fast_mode) {
     printf("  passes: display on %d, off %d, FAST %d\n", on, off, fast);
     EXPECT_TRUE(off - on > 1100 && off - on < 1500);
     EXPECT_NEAR(fast, 2 * off, 50);
+    delete m;
+}
+
+namespace {
+// A C128 .crt: hardware type `hw`, CHIP packets {bank, start, data}
+std::vector<uint8_t> c128Crt(int hw, const std::vector<std::tuple<int, int, std::vector<uint8_t>>>& chips) {
+    std::vector<uint8_t> f(0x40, 0);
+    std::memcpy(f.data(), "C128 CARTRIDGE  ", 16);
+    f[0x13] = 0x40; f[0x14] = 1; f[0x16] = 0; f[0x17] = (uint8_t)hw;
+    for (auto& [bank, start, data] : chips) {
+        const uint32_t len = 16 + (uint32_t)data.size();
+        const uint8_t h[16] = {'C', 'H', 'I', 'P', (uint8_t)(len >> 24), (uint8_t)(len >> 16), (uint8_t)(len >> 8), (uint8_t)len,
+                               0, 0, (uint8_t)(bank >> 8), (uint8_t)bank, (uint8_t)(start >> 8), (uint8_t)start,
+                               (uint8_t)(data.size() >> 8), (uint8_t)data.size()};
+        f.insert(f.end(), h, h + 16);
+        f.insert(f.end(), data.begin(), data.end());
+    }
+    return f;
+}
+// 16 KB of `fill` with `first` at offset 0
+std::vector<uint8_t> chip16(uint8_t first, uint8_t fill = 0xEA) {
+    std::vector<uint8_t> c(0x4000, fill);
+    c[0] = first;
+    return c;
+}
+}  // namespace
+
+// Bank-switching C128 cartridges (VICE c128/cart/): Magic Desk 128 and
+// Comal 80 bank through $DE00; Warp Speed 128 shows its ROM at $DE00/$DF00
+TEST_CASE(c128_bank_switching_carts) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    // Magic Desk 128: a raw 64 KB image, 4 banks of 16 KB at $8000
+    std::vector<uint8_t> md;
+    for (int b = 0; b < 4; ++b) { auto c = chip16((uint8_t)(0x40 + b)); md.insert(md.end(), c.begin(), c.end()); }
+    ASSERT(c128::insertCartridge(m, md, "md.bin", err));
+    EXPECT_EQ(c128::cartridgeInfo(m), std::string("md.bin (Magic Desk 128)"));
+    bus->write8(0xFF00, 0x08);                       // $8000 external, I/O in
+    EXPECT_EQ(bus->read8(0x8000), 0x40);
+    bus->write8(0xDE00, 2);
+    EXPECT_EQ(bus->read8(0x8000), 0x42);
+    bus->write8(0xDE00, 7);                          // masked to 4 banks
+    EXPECT_EQ(bus->read8(0x8000), 0x43);
+    bus->write8(0xFF00, 0x20);                       // $C000 external: nothing there
+    EXPECT_EQ(bus->read8(0xC000), 0xFF);
+    // Comal 80: 6 x 16 KB at $C000; $DE00 bits 6-5 the chip, bit 4 its half
+    std::vector<uint8_t> comal;
+    for (int b = 0; b < 6; ++b) { auto c = chip16((uint8_t)(0x10 + b)); comal.insert(comal.end(), c.begin(), c.end()); }
+    ASSERT(c128::insertCartridge(m, comal, "comal.bin", err));
+    bus->write8(0xFF00, 0x20);
+    const uint8_t sel[6] = {0x00, 0x10, 0x40, 0x50, 0x60, 0x70};
+    for (int b = 0; b < 6; ++b) {
+        bus->write8(0xDE00, sel[b]);
+        EXPECT_EQ(bus->read8(0xC000), 0x10 + b);
+    }
+    EXPECT_EQ(bus->read8(0xDE00), 0x70);             // the register's upper bits
+    // Warp Speed 128 (.crt type 1): 16 KB mirrored; $DE00/$DF00 are its $9E00/$9F00
+    auto ws = chip16(0x57);
+    ws[0x1E05] = 0x5A; ws[0x1F07] = 0xA5;
+    ASSERT(c128::insertCartridge(m, c128Crt(1, {{0, 0x8000, ws}}), "ws.crt", err));
+    EXPECT_EQ(c128::cartridgeInfo(m), std::string("ws.crt (Warp Speed 128)"));
+    bus->write8(0xFF00, 0x28);
+    EXPECT_EQ(bus->read8(0x8000), 0x57);
+    EXPECT_EQ(bus->read8(0xC000), 0x57);
+    EXPECT_EQ(bus->read8(0xDE05), 0x5A);
+    EXPECT_EQ(bus->read8(0xDF07), 0xA5);
+    // Not a C128 cartridge
+    ASSERT(!c128::insertCartridge(m, std::vector<uint8_t>(40000, 0), "x.bin", err));
+    delete m;
+}
+
+// Partner 128: 64 x 128 bytes of RAM at $DE00-$DE7F, $DE80 the bank; the
+// freeze button forces the NMI vector to $DEDE until $DE80 bit 6
+TEST_CASE(c128_partner128) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    auto rom = chip16(0x50);
+    rom[0x1E90] = 0x99;
+    ASSERT(c128::insertCartridge(m, c128Crt(2, {{0, 0x8000, rom}}), "p.crt", err));
+    bus->write8(0xFF00, 0x00);                       // ROMs and I/O
+    bus->write8(0xDE80, 3);
+    bus->write8(0xDE10, 0x77);
+    EXPECT_EQ(bus->read8(0xDE10), 0x77);
+    bus->write8(0xD605, 0x66);                       // $D600-$D60F also write the RAM
+    EXPECT_EQ(bus->read8(0xDE05), 0x66);
+    bus->write8(0xDE80, 0);
+    EXPECT_EQ(bus->read8(0xDE10), 0xFF);
+    EXPECT_EQ(bus->read8(0xDE90), 0x99);             // the ROM's $9E90
+    const uint8_t vec = bus->read8(0xFFFA);
+    m->onKey("freeze", true);
+    m->onKey("freeze", false);
+    EXPECT_EQ(bus->read8(0xFFFA), 0xDE);
+    EXPECT_EQ(bus->read8(0xFFFB), 0xDE);
+    bus->write8(0xDE80, 0x40);                       // release
+    EXPECT_EQ(bus->read8(0xFFFA), vec);
+    delete m;
+}
+
+// GMod2-C128: 32 x 16 KB of 29F040 flash at $8000 and $C000, $DE00 bits
+// 0-4 the bank; flash programming; the M93C86 EEPROM through $DE00 bits 4-7
+TEST_CASE(c128_gmod2) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    ASSERT(c128::insertCartridge(m, c128Crt(5, {{0, 0x8000, chip16(0x30)}, {3, 0x8000, chip16(0x33, 0xFF)}}), "g.crt", err));
+    bus->write8(0xFF00, 0x28);                       // $8000 and $C000 external
+    EXPECT_EQ(bus->read8(0x8000), 0x30);
+    bus->write8(0xDE00, 3);
+    EXPECT_EQ(bus->read8(0x8000), 0x33);
+    EXPECT_EQ(bus->read8(0xC000), 0x33);
+    // Program $12 at bank 3 + $10: $5555 <- $AA (bank 1 + $1555), $2AAA <- $55, $5555 <- $A0
+    bus->write8(0xDE00, 1); bus->write8(0x9555, 0xAA);
+    bus->write8(0xDE00, 0); bus->write8(0xAAAA, 0x55);
+    bus->write8(0xDE00, 1); bus->write8(0x9555, 0xA0);
+    bus->write8(0xDE00, 3); bus->write8(0x8010, 0x12);
+    EXPECT_EQ(bus->read8(0x8010), 0x12);
+    // EEPROM: write enable, write word 5 = $1234, read it back
+    auto clockBit = [&](int bit) {
+        bus->write8(0xDE00, (uint8_t)(0x40 | (bit << 4)));          // CS, data, clock low
+        bus->write8(0xDE00, (uint8_t)(0x60 | (bit << 4)));          // clock high
+    };
+    auto send = [&](uint32_t bits, int n) { for (int i = n - 1; i >= 0; --i) clockBit((bits >> i) & 1); };
+    auto deselect = [&]() { bus->write8(0xDE00, 0x00); };
+    deselect(); send(0x13 << 8, 13); deselect();                        // 1 0011 xxxxxxxx: WEN
+    send((0x5u << 26) | (5u << 16) | 0x1234, 29); deselect();            // 101 addr10 data16: WRITE
+    send((0x6u << 10) | 5u, 13);                                         // 110 addr10: READ
+    unsigned word = 0;
+    for (int i = 0; i < 16; ++i) {
+        clockBit(0);
+        word = (word << 1) | ((bus->read8(0xDE00) >> 7) & 1);
+    }
+    deselect();
+    EXPECT_EQ(word, 0x1234u);
     delete m;
 }

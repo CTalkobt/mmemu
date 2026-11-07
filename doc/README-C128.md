@@ -127,12 +127,21 @@ nothing fitted reads `$FF`.
 
 `cart <file>` (CLI), File > Attach Cartridge (GUI) or MCP `attach_cartridge`
 plugs a cartridge in and resets; `eject` takes it out; the Cartridge pane
-shows it. As in VICE (`c128/cart/generic.c`):
+shows it. The types are VICE's (`c128/cart/`); a `.crt` (`C128 CARTRIDGE  `
+header) names its type at `$16`, a raw `.bin` (a 2-byte load address is
+skipped) is taken by its size:
 
-| Image | Layout |
-|-------|--------|
-| raw `.bin`, 1 to 32 KB (a 2-byte load address is skipped) | from `$8000`, mirrored up to 32 KB |
-| `.crt` with the `C128 CARTRIDGE  ` header, hardware type 0 | up to two CHIP packets, at `$8000` and `$C000`, up to 16 KB each, mirrored within their 16 KB |
+| Type (`.crt` type) | Image | Hardware |
+|------|-------|----------|
+| Generic (0) | raw 1-32 KB, or a `.crt` with up to two CHIPs at `$8000`/`$C000` of up to 16 KB | 32 KB at `$8000-$FFFF`, mirrored |
+| Warp Speed 128 (1) | `.crt`, one 16 KB CHIP at `$8000` | mirrored at `$8000` and `$C000`; `$DE00`/`$DF00` read the ROM's `$9E00`/`$9F00` |
+| Partner 128 (2) | `.crt`, one 16 KB CHIP at `$8000` | mirrored; 8 KB RAM as 64 banks of 128 bytes at `$DE00-$DE7F`, `$DE80-$DEFF` the ROM's `$9E80-$9EFF` and the bank register (bit 6 ends a freeze); writes to `$D600-$D60F` also go to the RAM. The **FREEZE** screen button (`key freeze`) raises NMI with the KERNAL's NMI vector forced to `$DEDE` |
+| Comal 80 (3) | raw 96 KB, or six 16 KB CHIPs at `$C000` | 16 KB at `$C000`; `$DE00` bits 6-5 pick the chip, bit 4 its half; `$DF00` reads the ROM |
+| Magic Desk 128 (4) | raw 64 KB-1 MB (a power of two), or up to 64 16 KB CHIPs at `$8000` | 16 KB at `$8000`; `$DE00` bits 0-5 pick the bank |
+| GMod2-C128 (5) | `.crt`, 16 KB CHIPs by bank (0-31) | 512 KB of AM29F040 flash, the bank at `$8000` and `$C000`; `$DE00` bits 0-4 the bank, bits 4-6 the M93C86 EEPROM's data in, clock and select, bit 7 (read) its data out. Flash programming and erase work (the image file is not written back); the EEPROM starts blank |
+
+VICE takes a raw image's type from its command line; here 96 KB means
+Comal 80 and 64 KB or more Magic Desk 128 (GMod2 needs its `.crt`).
 
 At reset the KERNAL polls the four halves (`$E26B`): one with `CBM` at
 `$xx07` is noted, and one with `$01` at `$xx06` is called at `$xx00` (a
@@ -272,5 +281,6 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
   when it is drawn), the light pen
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- Bank-switching C128 cartridges, MFM disks (and burst MFM format/query)
+- MFM disks (and burst MFM format/query); cartridges in C64 mode; saving a
+  GMod2's flash and EEPROM
 - Sprite DMA cycle stealing (only badlines stop the 8502)
