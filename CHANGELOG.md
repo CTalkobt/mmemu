@@ -8,6 +8,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Repository
+- **45GS02 validation: `advanced.s` passes again**: `tests/45gs02/validate.py` now assembles with `ca45 -O0`. ca45's default `-O2` dropped `sta $10` before `INW $10` and the loads after it (its redundant-load and dead-store passes don't see INW/DEW write memory), so the INW check read stale values and reported `$FF`. mmsim's INW was right all along; all five checks give `$01`.
 - `mmsim.dump` and `xmega65.dump`, written by `tests/45gs02/validate.py` during `make test`, are no longer tracked and are now in `.gitignore` (they had been committed by accident again in #205).
 
 ### Apple II
