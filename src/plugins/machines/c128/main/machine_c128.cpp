@@ -932,14 +932,29 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     };
 
     // The 8502 at 1 or 2 MHz ($D030 bit 0), the Z80 at an effective 2 MHz
-    // (its 4 MHz clock waits for the VIC-II); time is counted at 1 MHz
+    // (its 4 MHz clock waits for the VIC-II); time is counted at 1 MHz.
+    // Badlines steal the bus from the 8502 at 1 MHz; in FAST mode the VIC-IIe
+    // steals nothing (VICE vicii-badline.c, vicii-fetch.c: no
+    // dma_maincpu_steal_cycles while fastmode) and the screen is drawn as
+    // usual.
     auto* half = new int(0);
-    desc->deleters.push_back([half]() { delete half; });
-    desc->schedulerStep = [io, cpu, z80, vic, bus, half, fresh8502](MachineDescriptor& d) -> int {
+    auto* backlog = new int(0);
+    desc->deleters.push_back([half, backlog]() { delete half; delete backlog; });
+    vic->setStallBacklog(backlog);
+    desc->schedulerStep = [io, cpu, z80, vic, bus, half, backlog, fresh8502](MachineDescriptor& d) -> int {
         int c;
         const bool z = bus->z80Active();
         d.cpus[0].active = !z;
         d.cpus[1].active = z;
+        if (*backlog > 0) {
+            if (z || vic->fastMode()) {
+                *backlog = 0;
+            } else {                             // the 8502 waits (RDY) while the VIC-II fetches
+                (*backlog)--;
+                io->tickAll(1);
+                return 1;
+            }
+        }
         if (z) {
             *half += z80->step();
             c = *half / 2;

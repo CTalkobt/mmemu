@@ -17,7 +17,11 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
 
 - **CPUs**: Zilog Z80 (boot BIOS, CP/M; see below) and MOS 8502, a 6510 with a seventh port pin: bit 6 reads the CAPS
   LOCK (ASCII/DIN) key. 1 MHz, or 2 MHz while VIC-IIe `$D030` bit 0 is set
-  (BASIC `FAST`); time is counted at the 1 MHz clock.
+  (BASIC `FAST`); time is counted at the 1 MHz clock. At 1 MHz each badline
+  stops the 8502 for about 40 cycles while the VIC-II fetches; in FAST mode
+  the VIC-IIe steals no cycles and the 40-column screen is still drawn (as in
+  VICE; a real C128 shows garbage there, which is why BASIC's `FAST` blanks
+  it).
 - **MMU** (8722) with 128 KB RAM in two banks: see below.
 - **Video**: 8564/8566 VIC-IIe, the C64's VIC-II plus `$D02F` (the extra
   keyboard lines K0-K2) and `$D030` (2 MHz, test). It fetches from the RAM
@@ -253,6 +257,5 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - VDC interlace and mid-frame register changes (raster effects)
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
-- The Z80 in C64 mode beyond the C64 memory map
-- Bank-switching C128 cartridges, MFM disks (and burst MFM format/query),
-  the VIC-IIe's 2 MHz effect on the display
+- Bank-switching C128 cartridges, MFM disks (and burst MFM format/query)
+- Sprite DMA cycle stealing (only badlines stop the 8502)
