@@ -161,7 +161,7 @@ The Disk II interface card in slot 6 with two drives, after AppleWin's
 
 | Address | |
 |---------|--|
-| `$C600-$C6FF` | the boot ROM (P5, 16 sectors: `roms/apple2/DISK2.rom`) |
+| `$C600-$C6FF` | the boot ROM (P5, 16 sectors: `roms/apple2/DISK2.rom`; 13 sectors, `DISK2-13sector.rom`, for a WOZ that says it boots DOS 3.2) |
 | `$C0E0-$C0E7` | stepper phases 0-3 off / on |
 | `$C0E8` / `$C0E9` | motor off / on (it runs on for a second after off) |
 | `$C0EA` / `$C0EB` | drive 1 / 2 |
@@ -187,12 +187,54 @@ Images (AppleWin `DiskImageHelper.cpp`):
   encoding, each track starting 768 nibbles on) and written back into the
   file when the head leaves a written track or the drive stops.
 - `.nib`: 6656 nibbles a track, as recorded.
+- `.woz` (WOZ1, WOZ2): the bit stream of each quarter track, see below.
+
+### WOZ
+
+After AppleWin's WOZ path (`Disk.cpp` `DataLatchReadWriteWOZ`,
+`DataLatchReadWOZ`, `DataLoadWriteWOZ`, `DataShiftWriteWOZ`,
+`FindTrackSeamWOZ`; `DiskImageHelper.cpp` `CWOZ1Image`, `CWOZ2Image`):
+
+- The INFO chunk (5.25" disks only; write protect; WOZ2's boot sector
+  format and optimal bit timing), TMAP (quarter tracks to tracks), TRKS
+  (WOZ1: 6656-byte tracks; WOZ2: 512-byte blocks and a length in bits).
+  WRIT, META and WOZ 2.1's FLUX chunks are skipped (FLUX tracks are not
+  emulated, as in AppleWin).
+- The disk turns a bit cell every optimal bit timing (32 = 4 us; Border
+  Zone's 28 = 3.5 us), the remainder carried over. Each access runs the
+  cells since the last one through the sequencer (after a gap of more than
+  100, the rest are skipped so it re-syncs): the MC3470's head window makes
+  up bits (~30% ones) after three zero cells (weak bits, fake bits); the
+  shift register latches a nibble when bit 7 sets, and holds it 7 us, longer
+  while zeroes follow. `$C08D` resets the sequencer (offset nibble streams).
+- With two adjacent magnets on the head stops between them: quarter tracks
+  (half tracks for `.dsk`/`.nib`, as AppleWin). Changing track keeps the
+  head's place in proportion to the two tracks' lengths (cross-track sync).
+- AppleWin's two jitters for copy protections: a slipped bit cell after
+  the boot ROM reads track 0 sector 0's address (GH#930), and at the track
+  seam from track 33 on (GH#1125).
+- Writes shift the latch out a bit cell at a time. A written track goes
+  back into the file with a new header CRC; a write to an unrecorded track
+  adds one at the end of TRKS (seen from the quarter tracks on either
+  side), so a blank WOZ can be formatted. Unrecorded tracks read as noise.
+
+Checked with the WOZ reference test images (applesaucefdc.com): the DOS 3.3
+and 3.2 System Masters (WOZ2) boot; Blazing Paddles and Take 1 (cross-track
+sync) reach their menus; Hard Hat Mack, The Bilestoad (half tracks), Dino
+Eggs, Crisis Mountain, Miner 2049er II, The Print Shop Companion (fake
+bits), First Math Adventures (latch lifespan), Stickybear Town Builder
+(offset streams), Bouncing Kamungas, Commando, Planetfall, Rescue Raiders,
+Sammy Lightfoot, Stargate on a II+; Wings of Fury, The Apple at Play and
+Border Zone on the enhanced IIe. INIT formats a blank WOZ2 that then
+boots. A WOZ1 has no boot sector format, so its DOS 3.2 master needs the
+13-sector ROM chosen by hand (not yet offered).
 
 Disks go in units 1 and 2: CLI `disk mount 1 dos33.dsk`, the GUI drive pane,
 MCP `mount_disk`. A read-only file is a write-protected disk.
 
 ## Not yet emulated
 
-- WOZ images, 13-sector (DOS 3.2) disks; `.zip`/`.gz` images (#233).
+- WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
+  13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
 - The IIc, the IIgs; RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.

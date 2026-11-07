@@ -5,6 +5,7 @@
 
 #include "disk2.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <unistd.h>
@@ -83,6 +84,12 @@ std::unique_ptr<Disk2Image> Disk2Image::fromBytes(std::vector<uint8_t> data, con
                                                   std::string* err) {
     auto img = std::unique_ptr<Disk2Image>(new Disk2Image());
     const std::string e = lowerExt("x" + ext);
+    const bool wozMagic = data.size() >= 12 && std::memcmp(data.data(), "WOZ", 3) == 0;
+    if (e == ".woz" || wozMagic) {
+        img->m_data = std::move(data);
+        if (!img->parseWoz(err)) return nullptr;
+        return img;
+    }
     if (e == ".nib") {
         if (data.empty() || data.size() % NIB_TRACK || data.size() / NIB_TRACK > TRACKS_MAX) {
             if (err) *err = "not a .nib image (35 tracks of 6656 nibbles)";
@@ -114,9 +121,10 @@ std::unique_ptr<Disk2Image> Disk2Image::open(const std::string& path, std::strin
     auto img = fromBytes(std::move(data), lowerExt(path), err);
     if (!img) return nullptr;
     img->m_path = path;
-    img->m_protect = access(path.c_str(), W_OK) != 0;
+    if (access(path.c_str(), W_OK) != 0) img->m_protect = true;
     return img;
 }
+
 
 // Code62: 256 bytes -> 342 6-bit values (86 of the low two bits, 256 of
 // the high six) -> XOR-chained with a checksum (343) -> disk bytes
@@ -269,18 +277,222 @@ void Disk2Image::writeTrack(int track, const uint8_t* nibbles, int count) {
     }
 }
 
+void Disk2Image::saveFile(size_t at, size_t len) {
+    if (m_path.empty()) return;
+    std::fstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
+    if (!f) return;
+    f.seekp((std::streamoff)at);
+    f.write((const char*)m_data.data() + at, (std::streamsize)len);
+}
+
+uint32_t Disk2Image::crc32(const uint8_t* p, size_t n) {
+    static uint32_t table[256];
+    static bool made = false;
+    if (!made) {
+        for (uint32_t i = 0; i < 256; ++i) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; ++k) c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[i] = c;
+        }
+        made = true;
+    }
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; ++i) c = table[(c ^ p[i]) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+// CWOZHelper::ProcessChunks: the header ("WOZ1"/"WOZ2", FF 0A 0D 0A, CRC),
+// then chunks: exactly one INFO (a 5.25" disk), TMAP and TRKS; WRIT, META
+// and FLUX are skipped
+bool Disk2Image::parseWoz(std::string* err) {
+    auto fail = [&](const char* why) { if (err) *err = std::string("WOZ: ") + why; return false; };
+    const auto& d = m_data;
+    if (d.size() < 12 || std::memcmp(d.data(), "WOZ", 3) != 0 || (d[3] != '1' && d[3] != '2'))
+        return fail("not a WOZ1/WOZ2 file");
+    if (d[4] != 0xFF || d[5] != 0x0A || d[6] != 0x0D || d[7] != 0x0A) return fail("bad header");
+    m_woz1 = d[3] == '1';
+    bool info = false, tmap = false, trks = false;
+    int infoVersion = 1, largestTrack = 0;
+    size_t p = 12;
+    while (p + 8 <= d.size()) {
+        const uint32_t size = word(d, p + 4) | ((uint32_t)word(d, p + 6) << 16);
+        const size_t body = p + 8;
+        if (body + size > d.size()) return fail("truncated chunk");
+        if (std::memcmp(&d[p], "INFO", 4) == 0) {
+            if (info) return fail("two INFO chunks");
+            info = true;
+            infoVersion = d[body];
+            if (d[body + 1] != 1) return fail("not a 5.25\" disk");
+            if (d[body + 2] == 1) m_protect = true;
+            if (infoVersion >= 2 && size >= 46) {
+                m_boot13 = d[body + 38] == 2;
+                if (d[body + 39]) m_bitTiming = d[body + 39];
+                largestTrack = word(d, body + 44);
+            }
+        } else if (std::memcmp(&d[p], "TMAP", 4) == 0) {
+            if (tmap || size < QUARTER_TRACKS) return fail("bad TMAP chunk");
+            tmap = true;
+            m_tmap = body;
+        } else if (std::memcmp(&d[p], "TRKS", 4) == 0) {
+            if (trks) return fail("two TRKS chunks");
+            trks = true;
+            m_trks = body;
+            m_trksHdr = p;
+            m_trksLast = body + size == d.size();
+        }
+        p = body + size;
+    }
+    if (!(info && tmap && trks)) return fail("missing INFO, TMAP or TRKS");
+    m_order = Order::Woz;
+    m_tracks = 40;
+    const int largest = infoVersion >= 2 ? largestTrack * 512 : NIB_TRACK;
+    m_maxTrackBytes = std::max({largest, NIB_TRACK, MAX_NIBBLES, WOZ_EMPTY_TRACK});
+    return true;
+}
+
+// CWOZImageHelper: an unrecorded track is noise, ~30% one bits
+int Disk2Image::wozReadTrack(int qt, uint8_t* out, uint32_t& bitCount) const {
+    static std::vector<uint8_t> empty;
+    if (empty.empty()) {
+        uint32_t r = 1;
+        empty.resize(WOZ_EMPTY_TRACK);
+        for (auto& b : empty) {
+            uint8_t n = 0;
+            for (int j = 0; j < 8; ++j) {
+                r = r * 1103515245u + 12345u;
+                if (((r >> 16) & 0x7FFF) % 10 < 3) n |= (uint8_t)(1 << j);
+            }
+            b = n;
+        }
+    }
+    auto noise = [&]() {
+        std::memcpy(out, empty.data(), WOZ_EMPTY_TRACK);
+        bitCount = WOZ_EMPTY_TRACK * 8;
+        return WOZ_EMPTY_TRACK;
+    };
+    if (qt < 0 || qt >= QUARTER_TRACKS) return noise();
+    const uint8_t idx = m_data[m_tmap + qt];
+    if (idx == 0xFF) return noise();
+    if (m_woz1) {
+        const size_t base = m_trks + (size_t)idx * NIB_TRACK;
+        if (base + NIB_TRACK > m_data.size()) return noise();
+        const int bytes = word(m_data, base + 6646);
+        bitCount = word(m_data, base + 6648);
+        if (bytes > 6646 || bytes == 0) return noise();
+        std::memcpy(out, &m_data[base], (size_t)bytes);
+        return bytes;
+    }
+    const size_t e = m_trks + (size_t)idx * 8;
+    const uint32_t start = word(m_data, e) * 512u;
+    const uint32_t bits = word(m_data, e + 4) | ((uint32_t)word(m_data, e + 6) << 16);
+    const int bytes = (int)((bits + 7) / 8);
+    if (bytes == 0 || bytes > m_maxTrackBytes || start + (size_t)bytes > m_data.size()) return noise();
+    bitCount = bits;
+    std::memcpy(out, &m_data[start], (size_t)bytes);
+    return bytes;
+}
+
+// CWOZ1Image/CWOZ2Image::Write: the bits back into the track; an unmapped
+// quarter track gets a new track (also seen from the quarter tracks on
+// either side) appended to TRKS; then the header CRC
+void Disk2Image::wozWriteTrack(int qt, const uint8_t* bits, int bytes) {
+    if (m_protect || qt < 0 || qt >= QUARTER_TRACKS || bytes <= 0) return;
+    auto put16 = [&](size_t at, uint32_t v) { m_data[at] = (uint8_t)v; m_data[at + 1] = (uint8_t)(v >> 8); };
+    auto put32 = [&](size_t at, uint32_t v) { put16(at, v & 0xFFFF); put16(at + 2, v >> 16); };
+    uint8_t idx = m_data[m_tmap + qt];
+    if (idx == 0xFF) {
+        if (!m_trksLast) return;        // TRKS can only grow at the end of the file
+        int highest = -1;
+        for (int i = 0; i < QUARTER_TRACKS; ++i)
+            if (m_data[m_tmap + i] != 0xFF) highest = std::max(highest, (int)m_data[m_tmap + i]);
+        idx = (uint8_t)(highest + 1);
+        if (!m_woz1 && idx >= QUARTER_TRACKS) return;
+        m_data[m_tmap + qt] = idx;
+        if (qt > 0) m_data[m_tmap + qt - 1] = idx;
+        if (qt + 1 < QUARTER_TRACKS) m_data[m_tmap + qt + 1] = idx;
+        uint32_t ext;
+        if (m_woz1) {
+            if (bytes > 6646) return;
+            ext = NIB_TRACK;
+            const size_t base = m_data.size();
+            m_data.resize(base + ext, 0);
+            put16(base + 6646, (uint32_t)bytes);
+            put16(base + 6648, (uint32_t)bytes * 8);
+        } else {
+            ext = ((uint32_t)bytes + 511) & ~511u;
+            m_data.resize(m_data.size() + ext, 0);
+            const size_t e = m_trks + (size_t)idx * 8;
+            uint32_t start = 3;
+            for (int i = 0; i < idx; ++i) start += word(m_data, m_trks + (size_t)i * 8 + 2);
+            put16(e, start);
+            put16(e + 2, ext / 512);
+            put32(e + 4, (uint32_t)bytes * 8);
+        }
+        const uint32_t size = word(m_data, m_trksHdr + 4) | ((uint32_t)word(m_data, m_trksHdr + 6) << 16);
+        put32(m_trksHdr + 4, size + ext);
+    }
+    if (m_woz1) {
+        const size_t base = m_trks + (size_t)idx * NIB_TRACK;
+        if (bytes > 6646 || base + NIB_TRACK > m_data.size()) return;
+        std::memcpy(&m_data[base], bits, (size_t)bytes);
+    } else {
+        const size_t e = m_trks + (size_t)idx * 8;
+        const uint32_t start = word(m_data, e) * 512u;
+        const uint32_t count = word(m_data, e + 4) | ((uint32_t)word(m_data, e + 6) << 16);
+        if ((int)((count + 7) / 8) != bytes || start + (size_t)bytes > m_data.size()) return;
+        std::memcpy(&m_data[start], bits, (size_t)bytes);
+    }
+    put32(8, crc32(m_data.data() + 12, m_data.size() - 12));
+    if (!m_path.empty()) {
+        std::ofstream f(m_path, std::ios::binary | std::ios::trunc);
+        f.write((const char*)m_data.data(), (std::streamsize)m_data.size());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Disk2Card
 // ---------------------------------------------------------------------------
 
-Disk2Card::Disk2Card(std::vector<uint8_t> rom) : m_rom(std::move(rom)) {
+namespace {
+// The address prologue of track 0 sector 0 as read through the latch
+// (AppleWin m_T00S00Pattern, for the GH#930 jitter)
+const uint8_t T00S00[] = {0xD5, 0xAA, 0x96, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xDE};
+}  // namespace
+
+Disk2Card::Disk2Card(std::vector<uint8_t> rom, std::vector<uint8_t> rom13)
+    : m_rom(std::move(rom)), m_rom13(std::move(rom13)) {
     m_rom.resize(256, 0);
+    if (m_rom13.size() < 256) m_rom13 = m_rom;
     for (auto& d : m_drive) d.disk.track.assign(Disk2Image::MAX_NIBBLES, 0);
 }
 
 Disk2Card::~Disk2Card() {
     flush(0);
     flush(1);
+}
+
+bool Disk2Card::woz() const {
+    const Disk2Image* img = m_drive[m_curr].disk.image.get();
+    return img && img->isWoz();
+}
+
+bool Disk2Card::chance(int num, int den) {
+    m_rand = m_rand * 1103515245u + 12345u;
+    return (int)((m_rand >> 16) % (uint32_t)den) < num;
+}
+
+// InitFirmware: the 13-sector ROM for a DOS 3.2 WOZ in drive 1
+void Disk2Card::chooseRom() {
+    const Disk2Image* img = m_drive[0].disk.image.get();
+    m_use13 = img && img->bootSector13();
+}
+
+void Disk2Card::resetSequencer() {
+    m_shiftReg = 0;
+    m_latchDelay = 0;
+    m_writeStarted = false;
+    m_t00Idx = 0;
+    m_t00Found = false;
 }
 
 void Disk2Card::reset(bool powerCycle) {
@@ -290,6 +502,7 @@ void Disk2Card::reset(bool powerCycle) {
     m_magnets = 0;
     m_writeMode = m_loadMode = false;
     m_deferred = false;
+    resetSequencer();
     if (powerCycle) {
         for (int i = 0; i < 2; ++i) {
             flush(i);
@@ -299,6 +512,7 @@ void Disk2Card::reset(bool powerCycle) {
         }
         m_lastCycle = m_lastReadLatch = m_now = 0;
     }
+    chooseRom();
 }
 
 void Disk2Card::syncStepper(uint64_t now) {
@@ -319,16 +533,20 @@ void Disk2Card::update(uint64_t now, uint64_t cycles) {
     }
 }
 
+// IORead / IOWrite
 int Disk2Card::io(uint16_t addr, const uint8_t* wr, uint64_t now) {
     syncStepper(now);
-    setSequencer(addr);
+    now = m_now;
+    bool isWoz = woz();
+    if (isWoz && seqFunction() == SHIFT_WRITE) shiftWriteWoz(now);   // finish the last write
+    setSequencer(addr, now);
     switch (addr & 0xF) {
         case 0x0: case 0x1: case 0x2: case 0x3:
-        case 0x4: case 0x5: case 0x6: case 0x7: controlStepper(addr, m_now); break;
-        case 0x8: case 0x9: controlMotor(addr, m_now); break;
-        case 0xA: case 0xB: enable(addr, m_now); break;
-        case 0xC: readWrite(m_now); break;
-        case 0xD: loadWriteProtect(); break;
+        case 0x4: case 0x5: case 0x6: case 0x7: controlStepper(addr, now); break;
+        case 0x8: case 0x9: controlMotor(addr, now); break;
+        case 0xA: case 0xB: enable(addr, now); isWoz = woz(); break;
+        case 0xC: if (!isWoz) readWrite(now); break;
+        case 0xD: loadWriteProtect(now); break;
         case 0xE: break;                        // read mode
         case 0xF:                               // write mode: the light
             m_drive[m_curr].writeLight = SPINNING_CYCLES;
@@ -337,22 +555,33 @@ int Disk2Card::io(uint16_t addr, const uint8_t* wr, uint64_t now) {
     if (wr) {
         // Any address loads the latch in the sequencer's LD function
         // (write mode and load mode, 74LS323)
-        if (m_writeMode && m_loadMode) m_latch = *wr;
+        if (seqFunction() == LOAD_WRITE) {
+            m_latch = *wr;
+            if (isWoz) latchWoz(true, now);
+        }
         return 0;
     }
     // Only even addresses return the latch (UTAIIe table 9.1)
-    return (addr & 1) ? -1 : m_latch;
+    if (addr & 1) return -1;
+    if (isWoz && seqFunction() != SHIFT_WRITE) latchWoz(false, now);
+    return m_latch;
 }
 
 // SetSequencerFunction: $C08C/$C08D load mode off/on, $C08E/$C08F write mode
-void Disk2Card::setSequencer(uint16_t addr) {
+void Disk2Card::setSequencer(uint16_t addr, uint64_t now) {
     if ((addr & 0xF) < 0xC) return;
+    const int old = seqFunction();
     switch ((addr & 3) ^ 2) {
         case 0: m_writeMode = false; break;
         case 1: m_writeMode = true; break;
         case 2: m_loadMode = false; break;
         case 3: m_loadMode = true; break;
     }
+    if (!m_writeMode) m_writeStarted = false;
+    // Leaving check-write-protect: the bit cells pass (write-protect checks,
+    // bit-slip protections)
+    if (old == CHECK_WP && seqFunction() != CHECK_WP && woz())
+        advanceBits(m_drive[m_curr].disk, bitCellDelta(now));
 }
 
 void Disk2Card::checkSpinning(bool stateChanged, uint64_t now) {
@@ -391,18 +620,26 @@ void Disk2Card::controlStepper(uint16_t addr, uint64_t now) {
     m_deferred = true;
 }
 
-// The head moves toward an adjacent magnet that is on, unless the magnets
-// on both sides are on; one half track at a time
+// ControlStepperDeferred: the head moves toward an adjacent magnet that is
+// on, unless the magnets on both sides are on; a half track at a time. With
+// two adjacent magnets on, a WOZ disk's head stops between (a quarter track)
 void Disk2Card::stepperDeferred() {
     m_deferred = false;
     Drive& d = m_drive[m_curr];
     int dir = 0;
     if (m_magnets & (1 << ((d.phase + 1) & 3))) dir += 1;
     if (m_magnets & (1 << ((d.phase + 3) & 3))) dir -= 1;
+    int quarterDir = 0;
+    if (woz() && (m_magnets == 0xC || m_magnets == 0x6 || m_magnets == 0x3 || m_magnets == 0x9)) {
+        quarterDir = dir;
+        dir = 0;
+    }
     const int np = std::clamp(d.phase + dir, 0, 79);
-    if (np != d.phase) {
-        flush(m_curr);
-        d.phase = np;
+    const int nq = std::max(0, np * 2 + quarterDir);
+    if (nq != d.quarter) flush(m_curr);     // the written track, before the head moves
+    d.phase = np;
+    if (nq != d.quarter) {
+        d.quarter = nq;
         d.disk.trackData = false;
     }
 }
@@ -416,34 +653,65 @@ void Disk2Card::enable(uint16_t addr, uint64_t now) {
     checkSpinning(changed, now);
 }
 
-void Disk2Card::readTrack(int drive) {
-    Floppy& f = m_drive[drive].disk;
-    const int track = m_drive[drive].phase >> 1;
-    if (!f.image || track >= f.image->tracks()) { f.trackData = false; return; }
-    f.nibbles = f.image->readTrack(track, f.track.data());
-    f.byte = 0;
-    f.trackData = f.nibbles != 0;
+// ReadTrack: a WOZ track keeps the head's place in proportion to the
+// track lengths (WOZ-1.01), rounded up for the cross-track sync checks
+void Disk2Card::readTrack(int drive, uint64_t now) {
+    Drive& d = m_drive[drive];
+    Floppy& f = d.disk;
+    if (!f.image) { f.trackData = false; return; }
+    if ((int)f.track.size() < f.image->maxTrackBytes()) f.track.assign((size_t)f.image->maxTrackBytes(), 0);
+    if (!f.image->isWoz()) {
+        const int track = d.phase >> 1;
+        if (track >= f.image->tracks()) { f.trackData = false; return; }
+        f.nibbles = f.image->readTrack(track, f.track.data());
+        f.byte = 0;
+        f.trackData = f.nibbles != 0;
+        return;
+    }
+    // The position on the old track first (only the current drive's clock runs)
+    if (drive == m_curr) advanceBits(f, bitCellDelta(now));
+    if (f.bitCount == 0) { f.bitOffset = 0; f.bitCount = 8; }
+    const uint32_t pos = f.bitOffset, len = f.bitCount;
+    uint32_t bits = 0;
+    f.nibbles = f.image->wozReadTrack(d.quarter, f.track.data(), bits);
+    if (f.nibbles == 0 || bits == 0) { f.nibbles = 1; bits = 8; }
+    f.bitCount = bits;
+    f.bitOffset = (uint32_t)(((uint64_t)pos * bits) / len) + 7;
+    if (f.bitOffset >= f.bitCount) f.bitOffset = 0;
+    bitOffsets(f);
+    f.extraCycles = 0;
+    d.headWindow = 0;
+    findTrackSeam(f);
+    f.trackData = true;
+    f.initialBitOffset = f.bitOffset;
+    f.revs = 0;
 }
 
 void Disk2Card::flush(int drive) {
-    Floppy& f = m_drive[drive].disk;
-    if (f.image && f.dirty) f.image->writeTrack(m_drive[drive].phase >> 1, f.track.data(), f.nibbles);
+    Drive& d = m_drive[drive];
+    Floppy& f = d.disk;
+    if (f.image && f.dirty) {
+        if (f.image->isWoz()) f.image->wozWriteTrack(d.quarter, f.track.data(), f.nibbles);
+        else f.image->writeTrack(d.phase >> 1, f.track.data(), f.nibbles);
+    }
     f.dirty = false;
 }
 
-// ReadWrite ($C08C): the disk has turned a nibble every 32 cycles since the
-// last access; a read takes the nibble under the head (part of it if within
-// 6 cycles of the last read), a write puts the latch there
+// UpdateLatchForEmptyDrive: noise once the sequencer settles (GH#748, GH#864)
+void Disk2Card::emptyLatch(const Drive& d, uint64_t now) {
+    if (now - d.motorOnCycle < (uint64_t)MOTOR_ON_UNTIL_LSS_STABLE_CYCLES) m_latch = 0x80;
+    else { m_rand = m_rand * 1103515245u + 12345u; m_latch = (uint8_t)(m_rand >> 16); }
+}
+
+// ReadWrite ($C08C, .dsk/.nib): the disk has turned a nibble every 32
+// cycles since the last access; a read takes the nibble under the head
+// (part of it if within 6 cycles of the last read), a write puts the latch
+// there
 void Disk2Card::readWrite(uint64_t now) {
     Drive& d = m_drive[m_curr];
     Floppy& f = d.disk;
-    if (!f.trackData && f.image) readTrack(m_curr);
-    if (!f.trackData) {
-        // An empty drive: noise once the sequencer settles (GH#748, GH#864)
-        if (now - d.motorOnCycle < (uint64_t)MOTOR_ON_UNTIL_LSS_STABLE_CYCLES) m_latch = 0x80;
-        else { m_rand = m_rand * 1103515245u + 12345u; m_latch = (uint8_t)(m_rand >> 16); }
-        return;
-    }
+    if (!f.trackData && f.image) readTrack(m_curr, now);
+    if (!f.trackData) { emptyLatch(d, now); return; }
     if (d.spinning) {
         const uint64_t diff = now - m_lastCycle;
         m_lastCycle = now;
@@ -471,21 +739,217 @@ void Disk2Card::readWrite(uint64_t now) {
 }
 
 // $C08D: the write-protect switch shifted into the latch (saturated: $FF
-// protected, $00 not)
-void Disk2Card::loadWriteProtect() {
-    if (!m_drive[m_curr].spinning) return;
-    const Disk2Image* img = m_drive[m_curr].disk.image.get();
+// protected, $00 not); on a WOZ disk the sequencer goes to state 0
+void Disk2Card::loadWriteProtect(uint64_t now) {
+    Drive& d = m_drive[m_curr];
+    if (!d.spinning) return;
+    const Disk2Image* img = d.disk.image.get();
     m_latch = (img && img->writeProtected()) ? 0xFF : 0x00;
+    if (m_writeStarted) return;
+    if (img && img->isWoz()) {
+        advanceBits(d.disk, bitCellDelta(now));     // E7 bit-slip protections
+        resetSequencer();
+    }
 }
+
+// --- WOZ: the bit stream -----------------------------------------------------
+
+// GetBitCellDelta: bit cells since the last access at the disk's optimal
+// bit timing (125 ns units), the remainder carried over
+uint32_t Disk2Card::bitCellDelta(uint64_t now) {
+    Floppy& f = m_drive[m_curr].disk;
+    const int timing = f.image ? f.image->optimalBitTiming() : 32;
+    const double cycles = (double)(now - m_lastCycle) + f.extraCycles;
+    const double bitTime = 0.125 * timing;
+    const uint32_t cells = (uint32_t)std::floor(cycles / bitTime);
+    f.extraCycles = cycles - cells * bitTime;
+    m_lastCycle = now;
+    return cells;
+}
+
+void Disk2Card::bitOffsets(Floppy& f) {
+    f.byte = (int)(f.bitOffset / 8);
+    f.bitMask = (uint8_t)(1 << (7 - (f.bitOffset & 7)));
+}
+
+void Disk2Card::advanceBits(Floppy& f, uint32_t cells) {
+    if (f.bitCount == 0) return;
+    f.bitOffset += cells;
+    if (f.bitOffset >= f.bitCount) f.bitOffset %= f.bitCount;
+    bitOffsets(f);
+}
+
+void Disk2Card::incBit(Floppy& f) {
+    f.bitMask >>= 1;
+    if (!f.bitMask) { f.bitMask = 0x80; ++f.byte; }
+    if (++f.bitOffset == f.bitCount) { f.bitMask = 0x80; f.bitOffset = 0; f.byte = 0; }
+    if (f.bitOffset == f.initialBitOffset) ++f.revs;
+}
+
+// PreJitterCheck / AddJitter (GH#930): after the boot ROM reads T$00 S$00's
+// address prologue, a long skip sometimes slips a bit cell
+void Disk2Card::preJitter(int phase) {
+    if (phase != 0 || !(m_latch & 0x80)) return;
+    if (m_latch == T00S00[m_t00Idx]) {
+        if (++m_t00Idx == (int)sizeof T00S00) m_t00Found = true;
+    } else {
+        m_t00Idx = 0;
+    }
+}
+void Disk2Card::jitter(int phase, Floppy& f) {
+    if (phase == 0 && m_t00Found && chance(1, 10)) incBit(f);
+    m_t00Idx = 0;
+    m_t00Found = false;
+}
+// AddTrackSeamJitter (GH#1125): from track 33 on, at the start of a long
+// sync run (the track seam) half the time a bit cell slips
+void Disk2Card::seamJitter(int quarter, Floppy& f) {
+    if (quarter >= 33 * 4 && f.longestSyncRun > 110 && (int)f.bitOffset == f.longestSyncStart && chance(5, 10))
+        incBit(f);
+}
+
+// DataLatchReadWriteWOZ: run the bit cells since the last access through
+// the sequencer (no more than 100: a long gap re-syncs)
+void Disk2Card::latchWoz(bool write, uint64_t now) {
+    Drive& d = m_drive[m_curr];
+    Floppy& f = d.disk;
+    if (!f.trackData && f.image) readTrack(m_curr, now);
+    if (!f.trackData) { emptyLatch(d, now); return; }
+    if (!d.spinning) return;
+    const uint32_t SIGNIFICANT = 100;
+    uint32_t delta = bitCellDelta(now);
+    uint32_t remainder = delta;
+    if (delta > SIGNIFICANT) {
+        remainder = SIGNIFICANT;
+        advanceBits(f, delta - SIGNIFICANT);
+        m_latchDelay = 0;
+        d.headWindow = 0;
+        jitter(d.phase, f);
+    }
+    if (!write) {
+        if (seqFunction() != READ_SEQ) {        // check write protect
+            advanceBits(f, remainder);
+            return;
+        }
+        readBitsWoz(remainder);
+        preJitter(d.phase);
+    } else {
+        loadWriteWoz(remainder);
+    }
+}
+
+// DataLatchReadWOZ: each bit cell through the MC3470's head window (after
+// three zero cells it makes up bits: ~30% ones) into the shift register; a
+// nibble (bit 7 set) is latched and held 7 us, longer while zeroes follow
+void Disk2Card::readBitsWoz(uint32_t cells) {
+    Drive& d = m_drive[m_curr];
+    Floppy& f = d.disk;
+    for (uint32_t i = 0; i < cells; ++i) {
+        const uint8_t n = f.track[(size_t)f.byte];
+        d.headWindow = (uint8_t)((d.headWindow << 1) | ((n & f.bitMask) ? 1 : 0));
+        const uint8_t bit = (d.headWindow & 0x0F) ? ((d.headWindow >> 1) & 1) : (chance(3, 10) ? 1 : 0);
+        incBit(f);
+        seamJitter(d.quarter, f);
+        m_shiftReg = (uint8_t)((m_shiftReg << 1) | bit);
+        if (m_latchDelay) {
+            m_latchDelay -= 4;
+            if (m_latchDelay < 0) m_latchDelay = 0;
+            if (!m_shiftReg) m_latchDelay += 4;     // GH#662
+        }
+        if (!m_latchDelay) {
+            m_latch = m_shiftReg;
+            if (m_shiftReg & 0x80) {
+                m_latchDelay = 7;
+                m_shiftReg = 0;
+            }
+        }
+    }
+}
+
+// DataLoadWriteWOZ: the latch goes to the shift register to be written
+void Disk2Card::loadWriteWoz(uint32_t cells) {
+    Floppy& f = m_drive[m_curr].disk;
+    if (f.image->writeProtected()) { advanceBits(f, cells); return; }
+    if (!m_writeStarted) advanceBits(f, cells);    // the cells before writing
+    m_writeStarted = true;
+    m_shiftReg = m_latch;
+    f.longestSyncStart = -1;                       // the seam moved
+}
+
+// DataShiftWriteWOZ: the shift register's bits onto the track, a bit cell
+// at a time since the last access
+void Disk2Card::shiftWriteWoz(uint64_t now) {
+    Drive& d = m_drive[m_curr];
+    Floppy& f = d.disk;
+    const uint32_t cells = bitCellDelta(now);
+    if (!f.image) return;
+    if (f.image->writeProtected()) { advanceBits(f, cells); return; }
+    if (!d.spinning || !f.trackData) return;
+    for (uint32_t i = 0; i < cells; ++i) {
+        const bool out = m_shiftReg & 0x80;
+        m_shiftReg = (uint8_t)(m_shiftReg << 1);
+        uint8_t& n = f.track[(size_t)f.byte];
+        n = (uint8_t)((n & ~f.bitMask) | (out ? f.bitMask : 0));
+        incBit(f);
+    }
+    f.dirty = true;
+}
+
+// FindTrackSeamWOZ: the longest run of 10-bit sync FFs
+void Disk2Card::findTrackSeam(Floppy& f) {
+    const uint32_t old = f.bitOffset;
+    uint8_t shift = 0;
+    int zeroes = 0, start = -1, nibbleStart = -1, syncStart = -1, syncRun = 0;
+    int longestStart = -1, longestRun = 0;
+    f.bitOffset = 0;
+    bitOffsets(f);
+    f.longestSyncStart = -1;
+    const uint32_t initial = f.initialBitOffset;
+    f.initialBitOffset = 0xFFFFFFFFu;               // no revolution counting here
+    for (uint64_t guard = 0; guard < (uint64_t)f.bitCount * 2 + 16; ++guard) {
+        const uint8_t bit = (f.track[(size_t)f.byte] & f.bitMask) ? 1 : 0;
+        incBit(f);
+        if ((start < 0 && f.bitOffset == 0) || (start >= 0 && (uint32_t)start == f.bitOffset)) break;
+        if (shift & 0x80) {
+            if (!bit) { ++zeroes; continue; }
+            if (shift == 0xFF && zeroes == 2) {
+                if (syncStart < 0) syncStart = nibbleStart;
+                ++syncRun;
+            }
+            if ((shift != 0xFF || zeroes != 2) && syncStart >= 0) {
+                if (start < 0) start = nibbleStart;
+                if (longestRun < syncRun) { longestStart = syncStart; longestRun = syncRun; }
+                syncStart = -1;
+                syncRun = 0;
+            }
+            shift = 0;
+            zeroes = 0;
+        }
+        shift = (uint8_t)((shift << 1) | bit);
+        if (shift == 0x01) {
+            nibbleStart = (int)f.bitOffset - 1;
+            if (nibbleStart < 0) nibbleStart += (int)f.bitCount;
+        }
+    }
+    if (longestRun) {
+        f.longestSyncStart = longestStart;
+        f.longestSyncRun = longestRun;
+    }
+    f.initialBitOffset = initial;
+    f.bitOffset = old;
+    bitOffsets(f);
+}
+
+// --- Disks -------------------------------------------------------------------
 
 bool Disk2Card::insert(int drive, std::unique_ptr<Disk2Image> image) {
     drive &= 1;
     ejectDisk(drive + 1);
     Floppy& f = m_drive[drive].disk;
+    f = Floppy();
     f.image = std::move(image);
-    f.trackData = false;
-    f.dirty = false;
-    f.byte = 0;
+    f.track.assign((size_t)std::max(Disk2Image::MAX_NIBBLES, f.image ? f.image->maxTrackBytes() : 0), 0);
+    chooseRom();
     return f.image != nullptr;
 }
 
@@ -507,7 +971,7 @@ void Disk2Card::ejectDisk(int unit) {
 bool Disk2Card::getDiskStatus(int unit, int& track, int& sector, bool& led) {
     if (unit != 1 && unit != 2) return false;
     const Drive& d = m_drive[unit - 1];
-    track = d.phase >> 1;
+    track = d.quarter >> 2;
     sector = 0;
     led = d.spinning > 0 && m_curr == unit - 1;
     return true;

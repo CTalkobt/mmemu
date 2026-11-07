@@ -128,8 +128,8 @@ void DriveStatusPane::RefreshStatus() {
 void DriveStatusPane::OnMount(wxCommandEvent& event) {
     int unit = event.GetId();
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
-                       s_apple2 ? "Apple II disk images (*.dsk;*.do;*.po;*.nib)|"
-                                  "*.dsk;*.do;*.po;*.nib;*.DSK;*.DO;*.PO;*.NIB"
+                       s_apple2 ? "Apple II disk images (*.dsk;*.do;*.po;*.nib;*.woz)|"
+                                  "*.dsk;*.do;*.po;*.nib;*.woz;*.DSK;*.DO;*.PO;*.NIB;*.WOZ"
                        : unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
                                 : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg)|"
                                   "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg;"

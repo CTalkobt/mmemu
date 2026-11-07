@@ -573,6 +573,8 @@ MachineDescriptor* create(Model model, std::string* err) {
     if (!loadFile(iie ? "roms/apple2/Apple2e_Enhanced_Video.rom" : "roms/apple2/Apple2_Video.rom",
                   iie ? 0x1000 : 0x800, chars, err)) return nullptr;
     if (!loadFile("roms/apple2/DISK2.rom", 0x100, disk2, err)) return nullptr;
+    std::vector<uint8_t> disk13;                       // DOS 3.2 (13 sectors), for WOZ disks that need it
+    loadFile("roms/apple2/DISK2-13sector.rom", 0x100, disk13, nullptr);
 
     static const char* const IDS[] = {"apple2", "apple2plus", "apple2e", "apple2e-enhanced"};
     static const char* const NAMES[] = {"Apple ][", "Apple ][+", "Apple //e", "Apple //e (enhanced)"};
@@ -591,7 +593,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* kbd = new Apple2Keyboard(iie);
     auto* spk = new Apple2Speaker();
     auto* display = new Apple2Display(video);
-    auto* disk = new Disk2Card(std::move(disk2));
+    auto* disk = new Disk2Card(std::move(disk2), std::move(disk13));
     auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk, disk, iie, enhanced);
     desc->buses.push_back({"system", bus});
     // The enhanced IIe has a 65C02
