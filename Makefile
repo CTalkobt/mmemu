@@ -201,6 +201,7 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/machines/plus4/main/plugin_init.cpp
 
 PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
+                   src/plugins/machines/c128/main/c128_carts.cpp \
 	src/plugins/devices/vdc8563/main/vdc8563.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
@@ -536,6 +537,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/ieee488/main/cbm_image_dos.o \
 	src/plugins/machines/plus4/main/machine_plus4.o \
 	src/plugins/machines/c128/main/machine_c128.o \
+	src/plugins/machines/c128/main/c128_carts.o \
 	src/plugins/z80/main/cpu_z80.o \
 	src/plugins/devices/riot6532/main/riot6532.o \
 	src/plugins/devices/tia/main/tia.o \

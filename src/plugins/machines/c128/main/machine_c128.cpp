@@ -3,6 +3,7 @@
 // VICE team.
 
 #include "machine_c128.h"
+#include "c128_carts.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -90,15 +91,21 @@ public:
      *  low half at $8000-$BFFF, the high half at $C000-$FFFF; internal (the
      *  socket on the board) when CR picks 1, external (a cartridge) for 2.
      *  Empty: none fitted (reads $FF). */
-    void setFunctionRom(bool external, Rom rom, std::string label = "") {
-        (external ? m_extFunc : m_intFunc) = std::move(rom);
-        (external ? m_cartLabel : m_intLabel) = std::move(label);
+    void setFunctionRom(Rom rom, std::string label = "") {
+        m_intFunc = std::move(rom);
+        m_intLabel = std::move(label);
     }
+    /** The cartridge at the expansion port (the external function ROM), or none. */
+    void setCartridge(std::unique_ptr<c128::C128Cart> cart, std::string label = "") {
+        m_cart = std::move(cart);
+        m_cartLabel = m_cart ? std::move(label) : "";
+    }
+    c128::C128Cart* cartridge() const { return m_cart.get(); }
     const std::string& cartridgeLabel() const { return m_cartLabel; }
     const std::string& internalFunctionRomLabel() const { return m_intLabel; }
-    uint8_t funcByte(int sel, uint16_t addr) const {
-        const Rom& r = sel == 1 ? m_intFunc : m_extFunc;
-        return r.empty() ? 0xFF : r[addr & 0x7FFF];
+    uint8_t funcByte(int sel, uint16_t addr, bool peek = true) const {
+        if (sel != 1) return m_cart ? m_cart->romRead(addr, peek) : 0xFF;
+        return m_intFunc.empty() ? 0xFF : m_intFunc[addr & 0x7FFF];
     }
     /** MCR bit 3: the fast serial direction (set = the C128 sends, through
      *  CIA1's shift register onto the bus's DATA and SRQ). */
@@ -291,16 +298,17 @@ private:
             switch ((cr >> 2) & 3) {
                 case 0: return m_basic[addr - 0x4000];
                 case 3: return m_ram[ramAddr(addr)];
-                default: return funcByte((cr >> 2) & 3, addr);   // internal / external function ROM
+                default: return funcByte((cr >> 2) & 3, addr, peek);   // internal / external function ROM
             }
         }
         if (addr >= 0xD000 && addr < 0xE000 && !(cr & 0x01)) return io(addr, nullptr, peek);
         switch ((cr >> 4) & 3) {
             case 0:
                 if (addr >= 0xD000 && addr < 0xE000) return m_chargen[0x1000 + (addr & 0x0FFF)];
+                if ((addr == 0xFFFA || addr == 0xFFFB) && m_cart && m_cart->nmiVectorForced()) return 0xDE;
                 return m_kernal[addr - 0xC000];             // editor $C000, KERNAL $E000
             case 3: return m_ram[ramAddr(addr)];
-            default: return funcByte((cr >> 4) & 3, addr);
+            default: return funcByte((cr >> 4) & 3, addr, peek);
         }
     }
 
@@ -311,6 +319,10 @@ private:
             return;
         }
         if (addr >= 0xD000 && addr < 0xE000 && !(m_mmu[0] & 0x01)) { io(addr, &val, false); return; }
+        // The cartridge sees writes where CR maps it (GMod2's flash), and the
+        // RAM underneath takes them too (VICE external_function_rom_store)
+        if (m_cart && addr >= 0x8000 && ((addr < 0xC000 ? (m_mmu[0] >> 2) : (m_mmu[0] >> 4)) & 3) == 2)
+            m_cart->romWrite(addr, val);
         m_ram[ramAddr(addr)] = val;                         // under ROM: RAM
     }
 
@@ -334,6 +346,7 @@ private:
                 else v = mmuPeek(addr & 0xFF);
                 break;
             case 0xD600:
+                if (wr && m_cart) m_cart->iod6Write(addr, *wr);
                 dev(m_vdc, addr); break;
             case 0xD800: case 0xD900: case 0xDA00: case 0xDB00: {
                 uint8_t* cram = &m_colorRam[c64Mode() || portBit(0) ? 0 : 0x400];
@@ -343,7 +356,15 @@ private:
             }
             case 0xDC00: dev(m_cia1, 0xDC00 | (addr & 0x0F)); break;
             case 0xDD00: dev(m_cia2, 0xDD00 | (addr & 0x0F)); break;
-            default: break;                                 // $D700, $DE00, $DF00: open
+            case 0xDE00: case 0xDF00:                       // I/O1, I/O2: the cartridge
+                if (m_cart && !c64Mode()) {
+                    uint8_t cv = 0xFF;
+                    const bool drives = (addr & 0xFF00) == 0xDE00 ? m_cart->io1(addr, wr, peek, cv)
+                                                                  : m_cart->io2(addr, wr, peek, cv);
+                    if (drives && !wr) v = cv;
+                }
+                break;
+            default: break;                                 // $D700: open
         }
         return v;
     }
@@ -375,7 +396,8 @@ private:
     uint8_t m_ram[0x20000];
     uint8_t m_colorRam[0x800];
     Rom m_basic, m_kernal, m_chargen, m_c64;
-    Rom m_intFunc, m_extFunc;
+    Rom m_intFunc;
+    std::unique_ptr<c128::C128Cart> m_cart;
     std::string m_cartLabel, m_intLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
@@ -686,55 +708,6 @@ private:
     std::vector<uint32_t> m_vicFrame;
 };
 
-/**
- * A function ROM image into 32 KB, as VICE does (c128/cart/generic.c): a raw
- * image loads the largest power of two from 32 KB down to 1 KB it holds
- * (after a 2-byte load address if there is one) and is mirrored; a .crt
- * ("C128 CARTRIDGE  ", generic) has up to two CHIP packets at $8000 and
- * $C000 of up to 16 KB, each mirrored in its half.
- */
-bool functionRomImage(const std::vector<uint8_t>& img, Rom& out, std::string& type, std::string& err) {
-    out.assign(0x8000, 0xFF);
-    auto be16 = [&](size_t o) { return (uint32_t)(img[o] << 8 | img[o + 1]); };
-    auto mirror = [&](size_t base, size_t len, size_t span) {
-        for (size_t l = len; l < span; l *= 2) std::copy(out.begin() + (long)base, out.begin() + (long)(base + l), out.begin() + (long)(base + l));
-    };
-    if (img.size() >= 0x40 && std::memcmp(img.data(), "C128 CARTRIDGE  ", 16) == 0) {
-        if (be16(0x16) != 0) { err = "unsupported .crt hardware type " + std::to_string(be16(0x16)) + " (only generic, 0)"; return false; }
-        size_t o = std::max<uint32_t>(be16(0x10) << 16 | be16(0x12), 0x40);
-        int chips = 0;
-        while (o + 16 <= img.size() && std::memcmp(&img[o], "CHIP", 4) == 0 && chips < 2) {
-            uint32_t len = be16(o + 4) << 16 | be16(o + 6), start = be16(o + 12), size = be16(o + 14);
-            if ((start != 0x8000 && start != 0xC000) || !size || size > 0x4000 || o + 16 + size > img.size()) {
-                err = "unsupported CHIP packet";
-                return false;
-            }
-            size_t base = start == 0xC000 ? 0x4000 : 0;
-            std::copy(img.begin() + (long)(o + 16), img.begin() + (long)(o + 16 + size), out.begin() + (long)base);
-            size_t p2 = 1;
-            while (p2 < size) p2 *= 2;
-            mirror(base, p2 == size ? size : p2, 0x4000);
-            ++chips;
-            o += len;
-        }
-        if (!chips) { err = "no CHIP packets"; return false; }
-        std::string name(img.begin() + 0x20, img.begin() + 0x40);
-        name = name.substr(0, name.find('\0'));
-        type = "C128 .crt" + (name.empty() ? std::string() : ": " + name);
-        return true;
-    }
-    for (size_t len = 0x8000; len >= 0x400; len /= 2) {
-        if (img.size() != len && img.size() != len + 2) continue;
-        size_t skip = img.size() - len;
-        std::copy(img.begin() + (long)skip, img.end(), out.begin());
-        mirror(0, len, 0x8000);
-        type = std::to_string(len / 1024) + " KB function ROM";
-        return true;
-    }
-    err = "not a C128 cartridge (a raw 1-32 KB image, or a .crt with a C128 CARTRIDGE header)";
-    return false;
-}
-
 C128Bus* c128Bus(MachineDescriptor* m) {
     if (!m) return nullptr;
     for (auto& b : m->buses)
@@ -748,10 +721,10 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
                      const std::string& label, std::string& err) {
     auto* bus = c128Bus(m);
     if (!bus) { err = "Not a C128."; return false; }
-    Rom rom;
-    std::string type;
-    if (!functionRomImage(image, rom, type, err)) return false;
-    bus->setFunctionRom(true, std::move(rom), label + " (" + type + ")");
+    auto cart = c128::makeCart(image, err);
+    if (!cart) return false;
+    const std::string type = cart->type();
+    bus->setCartridge(std::move(cart), label + " (" + type + ")");
     if (m->onReset) m->onReset(*m);
     return true;
 }
@@ -759,7 +732,7 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image,
 void removeCartridge(MachineDescriptor* m) {
     auto* bus = c128Bus(m);
     if (!bus) return;
-    bus->setFunctionRom(true, {});
+    bus->setCartridge(nullptr);
     if (m->onReset) m->onReset(*m);
 }
 
@@ -772,11 +745,11 @@ bool setInternalFunctionRom(MachineDescriptor* m, const std::vector<uint8_t>& im
                             const std::string& label) {
     auto* bus = c128Bus(m);
     if (!bus) { err = "Not a C128."; return false; }
-    if (image.empty()) { bus->setFunctionRom(false, {}); return true; }
+    if (image.empty()) { bus->setFunctionRom({}); return true; }
     Rom rom;
     std::string type;
-    if (!functionRomImage(image, rom, type, err)) return false;
-    bus->setFunctionRom(false, std::move(rom), label.empty() ? type : label + " (" + type + ")");
+    if (!c128::functionRomImage(image, rom, type, err)) return false;
+    bus->setFunctionRom(std::move(rom), label.empty() ? type : label + " (" + type + ")");
     return true;
 }
 
@@ -807,7 +780,8 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     desc->screenButtons = {
         {"40/80", {"40_80"}, "The 40/80 DISPLAY key (it locks): down shows the VDC's 80 columns, up the VIC-II's 40. The screen editor reads it at reset to pick its screen."},
         {"RUN/STOP + RESTORE", {"run_stop", "restore"}, "Hold RUN/STOP and press RESTORE: the KERNAL's warm start."},
-        {"RESTORE", {"restore"}, "RESTORE on its own: an NMI."}};
+        {"RESTORE", {"restore"}, "RESTORE on its own: an NMI."},
+        {"FREEZE", {"freeze"}, "The cartridge's freeze button (Partner 128)."}};
 
     desc->romSockets.push_back({"function",
         "The internal function ROM socket (U36): 32 KB at $8000-$FFFF when CR picks it; a raw 1-32 KB image or a C128 .crt",
@@ -906,10 +880,17 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         delete irq; delete nmi;
     });
 
-    desc->onKey = [kbd, restore](const std::string& n, bool down) {
+    // The cartridge's freeze button (Partner 128): NMI while it is held
+    ISignalLine* freezeLine = nmi->createLine();
+    desc->onKey = [kbd, restore, freezeLine, bus](const std::string& n, bool down) {
         std::string l = n;
         std::transform(l.begin(), l.end(), l.begin(), [](unsigned char c) { return (char)std::tolower(c); });
         if (l == "restore") { restore->set(down); return true; }
+        if (l == "freeze") {
+            if (!down) { freezeLine->set(false); return true; }
+            if (bus->cartridge() && bus->cartridge()->freeze()) freezeLine->set(true);
+            return true;
+        }
         return kbd->key(n, down);
     };
     desc->joystickPorts = 2;
@@ -923,6 +904,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     desc->deleters.push_back([fresh8502]() { delete fresh8502; });
     desc->onReset = [bus, io, cpu, z80, fresh8502, desc](MachineDescriptor&) {
         bus->resetMmu();
+        if (bus->cartridge()) bus->cartridge()->reset();
         io->resetAll();
         z80->reset();
         *fresh8502 = true;
