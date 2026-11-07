@@ -330,3 +330,32 @@ TEST_CASE(c128_fast_serial_load) {
     std::filesystem::remove_all(dir);
     delete m;
 }
+
+// Badlines steal the bus from the 8502 at 1 MHz (25 a frame, ~40 cycles
+// each); in FAST mode the VIC-IIe steals nothing (VICE) and the CPU does
+// twice the work
+TEST_CASE(c128_badlines_and_fast_mode) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    // $0B00: SEI; loop: INC $FB; BNE loop; INC $FC; JMP loop
+    const uint8_t code[] = {0x78, 0xE6, 0xFB, 0xD0, 0xFC, 0xE6, 0xFC, 0x4C, 0x01, 0x0B};
+    for (size_t i = 0; i < sizeof code; ++i) bus->write8(0x0B00 + (uint32_t)i, code[i]);
+    m->cpus[0].cpu->setPc(0x0B00);
+    run(m, 100);
+    auto passes = [&](uint8_t d011, uint8_t d030) {
+        bus->write8(0xD011, d011);
+        bus->write8(0xD030, d030);
+        run(m, 2 * 19656);                         // settle
+        bus->write8(0xFB, 0); bus->write8(0xFC, 0);
+        run(m, 10 * 19656);                        // 10 PAL frames
+        return bus->peek8(0xFB) | (bus->peek8(0xFC) << 8);
+    };
+    const int on = passes(0x1B, 0xFC), off = passes(0x0B, 0xFC), fast = passes(0x1B, 0xFD);
+    // A pass is 8 cycles: 10 frames of 25 badlines x 40 cycles = ~1250 fewer
+    printf("  passes: display on %d, off %d, FAST %d\n", on, off, fast);
+    EXPECT_TRUE(off - on > 1100 && off - on < 1500);
+    EXPECT_NEAR(fast, 2 * off, 50);
+    delete m;
+}
