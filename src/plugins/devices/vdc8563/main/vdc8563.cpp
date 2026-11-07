@@ -2,6 +2,7 @@
 // vdc.c), GPL-2.0-or-later, VICE team.
 
 #include "vdc8563.h"
+#include <algorithm>
 #include <cstring>
 
 namespace {
@@ -16,14 +17,46 @@ const uint8_t REGMASK[38] = {
 constexpr uint8_t REVISION = 2;          // VICE's default (8563 R9)
 }  // namespace
 
-Vdc8563::Vdc8563(bool ram64k) : m_ram(ram64k ? 0x10000 : 0x4000, 0) {
+Vdc8563::Vdc8563(bool ram64k)
+    : m_ram(ram64k ? 0x10000 : 0x4000, 0),
+      m_back((size_t)FRAME_W * FRAME_H, 0xFF000000u), m_front((size_t)FRAME_W * FRAME_H, 0xFF000000u) {
     Vdc8563::reset();
 }
 
+// vdc_reset (with the registers cleared, as at power-up)
 void Vdc8563::reset() {
     std::memset(m_regs, 0, sizeof m_regs);
     m_index = 0;
-    m_frameCycle = 0;
+    m_frameCounter = 0;
+    m_acc = 0;
+    m_screenTextCols = 100;
+    m_xsmooth = 7;
+    m_regs[0] = 126;
+    m_regs[1] = 102;
+    m_xcharsTotal = 127;
+    m_regs[4] = 39;
+    m_regs[6] = 25;
+    m_interlaced = 0;
+    m_regs[9] = 7;
+    m_regs[22] = 0x78;
+    m_charwidth = 8;
+    m_attributeOffset = 0;
+    m_rowCounter = m_rowCounterY = 0;
+    m_rowCounterLatch = m_vertFineAdj = m_displayEnable = m_vsync = false;
+    m_vsyncCounter = 0;
+    m_primeDraw = m_drawActive = m_drawFinished = m_drawCounterLatch = false;
+    m_drawCounter = m_drawCounterY = 0;
+    m_memCounter = m_memCounterInc = m_bitmapCounter = 0;
+    m_screenAdr = m_attributeAdr = 0;
+    m_bufDraw = 0;
+    m_attributeBlink = false;
+    m_canvasHeight = m_pal ? 288 : 240;
+    m_vsyncHeight = m_pal ? 25 : 21;
+    m_canvasHeightOld = m_stableSizeCount = 0;
+    m_currentLine = 0;
+    std::fill(m_back.begin(), m_back.end(), 0xFF000000u);
+    std::fill(m_front.begin(), m_front.end(), 0xFF000000u);
+    updateGeometry();
 }
 
 // R28 bit 4 selects 64 KB addressing; translate when it does not match the
@@ -64,29 +97,219 @@ void Vdc8563::fillCopy() {
     m_regs[19] = ptr & 0xFF;
 }
 
-// A line is (R0 + 1) characters of 8 dots at 16 MHz (vdc_calculate_xsync);
-// a frame (R4 + 1) rows of (R9 + 1) lines plus R5
-uint64_t Vdc8563::lineCycles() const {
-    uint64_t c = (uint64_t)(m_regs[0] + 1) * 8 * m_clockHz / 16000000;
-    return c ? c : 1;
-}
-uint64_t Vdc8563::frameCycles() const {
-    uint64_t lines = (uint64_t)(m_regs[4] + 1) * ((m_regs[9] & 0x1F) + 1) + (m_regs[5] & 0x1F);
-    if (lines < 2) lines = m_pal ? 312 : 262;              // not set up yet
-    return lines * lineCycles();
-}
-
-// Vertical blank (VICE: !display_enable): past the displayed rows
+// Vertical blank (VICE: !display_enable)
 uint8_t Vdc8563::status() const {
-    const uint64_t line = m_frameCycle / lineCycles();
-    const uint64_t shown = (uint64_t)m_regs[6] * ((m_regs[9] & 0x1F) + 1);
-    return 0x80 | (line >= shown ? 0x20 : 0) | REVISION;
+    return 0x80 | (m_displayEnable ? 0 : 0x20) | REVISION;
 }
 
+// vdc_calculate_xsync: a line is xchars_total * 8 dots at 16 MHz, counted
+// in CPU cycles (16.16)
 void Vdc8563::tick(uint64_t cycles) {
-    const uint64_t frame = frameCycles();
-    m_frameCycle += cycles;
-    while (m_frameCycle >= frame) { m_frameCycle -= frame; ++m_frameCounter; }
+    const uint64_t inc = (uint64_t)m_xcharsTotal * 8 * 65536 * m_clockHz / 16000000;
+    if (!inc) return;
+    m_acc += cycles << 16;
+    while (m_acc >= inc) { m_acc -= inc; rasterLine(); }
+}
+
+void Vdc8563::calculateCharwidth() {
+    m_charwidth = (m_regs[25] & 0x10) ? 2 * (m_regs[22] >> 4) : 1 + (m_regs[22] >> 4);
+}
+
+// vdc_update_geometry: the displayed columns and the left border (R1, R2)
+void Vdc8563::updateGeometry() {
+    const int r0 = m_regs[0], r1 = m_regs[1];
+    if (r1 >= 6 && r1 <= 100 && r1 < r0) m_screenTextCols = r1;
+    else if (r1 < 6) m_screenTextCols = 6;
+    else if (r1 >= r0 && r0 > 0) m_screenTextCols = std::min(r0 - 1, 100);
+    else m_screenTextCols = 100;
+    int hsync = (m_regs[25] & 0x10) ? 62 * 16 - m_regs[2] * m_charwidth : 116 * 8 - m_regs[2] * m_charwidth;
+    if (hsync < 0) hsync = 0;
+    if (m_screenTextCols * m_charwidth > CANVAS_W) hsync = 0;
+    else if (hsync + m_screenTextCols * m_charwidth > CANVAS_W) hsync = CANVAS_W - m_screenTextCols * m_charwidth;
+    m_borderWidth = hsync;
+    m_updateGeometry = false;
+}
+
+// Register side effects (vdc-mem.c vdc_store)
+void Vdc8563::registerWritten(int reg, uint8_t oldval) {
+    switch (reg) {
+        case 0:
+            if (m_regs[0] != oldval) {
+                if (m_regs[0] >= 120 && m_regs[0] <= 127) m_xcharsTotal = m_regs[0] + 1;
+                m_updateGeometry = true;
+            }
+            break;
+        case 1: case 2: case 6:
+            if (m_regs[reg] != oldval) m_updateGeometry = true;
+            break;
+        case 8:                                            // interlace sync and video
+            m_interlaced = (m_regs[8] & 3) == 3 ? 1 : 0;
+            break;
+        case 9:                                            // the RFO VDC FLI 8x1 colour cell trick
+            if ((oldval & 0x1F) == 0 && m_rowCounter == (unsigned)(m_regs[6] - 1)) m_attributeOffset = 3;
+            break;
+        case 22:
+            calculateCharwidth();
+            break;
+        case 24:
+            m_attributeBlink = (m_regs[24] & 0x20) ? (m_frameCounter & 16) : (m_frameCounter & 8);
+            break;
+        case 25:
+            if ((m_regs[25] & 0x0F) != (oldval & 0x0F)) m_xsmooth = m_regs[25] & 0x0F;   // revisions 1-2
+            if ((m_regs[25] & 0x10) != (oldval & 0x10)) m_updateGeometry = true;
+            calculateCharwidth();
+            break;
+        case 30: fillCopy(); break;
+        case 31: writeData(); break;
+        default: break;
+    }
+}
+
+// Take the screen and attribute addresses for the next frame and fetch the
+// first row (vdc.c, after the last displayed row)
+void Vdc8563::latchAddresses() {
+    m_screenAdr = (uint32_t)(m_regs[12] << 8 | m_regs[13]);
+    m_attributeAdr = ((uint32_t)(m_regs[20] << 8 | m_regs[21]) + m_attributeOffset) & 0xFFFF;
+    m_attributeOffset = 0;
+    if (m_regs[4] == 255) m_attributeAdr = (m_attributeAdr - m_regs[1]) & 0xFFFF;   // vdcmodemania FLI
+    if (m_interlaced && (m_regs[25] & 0x80) && !(m_frameCounter & 1)) {
+        // interlaced bitmap, even frame: the counters run on
+    } else {
+        m_memCounter = 0;
+        m_bitmapCounter = 0;
+        m_drawActive = false;
+    }
+    for (unsigned i = 0, j = 0; i <= m_memCounterInc; i++, j++) {
+        if (j == 82) j = 41;
+        m_attrbuf[m_bufDraw | j] = ramRead(m_attributeAdr + m_memCounter + i);
+        m_scrnbuf[m_bufDraw | j] = ramRead(m_screenAdr + m_memCounter + i);
+    }
+}
+
+// One raster line: vdc_raster_draw_alarm_handler
+void Vdc8563::rasterLine() {
+    const unsigned r9 = m_regs[9] & 0x1F, il = m_interlaced;
+    // --- the video signal ---
+    if (m_rowCounterLatch) {
+        m_rowCounterLatch = false;
+        m_rowCounterY = ~(m_rowCounterY ^ m_regs[9]) & il;
+        m_rowCounter++;
+        if (m_rowCounter == 1) m_displayEnable = true;
+        if (m_rowCounter > m_regs[6]) m_displayEnable = false;
+        if (m_rowCounter > m_regs[4]) {
+            if (m_vertFineAdj || (m_regs[5] & 0x1F) == 0 || (m_regs[5] & 0x1F) == r9) {
+                m_vertFineAdj = false;
+                m_rowCounter = 0;
+                m_rowCounterY = il & m_frameCounter;
+                m_primeDraw = true;
+                if (!m_drawFinished) latchAddresses();
+                m_drawFinished = true;
+            } else {
+                m_vertFineAdj = true;
+            }
+        }
+        if (m_rowCounter == m_regs[7]) {                   // vertical sync starts
+            m_vsync = true;
+            m_vsyncCounter = 0;
+            if (m_currentLine != m_canvasHeightOld) {
+                m_canvasHeightOld = m_currentLine;
+                m_stableSizeCount = 0;
+            } else if (m_stableSizeCount == 10) {
+                m_canvasHeight = m_currentLine < 264 ? 240 : 288;
+                m_vsyncHeight = m_currentLine < 264 ? 21 : 25;
+                m_updateGeometry = true;
+                m_stableSizeCount++;
+            } else {
+                m_stableSizeCount++;
+            }
+        }
+    } else {
+        m_rowCounterY = (m_rowCounterY + 1 + il) & 0x1F;
+    }
+    const unsigned last = m_vertFineAdj ? (m_regs[5] & 0x1F) : r9;
+    if (m_rowCounterY == last || m_rowCounterY + il == last) m_rowCounterLatch = true;
+
+    if (m_vsync && ++m_vsyncCounter > m_vsyncHeight) {     // out of the pulse: a new frame
+        m_vsync = false;
+        m_currentLine = 0;
+        m_front = m_back;
+        m_frameCounter++;
+        m_attributeBlink = (m_regs[24] & 0x20) ? (m_frameCounter & 16) : (m_frameCounter & 8);
+        if (m_updateGeometry) updateGeometry();
+    }
+
+    if (m_rowCounter == (unsigned)m_regs[6] + 1 && (m_rowCounterY == 1 || (il && m_rowCounterY == 2))) {
+        m_drawActive = false;
+        m_drawFinished = true;
+        latchAddresses();
+    }
+
+    // --- drawing ---
+    const uint32_t step = m_memCounterInc + m_regs[27];
+    if (m_primeDraw) {
+        if (m_rowCounter == 0 && m_rowCounterY == (il & m_frameCounter)) {
+            m_drawCounterY = m_regs[24] & 0x1F;
+            m_drawCounter = 0;
+            m_drawCounterLatch = false;
+            if (il & m_frameCounter) {
+                m_drawCounterY = (m_drawCounterY + 1) % (r9 + 1);
+                m_bitmapCounter = (m_bitmapCounter + step) & 0xFFFF;
+            }
+        } else if (m_drawCounterY == r9 || m_drawCounterY + il == r9) {
+            m_drawCounterY = ~(m_drawCounterY ^ m_regs[9]) & il;
+            m_drawCounter++;
+            m_primeDraw = false;
+            m_drawActive = true;
+            m_drawFinished = false;
+            if (il && (m_regs[25] & 0x80) && !(m_frameCounter & 1)) {
+                m_memCounterInc = (uint32_t)m_screenTextCols;
+                m_memCounter = (m_memCounter + m_memCounterInc + m_regs[27]) & 0xFFFF;
+            }
+        } else {
+            m_drawCounterY = (m_drawCounterY + 1 + il) & 0x1F;
+            if (il) m_bitmapCounter = (m_bitmapCounter + step) & 0xFFFF;
+        }
+    } else if (m_drawActive) {
+        if (m_drawCounterLatch) {                          // a new character row
+            m_drawCounterY = ~(m_drawCounterY ^ m_regs[9]) & il;
+            m_drawCounter++;
+            m_drawCounterLatch = false;
+            m_bufDraw ^= 0x100;
+            m_memCounterInc = (uint32_t)m_screenTextCols;
+            m_memCounter = (m_memCounter + m_memCounterInc + m_regs[27]) & 0xFFFF;
+            m_bitmapCounter = (m_bitmapCounter + m_memCounterInc + m_regs[27]) & 0xFFFF;
+        } else {                                           // a new line of the row
+            m_drawCounterY = (m_drawCounterY + 1 + il) & 0x1F;
+            m_bitmapCounter = (m_bitmapCounter + step) & 0xFFFF;
+        }
+        if (m_drawCounterY == r9 || m_drawCounterY + il == r9) m_drawCounterLatch = true;
+    } else {
+        m_drawCounterLatch = false;
+    }
+
+    // --- what this line shows ---
+    enum { IDLE, TEXT, BITMAP };
+    int mode = IDLE;
+    const int r34 = m_regs[34], r35 = m_regs[35], r0 = m_regs[0];
+    if (m_vsync) mode = IDLE;
+    else if ((m_regs[25] & 0x0F) > ((m_regs[22] >> 4) & 0x0F) ||
+             ((m_regs[25] & 0x10) && (m_regs[25] & 0x0F) == ((m_regs[22] >> 4) & 0x0F))) mode = IDLE;
+    else if ((r34 > r0 && r35 <= r0) || (r34 == r35 && r35 <= r0)) mode = IDLE;
+    else if (m_charwidth < 8) mode = IDLE;
+    else if (m_drawActive && m_displayEnable) mode = m_drawCounterY > r9 ? IDLE : (m_regs[25] & 0x80) ? BITMAP : TEXT;
+
+    // Fetch the next character row into the other buffer as this one starts
+    if ((m_drawCounterY | il) == il) {
+        for (unsigned i = 0, j = 0; i <= m_memCounterInc; i++, j++) {
+            if (j == 82) j = 41;
+            const uint32_t at = m_memCounter + m_memCounterInc + m_regs[27] + i;
+            m_attrbuf[(m_bufDraw ^ 0x100) | j] = ramRead(m_attributeAdr + at);
+            m_scrnbuf[(m_bufDraw ^ 0x100) | j] = ramRead(m_screenAdr + at);
+        }
+    }
+
+    drawLine(mode);
+    m_currentLine++;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,93 +388,103 @@ Masks drawMasks(const uint8_t* regs) {
 }
 }  // namespace
 
-void Vdc8563::renderFrame(uint32_t* buffer) {
+// Draw the current raster line (vdc-draw.c draw_std_text, draw_std_bitmap,
+// draw_idle) into the picture
+void Vdc8563::drawLine(int mode) {
+    const int top = (m_canvasHeight - FRAME_H / 2) / 2;   // PAL 8, NTSC -16
+    const int oy = m_currentLine - top;
+    if (oy < 0 || oy >= FRAME_H / 2) return;
     const uint8_t* r = m_regs;
-    const int LINES = FRAME_H / 2;
-    const uint32_t bgCol = palette(r[26] & 0x0F);
-    for (int i = 0; i < FRAME_W * FRAME_H; ++i) buffer[i] = bgCol;
-
+    uint8_t line[CANVAS_W + 64];
+    const uint8_t border = r[26] & 0x0F;
+    std::memset(line, border, sizeof line);
+    auto put = [&](int x, uint8_t c) { if (x >= 0 && x < (int)sizeof line) line[x] = c; };
     const bool dbl = r[25] & 0x10;
     const int scale = dbl ? 2 : 1;
-    const int cw = ((r[22] >> 4) + 1) * scale;             // dots a column
-    const int cols = r[1], rows = r[6];
-    const int ch = (r[9] & 0x1F) + 1;                       // lines a row
-    if (!cols || !rows) return;
-    const int dispW = cols * cw, dispH = rows * ch;
-    const int x0 = (FRAME_W - dispW) / 2, y0 = (LINES - dispH) / 2;
-    const int xshift = ((r[25] & 0x0F) - (r[22] >> 4)) * scale;   // smooth scroll
-    const int yshift = r[24] & 0x1F;
-    const int inc = cols + r[27];
-    const uint16_t screen = (uint16_t)(r[12] << 8 | r[13]);
-    const uint16_t attrs = (uint16_t)(r[20] << 8 | r[21]);
-    const uint16_t cursor = (uint16_t)(r[14] << 8 | r[15]);
-    const uint16_t charBase = (uint16_t)((r[28] & 0xE0) << 8);
-    const int bpc = (r[9] & 0x1F) > 15 ? 32 : 16;
-    const bool bitmap = r[25] & 0x80, attrMode = r[25] & 0x40;
-    const bool blinkOn = (r[24] & 0x20) ? (m_frameCounter & 16) : (m_frameCounter & 8);
-    const bool cursorOn = ((m_frameCounter | 1) & CRSRBLINK[(r[10] >> 5) & 3]) != 0;
-    const int cs = r[10] & 0x1F, ce = r[11] & 0x1F;
-    const Masks mk = drawMasks(r);
-
-    auto plot = [&](int x, int line, uint32_t c) {
-        if (x < x0 || x >= x0 + dispW || line < y0 || line >= y0 + dispH) return;
-        buffer[(line * 2) * FRAME_W + x] = c;
-        buffer[(line * 2 + 1) * FRAME_W + x] = c;
+    int icsi = -1;                                          // the gap between characters
+    if (dbl) { if (m_charwidth > 16) icsi = m_charwidth / 2 - 8; }
+    else if (m_charwidth > 8) icsi = m_charwidth - 8;
+    // a byte and the gap byte, in fg/bg, at x
+    auto byteAt = [&](int x, unsigned d, unsigned d2, uint8_t fg, uint8_t bg) {
+        for (int b = 0; b < 8; ++b)
+            for (int k = 0; k < scale; ++k) put(x + b * scale + k, (d >> (7 - b)) & 1 ? fg : bg);
+        if (icsi >= 0)
+            for (int b = 0; b < 8; ++b)
+                for (int k = 0; k < scale; ++k) put(x + 8 * scale + b * scale + k, (d2 >> (7 - b)) & 1 ? fg : bg);
     };
-
-    // One extra row for the vertical smooth scroll
-    for (int row = 0; row <= rows; ++row) {
-        for (int yc = 0; yc < ch; ++yc) {
-            const int ycRow = row * ch + yc - yshift;       // line in the picture
-            if (ycRow < 0 || ycRow >= dispH) continue;
-            const int line = y0 + ycRow;
-            const uint16_t rowScreen = (uint16_t)(screen + row * inc);
-            const uint16_t rowAttr = (uint16_t)(attrs + row * inc);
-            const uint16_t bitmapLine = (uint16_t)(screen + (row * ch + yc) * inc);
-            for (int i = 0; i < cols; ++i) {
-                const uint8_t a = attrMode ? m_ram[map((uint16_t)(rowAttr + i))] : 0;
+    const int ycounter = (int)m_drawCounterY;
+    if (mode != 0) {
+        int p = m_borderWidth + (dbl ? 2 : 0) + m_xsmooth * scale - (r[22] >> 4) * scale;
+        const uint8_t* attr = &m_attrbuf[m_bufDraw];
+        const uint8_t* scrn = &m_scrnbuf[m_bufDraw];
+        const Masks mk = drawMasks(r);
+        if (mode == 1) {                                    // text
+            const uint32_t cpos = ((uint32_t)(r[14] << 8 | r[15]) - m_screenAdr - m_memCounter) & 0xFFFF;
+            const uint32_t charIndex = (uint32_t)((r[28] << 8) & 0xE000) + (uint32_t)ycounter;
+            const int bpc = (r[9] & 0x1F) < 16 ? 16 : 32;
+            const bool attrMode = r[25] & 0x40;
+            const bool cursorOn = ((m_frameCounter | 1) & CRSRBLINK[(r[10] >> 5) & 3]) != 0;
+            const int cs = r[10] & 0x1F, ce = r[11] & 0x1F;
+            for (int i = 0; i < m_screenTextCols; i++, p += m_charwidth) {
+                const uint8_t a = attrMode ? attr[i] : 0;
                 unsigned d = 0, d2 = 0;
-                int fg, bg;
-                if (bitmap) {
-                    if (yc <= (r[23] & 0x1F)) d = m_ram[map((uint16_t)(bitmapLine + i))];
-                    d &= mk.dmask;
-                    if (d & mk.semiTest) { d |= mk.semiMask; d2 = mk.semiType; }
-                    if (r[24] & 0x40) { d ^= 0xFF; d2 ^= 0xFF; }
-                    if (attrMode) { fg = a & 0x0F; bg = a >> 4; }
-                    else { fg = r[26] >> 4; bg = r[26] & 0x0F; }
-                } else {
-                    const uint8_t code = m_ram[map((uint16_t)(rowScreen + i))];
-                    if (yc <= (r[23] & 0x1F)) {
-                        uint16_t at = (uint16_t)(charBase + code * bpc + yc);
-                        if (attrMode && (a & 0x80)) at = (uint16_t)(at + 0x100 * bpc);   // alternate set
-                        d = m_ram[map(at)];
-                    }
-                    d &= mk.dmask;
-                    if (attrMode) {
-                        if (yc == (r[29] & 0x1F) && (a & 0x20)) { d = 0xFF; d2 = 0xFF; }   // underline
-                        if (blinkOn && (a & 0x10)) { d = 0; d2 = 0; }
-                    }
-                    if (d & mk.semiTest) { d |= mk.semiMask; d2 = mk.semiType; }
-                    if (attrMode && (a & 0x40)) { d ^= 0xFF; d2 ^= 0xFF; }
-                    if ((uint16_t)(rowScreen + i) == cursor && cursorOn &&
-                        ((yc >= cs && yc < ce) || (yc == cs && yc == ce) || (cs > ce && (yc >= cs || yc < ce)))) {
-                        d ^= 0xFF; d2 ^= 0xFF;
-                    }
-                    if (r[24] & 0x40) { d ^= 0xFF; d2 ^= 0xFF; }
-                    if (attrMode) { fg = a & 0x0F; bg = r[26] & 0x0F; }
-                    else { fg = r[26] >> 4; bg = r[26] & 0x0F; }
+                if (ycounter <= (int)r[23])
+                    d = ramRead(charIndex + ((attrMode && (a & 0x80)) ? 0x100u * bpc : 0) + scrn[i] * (uint32_t)bpc);
+                d &= mk.dmask;
+                if (attrMode) {
+                    if (ycounter == r[29] && (a & 0x20)) { d = 0xFF; d2 = 0xFF; }
+                    if (m_attributeBlink && (a & 0x10)) { d = 0; d2 = 0; }
                 }
+                if (d & mk.semiTest) { d |= mk.semiMask; d2 = mk.semiType; }
+                if (attrMode && (a & 0x40)) { d ^= 0xFF; d2 ^= 0xFF; }
+                if (cpos == (uint32_t)i && cursorOn &&
+                    ((ycounter >= cs && ycounter < ce) || (ycounter == cs && ycounter == ce) ||
+                     (cs > ce && (ycounter >= cs || ycounter < ce)))) {
+                    d ^= 0xFF; d2 ^= 0xFF;
+                }
+                if (r[24] & 0x40) { d ^= 0xFF; d2 ^= 0xFF; }
                 d2 &= mk.d2mask;
-                const uint32_t f = palette(fg), b = palette(bg);
-                const int x = x0 + xshift + i * cw;
-                const int dots = cw / scale;
-                for (int px = 0; px < dots; ++px) {
-                    bool on = px < 8 ? (d >> (7 - px)) & 1 : (d2 >> (7 - (px - 8))) & 1;
-                    for (int k = 0; k < scale; ++k) plot(x + px * scale + k, line, on ? f : b);
-                }
+                const uint8_t fg = attrMode ? (a & 0x0F) : (r[26] >> 4);
+                byteAt(p, d, d2, fg, r[26] & 0x0F);
             }
+            for (int i = m_xsmooth; i < (r[22] >> 4); i++, p++) put(p, r[26] & 0x0F);
+        } else {                                            // bitmap
+            const uint32_t bitmapIndex = m_screenAdr + m_bitmapCounter;
+            const bool attrMode = r[25] & 0x40;
+            unsigned i = 0;
+            for (; i < m_memCounterInc; i++, p += m_charwidth) {
+                unsigned d = ycounter > (int)r[23] ? 0 : ramRead(bitmapIndex + i), d2 = 0;
+                d &= mk.dmask;
+                if (d & mk.semiTest) { d |= mk.semiMask; d2 = mk.semiType; }
+                if (r[24] & 0x40) { d ^= 0xFF; d2 ^= 0xFF; }
+                d2 &= mk.d2mask;
+                const uint8_t fg = attrMode ? (attr[i] & 0x0F) : (r[26] >> 4);
+                const uint8_t bg = attrMode ? (attr[i] >> 4) : (r[26] & 0x0F);
+                byteAt(p, d, d2, fg, bg);
+            }
+            unsigned d = ramRead(bitmapIndex + i);
+            if (r[24] & 0x40) d ^= 0xFF;
+            const uint8_t fg = attrMode ? (attr[i] >> 4) : (r[26] >> 4);
+            const uint8_t bg = attrMode ? (attr[i] & 0x0F) : (r[26] & 0x0F);
+            unsigned j = 0x80;
+            for (int k = m_xsmooth; k < (r[22] >> 4); k++, p++, j >>= 1) put(p, (d & j) ? fg : bg);
         }
+        // The border outside the display window (raster display_xstart/xstop)
+        const int xstop = std::min(m_borderWidth + m_charwidth * m_screenTextCols, CANVAS_W - 1);
+        for (int x = 0; x < CANVAS_W; ++x)
+            if (x < m_borderWidth || x >= xstop) line[x] = border;
     }
+    // Into the picture: both lines, or this field's line when interlaced
+    uint32_t px[FRAME_W];
+    for (int x = 0; x < FRAME_W; ++x) px[x] = palette(line[x + X_OFFSET]);
+    for (int f = 0; f < 2; ++f) {
+        if (m_interlaced && f != (int)(m_frameCounter & 1)) continue;
+        std::memcpy(&m_back[(size_t)(oy * 2 + f) * FRAME_W], px, sizeof px);
+    }
+}
+
+void Vdc8563::renderFrame(uint32_t* buffer) {
+    std::memcpy(buffer, m_front.data(), m_front.size() * sizeof(uint32_t));
 }
 
 bool Vdc8563::ioPeek(IBus*, uint32_t addr, uint8_t* val) {
@@ -276,8 +509,9 @@ bool Vdc8563::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
 bool Vdc8563::ioWrite(IBus*, uint32_t addr, uint8_t val) {
     if (!(addr & 1)) { m_index = val & 0x3F; return true; }
     if (m_index >= 38) return true;
+    const uint8_t old = m_regs[m_index];
+    if (m_index == 16 || m_index == 17) return true;        // light pen: read only
     m_regs[m_index] = val;
-    if (m_index == 30) fillCopy();
-    else if (m_index == 31) writeData();
+    registerWritten(m_index, old);
     return true;
 }

@@ -155,8 +155,22 @@ reset to choose where BASIC prints: press it (`key 40_80 1`, or the GUI's
 40/80 button) and reset for an 80-column start. Both screens are 768 x 544:
 the VIC-II's frame doubled, the VDC's 768-dot lines drawn twice.
 
-The VDC display follows VICE (`vdc-draw.c`, `vdc.c`), drawn a frame at a
-time from the registers:
+The VDC display follows VICE (`vdc.c`, `vdc-draw.c`), drawn a raster line at
+a time as the chip runs:
+
+- The video signal counts character rows of R9 + 1 lines, R4 + 1 rows a
+  frame and R5 lines of vertical fine adjust; the display is enabled for R6
+  rows; vertical sync starts at row R7 (about 25 lines on PAL, 21 on NTSC)
+  and the picture starts when it ends. The status register's bit 5 is set
+  outside the displayed rows. A line lasts (R0 + 1) x 8 dots at 16 MHz.
+- Each character row's screen and attribute bytes are fetched as the row
+  starts; the screen and attribute addresses (R12/R13, R20/R21) are taken
+  after the last displayed row. Every line is drawn with the registers as
+  they are then, so changes in mid-frame show (raster splits, VDC FLI).
+- Interlace (R8 = 3, sync and video): the two fields go on alternate lines,
+  each showing every other line of the characters.
+- The left border follows the horizontal sync position R2; R34/R35 blank
+  lines as VICE has them.
 
 - Text: R1 columns of (R22 >> 4) + 1 dots, doubled in 40-column mode (R25
   bit 4), R6 rows of (R9 & 31) + 1 lines, character data on lines 0-R23;
@@ -254,7 +268,8 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 
 ## Not yet emulated
 
-- VDC interlace and mid-frame register changes (raster effects)
+- VDC changes within a line (a raster line uses the registers as they are
+  when it is drawn), the light pen
 - Cartridges in C64 mode (EXROM/GAME), the C64 mode page 0/1 relocation
   corner cases
 - Bank-switching C128 cartridges, MFM disks (and burst MFM format/query)
