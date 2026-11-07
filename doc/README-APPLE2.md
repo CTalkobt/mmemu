@@ -1,4 +1,4 @@
-# mmemu-plugin-apple2: Apple II and II+
+# mmemu-plugin-apple2: Apple II, II+ and IIe
 
 The Apple II family (#12), after AppleWin (GPL-2.0-or-later): the memory
 map and soft switches (`Memory.cpp`), the language card
@@ -12,13 +12,20 @@ of `NTSC.cpp`, see below) and the Disk II (`Disk.cpp`).
 |---------|---------|
 | `apple2` | Apple ][: Integer BASIC and the original monitor (starts at the `*` prompt) |
 | `apple2plus` | Apple ][+: Applesoft and the autostart monitor (starts at the `]` prompt) |
+| `apple2e` | Apple //e: 128 KB, 80 columns, NMOS 6502 |
+| `apple2e-enhanced` | Apple //e enhanced: 65C02, MouseText, the enhanced ROMs |
 
-Both have 48 KB of RAM and a 16 KB language card in slot 0. The CPU is an
+The II and II+ have 48 KB of RAM and a 16 KB language card in slot 0; the
+IIe has 64 KB (the language card built in) and an extended 80-column card
+with 64 KB more in the aux slot. The CPU is an
 NMOS 6502 at 1.020484 MHz (14.318181 MHz / 14 with a long cycle every 65).
 
 ROMs (AppleWin's resource images, in `roms/apple2/`): `Apple2.rom`,
 `Apple2_Plus.rom` (12 KB at `$D000-$FFFF`), `Apple2_Video.rom` (the
-character generator).
+character generator); `Apple2e.rom`, `Apple2e_Enhanced.rom` (16 KB at
+`$C000-$FFFF`: the internal `$C100-$CFFF` ROM, then `$D000`),
+`Apple2e_Enhanced_Video.rom` (the IIe's 4 KB character ROM with the
+alternate set; the original IIe has no MouseText).
 
 ## Memory map
 
@@ -62,9 +69,49 @@ a read-modify-write instruction after its read) write-enables the RAM, an
 even one write-protects it. At power-on: ROM read, bank 2, write enabled.
 The RESET key leaves it alone (on a II/II+ the card does not see RESET).
 
+## IIe
+
+After AppleWin's `Memory.cpp` (`MemSetPaging`, `UpdatePaging`, `IO_Cxxx`)
+and *Understanding the Apple IIe*:
+
+| Write | |
+|-------|--|
+| `$C000` / `$C001` | 80STORE off / on: PAGE2 picks main or aux for `$0400-$07FF` (and `$2000-$3FFF` with HIRES) |
+| `$C002` / `$C003` | RAMRD: read `$0200-$BFFF` from main / aux |
+| `$C004` / `$C005` | RAMWRT: write `$0200-$BFFF` to main / aux |
+| `$C006` / `$C007` | INTCXROM: slot ROMs / the internal ROM at `$C100-$CFFF` |
+| `$C008` / `$C009` | ALTZP: main / aux zero page, stack and language card |
+| `$C00A` / `$C00B` | SLOTC3ROM: internal / slot ROM at `$C300` |
+| `$C00C` / `$C00D` | 80 columns off / on |
+| `$C00E` / `$C00F` | the alternate character set off / on |
+| `$C05E` / `$C05F` | double hi-res on / off (and annunciator 3) |
+
+| Read | bit 7 |
+|------|-------|
+| `$C010` | any key down (and clears the strobe) |
+| `$C011` / `$C012` | language card bank 2 / reading RAM |
+| `$C013` - `$C018` | RAMRD, RAMWRT, INTCXROM, ALTZP, SLOTC3ROM, 80STORE |
+| `$C019` | not vertical blank |
+| `$C01A` - `$C01F` | TEXT, MIXED, PAGE2, HIRES, ALTCHARSET, 80COL |
+| `$C07F` | double hi-res (enhanced IIe) |
+
+The status reads give the key code in bits 0-6. With SLOTC3ROM off, an
+access to `$C3xx` switches the internal `$C800-$CFFF` ROM in until `$CFFF`
+is touched (the 80-column firmware). The language card's aux banks follow
+AppleWin: bank 2 at aux `$D000`, bank 1 at aux `$C000`.
+
+Control-RESET on a IIe resets the memory switches, the language card (ROM
+read, bank 2, write enabled) and the video modes (AppleWin `CtrlReset`).
+The built-in self-test (hold Open Apple and Closed Apple, then
+Control-RESET) passes: "System OK" on the enhanced IIe, "KERNEL OK" on the
+original once the keys are let go.
+
 ## Keyboard
 
-The II and II+ keyboards give upper case only. Keys come from the frontends
+The II and II+ keyboards give upper case only. The IIe has lower case and
+Caps Lock (`caps_lock`; on at power-on, as AppleWin): letters are upper
+case with Caps Lock or Shift. Open Apple (`alt`) and Closed Apple
+(`right_alt`) are buttons 0 and 1. Typed text keeps its case on a IIe. Keys come from the frontends
 by name (US layout; Shift and Control are tracked: `Ctrl`+letter gives the
 control code), or as typed text (CLI `type`, MCP). Return is `$0D`, the
 left arrow and Backspace `$08`, the right arrow `$15`, Esc `$1B`. The
@@ -147,5 +194,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 ## Not yet emulated
 
 - WOZ images, 13-sector (DOS 3.2) disks; `.zip`/`.gz` images (#233).
-- The IIe and IIc (auxiliary memory, 80 columns, double hi-res), the IIgs.
+- The IIc, the IIgs; RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.

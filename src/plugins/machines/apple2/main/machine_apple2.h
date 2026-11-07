@@ -16,10 +16,17 @@ struct MachineDescriptor;
  * and the original monitor), Apple2_Plus.rom (Applesoft and the autostart
  * monitor), 12 KB at $D000-$FFFF; Apple2_Video.rom, the character
  * generator.
+ *
+ * IIe and enhanced IIe: 64 KB main and 64 KB auxiliary RAM (an extended
+ * 80-column card in the aux slot), the internal $C100-$CFFF ROM, the IIe
+ * soft switches (80STORE, RAMRD, RAMWRT, INTCXROM, ALTZP, SLOTC3ROM, 80COL,
+ * ALTCHARSET, double hi-res) and their status reads, lower case, the Apple
+ * keys; the enhanced IIe has a 65C02. ROMs: Apple2e.rom /
+ * Apple2e_Enhanced.rom (16 KB at $C000), Apple2e_Enhanced_Video.rom.
  */
 namespace apple2 {
 
-enum class Model { II, IIPlus };
+enum class Model { II, IIPlus, IIe, IIeEnhanced };
 
 /** A new machine, or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(Model model, std::string* err = nullptr);

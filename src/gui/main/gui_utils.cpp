@@ -10,6 +10,7 @@ std::string wxKeyToVic20Name(int code) {
         case WXK_RETURN:           return "return";
         case WXK_CONTROL:          return "control";
         case WXK_ALT:              return "alt";
+        case WXK_CAPITAL:          return "caps_lock";
         case WXK_UP:               return "up";
         case WXK_DOWN:             return "down";
         case WXK_LEFT:             return "left";

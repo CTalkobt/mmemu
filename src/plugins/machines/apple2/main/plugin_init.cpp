@@ -32,5 +32,7 @@ static void reg(const char* id, apple2::Model model, const char* desc) {
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
     reg("apple2", apple2::Model::II, "Apple ][ (Integer BASIC)");
     reg("apple2plus", apple2::Model::IIPlus, "Apple ][+ (Applesoft)");
+    reg("apple2e", apple2::Model::IIe, "Apple //e (128 KB, 80 columns)");
+    reg("apple2e-enhanced", apple2::Model::IIeEnhanced, "Apple //e enhanced (65C02, MouseText)");
     return &s_manifest;
 }
