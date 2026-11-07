@@ -145,3 +145,137 @@ TEST_CASE(apple2_io) {
     EXPECT_EQ(bus->read8(0xC064) & 0x80, 0);
     delete m;
 }
+
+namespace {
+void press(MachineDescriptor* m, const char* k, bool down) { m->onKey(k, down); }
+}  // namespace
+
+// The IIe soft switches (Memory.cpp MemSetPaging/UpdatePaging): RAMRD and
+// RAMWRT, ALTZP for pages 0-1 and the language card, 80STORE with PAGE2 for
+// the text page (and HIRES for hi-res page 1); their status at $C013-$C018
+TEST_CASE(apple2e_memory_switches) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIeEnhanced, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0x2000, 0x11);                       // main
+    bus->write8(0xC005, 0);                          // RAMWRT on
+    bus->write8(0x2000, 0x22);                       // aux
+    EXPECT_EQ(bus->read8(0x2000), 0x11);             // reads still main
+    EXPECT_EQ(bus->read8(0xC014) & 0x80, 0x80);
+    bus->write8(0xC003, 0);                          // RAMRD on
+    EXPECT_EQ(bus->read8(0x2000), 0x22);
+    EXPECT_EQ(bus->read8(0xC013) & 0x80, 0x80);
+    bus->write8(0xC002, 0); bus->write8(0xC004, 0);
+    EXPECT_EQ(bus->read8(0x2000), 0x11);
+    // ALTZP: zero page, stack and $D000-$FFFF
+    bus->write8(0x0080, 0x33);
+    bus->write8(0xC009, 0);
+    EXPECT_EQ(bus->read8(0xC016) & 0x80, 0x80);
+    bus->write8(0x0080, 0x44);
+    bus->read8(0xC083); bus->read8(0xC083);          // LC RAM, bank 2, write enabled
+    bus->write8(0xD000, 0x55);
+    bus->write8(0xC008, 0);                          // main ZP and LC
+    EXPECT_EQ(bus->read8(0x0080), 0x33);
+    bus->write8(0xD000, 0x66);
+    EXPECT_EQ(bus->read8(0xD000), 0x66);
+    bus->write8(0xC009, 0);
+    EXPECT_EQ(bus->read8(0x0080), 0x44);
+    EXPECT_EQ(bus->read8(0xD000), 0x55);
+    bus->write8(0xC008, 0);
+    // 80STORE: PAGE2 picks aux for $0400-$07FF, with HIRES also $2000-$3FFF
+    bus->write8(0xC001, 0);
+    EXPECT_EQ(bus->read8(0xC018) & 0x80, 0x80);
+    bus->read8(0xC055);                              // PAGE2
+    bus->write8(0x0400, 0xC1);                       // aux text
+    EXPECT_EQ(bus->read8(0x2000), 0x11);             // HIRES off: main
+    bus->read8(0xC057);                              // HIRES
+    EXPECT_EQ(bus->read8(0x2000), 0x22);
+    bus->read8(0xC054);
+    EXPECT_EQ(bus->read8(0x0400) == 0xC1, false);
+    bus->read8(0xC055);
+    EXPECT_EQ(bus->read8(0x0400), 0xC1);
+    bus->read8(0xC054); bus->read8(0xC056);
+    bus->write8(0xC000, 0);
+    // INTCXROM: the internal ROM at $C600 instead of the Disk II's
+    const uint8_t disk = bus->read8(0xC600);
+    bus->write8(0xC007, 0);
+    EXPECT_EQ(bus->read8(0xC015) & 0x80, 0x80);
+    EXPECT_TRUE(bus->read8(0xC600) != disk || bus->read8(0xC601) != 0x20);
+    bus->write8(0xC006, 0);
+    EXPECT_EQ(bus->read8(0xC600), disk);
+    // 80COL and ALTCHARSET status
+    bus->write8(0xC00D, 0); bus->write8(0xC00F, 0);
+    EXPECT_EQ(bus->read8(0xC01F) & 0x80, 0x80);
+    EXPECT_EQ(bus->read8(0xC01E) & 0x80, 0x80);
+    // Control-RESET puts the switches back
+    bus->write8(0xC005, 0);
+    press(m, "reset", true); press(m, "reset", false);
+    EXPECT_EQ(bus->read8(0xC014) & 0x80, 0);
+    EXPECT_EQ(bus->read8(0xC01F) & 0x80, 0);
+    delete m;
+}
+
+// The IIe's built-in self-test (Open Apple, Closed Apple and Control-RESET):
+// the MMU, IOU, ROM and RAM tests pass ("System OK" on the enhanced IIe,
+// "KERNEL OK" on the original once the keys are let go)
+TEST_CASE(apple2e_self_test) {
+    for (auto model : {apple2::Model::IIeEnhanced, apple2::Model::IIe}) {
+        std::string err;
+        MachineDescriptor* m = apple2::create(model, &err);
+        if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+        run(m, 1000000);
+        press(m, "control", true); press(m, "alt", true); press(m, "right_alt", true);
+        press(m, "reset", true); press(m, "reset", false);
+        press(m, "control", false);
+        run(m, 300000);
+        press(m, "alt", false); press(m, "right_alt", false);
+        uint64_t t = 0;
+        const char* want = model == apple2::Model::IIe ? "KERNEL OK" : "System OK";
+        while (t < 100000000 && !screenHas(m, want)) { run(m, 1000000); t += 1000000; }
+        EXPECT_TRUE(screenHas(m, model == apple2::Model::IIe ? "KERNEL OK" : "System OK"));
+        delete m;
+    }
+}
+
+// IIe keyboard: lower case with Caps Lock off; $C010 reads any-key-down;
+// the enhanced IIe shows lower case; PR#3 gives 80 columns from aux memory
+TEST_CASE(apple2e_keyboard_and_80_columns) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIeEnhanced, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 2000000);
+    press(m, "reset", true); press(m, "reset", false);     // no disk: to BASIC
+    run(m, 1000000);
+    IBus* bus = m->buses[0].bus;
+    press(m, "a", true);
+    EXPECT_EQ(bus->read8(0xC000), 0xC1);             // Caps Lock on at power-on
+    EXPECT_EQ(bus->read8(0xC010) & 0x80, 0x80);      // still held
+    press(m, "a", false);
+    EXPECT_EQ(bus->read8(0xC010) & 0x80, 0);
+    press(m, "caps_lock", true); press(m, "caps_lock", false);
+    press(m, "a", true); press(m, "a", false);
+    EXPECT_EQ(bus->read8(0xC000), 0xE1);
+    bus->read8(0xC010);
+    // Open Apple is button 0
+    press(m, "alt", true);
+    EXPECT_EQ(bus->read8(0xC061) & 0x80, 0x80);
+    press(m, "alt", false);
+    EXPECT_EQ(bus->read8(0xC061) & 0x80, 0);
+    // 80 columns: alternate columns in aux text memory
+    auto* kbd = find<IKeyboardMatrix>(m);
+    kbd->enqueueText("PR#3\nHOME\nPRINT \"ABCD\"\n");
+    run(m, 3000000);
+    EXPECT_EQ(bus->read8(0xC01F) & 0x80, 0x80);      // 80COL
+    // "ABCD" on row 2 (after the PRINT line): A, C in aux; B, D in main
+    bus->write8(0xC001, 0);                          // 80STORE
+    bus->read8(0xC055);
+    const uint8_t a0 = bus->read8(0x0500), a1 = bus->read8(0x0501);
+    bus->read8(0xC054);
+    const uint8_t m0 = bus->read8(0x0500), m1 = bus->read8(0x0501);
+    EXPECT_EQ(a0 & 0x7F, 'A');
+    EXPECT_EQ(m0 & 0x7F, 'B');
+    EXPECT_EQ(a1 & 0x7F, 'C');
+    EXPECT_EQ(m1 & 0x7F, 'D');
+    delete m;
+}

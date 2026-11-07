@@ -72,8 +72,8 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Hardware**: 7501/8501 CPU, MOS 7360/8360 TED video/sound/timers, ROM banking (BASIC 3.5, KERNAL, 3-plus-1), keyboard matrix, two joysticks, IEC drive on unit 8, 1531 datasette, 6551 ACIA (Plus/4). See `doc/README-PLUS4.md`.
 
 ### Apple II
-- **Profiles**: `apple2` (Integer BASIC), `apple2plus` (Applesoft).
-- **Hardware**: MOS 6502 at 1.02 MHz, 48 KB RAM and a 16 KB language card, the soft switches, keyboard latch, speaker, paddles and buttons, the floating bus, the NTSC video (text, lo-res, hi-res, mixed) and the Disk II (slot 6, two drives, `.dsk`/`.do`/`.po`/`.nib`, read and write) after AppleWin. See `doc/README-APPLE2.md`.
+- **Profiles**: `apple2` (Integer BASIC), `apple2plus` (Applesoft), `apple2e` (128 KB, 80 columns), `apple2e-enhanced` (65C02).
+- **Hardware**: MOS 6502 at 1.02 MHz, 48 KB RAM and a 16 KB language card, the soft switches, keyboard latch, speaker, paddles and buttons, the floating bus, the IIe's 64 KB aux RAM, 80 columns and double hi-res, the NTSC video (text, lo-res, hi-res, mixed) and the Disk II (slot 6, two drives, `.dsk`/`.do`/`.po`/`.nib`, read and write) after AppleWin. See `doc/README-APPLE2.md`.
 
 ### Atari 2600
 - **Profiles**: `atari2600`, `atari2600-pal`.
