@@ -16,13 +16,15 @@
 #include <vector>
 
 class CbmSectorDisk;
+class ImdDisk;
 
 class CbmImageDos : public ICbmDos {
 public:
     CbmImageDos();
     ~CbmImageDos() override;
 
-    /** Open an image (type from the extension). False if it cannot be read. */
+    /** Open an image (type from the extension; .imd is an MFM disk, see
+     *  imd_disk.h). False if it cannot be read. */
     bool open(const std::string& path);
     const std::string& path() const { return m_path; }
     void setUnit(int unit) { m_unit = unit; }
@@ -71,6 +73,8 @@ private:
     void blockWrite(const std::string& args, bool u2);
     void closeChannel(int ch);
     void burst(const std::string& bytes);
+    bool mfmBurst(const std::string& bytes);
+    uint8_t mfmStatus(int cyl, int side, int controller);
     void burstUtility(const std::string& args);
     uint8_t burstStatus(int controller) const;
     int nextBurstSector(int track, int sector) const;
@@ -80,7 +84,8 @@ private:
     void openChannel(int channel, const std::string& spec);
     void command(const std::string& cmd);
 
-    std::unique_ptr<CbmSectorDisk> m_disk;
+    std::unique_ptr<CbmSectorDisk> m_disk;   // a Commodore (GCR) disk, or
+    std::unique_ptr<ImdDisk> m_mfm;          // an MFM disk: burst commands only
     std::string m_path;
     int m_unit = 8;
     bool m_listening = false, m_talking = false, m_opening = false, m_active = false;
@@ -89,7 +94,8 @@ private:
     Channel m_ch[16];
     std::string m_error;
     // A burst write in progress: sectors left, where, the bytes so far
-    int m_bwLeft = 0, m_bwTrack = 0, m_bwSector = 0;
+    int m_bwLeft = 0, m_bwTrack = 0, m_bwSector = 0, m_bwSide = 0;
+    size_t m_bwSize = 256;
     std::vector<uint8_t> m_bwBuf;
     // The drive's burst state: the last status byte, the disk logged in
     // (INQUIRE DISK / QUERY DISK FORMAT), the soft interleave of

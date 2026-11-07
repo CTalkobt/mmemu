@@ -196,3 +196,92 @@ TEST_CASE(image_dos_burst_format_query) {
     EXPECT_EQ(dos.burstOut().front(), 0x16);
     std::remove(path.c_str());
 }
+
+namespace {
+// An ImageDisk file: 40 cylinders, side 0, 10 x 512-byte sectors numbered 0-9
+// laid out 0 5 1 6 2 7 3 8 4 9; sector (c, s) starts with c, s
+std::string makeImd() {
+    std::string path = "/tmp/mmemu_test_mfm_" + std::to_string(getpid()) + ".imd";
+    std::string hdr = "IMD 1.18: 06/11/2026 12:00:00\r\ntest\r\n\x1a";
+    std::vector<uint8_t> d(hdr.begin(), hdr.end());
+    const uint8_t order[10] = {0, 5, 1, 6, 2, 7, 3, 8, 4, 9};
+    for (int c = 0; c < 40; ++c) {
+        const uint8_t t[5] = {5, (uint8_t)c, 0, 10, 2};
+        d.insert(d.end(), t, t + 5);
+        d.insert(d.end(), order, order + 10);
+        for (int i = 0; i < 10; ++i) {
+            d.push_back(1);
+            std::vector<uint8_t> sec(512, 0xE5);
+            sec[0] = (uint8_t)c; sec[1] = order[i];
+            d.insert(d.end(), sec.begin(), sec.end());
+        }
+    }
+    std::ofstream(path, std::ios::binary).write((const char*)d.data(), (std::streamsize)d.size());
+    return path;
+}
+}  // namespace
+
+// MFM disks (.imd) through the burst commands, as the C128's CP/M uses
+// them: inquire, query, read and write by cylinder / sector number /
+// side, disk change before a log-in, the MFM format; no Commodore DOS
+TEST_CASE(image_dos_mfm_imd) {
+    std::string path = makeImd();
+    CbmImageDos dos;
+    ASSERT(dos.open(path));
+    auto cmd = [&](std::string bytes) { send(dos, 0xFF, std::string("U0") + bytes); };
+    auto& q = dos.burstOut();
+    cmd(std::string("\x00\x01\x00\x01", 4));                       // read before a log-in
+    ASSERT(q.size() == 1 && q.front() == 0xAB);                    // MFM, 512, disk change
+    cmd(std::string("\x04", 1));                                   // inquire: MFM, 512-byte sectors
+    ASSERT(q.size() == 1 && q.front() == 0xA0);
+    cmd(std::string("\x8A\x04", 2));                               // query track 4
+    ASSERT_EQ((int)q.size(), 7);
+    EXPECT_EQ(q[0], 0xA0); EXPECT_EQ(q[1], 0xA0);
+    EXPECT_EQ(q[2], 10);                                           // sectors
+    EXPECT_EQ(q[3], 4);                                            // the track in the headers
+    EXPECT_EQ(q[4], 0); EXPECT_EQ(q[5], 9);                        // lowest, highest
+    EXPECT_EQ(q[6], 2);                                            // interleave
+    cmd(std::string("\x00\x03\x04\x02", 4));                       // read 3/4, 3/5
+    ASSERT_EQ((int)q.size(), 2 * 513);
+    EXPECT_EQ(q[1], 3); EXPECT_EQ(q[2], 4);
+    EXPECT_EQ(q[514], 3); EXPECT_EQ(q[515], 5);
+    cmd(std::string("\x10\x03\x00\x01", 4));                       // side 1: none
+    ASSERT(q.size() == 1 && (q.front() & 0x0F) == 0x03);
+    cmd(std::string("\x00\x03\x0C\x01", 4));                       // no sector 12
+    ASSERT(q.size() == 1 && (q.front() & 0x0F) == 0x02);
+    // Write 7/9: 512 bytes, then the status; on the file
+    cmd(std::string("\x02\x07\x09\x01", 4));
+    ASSERT(dos.burstWriting());
+    for (int i = 0; i < 511; ++i) ASSERT(!dos.burstWriteByte((uint8_t)i));
+    ASSERT(dos.burstWriteByte(0x99));
+    dos.burstFinishSector();
+    ASSERT(q.back() == 0xA0);
+    {
+        CbmImageDos again;
+        ASSERT(again.open(path));
+        auto c2 = [&](std::string bytes) { send(again, 0xFF, std::string("U0") + bytes); };
+        c2(std::string("\x04", 1));
+        c2(std::string("\x00\x07\x09\x01", 4));
+        ASSERT_EQ((int)again.burstOut().size(), 513);
+        EXPECT_EQ(again.burstOut()[1], 0x00);
+        EXPECT_EQ(again.burstOut()[512], 0x99);
+    }
+    // No Commodore DOS on it
+    send(dos, 0xF0, "$");
+    std::string err;
+    uint8_t ch = 0;
+    dos.talk(0x48); dos.tksa(0x6F);
+    while (dos.acptr(&ch) >= 0 && ch != '\r') err += (char)ch;
+    dos.untlk();
+    EXPECT_EQ(err.substr(0, 2), std::string("74"));
+    // FORMAT MFM: IBM-8 style, 8 x 512 numbered from 1, both sides, 40 cylinders
+    cmd(std::string("\x26\x81\x00\x02\x27\x08\x00\x00\xE5", 9));
+    cmd(std::string("\x04", 1));
+    cmd(std::string("\x9A\x00", 2));                               // query side 1
+    ASSERT_EQ((int)q.size(), 7);
+    EXPECT_EQ(q[2], 8); EXPECT_EQ(q[4], 1); EXPECT_EQ(q[5], 8);
+    cmd(std::string("\x00\x27\x08\x01", 4));                       // the last sector of the last track
+    ASSERT_EQ((int)q.size(), 513);
+    EXPECT_EQ(q[1], 0xE5);
+    std::remove(path.c_str());
+}
