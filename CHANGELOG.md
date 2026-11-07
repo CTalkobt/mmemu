@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### MEGA65
+- **45GS02 cycle-accurate instruction timing** (#4): each instruction now takes the cycles in xemu's timing tables (`cpu65.c`, `cpu65_mega65_timings.h`), chosen by the CPU speed. Before, the count came from ad-hoc per-instruction increments.
+  - 1 and 2 MHz: 6502 timing, plus the page-crossing cycle for indexed reads.
+  - 3.5 MHz: 65CE02 timing.
+  - 40.5 MHz: the table measured on hardware with LGB's MEGAcyc.
+  - At every speed: prefix bytes are charged as the NEG/NOP they are, the 32-bit (NEG NEG / NOP / NEG NEG NOP) forms have their own counts, and branches cost xemu's extra cycles when taken and on a page change.
+  - The machine picks the table from its speed select on every step; the hypervisor always runs at full speed.
+  - Generated tables: `src/plugins/45gs02/main/timings_45gs02.h`.
+  - Checked: the MEGA65 boots to READY, and the four 45GS02 validation programs and the MCP tests pass.
+  - Not modelled: the extra cycle on `$D019` read-modify-write instructions.
+  - Tests: `gs02_timing_fast`, `gs02_timing_slow_and_c65`.
+
 ### Repository
 - **45GS02 validation: `advanced.s` passes again**: `tests/45gs02/validate.py` now assembles with `ca45 -O0`. ca45's default `-O2` dropped `sta $10` before `INW $10` and the loads after it (its redundant-load and dead-store passes don't see INW/DEW write memory), so the INW check read stale values and reported `$FF`. mmsim's INW was right all along; all five checks give `$01`.
 - `mmsim.dump` and `xmega65.dump`, written by `tests/45gs02/validate.py` during `make test`, are no longer tracked and are now in `.gitignore` (they had been committed by accident again in #205).

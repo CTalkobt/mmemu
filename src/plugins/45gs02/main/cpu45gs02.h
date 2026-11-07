@@ -168,6 +168,14 @@ public:
     void setExperimentalPrefixMode(bool enable) { m_experimentalPrefixMode = enable; }
     bool isExperimentalPrefixMode() const { return m_experimentalPrefixMode; }
 
+    /** Instruction timing by CPU speed (xemu's tables; the 40 MHz one
+     *  measured on hardware with MEGAcyc): Slow = 1/2 MHz (6502 cycles,
+     *  with the page-crossing penalty), C65 = 3.5 MHz (65CE02), Fast =
+     *  40.5 MHz. The machine sets it from the speed select. */
+    enum class Timing { Slow, C65, Fast };
+    void setTiming(Timing t) { m_timing = t; }
+    Timing timing() const { return m_timing; }
+
     // Access hypervisor RAM (writable copy) for bus overlay
     uint8_t* hyperRam() const { return m_hyperRam; }
     uint32_t hyperRomSize() const { return m_hyperRomSize; }
@@ -184,10 +192,15 @@ private:
     uint8_t*        m_hyperRam     = nullptr;  // writable copy for hypervisor mode
     uint32_t        m_hyperRomSize = 0;
 
+    Timing          m_timing = Timing::Fast;
     bool            m_experimentalPrefixMode = false;  // false = buggy (always consume NEG/NEG), true = fixed (peek-ahead)
 
     bool            m_loggerChecked = false;
     spdlog::logger* m_logger = nullptr;
+
+    /** The cycles an instruction took at the current timing (see Timing). */
+    int instructionCycles(uint8_t op, uint16_t opPc, bool quad, bool ind32,
+                          int negNegs, int nops, bool pageCrossed) const;
 
     // Logger initialization helper
     void _ensureLogger();
