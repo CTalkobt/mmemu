@@ -927,7 +927,7 @@ MachineDescriptor* Mega65MachineFactory::create() {
         return true;
     };
 
-    desc->schedulerStep = [dma, phiBacklog, speed, halfRatio](MachineDescriptor& d) -> int {
+    desc->schedulerStep = [dma, phiBacklog, speed, halfRatio, cpu45](MachineDescriptor& d) -> int {
         // Advance devices by `cycles` CPU cycles: CPU-clocked devices by the
         // cycles, phi-clocked ones by the phi cycles that elapsed at this speed.
         auto advance = [&](uint64_t cycles, int ratio) {
@@ -961,6 +961,10 @@ MachineDescriptor* Mega65MachineFactory::create() {
                 return 1;
             }
         }
+        // Instruction timing follows the real speed, warp or not (#4)
+        const int real = halfRatio();
+        cpu45->setTiming(real <= 4 ? MOS45GS02::Timing::Slow
+                         : real == 7 ? MOS45GS02::Timing::C65 : MOS45GS02::Timing::Fast);
         auto* cpu = d.cpus[0].cpu;
         int cycles = cpu->step();
         advance((uint64_t)cycles, ratio);

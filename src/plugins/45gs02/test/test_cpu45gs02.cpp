@@ -436,3 +436,53 @@ TEST_CASE(gs02_decode_entry_matches_disassembly) {
     ASSERT_EQ(lite.bytes, full.bytes);
     ASSERT_EQ(lite.bytes, 5);
 }
+
+// #4: instruction timing from xemu's tables (40 MHz measured with MEGAcyc)
+TEST_CASE(gs02_timing_fast) {
+    TestFixture t;   // the CPU starts with the 40.5 MHz timing
+    t.pokeProgram(0x0200, {
+        0xA9, 0x01,             // LDA #$01           2
+        0xAD, 0x34, 0x12,       // LDA $1234          5
+        0x42, 0x42, 0xA5, 0x12, // LDQ $12            1+1+8
+        0xEA, 0xB2, 0x12,       // LDA [$12],Z        1+12
+        0xF0, 0x00,             // BEQ (taken, +0)    2+2 (A = 0)
+        0xD0, 0x00,             // BNE (not taken)    2
+    });
+    ASSERT_EQ(t.cpu.step(), 2);
+    ASSERT_EQ(t.cpu.step(), 5);
+    ASSERT_EQ(t.cpu.step(), 10);
+    ASSERT_EQ(t.cpu.step(), 13);
+    ASSERT_EQ(t.cpu.step(), 4);
+    ASSERT_EQ(t.cpu.step(), 2);
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0210);
+}
+
+TEST_CASE(gs02_timing_slow_and_c65) {
+    TestFixture t;
+    t.cpu.setTiming(MOS45GS02::Timing::Slow);   // 1/2 MHz: 6502 cycles
+    t.cpu.regWrite(1, 0x01);                     // X = 1
+    t.pokeProgram(0x0200, {
+        0xBD, 0x00, 0x10,       // LDA $1000,X        4
+        0xBD, 0xFF, 0x10,       // LDA $10FF,X        4+1 (page crossed)
+        0x9D, 0xFF, 0x10,       // STA $10FF,X        5 (no penalty on stores)
+    });
+    ASSERT_EQ(t.cpu.step(), 4);
+    ASSERT_EQ(t.cpu.step(), 5);
+    ASSERT_EQ(t.cpu.step(), 5);
+
+    // A taken branch to another page: +1, +1 more
+    t.cpu.regWrite(6, 0x02F0);
+    t.pokeProgram(0x02F0, { 0xF0, 0x20 });       // BEQ $0312 (memory is 0: Z set)
+    ASSERT_EQ(t.cpu.step(), 4);
+    ASSERT_EQ(t.cpu.regRead(6), (uint32_t)0x0312);
+
+    t.cpu.setTiming(MOS45GS02::Timing::C65);    // 3.5 MHz: 65CE02 cycles
+    t.pokeProgram(0x0312, {
+        0x42, 0x42, 0xA5, 0x12, // LDQ $12            2+2+8
+        0xEA,                   // NOP                1
+        0xBD, 0xFF, 0x10,       // LDA $10FF,X        4 (no page penalty)
+    });
+    ASSERT_EQ(t.cpu.step(), 12);
+    ASSERT_EQ(t.cpu.step(), 1);
+    ASSERT_EQ(t.cpu.step(), 4);
+}

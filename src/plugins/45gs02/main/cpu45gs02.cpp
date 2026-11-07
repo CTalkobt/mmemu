@@ -1,5 +1,6 @@
 #include "libcore/main/intercept.h"
 #include "cpu45gs02.h"
+#include "timings_45gs02.h"
 #include "libdebug/main/execution_observer.h"
 #include "plugins/devices/map_mmu/main/map_mmu.h"
 #include "util/logging.h"
@@ -381,6 +382,8 @@ int MOS45GS02::step() {
     const uint64_t cyclesAtStart = m_state.cycles;
     bool isQuad = false;
     bool is32BitInd = false;
+    int negNegPrefixes = 0, nopPrefixes = 0;
+    bool pageCrossed = false;   // an indexed address crossed a page (1/2 MHz penalty)
 
     // Reset PC to startPc if observer fails
     if (m_observer) {
@@ -440,6 +443,7 @@ int MOS45GS02::step() {
                     m_state.cycles++;
                     updateNZ(m_state.a);
                     isQuad = true;
+                    negNegPrefixes++;
                     prefixCount++;
                     continue;
                 } else {
@@ -453,6 +457,7 @@ int MOS45GS02::step() {
             if (next == 0x12 || next == 0x32 || next == 0x52 || next == 0x72 ||
                 next == 0x92 || next == 0xB2 || next == 0xD2 || next == 0xF2) {
                 is32BitInd = true;
+                nopPrefixes++;
                 prefixCount++;
                 continue;
             }
@@ -461,10 +466,17 @@ int MOS45GS02::step() {
         break;
     }
 
+    const uint16_t opPc = (uint16_t)(m_state.pc - 1);   // the opcode byte, after any prefix
+
     auto getAbs = [&]() { uint16_t l=read8(m_state.pc++); uint16_t h=read8(m_state.pc++); m_state.cycles+=2; return (uint16_t)((h<<8)|l); };
     auto getZp  = [&]() { uint8_t z=read8(m_state.pc++); m_state.cycles++; return (uint16_t)((m_state.b << 8) | z); };
-    auto getAbsX = [&]() { return getAbs() + m_state.x; };
-    auto getAbsY = [&]() { return getAbs() + m_state.y; };
+    auto indexed = [&](uint16_t base, uint8_t i) {
+        uint16_t ea = (uint16_t)(base + i);
+        if ((ea ^ base) & 0xFF00) pageCrossed = true;
+        return (uint32_t)base + i;
+    };
+    auto getAbsX = [&]() { return indexed(getAbs(), m_state.x); };
+    auto getAbsY = [&]() { return indexed(getAbs(), m_state.y); };
     auto getZpX  = [&]() { uint8_t z=read8(m_state.pc++); m_state.cycles++; return (uint16_t)((m_state.b << 8) | (uint8_t)(z + m_state.x)); };
     auto getZpY  = [&]() { uint8_t z=read8(m_state.pc++); m_state.cycles++; return (uint16_t)((m_state.b << 8) | (uint8_t)(z + m_state.y)); };
 
@@ -481,7 +493,7 @@ int MOS45GS02::step() {
         uint16_t ptrAddr = (uint16_t)((m_state.b << 8) | z);
         uint16_t ptr = (uint16_t)read8(ptrAddr) | ((uint16_t)read8(ptrAddr + 1) << 8);
         m_state.cycles += 3;
-        return ptr + m_state.y;
+        return indexed(ptr, m_state.y);
     };
 
     auto getStackRelIndY = [&]() {
@@ -1414,7 +1426,63 @@ int MOS45GS02::step() {
     }
 
     // Cycles this instruction took (the scheduler advances the devices by it)
+    if (!m_state.haltLine)
+        m_state.cycles = cyclesAtStart + instructionCycles(op, opPc, isQuad, is32BitInd,
+                                                           negNegPrefixes, nopPrefixes, pageCrossed);
     return (int)(m_state.cycles - cyclesAtStart);
+}
+
+int MOS45GS02::instructionCycles(uint8_t op, uint16_t opPc, bool quad, bool ind32,
+                                 int negNegs, int nops, bool pageCrossed) const {
+    // xemu cpu65.c: the opcode's table entry, or the prefixed form's own
+    // count, plus each prefix byte as the instruction it is (NEG, NOP).
+    namespace T = timings45gs02;
+    const uint8_t* tbl = m_timing == Timing::Slow ? T::SLOW : m_timing == Timing::C65 ? T::C65 : T::FAST;
+    int cyc;
+    if (quad && ind32 && T::NEG_NEG_NOP[op]) cyc = T::NEG_NEG_NOP[op];
+    else if (quad && T::NEG_NEG[op])         cyc = T::NEG_NEG[op];
+    else if (ind32 && T::NOP[op])            cyc = T::NOP[op];
+    else                                     cyc = tbl[op];
+    cyc += negNegs * 2 * tbl[0x42] + nops * tbl[0xEA];
+
+    // Branches (xemu _BRA/_BRA16): a taken 8-bit branch costs 1 more (2 at
+    // 40 MHz), and 1 more again if the target is on another page than the
+    // offset byte; BBR/BBS 1 more when taken; 16-bit ones 1 more when taken.
+    const uint8_t p = m_state.p;
+    const uint16_t pc = m_state.pc;
+    const int branch8 = m_timing == Timing::Fast ? 2 : 1;
+    auto crossFrom = [&](uint16_t offsetByte) { return ((pc ^ offsetByte) & 0xFF00) ? 1 : 0; };
+    switch (op) {
+        case 0x10: case 0x30: case 0x50: case 0x70: case 0x90: case 0xB0: case 0xD0: case 0xF0: {
+            static const uint8_t flag[4] = { FLAG_N, FLAG_V, FLAG_C, FLAG_Z };
+            bool set = (p & flag[op >> 6]) != 0;
+            if (set == ((op & 0x20) != 0)) cyc += branch8 + crossFrom((uint16_t)(opPc + 1));
+            break;
+        }
+        case 0x80: cyc += crossFrom((uint16_t)(opPc + 1)); break;   // BRA: always taken, in the table
+        case 0x13: case 0x33: case 0x53: case 0x73: case 0x93: case 0xB3: case 0xD3: case 0xF3:
+            if (pc != (uint16_t)(opPc + 3)) cyc += 1;
+            break;
+        default:
+            if ((op & 0x0F) == 0x0F && pc != (uint16_t)(opPc + 3))      // BBR/BBS taken
+                cyc += 1 + crossFrom((uint16_t)(opPc + 2));
+            break;
+    }
+
+    // At 1/2 MHz the 6502's penalty for an indexed read that crosses a page
+    // (MEGA65 book, "Instruction Timing": page penalties only below full speed)
+    if (m_timing == Timing::Slow && pageCrossed) {
+        switch (op) {
+            case 0x11: case 0x19: case 0x1D: case 0x31: case 0x39: case 0x3C: case 0x3D:
+            case 0x51: case 0x59: case 0x5D: case 0x71: case 0x79: case 0x7D:
+            case 0xB1: case 0xB9: case 0xBB: case 0xBC: case 0xBD: case 0xBE:
+            case 0xD1: case 0xD9: case 0xDD: case 0xF1: case 0xF9: case 0xFD:
+                cyc += 1;
+                break;
+            default: break;
+        }
+    }
+    return cyc;
 }
 
 void MOS45GS02::triggerIrq() {

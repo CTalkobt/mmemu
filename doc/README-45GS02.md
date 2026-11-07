@@ -97,7 +97,24 @@ Register encoding: `A`/`X` control the lower half, `Y`/`Z` control the upper hal
 
 Physical Address = `vaddr + (offset << 8)` for enabled blocks.
 
-### 3.3 Hypervisor Mode
+### 3.3 Instruction Timing
+Each instruction's cycle count comes from a table chosen by the CPU speed. The tables are xemu's, in `timings_45gs02.h`. xemu's 40 MHz numbers were measured on a MEGA65 with LGB's [MEGAcyc](https://github.com/lgblgblgb/megacyc).
+
+| Speed | Table | Extra cycles |
+|-------|-------|--------------|
+| 1 and 2 MHz | 6502 (`TIMINGS_6502C65`) | +1 for an indexed read that crosses a page (`abs,X`, `abs,Y`, `(zp),Y`) |
+| 3.5 MHz | 65CE02 | none |
+| 40.5 MHz | measured (`TIMINGS_65GS_FAST`) | none |
+
+At every speed:
+- **Prefixed instructions:** prefix bytes cost what NEG (`$42`) and NOP (`$EA`) cost at that speed. The 32-bit forms (`NEG NEG`, `NOP` and `NEG NEG NOP`) have their own counts.
+- **8-bit branches:** a taken branch costs 1 more (2 at 40.5 MHz), plus 1 if the target is on a different page from the offset byte. `BRA` is always taken, so only the page cost applies.
+- **BBR/BBS:** 1 more when taken, plus 1 for a page change.
+- **16-bit branches:** 1 more when taken.
+
+The MEGA65 sets the timing from the speed select (`$D031`/`$D054`, POKE 0) on every step, warp or not. The hypervisor always runs at 40.5 MHz. Not modelled: the extra cycle the book gives read-modify-write instructions on `$D019`.
+
+### 3.4 Hypervisor Mode
 
 The 45GS02 supports a privileged **hypervisor mode** used by the MEGA65's HYPPO firmware. When hypervisor mode is active:
 
