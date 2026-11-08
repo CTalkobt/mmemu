@@ -74,7 +74,7 @@ Plugins that implement `MachineDescriptor` factories.
 | `lib/mmemu-plugin-pet.so` | Commodore PET Series (2001, 4032, 8032). | [README-PET.md](README-PET.md) |
 | `lib/mmemu-plugin-atari2600.so` | Atari 2600 (6507, TIA, RIOT 6532, bank-switched cartridges), NTSC and PAL. | [README-A2600.md](README-A2600.md) |
 | `lib/mmemu-plugin-apple2.so` | Apple ][, ][+, //e and enhanced //e (6502/65C02, 48 KB + language card or 128 KB, soft switches, keyboard, speaker, paddles, NTSC video, the Disk II with .dsk/.do/.po/.nib/.woz images, after AppleWin). | [README-APPLE2.md](README-APPLE2.md) |
-| `lib/mmemu-plugin-bbc.so` | BBC Micro Model B (2 MHz 6502, 32 KB, OS 1.20 and BASIC 2, sideways ROMs, 6845/ULA/SAA5050 video, System and User VIAs, keyboard, SN76489, the 8271 with DFS and .ssd/.dsd discs, after b-em). | [README-BBC.md](README-BBC.md) |
+| `lib/mmemu-plugin-bbc.so` | BBC Micro Model B (2 MHz 6502, 32 KB, OS 1.20 and BASIC 2, sideways ROMs, 6845/ULA/SAA5050 video, System and User VIAs, keyboard, SN76489, the 8271 with DFS and .ssd/.dsd discs, UEF cassettes, after b-em). | [README-BBC.md](README-BBC.md) |
 | `lib/mmemu-plugin-x16.so` | Commander X16 (65C02, VERA, VIAs, I2C SMC/RTC, banked RAM/ROM). | [README-X16.md](README-X16.md) |
 
 | Note | The `rawMega65` machine is defined via JSON in `machines/rawMega65.json` and uses the `45gs02` core and `hyper_serial` / `exit_trap` devices. | [README-RAW-MEGA65.md](README-RAW-MEGA65.md) |

@@ -5,6 +5,7 @@
 #include "machine_bbc.h"
 #include "bbc_via.h"
 #include "bbc_disc.h"
+#include "bbc_tape.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -232,8 +233,9 @@ class BbcBus : public IBus {
 public:
     std::function<void(bool)> onIrq;
 
-    BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn, I8271* fdc)
-        : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn), m_fdc(fdc) {
+    BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn, I8271* fdc,
+           Acia6850& acia, BbcTape* tape)
+        : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn), m_fdc(fdc), m_acia(acia), m_tape(tape) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x8000, 0);
         for (auto& r : m_roms) r.clear();
@@ -265,7 +267,8 @@ public:
         std::fill(m_ram.begin(), m_ram.end(), 0);
         m_romsel = 0;
         m_ic32 = 0;
-        m_aciaControl = 0;
+        m_acia.reset();
+        m_tape->reset();
         m_sdb = m_sdbOut = 0;
         m_cycles = m_devCycle = 0;
         m_sysvia.reset();
@@ -346,6 +349,7 @@ private:
         m_uservia.poll((int)d);
         m_sn->advance(d);
         m_fdc->clock(d);
+        m_tape->clock(d);
         if (onIrq) onIrq(irqLine());
     }
 
@@ -367,7 +371,11 @@ private:
                 if (a < 0xFE08) {                               // 6845
                     if (wr) m_video->crtcWrite(a, *wr); else r = m_video->crtcRead(a);
                 } else if (a < 0xFE10) {                        // 6850 ACIA (cassette/RS423)
-                    r = acia(a, wr);
+                    if (wr) m_acia.write(a, *wr); else r = m_acia.read(a);
+                } else {                                        // serial ULA (write only)
+                    // Reading it writes &FE (b-em serial_read)
+                    m_tape->serialUlaWrite(wr ? *wr : 0xFE);
+                    r = 0;
                 }
                 break;
             case 0xFE20:
@@ -390,19 +398,7 @@ private:
         return wr ? 0 : r;
     }
 
-    // The 6850 ACIA, with nothing attached (b-em acia.c): the transmit
-    // register is always empty; it interrupts only while the transmit
-    // interrupt is enabled; nothing is ever received
-    bool aciaIrq() const { return (m_aciaControl & 0x60) == 0x20; }
-    uint8_t acia(uint16_t a, const uint8_t* wr) {
-        if (wr) {
-            if (!(a & 1)) m_aciaControl = *wr;              // control (data written: dropped)
-            return 0;
-        }
-        if (a & 1) return 0;                                 // receive data
-        return (uint8_t)(0x02 | (aciaIrq() ? 0x80 : 0));     // status: TDRE
-    }
-    bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || aciaIrq(); }
+    bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || m_acia.irq(); }
 
     // The slow data bus (sysvia.c): the System VIA's port A, the keyboard
     // pulling bit 7 low when the addressed key is up (with the keyboard enabled)
@@ -451,11 +447,12 @@ private:
     BbcKeyboard* m_kbd;
     Sn76489* m_sn;
     I8271* m_fdc;
+    Acia6850& m_acia;
+    BbcTape* m_tape;
     BbcVia m_sysvia, m_uservia;
     int m_romsel = 0;
     uint8_t m_ic32 = 0, m_sdb = 0, m_sdbOut = 0;
     int m_keyRow = 0, m_keyCol = 0, m_cb2 = 0;
-    uint8_t m_aciaControl = 0;
     bool m_fire[2] = {};
     uint64_t m_cycles = 0, m_devCycle = 0;
     int m_access = 0, m_stretch = 0;
@@ -475,7 +472,7 @@ MachineDescriptor* create(Model, std::string* err) {
     desc->displayName = "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"drive"};
+    desc->uiPanes = {"drive", "tape"};
     desc->clockHz = CPU_HZ;
 
     auto* video = new BbcVideo();
@@ -485,7 +482,9 @@ MachineDescriptor* create(Model, std::string* err) {
     auto* display = new BbcDisplay(video);
     auto* sound = new BbcSound(sn);
     auto* fdc = new I8271();
-    auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc);
+    auto* acia = new Acia6850();
+    auto* tape = new BbcTape(acia);
+    auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc, *acia, tape);
     bus->setRom(15, std::move(basic));
     bus->setRom(14, std::move(dfs));            // Acorn DFS 0.90 for the 8271
     desc->buses.push_back({"system", bus});
@@ -502,8 +501,10 @@ MachineDescriptor* create(Model, std::string* err) {
     io->registerHandler(kbd);
     io->registerHandler(sound);
     io->registerHandler(fdc);
-    desc->deleters.push_back([video, display, kbd, sn, sound, fdc]() {
+    io->registerHandler(tape);
+    desc->deleters.push_back([video, display, kbd, sn, sound, fdc, tape, acia]() {
         delete display; delete video; delete kbd; delete sound; delete sn; delete fdc;
+        delete tape; delete acia;
     });
 
     // BREAK resets the 6502 only: the MOS tells it from power-on by the
