@@ -8,6 +8,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **BBC Micro cassette** (#13):
+  - **Tapes:** UEF tapes, gzipped or plain, after b-em (`uef.c`, `tape.c`, `serial.c`, `acia.c`). Mount with CLI `tape mount` or the GUI tape pane (`*.uef` in its file dialogs).
+  - **Serial ULA:** the motor relay and the RS423/cassette switch, at `&FE10`.
+  - **ACIA:** the 6850 now has receive, DCD (carrier, interrupting), CTS and transmit, in place of the stub. In cassette mode sending takes a byte time; the OS times its output by it, so b-em's instant transmit sends each byte several times.
+  - **Playback:** a byte time per step: carrier, data, gaps, and the baud-rate chunk.
+  - **Recording:** `tape record`/`tape save` writes what the OS sends as a UEF, with idle stretches as carrier tone.
+  - **Checked:** `SAVE` to a recording, then `CHAIN ""` on a fresh machine; b-em's `Welcome_B.uef` loads and runs to its welcome screen.
+  - **Build:** the BBC plugin and the test binary now link zlib (`-lz`).
+  - **Tests:** `bbc_uef_playback`, `bbc_tape_save_and_chain`.
 - **BBC Micro discs** (#13):
   - **Controller:** the Intel 8271 at `&FE80`, after b-em (`i8271.c`, `sdf-acc.c`). It has the commands DFS uses (read, write, verify, read ID, format, seek, specify, drive status, special registers), moves data a byte at a time by NMI, and uses b-em's timing.
   - **DFS:** Acorn DFS 0.90 in sideways slot 14 (`roms/bbc/dfs09.rom`, from b-em).

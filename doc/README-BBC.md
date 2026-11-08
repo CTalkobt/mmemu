@@ -6,7 +6,8 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 - the VIAs (`via.c`, `sysvia.c`);
 - the keyboard matrix (`keyboard.c`);
 - the SN76489 register handling (`sn76489.c`);
-- the 8271 disc controller (`i8271.c`, with the sector-image timing of `disc.c` and `sdf-acc.c`).
+- the 8271 disc controller (`i8271.c`, with the sector-image timing of `disc.c` and `sdf-acc.c`);
+- the cassette: the 6850 ACIA, the serial ULA's motor, and UEF tapes (`acia.c`, `serial.c`, `tape.c`, `uef.c`).
 
 ## Profiles
 
@@ -31,7 +32,8 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 | `&C000-&FBFF` | OS ROM |
 | `&FC00-&FDFF` | FRED, JIM (1 MHz bus): nothing fitted, read `&FF` |
 | `&FE00-&FE07` | 6845 CRTC (address, data) |
-| `&FE08-&FE0F` | 6850 ACIA: nothing attached (status: transmit empty; it interrupts only while its transmit interrupt is on) |
+| `&FE08-&FE0F` | 6850 ACIA: the cassette (RS423 has nothing attached) |
+| `&FE10-&FE17` | Serial ULA: motor relay (bit 7), RS423 or cassette (bit 6); write only (a read writes `&FE`) |
 | `&FE20-&FE2F` | Video ULA: control (`&FE20`), palette (`&FE21`); write only |
 | `&FE30-&FE3F` | ROMSEL (write only) |
 | `&FE40-&FE5F` | System VIA |
@@ -129,6 +131,27 @@ OS 1.20's pitch table is slightly sharp: `SOUND 1,-15,89,…`, an A, writes N = 
 
 SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT` runs `*BASIC` and `CHAIN"LOAD"`; the program loads and reports that it wants a Master 128, which is right for that disc.
 
+## Cassette
+
+**Tapes.** UEF tapes, gzipped or not, mount with CLI `tape mount <path>` or from the GUI tape pane. Mounting presses PLAY.
+- **Motion:** the tape moves while the serial ULA's motor relay is on and PLAY is down.
+- **Byte time:** one byte time per step (b-em's `uef_poll`). At 1200 baud that is 120 bytes a second; the baud-rate chunk changes it.
+- **Chunks:**
+  - carrier tone (`&110`, and `&111` with its dummy byte) raises the ACIA's DCD, which interrupts;
+  - data (`&100`, and `&104` with 7 or 8 bits) clears DCD and delivers its bytes to the receive register;
+  - gaps (`&112`, `&116`) are silence;
+  - other chunks are skipped.
+- **The end:** the tape stops at its end.
+- **Controls:** `tape stop`, `tape play` and `tape rewind`, and the pane's buttons.
+
+**The ACIA.** It follows b-em, with one change. In cassette mode it takes a byte time to send: 10 bits at 1200 baud, or 300 when the control register divides by 64. The OS times its output by the transmit register. b-em empties the register at once, and the OS then writes each byte several times.
+
+**Recording.** `tape record`, then `tape save <path>` (or the pane's Record and Save) records what the ACIA sends while the motor runs in cassette mode. The idle time between bytes becomes carrier tone, and the result is saved as a UEF.
+
+**Checked:**
+- `*TAPE`, `SAVE` onto a recording, then `CHAIN ""` on a fresh machine loads it and runs it.
+- b-em's `Welcome_B.uef` (gzipped) loads with `*TAPE` and `CHAIN ""`, and runs through to "Welcome to the BBC Microcomputer".
+
 ## Tests
 
 `src/plugins/machines/bbc/test/test_bbc_machine.cpp`:
@@ -142,8 +165,12 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 - `bbc_dfs_image_layout`: where `.ssd` and `.dsd` sectors are in the file.
 - `bbc_dfs_save_and_chain`: on a blank disc, DFS's banner, `*CAT`, `SAVE` writing the catalogue and file to the image, then `CHAIN` loading and running it.
 
+`test_bbc_tape.cpp`:
+- `bbc_uef_playback`: a plain and a gzipped UEF. Carrier raises DCD, then the data bytes arrive while the motor runs, and nothing moves while it is off.
+- `bbc_tape_save_and_chain`: the cassette filing system both ways.
+
 ## Not yet
 
-- **Storage:** cassette (the ACIA and serial ULA), the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
+- **Storage:** CSW tapes, the RS423 port, the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
 - **Other hardware:** the ADC (analogue joysticks), the Tube, Econet.
 - **Other models:** the Model A, the B+, the Master, and the Electron.

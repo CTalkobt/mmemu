@@ -136,6 +136,7 @@ PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
 	src/plugins/machines/bbc/main/sn76489.cpp \
 	src/plugins/machines/bbc/main/bbc_disc.cpp \
+	src/plugins/machines/bbc/main/bbc_tape.cpp \
 	src/plugins/devices/bbc_video/main/bbc_video.cpp \
 	src/plugins/machines/bbc/main/plugin_init.cpp
 
@@ -461,6 +462,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
 	src/plugins/machines/bbc/test/test_bbc_machine.cpp \
 	src/plugins/machines/bbc/test/test_bbc_disc.cpp \
+	src/plugins/machines/bbc/test/test_bbc_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -572,6 +574,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/bbc/main/bbc_via.o \
 	src/plugins/machines/bbc/main/sn76489.o \
 	src/plugins/machines/bbc/main/bbc_disc.o \
+	src/plugins/machines/bbc/main/bbc_tape.o \
 	src/plugins/devices/bbc_video/main/bbc_video.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
@@ -910,7 +913,7 @@ $(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) | $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS) -lz
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
@@ -1010,7 +1013,7 @@ $(TEST_RUNNER_BIN): $(TEST_RUNNER_OBJS) $(LIBS) | $(BINDIR)
 test-runner: $(TEST_RUNNER_BIN) plugins
 
 $(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound -lz
 
 src/plugins/45gs02/main/ca45_assembler.o src/plugins/45gs02/test/test_ca45_assemble_line.o: CXXFLAGS += $(CA45_CXXFLAGS)
 src/gui/main/host_gamepad.o: CXXFLAGS += $(SDL2_CXXFLAGS)
