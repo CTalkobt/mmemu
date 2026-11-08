@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Disk images
+- **Disk images inside `.gz` and `.zip` files** (#233), after AppleWin's `CheckGZipFile`/`CheckZipFile`.
+  - **Formats:** every disk format: the Commodore `.d64`/`.d71`/`.d80`/`.d81`/`.d82`/`.g64`/`.imd`, Atari `.atr`, Apple II `.dsk`/`.do`/`.po`/`.nib`/`.woz`, BBC `.ssd`/`.dsd`, the MEGA65 F011's `.d81` and the X16's SD card image.
+  - **Format detection:** a `.gz` takes its format from the inner name (`x.d64.gz` is a `.d64`); a zip from its first entry with a disk extension.
+  - **Writing:** the image is recompressed and the archive replaced through a temporary file. Floppies are written back per sector or track, as before. The F011 and the X16 SD card hold an archived image in memory and save it once writes have stopped for a second, and on eject.
+  - **Read-only:** a zip with more than one file (as AppleWin does), and archives the host won't let us write.
+  - **Shared layer:** `diskfile::` in libdevices (`disk_file.h`), with a small zip reader/writer on zlib (stored and deflated entries); hosts now link `-lz`.
+  - **Front ends:** the GUI Mount dialog lists `.gz` and `.zip`; the CLI `disk mount`, `load` (`.d64`, `.atr`, ...) and MCP `mount_disk` accept them.
+  - **Tests:** `disk_file_*` (gzip and zip round trips, a multi-file zip read-only, writes to a `.d64.gz`, a zipped `.d64`, `.nib` and `.ssd.gz` kept after remounting, an SD card zip saved on detach). Checked on the Plus/4: `SAVE` to a zipped and a gzipped `.d64`, read back by the system `unzip` and `gzip`.
+
 ### BBC Micro
 - **BBC Micro Tube and 6502 Second Processor** (#13): profile `bbcb-6502`, after b-em (`tube.c`, `6502tube.c`).
   - **The Tube ULA:** at `&FEE0`, with its four FIFOs and the control flags, giving the BBC an IRQ and the second processor an IRQ and NMI.

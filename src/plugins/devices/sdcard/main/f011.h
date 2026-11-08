@@ -1,9 +1,10 @@
 #pragma once
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/device_info.h"
+#include "libdevices/main/disk_file.h"
 #include <cstdint>
-#include <fstream>
 #include <string>
+#include <vector>
 
 class SdCardDevice;
 
@@ -17,7 +18,9 @@ class SdCardDevice;
  *
  * Each drive reads one of:
  *  - a host .d81 file attached as unit 8 (drive 0) or 9 (drive 1) with
- *    mountDisk (CLI `disk mount`, GUI drive pane, MCP), or
+ *    mountDisk (CLI `disk mount`, GUI drive pane, MCP), plain or as
+ *    `.d81.gz` / a `.zip` (#233): held in memory, a plain file patched per
+ *    sector, an archive saved once writes stop (diskfile::WriteBack), or
  *  - the D81 image HYPPO mounted inside the SD card image: $D68B bits
  *    0+1 / 3+4 (image enabled, present), start sector $D68C-$D68F /
  *    $D690-$D693. Bit 2 / 5 is set when the image may be written: the
@@ -33,7 +36,7 @@ class SdCardDevice;
 class F011Fdc : public IOHandler {
 public:
     explicit F011Fdc(SdCardDevice* sd);
-    ~F011Fdc() override = default;
+    ~F011Fdc() override;
 
     const char* name() const override { return m_name.c_str(); }
     uint32_t    baseAddr() const override { return 0xD080; }
@@ -50,7 +53,7 @@ public:
      */
     bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
-    void tick(uint64_t) override {}
+    void tick(uint64_t) override;
     void getDeviceInfo(DeviceInfo& out) const override;
 
     /** Units 8 and 9 are drives 0 and 1: attach a host .d81 (800 KB). */
@@ -70,14 +73,17 @@ private:
     struct Drive {
         uint8_t statA = 0, statB = 0, headTrack = 0;
         bool haveDisk = false, canWrite = false;
-        std::fstream file;          // host .d81, when attached
+        bool         attached = false;  // a host .d81
+        std::vector<uint8_t> image;     // its contents
         std::string  path;
         bool         fileReadOnly = false;
+        diskfile::WriteBack writeBack;  // an archive's pending save
         uint64_t     source = 0;    // which disk: 0 none, 1 + SD start sector, or a host file serial
         uint64_t     fileSerial = 0;
     };
 
     void refreshMedia();
+    void saveImage(Drive& v);
     void setDisk(int d, bool haveDisk, bool canWrite);
     bool diskOffset(uint32_t& off) const;
     bool readDisk(int d, uint32_t off, uint8_t* buf);

@@ -3408,7 +3408,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  cart <path>         - Attach a cartridge image\n"
                  "  eject               - Eject currently attached cartridge\n"
                  "  rom [socket] [path|remove] - List the board's ROM sockets, or fit/remove a ROM (C128 function ROM)\n"
-                 "  disk mount <unit> <path> - Mount a disk image to drive unit\n"
+                 "  disk mount <unit> <path> - Mount a disk image to drive unit (also .gz / .zip)\n"
                  "  disk eject <unit>   - Eject a disk image\n"
                  "  tape mount <path>   - Mount a .tap file for playback\n"
                  "  tape play           - Start/resume tape playback\n"

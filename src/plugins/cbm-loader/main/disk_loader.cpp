@@ -6,13 +6,11 @@
 #include "d82_parser.h"
 #include "t64_parser.h"
 #include "libcore/main/machine_desc.h"
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 
 bool DiskImageLoader::canLoad(const std::string& path) const {
-    size_t dot = path.find_last_of('.');
-    if (dot == std::string::npos) return false;
-    std::string ext = path.substr(dot + 1);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    const std::string ext = diskfile::imageExt(path);   // x.d64.gz, a zip holding a .d64
     return ext == "d64" || ext == "d71" || ext == "d80" ||
            ext == "d81" || ext == "d82" || ext == "t64";
 }
@@ -25,9 +23,7 @@ bool DiskImageLoader::load(const std::string& path, IBus* bus, MachineDescriptor
     }
     if (!bus) return false;
 
-    size_t dot = path.find_last_of('.');
-    std::string ext = path.substr(dot + 1);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    const std::string ext = diskfile::imageExt(path);
 
     ICbmDiskImage* parser = nullptr;
     if      (ext == "d64") parser = new D64Parser();

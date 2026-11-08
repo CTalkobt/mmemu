@@ -5,6 +5,7 @@
 #include "d81_parser.h"
 #include "d82_parser.h"
 #include <fstream>
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 #include <cstring>
 
@@ -145,23 +146,18 @@ int CbmDiskGeometry::totalSectors() const {
 CbmSectorDisk::CbmSectorDisk(const CbmDiskGeometry& geom) : m_geom(geom) {}
 
 bool CbmSectorDisk::open(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-
-    file.seekg(0, std::ios::end);
-    size_t size = file.tellg();
-    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> bytes;
+    if (!diskfile::read(path, bytes)) return false;   // plain, .gz or .zip
 
     bool valid = false;
     for (int i = 0; i < m_geom.numValidSizes; ++i) {
-        if (size == m_geom.validSizes[i]) { valid = true; break; }
+        if (bytes.size() == m_geom.validSizes[i]) { valid = true; break; }
     }
     if (!valid) return false;
 
-    m_data.resize(size);
-    file.read(reinterpret_cast<char*>(m_data.data()), size);
+    m_data = std::move(bytes);
     m_path = path;
-    m_writable = static_cast<bool>(std::fstream(path, std::ios::binary | std::ios::in | std::ios::out));
+    m_writable = diskfile::writable(path);
     return true;
 }
 
@@ -170,11 +166,7 @@ bool CbmSectorDisk::writeSector(int track, int sector, const uint8_t* data) {
     if (off == 0xFFFFFFFF || off + 256 > m_data.size()) return false;
     std::copy(data, data + 256, m_data.begin() + off);
     if (!m_writable) return false;
-    std::fstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!f) return false;
-    f.seekp(off);
-    f.write(reinterpret_cast<const char*>(data), 256);
-    return static_cast<bool>(f);
+    return diskfile::patch(m_path, m_data, off, 256);
 }
 
 bool CbmSectorDisk::formatSectors() {
@@ -615,10 +607,7 @@ bool CbmSectorDisk::findSlot(uint32_t& entryOffset) {
 
 bool CbmSectorDisk::flushAll() {
     if (!m_writable) return false;
-    std::ofstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!f) return false;
-    f.write(reinterpret_cast<const char*>(m_data.data()), (std::streamsize)m_data.size());
-    return static_cast<bool>(f);
+    return diskfile::patch(m_path, m_data, 0, m_data.size());
 }
 
 int CbmSectorDisk::writeFile(const std::string& name, int type, const std::vector<uint8_t>& data, bool replace) {

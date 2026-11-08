@@ -1,6 +1,7 @@
 // ImageDisk (.imd) files for the 1571's MFM disks (see imd_disk.h).
 
 #include "imd_disk.h"
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
@@ -8,9 +9,8 @@
 #include <unistd.h>
 
 bool ImdDisk::open(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::vector<uint8_t> d((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::vector<uint8_t> d;
+    if (!diskfile::read(path, d)) return false;           // plain, .gz or .zip
     if (d.size() < 4 || d[0] != 'I' || d[1] != 'M' || d[2] != 'D') return false;
     size_t o = 0;
     while (o < d.size() && d[o] != 0x1A) ++o;
@@ -62,7 +62,7 @@ bool ImdDisk::open(const std::string& path) {
     m_tracks = std::move(tracks);
     m_header = header;
     m_path = path;
-    m_writable = access(path.c_str(), W_OK) == 0;
+    m_writable = diskfile::writable(path);
     return true;
 }
 
@@ -87,10 +87,7 @@ bool ImdDisk::save() {
             else { d.push_back((uint8_t)(base + 1)); d.insert(d.end(), s.data.begin(), s.data.end()); }
         }
     }
-    std::ofstream f(m_path, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write(reinterpret_cast<const char*>(d.data()), (std::streamsize)d.size());
-    return static_cast<bool>(f);
+    return diskfile::save(m_path, d);
 }
 
 ImdDisk::Track* ImdDisk::track(int cyl, int side) {

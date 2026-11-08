@@ -1,19 +1,13 @@
 #include "g64_parser.h"
+#include "libdevices/main/disk_file.h"
 #include <fstream>
 #include <cstring>
 
 G64Parser::G64Parser() {}
 
 bool G64Parser::open(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    
-    file.seekg(0, std::ios::end);
-    size_t size = file.tellg();
-    file.seekg(0, std::ios::beg);
-    
-    m_data.resize(size);
-    file.read((char*)m_data.data(), size);
+    if (!diskfile::read(path, m_data)) return false;      // plain, .gz or .zip
+    const size_t size = m_data.size();
     
     if (size < 12) return false;
     
