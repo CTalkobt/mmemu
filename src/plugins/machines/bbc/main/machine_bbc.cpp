@@ -1,4 +1,4 @@
-// BBC Micro Model B, after b-em (GPL-2.0-or-later): 6502.c (the memory map,
+// BBC Micro Model A and B, after b-em (GPL-2.0-or-later): 6502.c (the memory map,
 // the 1 MHz bus), sysvia.c (the slow data bus, IC32), keyboard.c (the
 // matrix), mem.c (sideways ROMs).
 
@@ -6,6 +6,7 @@
 #include "bbc_via.h"
 #include "bbc_disc.h"
 #include "bbc_tape.h"
+#include "bbc_tube.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -16,6 +17,7 @@
 #include "libdebug/main/execution_observer.h"
 #include "libmem/main/ibus.h"
 #include "plugins/6502/main/cpu6502.h"
+#include "plugins/6502/main/cpu65c02.h"
 #include "plugins/devices/bbc_video/main/bbc_video.h"
 #include <algorithm>
 #include <cctype>
@@ -234,7 +236,7 @@ public:
     std::function<void(bool)> onIrq;
 
     BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn, I8271* fdc,
-           Acia6850& acia, BbcTape* tape)
+           Acia6850& acia, UefTape* tape)
         : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn), m_fdc(fdc), m_acia(acia), m_tape(tape) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x8000, 0);
@@ -262,6 +264,17 @@ public:
     }
 
     void setRom(int slot, std::vector<uint8_t> rom) { m_roms[slot & 15] = std::move(rom); }
+    /** Model A: 16 KB of RAM seen at &0000 and &4000 (A14 not decoded: b-em
+     *  maps both to the top half, where the video finds its screen); no
+     *  User VIA, ADC or disc */
+    void setModelA(bool a) { m_modelA = a; }
+    /** A second processor on the Tube (&FEE0-&FEFF) */
+    void setTube(TubeUla* t) { m_tube = t; }
+    /** The parasite changed the Tube: the host's IRQ follows */
+    void tubeChanged() { if (onIrq) onIrq(irqLine()); }
+    /** BREAK (b-em main_key_break): the 6502, the video and the disc
+     *  controller restart; the VIAs keep their state */
+    void breakKey() { m_video->reset(); m_fdc->reset(); }
 
     void powerOn() {
         std::fill(m_ram.begin(), m_ram.end(), 0);
@@ -271,6 +284,9 @@ public:
         m_tape->reset();
         m_sdb = m_sdbOut = 0;
         m_cycles = m_devCycle = 0;
+        m_adcStatus = 0x40;
+        m_adcHigh = m_adcLow = 0;
+        m_adcLeft = 0;
         m_sysvia.reset();
         m_uservia.reset();
         m_video->reset();
@@ -280,6 +296,10 @@ public:
     }
 
     void setFire(int n, bool down) { m_fire[n & 1] = down; }
+    /** An analogue channel (0-3: joystick 1 X, Y, joystick 2 X, Y), 0-65535:
+     *  high for left and up, as the BBC's sticks read */
+    void setAxis(int ch, uint16_t v) { m_axis[ch & 3] = v; }
+    uint8_t adcStatus() const { return m_adcStatus; }
 
     // Instruction framing: accesses are counted so I/O happens on its cycle
     void begin() { m_access = 0; m_stretch = 0; }
@@ -311,7 +331,7 @@ public:
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t a = addr & 0xFFFF;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
-        if (a < 0x8000) m_ram[a] = v;
+        if (a < 0x8000) m_ram[ramIndex(a)] = v;
         else if (a >= 0xFC00 && a < 0xFF00) io(a, &v);
         ++m_access;
     }
@@ -330,8 +350,10 @@ public:
     BbcVia& uservia() { return m_uservia; }
 
 private:
+    uint16_t ramIndex(uint16_t a) const { return m_modelA ? (uint16_t)(0x4000 | (a & 0x3FFF)) : a; }
+
     uint8_t peekMem(uint16_t a) const {
-        if (a < 0x8000) return m_ram[a];
+        if (a < 0x8000) return m_ram[ramIndex(a)];
         if (a < 0xC000) {
             const auto& r = m_roms[m_romsel];
             return r.empty() ? 0 : r[(a - 0x8000) % r.size()];
@@ -350,6 +372,8 @@ private:
         m_sn->advance(d);
         m_fdc->clock(d);
         m_tape->clock(d);
+        for (m_aciaAcc += d; m_aciaAcc >= 128; m_aciaAcc -= 128) m_acia.poll(128);
+        if (m_adcLeft > 0 && (m_adcLeft -= (int64_t)d) <= 0) adcDone();
         if (onIrq) onIrq(irqLine());
     }
 
@@ -374,7 +398,7 @@ private:
                     if (wr) m_acia.write(a, *wr); else r = m_acia.read(a);
                 } else {                                        // serial ULA (write only)
                     // Reading it writes &FE (b-em serial_read)
-                    m_tape->serialUlaWrite(wr ? *wr : 0xFE);
+                    serialUlaWrite(wr ? *wr : 0xFE);
                     r = 0;
                 }
                 break;
@@ -386,9 +410,19 @@ private:
                 if (wr) m_sysvia.write(a, *wr); else r = m_sysvia.read(a);
                 break;
             case 0xFE60:                                        // User VIA
+                if (m_modelA) break;
                 if (wr) m_uservia.write(a, *wr); else r = m_uservia.read(a);
                 break;
+            case 0xFEC0:                                        // uPD7002 ADC
+                if (m_modelA) break;
+                if (wr) adcWrite(a, *wr); else r = adcRead(a);
+                break;
+            case 0xFEE0:                                        // the Tube (host side)
+                if (!m_tube) break;
+                if (wr) m_tube->hostWrite(a, *wr); else r = m_tube->hostRead(a);
+                break;
             case 0xFE80:                                        // 8271 disc controller
+                if (m_modelA) break;
                 if (wr) m_fdc->write(a, *wr); else r = m_fdc->read(a);
                 break;
             default:
@@ -398,7 +432,45 @@ private:
         return wr ? 0 : r;
     }
 
-    bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || m_acia.irq(); }
+    // The uPD7002 ADC (b-em adc.c): writing &FEC0 starts a conversion of the
+    // channel in bits 0-1, 10 ms for 10 bits (bit 3) else 4 ms; the status
+    // has busy (bit 7), not-busy (bit 6) and the top two bits of the result;
+    // end of conversion is the System VIA's CB1 (low when done)
+    void adcWrite(uint16_t a, uint8_t v) {
+        if (a & 3) return;
+        m_adcLeft = (int64_t)((v & 8) ? 156 : 62) * 128;
+        m_adcStatus = (uint8_t)((v & 0xF) | 0x80);
+        m_sysvia.setCb1(1);
+    }
+    uint8_t adcRead(uint16_t a) const {
+        switch (a & 3) {
+            case 0: return m_adcStatus;
+            case 1: return m_adcHigh;
+            case 2: return m_adcLow;
+        }
+        return 0x40;
+    }
+    void adcDone() {
+        m_adcLeft = 0;
+        const uint16_t v = m_axis[m_adcStatus & 3];
+        m_adcStatus = (uint8_t)((m_adcStatus & 0xF) | 0x40 | ((v & 0xC000) >> 10));
+        m_adcHigh = (uint8_t)(v >> 8);
+        m_adcLow = (uint8_t)(v & 0xFF);
+        m_sysvia.setCb1(0);
+    }
+
+    // The serial ULA (b-em serial.c serial_write): bit 7 the motor relay;
+    // bit 6 RS423 (DCD and CTS cleared) or cassette (CTS cleared)
+    void serialUlaWrite(uint8_t v) {
+        const bool cassette = !(v & 0x40);
+        m_acia.clearStatus(cassette ? Acia6850::CTS : (Acia6850::DCD | Acia6850::CTS));
+        m_acia.setCassette(cassette);
+        m_tape->setMotor(v & 0x80, cassette);
+    }
+
+    bool irqLine() const {
+        return m_sysvia.irq() || m_uservia.irq() || m_acia.irq() || (m_tube && m_tube->hostIrq());
+    }
 
     // The slow data bus (sysvia.c): the System VIA's port A, the keyboard
     // pulling bit 7 low when the addressed key is up (with the keyboard enabled)
@@ -448,31 +520,46 @@ private:
     Sn76489* m_sn;
     I8271* m_fdc;
     Acia6850& m_acia;
-    BbcTape* m_tape;
+    UefTape* m_tape;
+    uint64_t m_aciaAcc = 0;
     BbcVia m_sysvia, m_uservia;
     int m_romsel = 0;
     uint8_t m_ic32 = 0, m_sdb = 0, m_sdbOut = 0;
     int m_keyRow = 0, m_keyCol = 0, m_cb2 = 0;
     bool m_fire[2] = {};
+    bool m_modelA = false;
+    TubeUla* m_tube = nullptr;
+    uint16_t m_axis[4] = {0x7FF8, 0x7FF8, 0x7FF8, 0x7FF8};
+    uint8_t m_adcStatus = 0x40, m_adcHigh = 0, m_adcLow = 0;
+    int64_t m_adcLeft = 0;
     uint64_t m_cycles = 0, m_devCycle = 0;
     int m_access = 0, m_stretch = 0;
 };
 
 }  // namespace
 
-MachineDescriptor* create(Model, std::string* err) {
-    std::vector<uint8_t> os, basic, dfs;
+MachineDescriptor* create(Model model, std::string* err) {
+    const bool modelA = model == Model::A;
+    const bool tubed = model == Model::BTube;
+    std::vector<uint8_t> os, basic, dfs, tubeRom;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
-    // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
-    if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
+    if (tubed) {
+        // DNFS 1.00 (DFS 1.00 and NFS 3.40): DFS 0.90 has no Tube host code
+        if (!loadFile("roms/bbc/dnfs100.rom", 0x4000, dfs, err)) return nullptr;
+        if (!loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
+    } else if (!modelA) {
+        // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
+        if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
+    }
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = "bbcb";
-    desc->displayName = "BBC Micro Model B";
+    desc->machineId = modelA ? "bbca" : tubed ? "bbcb-6502" : "bbcb";
+    desc->displayName = modelA ? "BBC Micro Model A" : tubed ? "BBC Micro Model B with 6502 Second Processor"
+                                                             : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"drive", "tape"};
+    desc->uiPanes = modelA ? std::vector<std::string>{"tape"} : std::vector<std::string>{"drive", "tape"};
     desc->clockHz = CPU_HZ;
 
     auto* video = new BbcVideo();
@@ -483,10 +570,15 @@ MachineDescriptor* create(Model, std::string* err) {
     auto* sound = new BbcSound(sn);
     auto* fdc = new I8271();
     auto* acia = new Acia6850();
-    auto* tape = new BbcTape(acia);
+    auto* tape = new UefTape();
+    tape->onCarrier = [acia]() { acia->dcdHigh(); };
+    tape->onDataStart = [acia]() { acia->dcdLow(); };
+    tape->onByte = [acia](uint8_t v) { acia->receive(v); };
+    acia->onTransmit = [tape](uint8_t v) { tape->transmitted(v); };
     auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc, *acia, tape);
+    bus->setModelA(modelA);
     bus->setRom(15, std::move(basic));
-    bus->setRom(14, std::move(dfs));            // Acorn DFS 0.90 for the 8271
+    if (!modelA) bus->setRom(14, std::move(dfs));   // Acorn DFS 0.90 (or DNFS) for the 8271
     desc->buses.push_back({"system", bus});
     auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
@@ -500,33 +592,82 @@ MachineDescriptor* create(Model, std::string* err) {
     io->registerHandler(display);
     io->registerHandler(kbd);
     io->registerHandler(sound);
-    io->registerHandler(fdc);
+    if (!modelA) io->registerHandler(fdc);
     io->registerHandler(tape);
     desc->deleters.push_back([video, display, kbd, sn, sound, fdc, tape, acia]() {
         delete display; delete video; delete kbd; delete sound; delete sn; delete fdc;
         delete tape; delete acia;
     });
 
-    // BREAK resets the 6502 only: the MOS tells it from power-on by the
-    // System VIA's IER, which keeps its value (b-em main_key_break)
-    kbd->onBreak = [cpu]() { cpu->reset(); };
+    // The 6502 Second Processor: a 65C02 at 3 MHz with 64 KB (b-em 6502tube.c)
+    TubeUla* tube = nullptr;
+    TubeParasiteBus* pbus = nullptr;
+    MOS65C02* pcpu = nullptr;
+    if (tubed) {
+        tube = new TubeUla();
+        pbus = new TubeParasiteBus(tube, std::move(tubeRom));
+        pcpu = new MOS65C02();
+        pcpu->setDataBus(pbus);
+        pcpu->setCodeBus(pbus);
+        bus->setTube(tube);
+        desc->buses.push_back({"tube", pbus});
+        desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+        tube->onParasiteReset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+        desc->deleters.push_back([tube]() { delete tube; });
+    }
+
+    // BREAK: the 6502, the video, the disc controller and a second
+    // processor restart (b-em main_key_break). The MOS tells it from
+    // power-on by the System VIA's IER, which keeps its value
+    kbd->onBreak = [cpu, bus, pbus, pcpu]() {
+        bus->breakKey();
+        cpu->reset();
+        if (pcpu) { pbus->reset(); pcpu->reset(); }
+    };
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"break"}, "BREAK: the 6502 restarts (a soft reset; the program in memory stays)."}};
 
-    // Joystick fire buttons on the System VIA (the analogue sticks need the ADC: not yet)
-    desc->joystickPorts = 2;
+    // Joysticks: the fire buttons on the System VIA, the sticks on the ADC
+    desc->joystickPorts = modelA ? 0 : 2;          // the Model A has no analogue port
     desc->primaryJoystickPort = 0;
-    desc->onJoystick = [bus](int port, uint8_t bits) { bus->setFire(port, !(bits & 0x10)); };
+    // Digital sticks drive the analogue channels to their ends
+    desc->onJoystick = [bus](int port, uint8_t bits) {
+        const int p = (port & 1) * 2;
+        bus->setAxis(p, !(bits & 0x04) ? 0xFFF0 : !(bits & 0x08) ? 0x0000 : 0x7FF8);
+        bus->setAxis(p + 1, !(bits & 0x01) ? 0xFFF0 : !(bits & 0x02) ? 0x0000 : 0x7FF8);
+        bus->setFire(port, !(bits & 0x10));
+    };
 
-    desc->onReset = [bus, io, cpu](MachineDescriptor&) {     // power on
+    desc->onReset = [bus, io, cpu, tube, pbus, pcpu](MachineDescriptor&) {     // power on
         bus->powerOn();
         io->resetAll();
         cpu->reset();
+        if (tube) {
+            tube->reset();
+            pbus->powerOn();
+            pcpu->reset();
+        }
     };
-    desc->schedulerStep = [bus, cpu, io](MachineDescriptor&) -> int {
+    // The second processor runs 1.5 cycles for each of the BBC's (3 MHz
+    // against 2), unless the Tube holds it in reset
+    auto budget = std::make_shared<double>(0.0);
+    desc->schedulerStep = [bus, cpu, io, tube, pcpu, budget](MachineDescriptor&) -> int {
         bus->begin();
         const int c = bus->end(cpu->step());
         io->tickAll((uint64_t)c);
+        if (tube) {
+            if (tube->parasiteHeld()) {
+                *budget = 0;
+            } else {
+                *budget += c * 1.5;
+                while (*budget > 0) {
+                    pcpu->setIrqLine(tube->parasiteIrq());
+                    pcpu->setNmiLine(tube->parasiteNmi());
+                    *budget -= pcpu->step();
+                }
+                bus->tubeChanged();
+            }
+        }
         return c;
     };
     if (desc->onReset) desc->onReset(*desc);

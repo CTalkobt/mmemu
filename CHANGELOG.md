@@ -8,6 +8,28 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **BBC Micro Tube and 6502 Second Processor** (#13): profile `bbcb-6502`, after b-em (`tube.c`, `6502tube.c`).
+  - **The Tube ULA:** at `&FEE0`, with its four FIFOs and the control flags, giving the BBC an IRQ and the second processor an IRQ and NMI.
+  - **The second processor:** a 65C02 at 3 MHz with 64 KB and its 2 KB boot ROM (`roms/bbc/6502tube.rom`).
+  - **DNFS:** DNFS 1.00 (`roms/bbc/dnfs100.rom`) replaces DFS 0.90 for its Tube host code.
+  - **Checked:** "Acorn TUBE 6502 64K"; BASIC runs on the second processor (`PAGE` `&800`, `HIMEM` `&8000`).
+  - **BREAK:** it now also restarts the video and the 8271, as b-em's does, and the second processor if there is one.
+  - **Tests:** `bbc_tube_6502`.
+- **Acorn Electron** (#13): profile `electron`, in the BBC plugin, after Elkulator (GPL-2.0-or-later). It starts at BASIC's `>` prompt in Mode 6. See `doc/README-ELECTRON.md`.
+  - **CPU and memory:** a 2 MHz 6502 with 32 KB RAM the ULA shares; the CPU waits for it (Modes 0-3 hold it off each visible line, otherwise RAM runs at 1 MHz). OS 1.00 and BASIC 2 (`roms/electron/`).
+  - **The ULA:**
+    - video: Modes 0-6, the palette, 312/313-line frames, 640 x 512;
+    - interrupts: display end, RTC, power-on, cassette;
+    - ROM paging, with the keyboard read through pages 8/9 and the quirk for pages 0-7;
+    - the square-wave sound.
+  - **Cassette:** the BBC's UEF code, now shared as `UefTape` with hooks the BBC wires to its ACIA and the Electron to its ULA. Includes recording.
+  - **Keyboard:** the 14 x 4 matrix by position, FUNC function keys, BREAK. Typed text keeps its case with SHIFT+CAPS LK.
+  - **Not yet:** Plus 1, Plus 3.
+  - **Tests:** `electron_boots_basic`, `electron_typed_basic`, `electron_mode2_graphics`, `electron_sound_tone`, `electron_tape_save_and_chain`.
+- **BBC Micro joysticks and Model A** (#13):
+  - **ADC:** the uPD7002 at `&FEC0` (b-em `adc.c`): conversions of 4 or 10 ms, ending on the System VIA's CB1. The frontends' joysticks drive its channels, so `ADVAL(1)` and `ADVAL(2)` read the sticks; the fire buttons are on the System VIA as before.
+  - **Model A:** new profile `bbca`. 16 KB seen at `&0000` and `&4000`, OS 1.20 and BASIC 2, and no User VIA, ADC or disc.
+  - **Tests:** `bbc_joystick_adc`, `bbc_model_a`.
 - **BBC Micro cassette** (#13):
   - **Tapes:** UEF tapes, gzipped or plain, after b-em (`uef.c`, `tape.c`, `serial.c`, `acia.c`). Mount with CLI `tape mount` or the GUI tape pane (`*.uef` in its file dialogs).
   - **Serial ULA:** the motor relay and the RS423/cassette switch, at `&FE10`.

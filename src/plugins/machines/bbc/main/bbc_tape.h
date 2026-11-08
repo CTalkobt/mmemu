@@ -46,19 +46,24 @@ private:
 };
 
 /**
- * The cassette (b-em tape.c, uef.c, serial.c): a UEF tape (gzipped or
- * not) played into the ACIA while the serial ULA's motor relay is on and
- * PLAY is down, a byte time at a time (1200 baud: 120 bytes a second; the
- * baud-rate chunk changes it). Carrier tone raises DCD; data clears it and
- * delivers its bytes; gaps are silence. The tape stops at its end.
+ * A UEF cassette (b-em tape.c, uef.c): gzipped or not, played while the
+ * machine's motor relay is on and PLAY is down, a byte time at a time (1200
+ * baud: 120 bytes a second; the baud-rate chunk changes it). The machine
+ * takes what it hears through the hooks: carrier (each byte time of tone),
+ * the start of a data chunk, each data byte; gaps are silence. The tape
+ * stops at its end. The BBC Micro wires the hooks to its 6850 (DCD, the
+ * receive register), the Electron to its ULA.
  *
  * Recording (CLI `tape record` / `tape save`, the GUI tape pane): bytes the
- * ACIA sends while the motor runs in cassette mode, with the idle time
+ * machine sends while the motor runs in output mode, with the idle time
  * between them as carrier tone, saved as a UEF.
  */
-class BbcTape : public IOHandler {
+class UefTape : public IOHandler {
 public:
-    explicit BbcTape(Acia6850* acia);
+    std::function<void()> onCarrier, onDataStart;
+    std::function<void(uint8_t)> onByte;
+
+    UefTape();
     const char* name() const override { return "Tape"; }
     uint32_t baseAddr() const override { return 0; }
     uint32_t addrMask() const override { return 0; }
@@ -67,11 +72,11 @@ public:
     void reset() override;
     void tick(uint64_t) override {}
 
-    /** &FE10: the serial ULA's control register (bit 7 motor, bit 6 RS423). */
-    void serialUlaWrite(uint8_t v);
+    /** The motor relay; `output`: the machine sends to tape (recording takes it). */
+    void setMotor(bool on, bool output);
     /** Run `cycles` 2 MHz cycles. */
     void clock(uint64_t cycles);
-    /** A byte the ACIA sent. */
+    /** A byte the machine sent. */
     void transmitted(uint8_t v);
 
     bool mountTape(const std::string& path) override;
@@ -102,10 +107,9 @@ private:
     void recChunk(uint16_t id, const std::vector<uint8_t>& body);
     void recFlushData();
 
-    Acia6850* m_acia;
     std::vector<uint8_t> m_uef;      // the chunks (after the 12-byte header)
     size_t m_pos = 0;
-    bool m_motor = false, m_play = false, m_cassette = true;
+    bool m_motor = false, m_play = false, m_output = true;
     // b-em uef_poll state
     bool m_inChunk = false, m_startChunk = false, m_secondTone = false;
     uint16_t m_chunkId = 0;
@@ -113,7 +117,7 @@ private:
     int m_chunkPos = 0, m_dataBits = 8, m_inTone = 0;
     float m_gapLeft = 0;
     double m_pps = 120;              // byte times a second
-    // Timing: b-em's otherstuff poll every 128 cycles, a byte every `latch` of those
+    // Timing: b-em polls every 128 cycles, a byte every `latch` of those
     uint64_t m_cycleAcc = 0;
     int m_latch = 130, m_latchCount = 0;
     uint64_t m_now = 0;

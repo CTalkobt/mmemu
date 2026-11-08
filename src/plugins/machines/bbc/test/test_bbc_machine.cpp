@@ -147,3 +147,68 @@ TEST_CASE(bbc_sound_tone) {
     EXPECT_TRUE(hz > 445 && hz < 454);
     delete m;
 }
+
+// Joysticks: the sticks through the ADC (ADVAL(1) is joystick 1's X:
+// high to the left), the fire buttons on the System VIA (ADVAL(0) bits 0-1)
+TEST_CASE(bbc_joystick_adc) {
+    MachineDescriptor* m = make();
+    if (!m) return;
+    run(m, 3000000);
+    auto* kbd = find<IKeyboardMatrix>(m);
+    ASSERT(kbd);
+    m->onJoystick(0, (uint8_t)(0x1F & ~0x04 & ~0x10));      // left, fire
+    run(m, 200000);
+    kbd->enqueueText("PRINT ADVAL(1) DIV 256;\"/\";ADVAL(2) DIV 256;\"/\";ADVAL(0) AND 3\n");
+    run(m, 14000000);                                       // typing: 70 ms a key
+    EXPECT_TRUE(screenHas(m, "255/127/1"));
+    m->onJoystick(0, (uint8_t)(0x1F & ~0x08));               // right, no fire
+    run(m, 200000);
+    kbd->enqueueText("PRINT ADVAL(1);\"/\";ADVAL(0) AND 3\n");
+    run(m, 8000000);
+    EXPECT_TRUE(screenHas(m, "0/0"));
+    delete m;
+}
+
+// Model A: 16 KB (seen twice), no DFS: Mode 7's screen ends RAM at &4000
+TEST_CASE(bbc_model_a) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::A, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 4000000);
+    ASSERT(screenHas(m, "BBC Computer 16K"));
+    EXPECT_TRUE(!screenHas(m, "DFS"));
+    auto* kbd = find<IKeyboardMatrix>(m);
+    ASSERT(kbd);
+    kbd->enqueueText("PRINT ~PAGE;\" \";~HIMEM\n");
+    run(m, 6000000);
+    EXPECT_TRUE(screenHas(m, "E00 3C00"));
+    delete m;
+}
+
+// The 6502 Second Processor on the Tube: DNFS's Tube host finds it ("Acorn
+// TUBE 6502 64K"), BASIC is copied across to &8000 and runs there (PAGE
+// &800, HIMEM &8000); BREAK restarts both
+TEST_CASE(bbc_tube_6502) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::BTube, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 4000000);
+    ASSERT(screenHas(m, "Acorn TUBE 6502 64K"));
+    ASSERT(screenHas(m, ">"));
+    auto* kbd = find<IKeyboardMatrix>(m);
+    ASSERT(kbd);
+    kbd->enqueueText("PRINT ~PAGE;\" \";~HIMEM;\" \";6*7\n");
+    run(m, 12000000);
+    EXPECT_TRUE(screenHas(m, "800 8000 42"));
+    // The program is in the second processor's memory, not the BBC's
+    kbd->enqueueText("10 REM TUBE\n");
+    run(m, 6000000);
+    IBus* tube = m->buses.size() > 1 ? m->buses[1].bus : nullptr;
+    ASSERT(tube);
+    EXPECT_EQ(tube->peek8(0x0800), 0x0D);           // BASIC's program start
+    m->onKey("break", true);
+    m->onKey("break", false);
+    run(m, 4000000);
+    EXPECT_TRUE(screenHas(m, "Acorn TUBE 6502 64K"));
+    delete m;
+}
