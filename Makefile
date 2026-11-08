@@ -88,7 +88,7 @@ LIBCORE_SRCS      = src/libcore/main/icore.cpp src/libcore/main/rom_loader.cpp s
 LIBDEVICES_SRCS   = src/libdevices/main/libdevices.cpp src/libdevices/main/io_registry.cpp \
                     src/libdevices/main/ivideo_output.cpp src/libdevices/main/iaudio_inspect.cpp \
                     src/libdevices/main/device_registry.cpp src/libdevices/main/joystick.cpp \
-                    src/libdevices/main/ieee488.cpp
+                    src/libdevices/main/ieee488.cpp src/libdevices/main/disk_file.cpp
 LIBPROJECT_SRCS   = src/libproject/main/project.cpp src/libproject/main/make_runner.cpp \
 	src/libproject/main/diagnostics.cpp src/libproject/main/launcher.cpp \
 	src/libproject/main/templates.cpp
@@ -434,6 +434,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/libcore/test/test_machine_boot.cpp \
 	src/libdevices/test/test_devices.cpp \
 	src/libdevices/test/test_ieee488.cpp \
+	src/libdevices/test/test_disk_file.cpp \
 	src/libdevices/test/test_io_peek.cpp \
 	src/libdebug/test/test_debug.cpp \
 	src/libdebug/test/test_trace_buffer.cpp \
@@ -810,7 +811,7 @@ LIBS = $(ILIBDIR)/libmem.a $(ILIBDIR)/libcore.a $(ILIBDIR)/libdevices.a \
 	$(ILIBDIR)/libtoolchain.a $(ILIBDIR)/libdebug.a $(ILIBDIR)/libplugins.a \
 	$(ILIBDIR)/libproject.a
 
-BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lproject -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt /lib/x86_64-linux-gnu/liblua5.4.so
+BASE_LIBS = -Wl,--whole-archive -L$(ILIBDIR) -lproject -lplugins -ldebug -ltoolchain -ldevices -lcore -lmem -Wl,--no-whole-archive -ldl -lspdlog -lfmt /lib/x86_64-linux-gnu/liblua5.4.so -lz
 
 # ---------------------------------------------------------------------------
 # Build rules

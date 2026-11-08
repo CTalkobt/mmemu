@@ -2,6 +2,7 @@
 #include "plugins/devices/pokey/main/pokey.h"
 #include <cstring>
 #include <fstream>
+#include "libdevices/main/disk_file.h"
 
 namespace atari {
 
@@ -237,13 +238,8 @@ bool AtariSio::writeSector(Drive& d, int sector, const uint8_t* data) {
     if (d.readOnly) return false;
     if (!d.image.write(sector, data)) return false;
     if (d.path.empty()) return true;
-    // Write through to the file
-    std::fstream f(d.path, std::ios::in | std::ios::out | std::ios::binary);
-    if (f) {
-        f.seekp((std::streamoff)d.image.offsetOf(sector));
-        f.write(reinterpret_cast<const char*>(data), d.image.sizeOf(sector));
-    }
-    if (!f) {
+    // Write through to the file (an archive is recompressed whole)
+    if (!diskfile::patch(d.path, d.image.bytes(), d.image.offsetOf(sector), (size_t)d.image.sizeOf(sector))) {
         m_lastError = "Could not save sector " + std::to_string(sector) + " to " + d.path + ".";
         return false;
     }
@@ -273,18 +269,14 @@ bool AtariSio::mount(int drive, std::vector<uint8_t> atrBytes, const std::string
     d.present = true;
     d.label = label;
     d.path = path;
-    if (!path.empty()) {
-        std::fstream probe(path, std::ios::in | std::ios::out | std::ios::binary);
-        d.readOnly = !probe;
-    }
+    if (!path.empty()) d.readOnly = !diskfile::writable(path);
     return true;
 }
 
 bool AtariSio::mountDisk(int unit, const std::string& path) {
     if (unit < 1 || unit > 4) return false;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) { m_lastError = "Cannot open " + path + "."; return false; }
-    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::vector<uint8_t> bytes;
+    if (!diskfile::read(path, bytes, &m_lastError)) return false;   // plain, .gz or .zip
     return mount(unit - 1, std::move(bytes), path, m_lastError, path);
 }
 

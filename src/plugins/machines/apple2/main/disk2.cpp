@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include "libdevices/main/disk_file.h"
 #include <unistd.h>
 
 namespace apple2 {
@@ -112,16 +113,13 @@ std::unique_ptr<Disk2Image> Disk2Image::fromBytes(std::vector<uint8_t> data, con
 }
 
 std::unique_ptr<Disk2Image> Disk2Image::open(const std::string& path, std::string* err) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        if (err) *err = "can't open " + path;
-        return nullptr;
-    }
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    auto img = fromBytes(std::move(data), lowerExt(path), err);
+    // Plain, .gz or .zip (#233): the format comes from the image's own name
+    std::vector<uint8_t> data;
+    if (!diskfile::read(path, data, err)) return nullptr;
+    auto img = fromBytes(std::move(data), lowerExt(diskfile::imageName(path)), err);
     if (!img) return nullptr;
     img->m_path = path;
-    if (access(path.c_str(), W_OK) != 0) img->m_protect = true;
+    if (!diskfile::writable(path)) img->m_protect = true;
     return img;
 }
 
@@ -268,21 +266,12 @@ void Disk2Image::writeTrack(int track, const uint8_t* nibbles, int count) {
         len = TRACK_BYTES;
         denibblize(nibbles, count, m_data.data() + at);
     }
-    if (!m_path.empty()) {
-        std::fstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
-        if (f) {
-            f.seekp((std::streamoff)at);
-            f.write((const char*)m_data.data() + at, (std::streamsize)len);
-        }
-    }
+    if (!m_path.empty()) diskfile::patch(m_path, m_data, at, len);
 }
 
 void Disk2Image::saveFile(size_t at, size_t len) {
     if (m_path.empty()) return;
-    std::fstream f(m_path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!f) return;
-    f.seekp((std::streamoff)at);
-    f.write((const char*)m_data.data() + at, (std::streamsize)len);
+    diskfile::patch(m_path, m_data, at, len);
 }
 
 uint32_t Disk2Image::crc32(const uint8_t* p, size_t n) {
@@ -443,10 +432,7 @@ void Disk2Image::wozWriteTrack(int qt, const uint8_t* bits, int bytes) {
         std::memcpy(&m_data[start], bits, (size_t)bytes);
     }
     put32(8, crc32(m_data.data() + 12, m_data.size() - 12));
-    if (!m_path.empty()) {
-        std::ofstream f(m_path, std::ios::binary | std::ios::trunc);
-        f.write((const char*)m_data.data(), (std::streamsize)m_data.size());
-    }
+    if (!m_path.empty()) diskfile::save(m_path, m_data);
 }
 
 // ---------------------------------------------------------------------------

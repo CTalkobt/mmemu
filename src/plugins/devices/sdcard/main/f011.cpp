@@ -1,5 +1,6 @@
 #include "f011.h"
 #include "sdcard.h"
+#include <algorithm>
 #include <cstring>
 
 // Status A bits
@@ -37,7 +38,7 @@ void F011Fdc::refreshMedia() {
     for (int d = 0; d < 2; d++) {
         bool have = false, canWrite = false;
         uint64_t source = 0;
-        if (m_drv[d].file.is_open()) {
+        if (m_drv[d].attached) {
             have = true;
             canWrite = !m_drv[d].fileReadOnly;
             source = m_drv[d].fileSerial;
@@ -78,11 +79,10 @@ bool F011Fdc::diskOffset(uint32_t& off) const {
 
 bool F011Fdc::readDisk(int d, uint32_t off, uint8_t* buf) {
     Drive& v = m_drv[d];
-    if (v.file.is_open()) {
-        v.file.clear();
-        v.file.seekg(off);
-        v.file.read((char*)buf, 512);
-        return v.file.gcount() == 512;
+    if (v.attached) {
+        if (off + 512 > v.image.size()) return false;
+        std::copy(v.image.begin() + off, v.image.begin() + off + 512, buf);
+        return true;
     }
     uint64_t start = (uint64_t)m_sd->mountStartSector(d) * 512;
     return m_sd->readImage(start + off, buf, 512);
@@ -90,12 +90,11 @@ bool F011Fdc::readDisk(int d, uint32_t off, uint8_t* buf) {
 
 bool F011Fdc::writeDisk(int d, uint32_t off, const uint8_t* buf) {
     Drive& v = m_drv[d];
-    if (v.file.is_open()) {
-        v.file.clear();
-        v.file.seekp(off);
-        v.file.write((const char*)buf, 512);
-        v.file.flush();
-        return v.file.good();
+    if (v.attached) {
+        if (off + 512 > v.image.size()) return false;
+        std::copy(buf, buf + 512, v.image.begin() + off);
+        if (diskfile::isArchive(v.path)) { v.writeBack.touched(); return true; }
+        return diskfile::patch(v.path, v.image, off, 512);
     }
     uint64_t start = (uint64_t)m_sd->mountStartSector(d) * 512;
     return m_sd->writeImage(start + off, buf, 512);
@@ -287,21 +286,15 @@ bool F011Fdc::ioWrite(IBus*, uint32_t addr, uint8_t val) {
 bool F011Fdc::mountDisk(int unit, const std::string& path) {
     if (unit != 8 && unit != 9) return false;
     Drive& v = m_drv[unit - 8];
-    std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
-    bool ro = false;
-    if (!f.is_open()) {
-        f.open(path, std::ios::in | std::ios::binary);
-        ro = true;
-    }
-    if (!f.is_open()) return false;
-    f.seekg(0, std::ios::end);
-    if ((uint64_t)f.tellg() < D81_SIZE) return false;       // only 800 KB D81 images
-    f.seekg(0);
-    if (v.file.is_open()) v.file.close();
-    v.file = std::move(f);
+    std::vector<uint8_t> image;
+    if (!diskfile::read(path, image)) return false;           // plain, .gz or .zip
+    if (image.size() < D81_SIZE) return false;                // only 800 KB D81 images
+    saveImage(v);                                             // the disk it replaces
+    v.image = std::move(image);
+    v.attached = true;
     v.fileSerial = m_nextSerial++;
     v.path = path;
-    v.fileReadOnly = ro;
+    v.fileReadOnly = !diskfile::writable(path);
     refreshMedia();
     return true;
 }
@@ -309,9 +302,26 @@ bool F011Fdc::mountDisk(int unit, const std::string& path) {
 void F011Fdc::ejectDisk(int unit) {
     if (unit != 8 && unit != 9) return;
     Drive& v = m_drv[unit - 8];
-    if (v.file.is_open()) v.file.close();
+    saveImage(v);
+    v.attached = false;
+    v.image.clear();
     v.path.clear();
     refreshMedia();
+}
+
+// An archive's pending writes go back to the file
+void F011Fdc::saveImage(Drive& v) {
+    if (v.attached && v.writeBack.dirty()) diskfile::save(v.path, v.image);
+    v.writeBack.clear();
+}
+
+F011Fdc::~F011Fdc() {
+    for (Drive& v : m_drv) saveImage(v);
+}
+
+void F011Fdc::tick(uint64_t) {
+    for (Drive& v : m_drv)
+        if (v.writeBack.due()) saveImage(v);
 }
 
 bool F011Fdc::getDiskStatus(int unit, int& track, int& sector, bool& led) {
@@ -325,7 +335,7 @@ bool F011Fdc::getDiskStatus(int unit, int& track, int& sector, bool& led) {
 std::string F011Fdc::getMountedDiskPath(int unit) {
     if (unit != 8 && unit != 9) return "";
     const Drive& v = m_drv[unit - 8];
-    if (v.file.is_open()) return v.path;
+    if (v.attached) return v.path;
     if (v.haveDisk) return "<D81 on SD card @ sector " + std::to_string(m_sd->mountStartSector(unit - 8)) + ">";
     return "";
 }
@@ -344,7 +354,7 @@ void F011Fdc::getDeviceInfo(DeviceInfo& out) const {
     out.registers.push_back({"SIDE", 0x06, m_side, "Side"});
     for (int d = 0; d < 2; d++) {
         const Drive& x = m_drv[d];
-        std::string src = x.file.is_open() ? x.path
+        std::string src = x.attached ? x.path
                         : x.haveDisk ? "SD card D81" : "no disk";
         out.state.push_back({"Drive " + std::to_string(d), src + (x.haveDisk && !x.canWrite ? " (read-only)" : "")});
     }

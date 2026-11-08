@@ -18,15 +18,22 @@ const uint8_t BAD_LBA[] = {0x00, 0x08};
 
 bool SdCardSpi::attach(const std::string& path) {
     detach();
-    m_file.open(path, std::ios::in | std::ios::out | std::ios::binary);
-    m_readOnly = false;
-    if (!m_file.is_open()) {
-        m_file.open(path, std::ios::in | std::ios::binary);
-        m_readOnly = true;
+    if (diskfile::isArchive(path)) {
+        if (!diskfile::read(path, m_mem)) return false;
+        m_archive = true;
+        m_readOnly = !diskfile::writable(path);
+        m_size = m_mem.size();
+    } else {
+        m_file.open(path, std::ios::in | std::ios::out | std::ios::binary);
+        m_readOnly = false;
+        if (!m_file.is_open()) {
+            m_file.open(path, std::ios::in | std::ios::binary);
+            m_readOnly = true;
+        }
+        if (!m_file.is_open()) return false;
+        m_file.seekg(0, std::ios::end);
+        m_size = (uint64_t)m_file.tellg();
     }
-    if (!m_file.is_open()) return false;
-    m_file.seekg(0, std::ios::end);
-    m_size = (uint64_t)m_file.tellg();
     m_path = path;
     m_initialized = false;
     m_idle = true;
@@ -35,7 +42,15 @@ bool SdCardSpi::attach(const std::string& path) {
     return true;
 }
 
+void SdCardSpi::save() {
+    if (m_archive && m_writeBack.dirty()) diskfile::save(m_path, m_mem);
+    m_writeBack.clear();
+}
+
 void SdCardSpi::detach() {
+    save();
+    m_archive = false;
+    m_mem.clear();
     if (m_file.is_open()) m_file.close();
     m_path.clear();
     m_size = 0;
@@ -75,15 +90,19 @@ int SdCardSpi::loadBlock(uint8_t* dest) {
         dest[0] = 0x08;                             // error token: out of range
         return 1;
     }
-    m_file.clear();
-    m_file.seekg((std::streamoff)m_lba * 512);
-    m_file.read((char*)&dest[1], 512);
+    if (m_archive) {
+        std::memcpy(&dest[1], &m_mem[(size_t)m_lba * 512], 512);
+    } else {
+        m_file.clear();
+        m_file.seekg((std::streamoff)m_lba * 512);
+        m_file.read((char*)&dest[1], 512);
+    }
     dest[513] = dest[514] = 0xFF;                   // CRC (not checked)
     return 1 + 512 + 2;
 }
 
 uint8_t SdCardSpi::handle(uint8_t in) {
-    if (!m_selected || !m_file.is_open()) return 0xFF;
+    if (!m_selected || !attached()) return 0xFF;
     uint8_t out = 0xFF;
     if (m_rxIdx == 0 && in == 0xFF) {
         if (m_resp) {
@@ -144,10 +163,15 @@ uint8_t SdCardSpi::handle(uint8_t in) {
         // A data block after CMD24: token $FE, 512 bytes, CRC
         m_rxIdx = 0;
         if (m_lastCmd == CMD24 && m_rx[0] == 0xFE && !m_readOnly && (uint64_t)m_lba * 512 < m_size) {
-            m_file.clear();
-            m_file.seekp((std::streamoff)m_lba * 512);
-            m_file.write((const char*)m_rx + 1, 512);
-            m_file.flush();
+            if (m_archive) {
+                std::memcpy(&m_mem[(size_t)m_lba * 512], m_rx + 1, 512);
+                m_writeBack.touched();
+            } else {
+                m_file.clear();
+                m_file.seekp((std::streamoff)m_lba * 512);
+                m_file.write((const char*)m_rx + 1, 512);
+                m_file.flush();
+            }
         }
     }
     return out;

@@ -130,14 +130,22 @@ void DriveStatusPane::RefreshStatus() {
 
 void DriveStatusPane::OnMount(wxCommandEvent& event) {
     int unit = event.GetId();
+    // Each format, also gzipped (x.d64.gz) or in a zip (#233), either case
+    auto filter = [](const wxString& desc, std::initializer_list<const char*> exts) {
+        wxString shown, pat;
+        for (const char* e : exts) {
+            const wxString x(e);
+            shown += (shown.empty() ? "*." : ";*.") + x;
+            for (const wxString& v : {x, x.Upper()}) pat += "*." + v + ";*." + v + ".gz;*." + v + ".GZ;";
+        }
+        pat += "*.zip;*.ZIP";
+        return desc + " (" + shown + ";*.gz;*.zip)|" + pat;
+    };
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
-                       s_apple2 ? "Apple II disk images (*.dsk;*.do;*.po;*.nib;*.woz)|"
-                                  "*.dsk;*.do;*.po;*.nib;*.woz;*.DSK;*.DO;*.PO;*.NIB;*.WOZ"
-                       : s_bbc ? "BBC DFS disc images (*.ssd;*.dsd)|*.ssd;*.dsd;*.SSD;*.DSD"
-                       : unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
-                                : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg)|"
-                                  "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg;"
-                                  "*.D64;*.D71;*.D80;*.D81;*.D82;*.G64;*.IMD;*.IMG;*.PRG",
+                       s_apple2 ? filter("Apple II disk images", {"dsk", "do", "po", "nib", "woz"})
+                       : s_bbc ? filter("BBC DFS disc images", {"ssd", "dsd"})
+                       : unit < 8 ? filter("Atari disk images", {"atr"})
+                                : filter("Disk images", {"d64", "d71", "d80", "d81", "d82", "g64", "imd", "img", "prg"}),
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (openFileDialog.ShowModal() == wxID_OK) {
         std::string path = openFileDialog.GetPath().ToStdString();

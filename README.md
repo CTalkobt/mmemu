@@ -155,6 +155,8 @@ The `mmemu-cli` binary provides an interactive REPL for low-level machine contro
 Automate startup tasks via command line arguments:
 - `-m, --machine <id>`: Automatically create a machine on startup (e.g., `c64`, `vic20`).
 - `-i, --mount <path>`: Mount a disk, tape, or program image immediately.
+
+Disk images may be gzipped (`game.d64.gz`) or in a `.zip` for every disk format: the CLI `disk mount`, the GUI's Mount dialog and MCP `mount_disk` take them, and writes are recompressed back into the archive. A zip holding more than one file mounts read-only.
 - `-t, --type <text>`: Type text into the machine virtual keyboard on startup (supports `\n`, `\r`, `\t`).
 - `-h, -?, --help`: Show available options and exit.
 

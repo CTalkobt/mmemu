@@ -640,7 +640,7 @@ Json handleDescribe() {
     mdSchema.oVal["properties"] = mdProps;
     Json mdReq(Json::ARR); mdReq.push_back(Json("machine_id")); mdReq.push_back(Json("unit")); mdReq.push_back(Json("path"));
     mdSchema.oVal["required"] = mdReq;
-    addTool("mount_disk", "Mount a .d64/.g64/.d81 disk image into a drive unit", mdSchema);
+    addTool("mount_disk", "Mount a disk image into a drive unit (.d64/.d71/.d81/.g64/.imd, .atr, .dsk/.po/.nib/.woz, .ssd/.dsd, SD .img; also gzipped, e.g. x.d64.gz, or in a .zip)", mdSchema);
 
     Json edSchema(Json::OBJ);
     edSchema.oVal["type"] = Json("object");

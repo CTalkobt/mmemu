@@ -2,6 +2,7 @@
 #include "libcore/main/machines/machine_registry.h"
 #include "machine_atari.h"
 #include "libcore/main/image_loader.h"
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 #include <fstream>
 
@@ -39,11 +40,12 @@ public:
 /** .atr: put the disk in drive 1 and boot it. */
 class AtrLoader : public IImageLoader {
 public:
-    bool canLoad(const std::string& path) const override { return extensionOf(path) == "atr"; }
+    // Plain, .gz or .zip (#233)
+    bool canLoad(const std::string& path) const override { return diskfile::imageExt(path) == "atr"; }
     bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
         std::vector<uint8_t> data;
         std::string err;
-        return readFile(path, data) && atari::bootDisk(m, std::move(data), path, err, path);
+        return diskfile::read(path, data) && atari::bootDisk(m, std::move(data), path, err, path);
     }
     const char* name() const override { return "Atari ATR Disk Loader"; }
 };

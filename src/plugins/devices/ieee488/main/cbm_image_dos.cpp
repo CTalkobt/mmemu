@@ -5,6 +5,7 @@
 #include "plugins/cbm-loader/main/d81_parser.h"
 #include "plugins/cbm-loader/main/d82_parser.h"
 #include "imd_disk.h"
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -14,8 +15,7 @@ CbmImageDos::CbmImageDos() { setError(0, " OK"); }
 CbmImageDos::~CbmImageDos() = default;
 
 bool CbmImageDos::open(const std::string& path) {
-    std::string ext = path.size() > 4 ? path.substr(path.size() - 3) : "";
-    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    const std::string ext = diskfile::imageExt(path);   // x.d64.gz, a zip holding a .d81, ...
     if (ext == "imd") {                          // an MFM disk
         auto m = std::make_unique<ImdDisk>();
         if (!m->open(path)) return false;

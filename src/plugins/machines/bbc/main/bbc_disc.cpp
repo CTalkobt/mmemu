@@ -2,6 +2,7 @@
 // (i8271.c, disc.c, sdf-acc.c; GPL-2.0-or-later)
 
 #include "bbc_disc.h"
+#include "libdevices/main/disk_file.h"
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -12,23 +13,18 @@ namespace bbc {
 // DfsImage
 // ---------------------------------------------------------------------------
 std::unique_ptr<DfsImage> DfsImage::open(const std::string& path, std::string* err) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) {
-        if (err) *err = "cannot open " + path;
-        return nullptr;
-    }
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    std::string ext = path.size() >= 4 ? path.substr(path.size() - 4) : "";
-    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext != ".ssd" && ext != ".dsd") {
+    // Plain, .gz or .zip (#233): the format comes from the image's own name
+    const std::string ext = diskfile::imageExt(path);
+    if (ext != "ssd" && ext != "dsd") {
         if (err) *err = "not a DFS disc image (.ssd, .dsd): " + path;
         return nullptr;
     }
-    auto img = fromBytes(std::move(data), ext == ".dsd");
+    std::vector<uint8_t> data;
+    if (!diskfile::read(path, data, err)) return nullptr;
+    auto img = fromBytes(std::move(data), ext == "dsd");
     img->m_path = path;
-    // Read-only files open write-protected
-    std::ofstream probe(path, std::ios::binary | std::ios::in | std::ios::out);
-    if (!probe) img->m_protect = true;
+    // Read-only files (and zips holding more than the disc) open write-protected
+    if (!diskfile::writable(path)) img->m_protect = true;
     return img;
 }
 
@@ -59,8 +55,7 @@ void DfsImage::write(long at, uint8_t v) {
 
 void DfsImage::flush() {
     if (!m_dirty || m_path.empty()) return;
-    std::ofstream f(m_path, std::ios::binary | std::ios::trunc);
-    if (f) f.write((const char*)m_data.data(), (std::streamsize)m_data.size());
+    diskfile::save(m_path, m_data);
     m_dirty = false;
 }
 

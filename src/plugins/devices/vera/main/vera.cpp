@@ -1490,6 +1490,7 @@ void Vera::tick(uint64_t cycles) {
     videoStep(cycles);
     audioStep(cycles);
     spiStep(cycles);
+    m_sd.poll();
     updateIrq();
 }
 

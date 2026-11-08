@@ -4,6 +4,7 @@
 #include "plugins/cbm-loader/main/t64_parser.h"
 #include "plugins/cbm-loader/main/g64_parser.h"
 #include <fstream>
+#include "libdevices/main/disk_file.h"
 #include <iostream>
 #include <iterator>
 #include <cstdio>
@@ -396,8 +397,7 @@ void VirtualIECBus::processCommand(uint8_t cmd) {
             m_nextState = TURNAROUND;
             if (m_filename == "$" || m_filename == "*") generateDirectoryListing();
             else if (!m_filename.empty()) {
-                std::string ext = m_mountedPath.substr(m_mountedPath.find_last_of('.') + 1);
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                const std::string ext = diskfile::imageExt(m_mountedPath);
                 ICbmDiskImage* p = (ext == "d64") ? (ICbmDiskImage*)new D64Parser() : (ext == "t64") ? (ICbmDiskImage*)new T64Parser() : (ext == "g64") ? (ICbmDiskImage*)new G64Parser() : nullptr;
                 if (p && p->open(m_mountedPath)) p->readFile(m_filename, m_fileBuffer);
                 m_fileIdx = 0; delete p;
@@ -467,8 +467,7 @@ void VirtualIECBus::generateDirectoryListing() {
     uint16_t freeBlocks = 0;
 
     if (!m_mountedPath.empty()) {
-        std::string ext = m_mountedPath.substr(m_mountedPath.find_last_of('.') + 1);
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        const std::string ext = diskfile::imageExt(m_mountedPath);
         ICbmDiskImage* p = (ext == "d64") ? (ICbmDiskImage*)new D64Parser() : (ext == "t64") ? (ICbmDiskImage*)new T64Parser() : (ext == "g64") ? (ICbmDiskImage*)new G64Parser() : nullptr;
         if (p && p->open(m_mountedPath)) {
             entries = p->getDirectory();
