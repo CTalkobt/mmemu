@@ -335,7 +335,7 @@ int Z80::interrupt() {
     incR();
     m_cycles += 7;                                           // the acknowledge M1
     push(m_pc);
-    if (m_im == 2) m_pc = rd16((uint16_t)(m_i << 8 | 0xFF)); // $FF on the data bus
+    if (m_im == 2) m_pc = rd16((uint16_t)(m_i << 8 | m_intVector));   // the data bus's byte
     else m_pc = 0x0038;                                      // IM 1, and IM 0's RST 38h
     m_wz = m_pc;
     return m_im == 2 ? 19 : 13;

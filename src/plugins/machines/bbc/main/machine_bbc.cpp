@@ -7,6 +7,9 @@
 #include "bbc_disc.h"
 #include "bbc_tape.h"
 #include "bbc_tube.h"
+#include "plugins/z80/main/cpu_z80.h"
+#include "plugins/6809/main/cpu6809.h"
+#include "plugins/arm/main/cpu_arm2.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -540,23 +543,31 @@ private:
 
 MachineDescriptor* create(Model model, std::string* err) {
     const bool modelA = model == Model::A;
-    const bool tubed = model == Model::BTube;
+    const bool tubed = model == Model::BTube || model == Model::BZ80 || model == Model::B6809 || model == Model::BArm;
     std::vector<uint8_t> os, basic, dfs, tubeRom;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
     if (tubed) {
         // DNFS 1.00 (DFS 1.00 and NFS 3.40): DFS 0.90 has no Tube host code
         if (!loadFile("roms/bbc/dnfs100.rom", 0x4000, dfs, err)) return nullptr;
-        if (!loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
+        if (model == Model::BTube && !loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
+        if (model == Model::BZ80 && !loadFile("roms/bbc/z80tube121.rom", 0x1000, tubeRom, err)) return nullptr;
+        if (model == Model::B6809 && !loadFile("roms/bbc/6809tube.rom", 0x800, tubeRom, err)) return nullptr;
+        if (model == Model::BArm && !loadFile("roms/bbc/armeval100.rom", 0x4000, tubeRom, err)) return nullptr;
     } else if (!modelA) {
         // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
         if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
     }
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = modelA ? "bbca" : tubed ? "bbcb-6502" : "bbcb";
-    desc->displayName = modelA ? "BBC Micro Model A" : tubed ? "BBC Micro Model B with 6502 Second Processor"
-                                                             : "BBC Micro Model B";
+    desc->machineId = modelA ? "bbca" : model == Model::BTube ? "bbcb-6502" : model == Model::BZ80 ? "bbcb-z80"
+                    : model == Model::B6809 ? "bbcb-6809" : model == Model::BArm ? "bbcb-arm" : "bbcb";
+    desc->displayName = modelA ? "BBC Micro Model A"
+                      : model == Model::BTube ? "BBC Micro Model B with 6502 Second Processor"
+                      : model == Model::BZ80 ? "BBC Micro Model B with Z80 Second Processor"
+                      : model == Model::B6809 ? "BBC Micro Model B with 6809 Second Processor"
+                      : model == Model::BArm ? "BBC Micro Model B with ARM Evaluation System"
+                      : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = modelA ? std::vector<std::string>{"tape"} : std::vector<std::string>{"drive", "tape"};
@@ -599,30 +610,99 @@ MachineDescriptor* create(Model model, std::string* err) {
         delete tape; delete acia;
     });
 
-    // The 6502 Second Processor: a 65C02 at 3 MHz with 64 KB (b-em 6502tube.c)
+    // A second processor on the Tube (b-em model.c tube_defaults: cycles per
+    // BBC cycle = speed multiplier / 2):
+    //  - 6502: a 65C02 at 3 MHz with 64 KB (6502tube.c);
+    //  - Z80: 6 MHz, 64 KB, the client ROM until it runs above $7FFF (z80.c)
+    //  - 6809: 1.5 cycles a BBC cycle, 64 KB, the ROM at $F800 until the Tube
+    //    is touched, the vectors at $FEF0, the Tube's IRQ on FIRQ and its NMI
+    //    on IRQ (6809tube.c)
+    //  - ARM: the ARM Evaluation System, an ARM1 at about 2.4 cycles a BBC
+    //    cycle, 4 MB, the ROM copied to 0 at reset, the Tube at $1000000,
+    //    its IRQ on IRQ and its NMI on FIQ (arm.c)
+    struct Parasite {
+        ICore* cpu = nullptr;
+        std::function<void()> powerOn, reset, beforeStep;
+        std::function<void()> setLines;              // the Tube's IRQ/NMI to the CPU (default: /IRQ, /NMI)
+        double ratio = 1.5;
+    };
+    std::shared_ptr<Parasite> par;
     TubeUla* tube = nullptr;
-    TubeParasiteBus* pbus = nullptr;
-    MOS65C02* pcpu = nullptr;
     if (tubed) {
         tube = new TubeUla();
-        pbus = new TubeParasiteBus(tube, std::move(tubeRom));
-        pcpu = new MOS65C02();
-        pcpu->setDataBus(pbus);
-        pcpu->setCodeBus(pbus);
+        par = std::make_shared<Parasite>();
+        if (model == Model::BTube) {
+            auto* pbus = new TubeParasiteBus(tube, std::move(tubeRom));
+            auto* pcpu = new MOS65C02();
+            pcpu->setDataBus(pbus);
+            pcpu->setCodeBus(pbus);
+            desc->buses.push_back({"tube", pbus});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->ratio = 1.5;
+        } else if (model == Model::BArm) {
+            auto* pbus = new ArmParasiteBus(tube, std::move(tubeRom));
+            auto* pcpu = new Arm2(true);                                // the ARM1: no MUL
+            pcpu->setDataBus(pbus);
+            desc->buses.push_back({"tube", pbus});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->ratio = 4.83 / 2;
+        } else if (model == Model::B6809) {
+            auto* pbus = new M6809ParasiteBus(tube, std::move(tubeRom));
+            auto* pcpu = new M6809();
+            pcpu->setDataBus(pbus);
+            pcpu->setVectorBase(0xFEF0);
+            desc->buses.push_back({"tube", pbus});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->setLines = [pcpu, tube]() {
+                pcpu->setFirqLine(tube->parasiteIrq());
+                pcpu->setIrqLine(tube->parasiteNmi());
+            };
+            par->ratio = 1.5;
+        } else {
+            auto* pbus = new Z80ParasiteBus(std::move(tubeRom));
+            auto* pio = new Z80TubeIo(tube);
+            auto* pcpu = new Z80();
+            pcpu->setDataBus(pbus);
+            pcpu->setIoBus(pio);
+            desc->buses.push_back({"tube", pbus});
+            desc->buses.push_back({"tube-io", pio});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, pio, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            pcpu->setInterruptVector(0xFE);                      // IM 2 (I = $FF): the vector at $FFFE
+            // The ROM pages in when an NMI is taken (its handler is at $0066)
+            // and out once the Z80 runs above $7FFF (b-em z80_exec)
+            auto lastNmi = std::make_shared<bool>(false);
+            par->beforeStep = [pbus, pcpu, tube, lastNmi]() {
+                if (pcpu->pc() & 0x8000) pbus->romOut();
+                const bool nmi = tube->parasiteNmi();       // taken at the start of this step
+                if (nmi && !*lastNmi) pbus->reset();
+                *lastNmi = nmi;
+            };
+            par->ratio = 3.0;
+        }
         bus->setTube(tube);
-        desc->buses.push_back({"tube", pbus});
-        desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
-        tube->onParasiteReset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+        tube->onParasiteReset = [par]() { par->reset(); };
         desc->deleters.push_back([tube]() { delete tube; });
     }
 
     // BREAK: the 6502, the video, the disc controller and a second
     // processor restart (b-em main_key_break). The MOS tells it from
     // power-on by the System VIA's IER, which keeps its value
-    kbd->onBreak = [cpu, bus, pbus, pcpu]() {
+    kbd->onBreak = [cpu, bus, par]() {
         bus->breakKey();
         cpu->reset();
-        if (pcpu) { pbus->reset(); pcpu->reset(); }
+        if (par) par->reset();
     };
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"break"}, "BREAK: the 6502 restarts (a soft reset; the program in memory stays)."}};
@@ -638,20 +718,19 @@ MachineDescriptor* create(Model model, std::string* err) {
         bus->setFire(port, !(bits & 0x10));
     };
 
-    desc->onReset = [bus, io, cpu, tube, pbus, pcpu](MachineDescriptor&) {     // power on
+    desc->onReset = [bus, io, cpu, tube, par](MachineDescriptor&) {     // power on
         bus->powerOn();
         io->resetAll();
         cpu->reset();
         if (tube) {
             tube->reset();
-            pbus->powerOn();
-            pcpu->reset();
+            par->powerOn();
         }
     };
-    // The second processor runs 1.5 cycles for each of the BBC's (3 MHz
-    // against 2), unless the Tube holds it in reset
+    // The second processor runs its share of cycles for each of the BBC's,
+    // unless the Tube holds it in reset
     auto budget = std::make_shared<double>(0.0);
-    desc->schedulerStep = [bus, cpu, io, tube, pcpu, budget](MachineDescriptor&) -> int {
+    desc->schedulerStep = [bus, cpu, io, tube, par, budget](MachineDescriptor&) -> int {
         bus->begin();
         const int c = bus->end(cpu->step());
         io->tickAll((uint64_t)c);
@@ -659,11 +738,15 @@ MachineDescriptor* create(Model model, std::string* err) {
             if (tube->parasiteHeld()) {
                 *budget = 0;
             } else {
-                *budget += c * 1.5;
+                *budget += c * par->ratio;
                 while (*budget > 0) {
-                    pcpu->setIrqLine(tube->parasiteIrq());
-                    pcpu->setNmiLine(tube->parasiteNmi());
-                    *budget -= pcpu->step();
+                    if (par->setLines) par->setLines();
+                    else {
+                        par->cpu->setIrqLine(tube->parasiteIrq());
+                        par->cpu->setNmiLine(tube->parasiteNmi());
+                    }
+                    if (par->beforeStep) par->beforeStep();
+                    *budget -= par->cpu->step();
                 }
                 bus->tubeChanged();
             }
