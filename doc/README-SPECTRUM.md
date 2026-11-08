@@ -46,6 +46,8 @@ The picture is 320 × 240: the 256 × 192 screen with 32 pixels of border at eac
 
 | Port | Read | Write |
 |------|------|-------|
+| `$FFFD` (128K) | The selected AY register | Select an AY register |
+| `$BFFD` (128K) | | Write the AY register |
 | `$FE` (any even port) | Keyboard half-rows (address lines A8-A15 low select, bits 0-4), EAR in (bit 6) | Border (bits 0-2), MIC (bit 3), EAR/beeper (bit 4) |
 | `$1F` (A5-A7 low) | Kempston joystick: right, left, down, up, fire (bits 0-4, high when pressed) | |
 | `$7FFD` (128K: A15 and A1 low) | | RAM bank at `$C000` (bits 0-2), screen in bank 5 or 7 (bit 3), ROM (bit 4), lock (bit 5) |
@@ -55,6 +57,17 @@ Bit 6 of a `$FE` read follows the last EAR output, as on an Issue 3 machine. The
 ## Sound
 
 The beeper is port `$FE`'s EAR bit, with a little MIC, at Fuse's levels, sampled at 44.1 kHz. `BEEP 1,0` plays middle C (261.6 Hz).
+
+## The AY-3-8912 (128K, +2)
+
+The AY is after Fuse's `sound/ay_engine.c` and `peripherals/sound/ay.c`:
+- **Clock:** the CPU clock / 2 (1.7734 MHz), stepped every 32 T-states.
+- **Channels:** three tone channels; the noise generator (a 17-bit LFSR); the envelope (16 steps, the shapes in register 13); the mixer (register 7).
+- **Levels:** Matthew Westcott's measured output levels. The channels are summed with the beeper.
+- **Ports:** `$FFFD` (A15, A14 and A1 decoded) selects a register and reads it back; `$BFFD` writes it. Unused bits read as 0, and register 14 reads `$BF` (the serial input).
+- **Snapshots:** `.z80` (version 2 and 3) snapshots restore the AY's registers.
+
+128 BASIC silences the AY when a command ends, so a sound written by `OUT` from a direct command stops at once. Use `PLAY`, or a program that keeps running.
 
 ## Keyboard
 
@@ -115,10 +128,10 @@ A 48K snapshot runs on the 128K in 48K mode: `$7FFD` = `$30` (ROM 1, locked). A 
 - `spectrum_tzx_blocks`
 - `spectrum48_sna_snapshot`
 - `spectrum_z80_snapshots` (version 1 compressed, version 3 128K)
+- `spectrum128_ay_tone` (tone A at 261 Hz from 128 BASIC; a register read back)
 
 `z80_fuse_core_tests` checks the Z80's per-cycle timing against Fuse's core tests.
 
 ## Not yet
 
-- **Sound:** the 128K's AY-3-8912.
 - **Saving:** snapshots, and recording a tape's pulses from MIC. A custom saver's blocks are not kept; the ROM's SAVE goes through the trap.

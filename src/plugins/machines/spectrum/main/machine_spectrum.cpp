@@ -7,6 +7,7 @@
 
 #include "machine_spectrum.h"
 #include "spectrum_tape.h"
+#include "spectrum_ay.h"
 #include "libcore/main/image_loader.h"
 #include "libdevices/main/disk_file.h"
 #include "libcore/main/machine_desc.h"
@@ -291,8 +292,15 @@ public:
         m_frame = m_canvas;
     }
 
+    /** The 128K's AY, mixed with the beeper. */
+    void setAy(SpectrumAy* ay) { m_ay = ay; }
+    /** Sound up to `t` (before an AY register changes). */
+    void syncAudio(uint64_t t) { audioTo(t); }
+
     void reset(uint64_t frameStart) {
         m_frameStart = frameStart;
+        m_ayNext = frameStart;
+        m_ayLevel = 0;
         m_cy = m_cx = 0;
         m_border = 7;
         m_out = 0;
@@ -447,30 +455,44 @@ private:
         for (int i = 0; i < 8; ++i, bits <<= 1) px[i] = (bits & 0x80) ? ink : paper;
     }
 
-    // The beeper: the level held between port writes, averaged per sample
+    // The beeper (the level held between port writes) and the AY (a level
+    // per 32 T-state step), averaged per sample
     void audioTo(uint64_t t) {
         const double per = (double)m_t.cpuHz / SAMPLE_RATE;
         while (m_audT < t) {
-            const double room = per - m_accT;
-            const uint64_t left = t - m_audT;
-            if ((double)left < room) {
-                m_acc += m_level * (double)left;
-                m_accT += (double)left;
-                m_audT = t;
-            } else {
-                const uint64_t step = (uint64_t)room + ((room - (double)(uint64_t)room) > 0 ? 1 : 0);
-                m_acc += m_level * room;
-                m_audT += step;
-                m_samples.push_back((float)(m_acc / per) - 0.28f);
-                if (m_samples.size() > (size_t)SAMPLE_RATE) m_samples.pop_front();
-                m_acc = 0;
-                m_accT = (double)step - room;
+            uint64_t end = t;
+            if (m_ay && m_ayNext < end) end = m_ayNext;
+            if (end > m_audT) {
+                const uint64_t span = end - m_audT;
+                const double room = per - m_accT;
+                const float level = m_level + m_ayLevel;
+                if ((double)span < room) {
+                    m_acc += level * (double)span;
+                    m_accT += (double)span;
+                    m_audT = end;
+                } else {
+                    const uint64_t step = (uint64_t)room + ((room - (double)(uint64_t)room) > 0 ? 1 : 0);
+                    m_acc += level * room;
+                    m_audT += step;
+                    m_samples.push_back((float)(m_acc / per) - 0.28f);
+                    if (m_samples.size() > (size_t)SAMPLE_RATE) m_samples.pop_front();
+                    m_acc = 0;
+                    m_accT = (double)step - room;
+                    continue;
+                }
+            }
+            if (m_ay && m_audT >= m_ayNext) {
+                m_ayLevel = m_ay->step();
+                m_ayNext += 32;
             }
         }
     }
 
     Timings m_t;
     Memory* m_mem;
+    SpectrumAy* m_ay = nullptr;
+    uint64_t m_ayNext = 0;
+    float m_ayLevel = 0;
     int64_t m_lineTime0 = 0;
     uint64_t m_frameStart = 0, m_frames = 0;
     int m_cy = 0, m_cx = 0;
@@ -535,6 +557,7 @@ public:
         m_cfg = {16, 8, BusRole::IO_PORT, true, 0xFFFF};
     }
     uint8_t kempston = 0;                        // right 1, left 2, down 4, up 8, fire 16
+    SpectrumAy* ay = nullptr;                    // the 128K's
     bool issue2 = false;
 
     const BusConfig& config() const override { return m_cfg; }
@@ -550,6 +573,7 @@ public:
             attached = 0xFF;
         }
         if (!(port & 0xE0)) { v &= kempston; attached = 0xFF; }
+        if (ay && (port & 0xC002) == 0xC000) { v &= ay->read(); attached = 0xFF; }   // $FFFD
         if (attached != 0xFF) v &= (uint8_t)(m_ula->floating(m_cpu->cycles()) | attached);
         return v;
     }
@@ -557,6 +581,8 @@ public:
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t port = addr & 0xFFFF;
         if (!(port & 1)) m_ula->out(m_cpu->cycles(), v);
+        if (ay && (port & 0xC002) == 0xC000) ay->selectRegister(v);                 // $FFFD
+        if (ay && (port & 0xC002) == 0x8000) { m_ula->syncAudio(m_cpu->cycles()); ay->write(v); }   // $BFFD
         if (m_mem->is128 && !(port & 0x8002) && !m_mem->locked()) {
             if (((m_mem->port7ffd ^ v) & 8)) m_ula->drawTo(m_cpu->cycles());   // the screen moves
             m_mem->port7ffd = v;
@@ -596,6 +622,7 @@ public:
     Z80* cpu = nullptr;
     SpectrumTape* tape = nullptr;
     SpecKeyboard* kbd = nullptr;
+    SpectrumAy* ay = nullptr;
     MachineDescriptor* desc = nullptr;
     bool is128 = false;
     const char* name() const override { return "Spectrum"; }
@@ -659,9 +686,12 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* tape = new SpectrumTape(tim.cpuHz);
     tape->set48k(!is128);
     auto* iobus = new SpecIo(mem, ula, kbd, cpu, tape);
+    SpectrumAy* ay = is128 ? new SpectrumAy() : nullptr;
+    iobus->ay = ay;
+    ula->setAy(ay);
     auto* parts = new SpecParts();
     parts->mem = mem; parts->ula = ula; parts->cpu = cpu; parts->tape = tape; parts->kbd = kbd;
-    parts->desc = desc; parts->is128 = is128;
+    parts->desc = desc; parts->is128 = is128; parts->ay = ay;
     auto* video = new UlaHandle(ula);
     kbd->peek = [mem](uint16_t a) { return mem->read(a); };
     kbd->poke = [mem](uint16_t a, uint8_t v) { if (mem->bankAt(a) >= 0) mem->ram[(size_t)mem->bankAt(a) * 0x4000 + (a & 0x3FFF)] = v; };
@@ -679,8 +709,8 @@ MachineDescriptor* create(Model model, std::string* err) {
     io->registerHandler(kbd);
     io->registerHandler(tape);
     io->registerHandler(parts);
-    desc->deleters.push_back([video, kbd, ula, mem, tape, parts]() {
-        delete video; delete kbd; delete ula; delete mem; delete tape; delete parts;
+    desc->deleters.push_back([video, kbd, ula, mem, tape, parts, ay]() {
+        delete video; delete kbd; delete ula; delete mem; delete tape; delete parts; delete ay;
     });
     desc->uiPanes = {"tape"};
 
@@ -700,7 +730,8 @@ MachineDescriptor* create(Model model, std::string* err) {
         iobus->kempston = k;
     };
 
-    desc->onReset = [mem, ula, io, cpu, kbd](MachineDescriptor&) {     // power on
+    desc->onReset = [mem, ula, io, cpu, kbd, ay](MachineDescriptor&) {     // power on
+        if (ay) ay->reset();
         std::fill(mem->ram.begin(), mem->ram.end(), 0);
         mem->port7ffd = 0;
         mem->map();
@@ -900,6 +931,10 @@ bool loadZ80(SpecParts* p, const std::vector<uint8_t>& b, std::string& err) {
     c.regWrite(Z80::R_IM, b[29] & 3);
     for (auto& [bank, data] : banks) putBank(mem, bank, data.data());
     startFrom(p, (uint8_t)((flags >> 1) & 7), snap128 ? port : (p->is128 ? 0x30 : 0));
+    if (snap128 && p->ay && b.size() >= 55) {           // the AY: registers 39-54, the selected one at 38
+        for (int r = 0; r < 16; ++r) p->ay->set(r, b[39 + (size_t)r]);
+        p->ay->selectRegister(b[38]);
+    }
     c.setPc(pc);
     return true;
 }

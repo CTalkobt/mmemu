@@ -8,6 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### ZX Spectrum
+- **The 128K's AY-3-8912** (#242), after Fuse's `ay_engine.c`:
+  - tone, noise, envelope and mixer, at the CPU clock / 2, stepped every 32 T-states;
+  - Westcott's measured levels, mixed with the beeper;
+  - `$FFFD` / `$BFFD`, and the AY registers restored from `.z80` snapshots;
+  - test: `spectrum128_ay_tone`.
 - **Spectrum tapes and snapshots** (#242), after Fuse and libspectrum.
   - **Tapes:** `.tap` and `.tzx` (also gzipped or zipped) are played as EAR pulses. TZX blocks 0x10-0x15, pause/stop, set level and loops are supported; information blocks are skipped. They go through CLI `tape`, the GUI tape pane and `load`.
   - **ROM traps:** LD-BYTES and SA-BYTES traps load and save standard blocks at once, with the registers as the ROM leaves them. `tape save` writes SAVEd blocks as a `.tap`.

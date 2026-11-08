@@ -237,3 +237,50 @@ TEST_CASE(spectrum128_boots_and_pages) {
     EXPECT_TRUE(after.find("705") != std::string::npos);
     delete m;
 }
+
+// The 128K's AY: tone A at period 424 (1773450 / (16 * 424) = 261.4 Hz),
+// enabled in the mixer at full volume, from 128 BASIC; register 0 reads
+// back through $FFFD
+TEST_CASE(spectrum128_ay_tone) {
+    MachineDescriptor* m = make(spectrum::Model::S128);
+    if (!m) return;
+    run(m, 3546900 * 3);
+    auto* kbd = find<IKeyboardMatrix>(m);
+    auto* audio = find<IAudioOutput>(m);
+    for (const char* k : {"down", "return"}) {
+        kbd->pressKeyByName(k, true);
+        run(m, 3546900 / 10);
+        kbd->pressKeyByName(k, false);
+        run(m, 3546900 / 2);
+    }
+    run(m, 3546900);
+    float drain[8192];
+    while (audio->pullSamples(drain, 8192) > 0) {}
+    // (in a program that keeps running: 128 BASIC silences the AY when a command ends)
+    kbd->enqueueText("10 OUT 65533,0: OUT 49149,168: OUT 65533,1: OUT 49149,1: OUT 65533,7: OUT 49149,62: "
+                     "OUT 65533,8: OUT 49149,15: OUT 65533,0: PRINT IN 65533\n20 GO TO 20\nRUN\n");
+    run(m, 3546900 * 10);                               // the 128 editor takes about 30 characters a second
+    while (audio->pullSamples(drain, 8192) > 0) {}
+    std::vector<float> s;
+    for (int i = 0; i < 30; ++i) {
+        run(m, 354690);
+        float buf[8192];
+        int n;
+        while ((n = audio->pullSamples(buf, 8192)) > 0) s.insert(s.end(), buf, buf + n);
+    }
+    int best = 0;
+    for (size_t at = 0; at + 22050 < s.size(); at += 4410) {
+        float mean = 0;
+        for (size_t i = at; i < at + 22050; ++i) mean += s[i];
+        mean /= 22050;
+        int n = 0;
+        for (size_t i = at + 1; i < at + 22050; ++i) if (s[i - 1] < mean && s[i] >= mean) ++n;
+        best = std::max(best, n);
+    }
+    printf("    AY: %d cycles in half a second\n", best);
+    EXPECT_TRUE(std::abs(best - 131) <= 3);
+    const std::string text = screenText(m);
+    if (text.find("168") == std::string::npos) printf("%s", text.c_str());
+    EXPECT_TRUE(text.find("168") != std::string::npos);
+    delete m;
+}
