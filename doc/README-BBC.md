@@ -7,7 +7,7 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 - the keyboard matrix (`keyboard.c`);
 - the SN76489 register handling (`sn76489.c`);
 - the 8271 disc controller (`i8271.c`, with the sector-image timing of `disc.c` and `sdf-acc.c`);
-- the cassette: the 6850 ACIA, the serial ULA's motor, and UEF tapes (`acia.c`, `serial.c`, `tape.c`, `uef.c`).
+- the cassette: the 6850 ACIA, the serial ULA's motor, and UEF tapes (`acia.c`, `serial.c`, `tape.c`, `uef.c`); the UEF player (`UefTape`) is shared with the Electron.
 
 ## Profiles
 
@@ -186,4 +186,4 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 
 - **Storage:** CSW tapes, the RS423 port, the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
 - **Other hardware:** the Tube, Econet, the printer port.
-- **Other models:** the B+, the Master, and the Electron.
+- **Other models:** the B+ and the Master. (The Electron is in [README-ELECTRON.md](README-ELECTRON.md).)

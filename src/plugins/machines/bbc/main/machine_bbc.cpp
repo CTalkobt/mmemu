@@ -234,7 +234,7 @@ public:
     std::function<void(bool)> onIrq;
 
     BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn, I8271* fdc,
-           Acia6850& acia, BbcTape* tape)
+           Acia6850& acia, UefTape* tape)
         : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn), m_fdc(fdc), m_acia(acia), m_tape(tape) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x8000, 0);
@@ -363,6 +363,7 @@ private:
         m_sn->advance(d);
         m_fdc->clock(d);
         m_tape->clock(d);
+        for (m_aciaAcc += d; m_aciaAcc >= 128; m_aciaAcc -= 128) m_acia.poll(128);
         if (m_adcLeft > 0 && (m_adcLeft -= (int64_t)d) <= 0) adcDone();
         if (onIrq) onIrq(irqLine());
     }
@@ -388,7 +389,7 @@ private:
                     if (wr) m_acia.write(a, *wr); else r = m_acia.read(a);
                 } else {                                        // serial ULA (write only)
                     // Reading it writes &FE (b-em serial_read)
-                    m_tape->serialUlaWrite(wr ? *wr : 0xFE);
+                    serialUlaWrite(wr ? *wr : 0xFE);
                     r = 0;
                 }
                 break;
@@ -445,6 +446,15 @@ private:
         m_sysvia.setCb1(0);
     }
 
+    // The serial ULA (b-em serial.c serial_write): bit 7 the motor relay;
+    // bit 6 RS423 (DCD and CTS cleared) or cassette (CTS cleared)
+    void serialUlaWrite(uint8_t v) {
+        const bool cassette = !(v & 0x40);
+        m_acia.clearStatus(cassette ? Acia6850::CTS : (Acia6850::DCD | Acia6850::CTS));
+        m_acia.setCassette(cassette);
+        m_tape->setMotor(v & 0x80, cassette);
+    }
+
     bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || m_acia.irq(); }
 
     // The slow data bus (sysvia.c): the System VIA's port A, the keyboard
@@ -495,7 +505,8 @@ private:
     Sn76489* m_sn;
     I8271* m_fdc;
     Acia6850& m_acia;
-    BbcTape* m_tape;
+    UefTape* m_tape;
+    uint64_t m_aciaAcc = 0;
     BbcVia m_sysvia, m_uservia;
     int m_romsel = 0;
     uint8_t m_ic32 = 0, m_sdb = 0, m_sdbOut = 0;
@@ -535,7 +546,11 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* sound = new BbcSound(sn);
     auto* fdc = new I8271();
     auto* acia = new Acia6850();
-    auto* tape = new BbcTape(acia);
+    auto* tape = new UefTape();
+    tape->onCarrier = [acia]() { acia->dcdHigh(); };
+    tape->onDataStart = [acia]() { acia->dcdLow(); };
+    tape->onByte = [acia](uint8_t v) { acia->receive(v); };
+    acia->onTransmit = [tape](uint8_t v) { tape->transmitted(v); };
     auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc, *acia, tape);
     bus->setModelA(modelA);
     bus->setRom(15, std::move(basic));

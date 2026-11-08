@@ -137,6 +137,7 @@ PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/sn76489.cpp \
 	src/plugins/machines/bbc/main/bbc_disc.cpp \
 	src/plugins/machines/bbc/main/bbc_tape.cpp \
+	src/plugins/machines/bbc/main/machine_electron.cpp \
 	src/plugins/devices/bbc_video/main/bbc_video.cpp \
 	src/plugins/machines/bbc/main/plugin_init.cpp
 
@@ -463,6 +464,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/bbc/test/test_bbc_machine.cpp \
 	src/plugins/machines/bbc/test/test_bbc_disc.cpp \
 	src/plugins/machines/bbc/test/test_bbc_tape.cpp \
+	src/plugins/machines/bbc/test/test_electron.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -575,6 +577,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/bbc/main/sn76489.o \
 	src/plugins/machines/bbc/main/bbc_disc.o \
 	src/plugins/machines/bbc/main/bbc_tape.o \
+	src/plugins/machines/bbc/main/machine_electron.o \
 	src/plugins/devices/bbc_video/main/bbc_video.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \

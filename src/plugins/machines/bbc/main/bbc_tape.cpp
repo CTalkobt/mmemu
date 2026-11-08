@@ -1,5 +1,5 @@
-// BBC Micro cassette: the 6850 ACIA, the serial ULA's motor and UEF tapes,
-// after b-em (acia.c, sysacia.c, serial.c, tape.c, uef.c; GPL-2.0-or-later)
+// BBC Micro and Electron cassette: the 6850 ACIA and UEF tapes, after b-em
+// (acia.c, sysacia.c, tape.c, uef.c; GPL-2.0-or-later)
 
 #include "bbc_tape.h"
 #include <algorithm>
@@ -56,7 +56,7 @@ void Acia6850::dcdHigh() {
 void Acia6850::dcdLow() { m_status &= (uint8_t)~DCD; }
 
 // ---------------------------------------------------------------------------
-// BbcTape
+// UefTape
 // ---------------------------------------------------------------------------
 namespace {
 constexpr double CPU_HZ = 2000000.0;
@@ -64,24 +64,21 @@ constexpr int POLL_CYCLES = 128;                     // b-em otherstuff_poll
 const char UEF_MAGIC[] = "UEF File!";
 }  // namespace
 
-BbcTape::BbcTape(Acia6850* acia) : m_acia(acia) {
-    m_acia->onTransmit = [this](uint8_t v) { transmitted(v); };
-}
+UefTape::UefTape() {}
 
-void BbcTape::reset() {
-    // serial_reset: the motor relay off
+void UefTape::reset() {
+    // The motor relay off
     m_motor = false;
-    m_cassette = true;
 }
 
-void BbcTape::setBaud(double baud) {
+void UefTape::setBaud(double baud) {
     // uef.c: tapellatch = (1000000 / (baud / 10)) / 64
     if (baud <= 0) return;
     m_pps = baud / 10.0;
     m_latch = std::max(1, (int)((1000000.0 / m_pps) / 64.0));
 }
 
-bool BbcTape::load(const std::vector<uint8_t>& file, std::string* err) {
+bool UefTape::load(const std::vector<uint8_t>& file, std::string* err) {
     std::vector<uint8_t> data;
     if (file.size() >= 2 && file[0] == 0x1F && file[1] == 0x8B) {
         // gzip: unpack with zlib
@@ -116,14 +113,14 @@ bool BbcTape::load(const std::vector<uint8_t>& file, std::string* err) {
     return true;
 }
 
-bool BbcTape::mountTape(const std::string& path) {
+bool UefTape::mountTape(const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     std::vector<uint8_t> file((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return load(file);
 }
 
-void BbcTape::controlTape(const std::string& op) {
+void UefTape::controlTape(const std::string& op) {
     if (op == "play") m_play = !m_uef.empty();
     else if (op == "stop") m_play = false;
     else if (op == "rewind") {
@@ -134,28 +131,18 @@ void BbcTape::controlTape(const std::string& op) {
     }
 }
 
-void BbcTape::serialUlaWrite(uint8_t v) {
-    // serial.c serial_write: bit 7 the motor relay; bit 6 RS423 (else cassette)
-    const bool motor = v & 0x80;
+void UefTape::setMotor(bool motor, bool output) {
     if (motor && !m_motor) m_recIdleFrom = m_now;
     if (!motor && m_motor && m_recording) recFlushData();
     m_motor = motor;
-    if (v & 0x40) {
-        m_acia->clearStatus(Acia6850::DCD | Acia6850::CTS);
-        m_cassette = false;
-    } else {
-        m_acia->clearStatus(Acia6850::CTS);
-        m_cassette = true;
-    }
-    m_acia->setCassette(m_cassette);
+    m_output = output;
 }
 
-void BbcTape::clock(uint64_t cycles) {
+void UefTape::clock(uint64_t cycles) {
     m_now += cycles;
     m_cycleAcc += cycles;
     while (m_cycleAcc >= POLL_CYCLES) {
         m_cycleAcc -= POLL_CYCLES;
-        m_acia->poll(POLL_CYCLES);
         if (m_latchCount == 0) {
             if (m_motor && m_play && !m_recording) poll();
             m_latchCount = m_latch;
@@ -164,7 +151,7 @@ void BbcTape::clock(uint64_t cycles) {
     }
 }
 
-float BbcTape::nextFloat() {
+float UefTape::nextFloat() {
     const uint32_t bits = next32();
     float f;
     std::memcpy(&f, &bits, sizeof(f));
@@ -172,7 +159,7 @@ float BbcTape::nextFloat() {
 }
 
 // uef_poll: one byte time of the tape
-void BbcTape::poll() {
+void UefTape::poll() {
     if (!m_inChunk) {
         if (m_pos + 6 > m_uef.size()) { m_pos = m_uef.size(); return; }   // the end
         m_startChunk = true;
@@ -185,9 +172,9 @@ void BbcTape::poll() {
     auto tone = [&](uint16_t n) { int t = n / 20; return t ? t : 1; };
     switch (m_chunkId) {
         case 0x100:                                  // raw data
-            if (m_startChunk) { m_acia->dcdLow(); m_startChunk = false; }
+            if (m_startChunk) { if (onDataStart) onDataStart(); m_startChunk = false; }
             if (--m_chunkLen <= 0) m_inChunk = false;
-            m_acia->receive(next());
+            if (onByte) onByte(next());
             return;
         case 0x104:                                  // defined-format data
             if (!m_chunkPos) {
@@ -196,25 +183,25 @@ void BbcTape::poll() {
                 next();                              // stop bits
                 m_chunkLen -= 3;
                 m_chunkPos = 1;
-                m_acia->dcdLow();
+                if (onDataStart) onDataStart();
                 if (m_chunkLen <= 0) m_inChunk = false;
             } else {
                 if (--m_chunkLen <= 0) m_inChunk = false;
                 const uint8_t v = next();
-                m_acia->receive(m_dataBits == 7 ? (uint8_t)(v & 0x7F) : v);
+                if (onByte) onByte(m_dataBits == 7 ? (uint8_t)(v & 0x7F) : v);
             }
             return;
         case 0x110:                                  // carrier tone
+            if (onCarrier) onCarrier();
             if (!m_inTone) {
-                m_acia->dcdHigh();
                 m_inTone = tone(next16());
             } else if (--m_inTone == 0) {
                 m_inChunk = false;
             }
             return;
         case 0x111:                                  // carrier tone with a dummy byte
+            if (onCarrier && !(m_secondTone && m_inTone == 1)) onCarrier();
             if (!m_inTone && !m_secondTone && m_chunkPos == 0) {
-                m_acia->dcdHigh();
                 m_inTone = tone(next16());
                 m_chunkPos = 1;
             } else if (--m_inTone <= 0) {
@@ -224,7 +211,7 @@ void BbcTape::poll() {
                 } else {
                     m_secondTone = true;
                     m_inTone = tone(next16());
-                    m_acia->receive(0xAA);
+                    if (onByte) onByte(0xAA);
                 }
             }
             return;
@@ -258,7 +245,7 @@ void BbcTape::poll() {
 // ---------------------------------------------------------------------------
 // Recording
 // ---------------------------------------------------------------------------
-bool BbcTape::startTapeRecord() {
+bool UefTape::startTapeRecord() {
     m_rec.clear();
     m_recData.clear();
     m_recording = true;
@@ -266,12 +253,12 @@ bool BbcTape::startTapeRecord() {
     return true;
 }
 
-void BbcTape::stopTapeRecord() {
+void UefTape::stopTapeRecord() {
     recFlushData();
     m_recording = false;
 }
 
-void BbcTape::recChunk(uint16_t id, const std::vector<uint8_t>& body) {
+void UefTape::recChunk(uint16_t id, const std::vector<uint8_t>& body) {
     const uint32_t n = (uint32_t)body.size();
     const uint8_t hdr[6] = {(uint8_t)id, (uint8_t)(id >> 8), (uint8_t)n, (uint8_t)(n >> 8),
                             (uint8_t)(n >> 16), (uint8_t)(n >> 24)};
@@ -279,13 +266,13 @@ void BbcTape::recChunk(uint16_t id, const std::vector<uint8_t>& body) {
     m_rec.insert(m_rec.end(), body.begin(), body.end());
 }
 
-void BbcTape::recFlushData() {
+void UefTape::recFlushData() {
     if (m_recData.empty()) return;
     recChunk(0x100, m_recData);
     m_recData.clear();
 }
 
-void BbcTape::recTone(uint64_t cycles) {
+void UefTape::recTone(uint64_t cycles) {
     // The line idles at the carrier (2400 Hz) while the motor runs
     uint64_t waves = (uint64_t)((double)cycles * 2400.0 / CPU_HZ);
     while (waves) {
@@ -295,8 +282,8 @@ void BbcTape::recTone(uint64_t cycles) {
     }
 }
 
-void BbcTape::transmitted(uint8_t v) {
-    if (!m_recording || !m_motor || !m_cassette) return;
+void UefTape::transmitted(uint8_t v) {
+    if (!m_recording || !m_motor || !m_output) return;
     // More than two byte times since the last byte: carrier tone in between
     const uint64_t idle = m_now - m_recIdleFrom;
     if (idle > (uint64_t)(2.0 * CPU_HZ / m_pps)) {
@@ -307,7 +294,7 @@ void BbcTape::transmitted(uint8_t v) {
     m_recIdleFrom = m_now;
 }
 
-bool BbcTape::saveTapeRecording(const std::string& path) {
+bool UefTape::saveTapeRecording(const std::string& path) {
     recFlushData();
     std::ofstream f(path, std::ios::binary | std::ios::trunc);
     if (!f) return false;

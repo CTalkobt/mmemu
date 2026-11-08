@@ -73,12 +73,15 @@ TEST_CASE(bbc_uef_playback) {
     chunk(0x0100, {0x12, 0x34});
     for (int gz = 0; gz < 2; gz++) {
         bbc::Acia6850 acia;
-        bbc::BbcTape tape(&acia);
+        bbc::UefTape tape;
+        tape.onCarrier = [&]() { acia.dcdHigh(); };
+        tape.onDataStart = [&]() { acia.dcdLow(); };
+        tape.onByte = [&](uint8_t v) { acia.receive(v); };
         ASSERT(tape.load(gz ? gzip(uef) : uef));
         acia.write(0, 0x83);                // receive interrupt on
         tape.clock(130 * 128 * 4);          // motor off: nothing moves
         EXPECT_EQ(tape.position(), (size_t)0);
-        tape.serialUlaWrite(0x85);          // motor on, cassette
+        tape.setMotor(true, true);          // motor on
         tape.clock(130 * 128 * 2);          // carrier
         EXPECT_TRUE(acia.status() & bbc::Acia6850::DCD);
         std::vector<uint8_t> got;
@@ -102,7 +105,7 @@ TEST_CASE(bbc_tape_save_and_chain) {
     if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
     const std::string path = "/tmp/mmemu_test_bbc_tape.uef";
     run(m, 4000000);
-    auto* tape = find<bbc::BbcTape>(m);
+    auto* tape = find<bbc::UefTape>(m);
     auto* kbd = find<IKeyboardMatrix>(m);
     ASSERT(tape && kbd);
     ASSERT(tape->startTapeRecord());
@@ -125,7 +128,7 @@ TEST_CASE(bbc_tape_save_and_chain) {
     m = bbc::create(bbc::Model::B, &err);
     ASSERT(m);
     run(m, 4000000);
-    tape = find<bbc::BbcTape>(m);
+    tape = find<bbc::UefTape>(m);
     kbd = find<IKeyboardMatrix>(m);
     ASSERT(tape->mountTape(path));
     kbd->enqueueText("*TAPE\nCHAIN \"\"\n");
