@@ -23,10 +23,18 @@ struct MachineDescriptor;
  * ALTCHARSET, double hi-res) and their status reads, lower case, the Apple
  * keys; the enhanced IIe has a 65C02. ROMs: Apple2e.rom /
  * Apple2e_Enhanced.rom (16 KB at $C000), Apple2e_Enhanced_Video.rom.
+ *
+ * IIc (after MAME apple2e.cpp): an enhanced IIe with 128 KB, the internal
+ * $C100-$CFFF ROM always in, the IOU's interrupts (VBL, mouse) and its
+ * switches, two 6551 ACIAs (the serial ports, slots 1 and 2) and the drive
+ * (Disk II compatible) in slot 6. ROM: roms/apple2/apple2c-ff.rom (the
+ * original 16 KB ROM; local only, see doc/README-APPLE2.md). $C028 banks a
+ * 32 KB ROM's halves, but those ROMs (00, 03, 04) also need the 3.5"
+ * drive or the memory expansion, not emulated yet.
  */
 namespace apple2 {
 
-enum class Model { II, IIPlus, IIe, IIeEnhanced };
+enum class Model { II, IIPlus, IIe, IIeEnhanced, IIc };
 
 /** A new machine, or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(Model model, std::string* err = nullptr);

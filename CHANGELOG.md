@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Apple II
+- **Apple IIc** (#12): profile `apple2c`, after MAME's `apple2e.cpp`. It's an enhanced IIe with the IIc's differences:
+  - the internal `$C100-$CFFF` ROM is always in;
+  - the IOU's switches and interrupts (VBL, mouse);
+  - the serial ports as two 6551 ACIAs at `$C098` and `$C0A8`;
+  - the built-in drive in slot 6, and the 40/80 switch.
+  - **Booting:** with no disk it shows "Check Disk Drive."; DOS 3.3 and ProDOS boot and run in 40 or 80 columns.
+  - **The ROM:** ROM FF (`roms/apple2/apple2c-ff.rom`) stays local: it's gitignored, and the README says where to download it. The tests skip without it.
+  - **Not yet:** the 32 KB ROMs (the 3.5" drive, the memory expansion) and the mouse's movement.
+  - **The 6551 ACIA:** it gains `irqAsserted()`.
+  - **Tests:** `apple2c_boots`, `apple2c_iou_and_serial`.
+
 ### BBC Micro
 - **Acorn ARM core and the ARM Evaluation System** (#13).
   - **The core:** `mmemu-plugin-arm.so`, an ARM1/ARM2 with the 26-bit PSR in R15. It covers data processing with the barrel shifter, MUL/MLA (ARM2), LDR/STR, LDM/STM with `^`, B/BL, SWI, the four modes with banked registers, and the exceptions, plus a disassembler. On about 160,000 random instructions it agrees with b-em's `arm.c`, apart from that core's documented departures from the datasheet. That comparison found two bugs in the new core, both fixed. See `doc/README-ARM.md`.

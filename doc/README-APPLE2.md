@@ -14,6 +14,7 @@ of `NTSC.cpp`, see below) and the Disk II (`Disk.cpp`).
 | `apple2plus` | Apple ][+: Applesoft and the autostart monitor (starts at the `]` prompt) |
 | `apple2e` | Apple //e: 128 KB, 80 columns, NMOS 6502 |
 | `apple2e-enhanced` | Apple //e enhanced: 65C02, MouseText, the enhanced ROMs |
+| `apple2c` | Apple //c: the enhanced IIe in one box, with its IOU, two serial ports and a built-in drive (ROM FF; the ROM is not included, see below) |
 
 The II and II+ have 48 KB of RAM and a 16 KB language card in slot 0; the
 IIe has 64 KB (the language card built in) and an extended 80-column card
@@ -105,6 +106,29 @@ read, bank 2, write enabled) and the video modes (AppleWin `CtrlReset`).
 The built-in self-test (hold Open Apple and Closed Apple, then
 Control-RESET) passes: "System OK" on the enhanced IIe, "KERNEL OK" on the
 original once the keys are let go.
+
+## IIc
+
+`apple2c` follows MAME's `apple2e.cpp`: an enhanced IIe (65C02, 128 KB, 80 columns, MouseText) with the IIc's differences.
+- **The internal ROM:** it always answers at `$C100-$CFFF`, holding the firmware of the built-in serial ports (slots 1 and 2), the 80-column display (slot 3), the mouse (slot 4) and the drive (slot 6). INTCXROM and SLOTC3ROM read back, but switch nothing.
+- **The IOU's interrupts:**
+  - IOUDIS is set by writing `$C078/A/C/E` and cleared by writing `$C079/B/D/F`. Reading `$C078/A/C/E` returns it in bit 7.
+  - With IOUDIS clear, `$C058-$C05F` are the mouse X/Y and VBL interrupt switches: DisXY, EnbXY, DisVBL, EnVBL, and the X0/Y0 edges. With it set, they are the IIe's annunciators and double hi-res.
+  - At vertical blanking with VBL enabled, VBLINT (`$C019` bit 7) rises and /IRQ is held. Reading `$C019` doesn't clear it; any `$C07x` access does.
+  - `$C040-$C043` read the XY mask, the VBL mask and the X0/Y0 edges. `$C015`/`$C017` read and clear the mouse interrupt flags, and `$C048` clears them too.
+- **The serial ports:** two 6551 ACIAs, port 1 at `$C098-$C09B` and port 2 at `$C0A8-$C0AB`. Their interrupts go to /IRQ. They're the devices "ACIA (port 1)" and "ACIA (port 2)", and `serial attach` connects them.
+- **The drive:** the IIc's internal 5.25" drive is the Disk II-compatible slot 6, drive 1; a second drive is unit 2. With no disk the firmware shows "Check Disk Drive.". DOS 3.3 and ProDOS boot.
+- **Other switches:**
+  - `$C060` reads the 40/80 switch as 40 columns.
+  - `$C063` reads the mouse button, up, inverted.
+  - `$C02x` swaps a 32 KB ROM's halves.
+
+**The ROM.** Apple's IIc ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM FF, "Apple IIc ROM FF - 342-0272-A.bin" (16 KB), from the Apple II Documentation Project mirror:
+<https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIc/ROM%20Images/>. Save it as `roms/apple2/apple2c-ff.rom`. The video ROM is the enhanced IIe's, which is included.
+
+**Not yet:**
+- **The later 32 KB ROMs** (00, 03, 04): ROM 00 needs the IWM's 3.5" drive (UniDisk / SmartPort), and 03/04 need the memory expansion (`$C0C0-$C0C3`). A 32 KB ROM is refused for now.
+- **The mouse:** its movement and button; the switches are there.
 
 ## Keyboard
 
@@ -236,5 +260,6 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
-- The IIc, the IIgs; RamWorks memory; the IIe without its 80-column card.
+- The IIc's 32 KB ROMs (the 3.5" drive, the memory expansion) and mouse; the
+  IIgs; RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.

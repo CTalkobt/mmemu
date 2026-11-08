@@ -34,5 +34,6 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("apple2plus", apple2::Model::IIPlus, "Apple ][+ (Applesoft)");
     reg("apple2e", apple2::Model::IIe, "Apple //e (128 KB, 80 columns)");
     reg("apple2e-enhanced", apple2::Model::IIeEnhanced, "Apple //e enhanced (65C02, MouseText)");
+    reg("apple2c", apple2::Model::IIc, "Apple //c (65C02, 128 KB; ROM local only)");
     return &s_manifest;
 }
