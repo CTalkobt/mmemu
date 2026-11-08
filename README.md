@@ -77,7 +77,7 @@ A single plugin module can provide multiple resources, which are automatically r
 
 ### BBC Micro
 - **Profiles**: `bbcb` (Model B, OS 1.20, BASIC 2).
-- **Hardware**: MOS 6502 at 2 MHz, 32 KB RAM, sideways ROMs, the 6845, video ULA and SAA5050 teletext (Modes 0-7), the System and User VIAs, the keyboard matrix on the slow data bus, the SN76489 and the 1 MHz bus, after b-em. See `doc/README-BBC.md`.
+- **Hardware**: MOS 6502 at 2 MHz, 32 KB RAM, sideways ROMs, the 6845, video ULA and SAA5050 teletext (Modes 0-7), the System and User VIAs, the keyboard matrix on the slow data bus, the SN76489, the 1 MHz bus, and the 8271 with Acorn DFS and `.ssd`/`.dsd` discs, after b-em. See `doc/README-BBC.md`.
 
 ### Atari 2600
 - **Profiles**: `atari2600`, `atari2600-pal`.

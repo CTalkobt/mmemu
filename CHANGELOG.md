@@ -8,6 +8,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **BBC Micro discs** (#13):
+  - **Controller:** the Intel 8271 at `&FE80`, after b-em (`i8271.c`, `sdf-acc.c`). It has the commands DFS uses (read, write, verify, read ID, format, seek, specify, drive status, special registers), moves data a byte at a time by NMI, and uses b-em's timing.
+  - **DFS:** Acorn DFS 0.90 in sideways slot 14 (`roms/bbc/dfs09.rom`, from b-em).
+  - **Images:** `.ssd` and `.dsd` (DFS drives 2 and 3 are the second sides), 40 or 80 tracks. Writes go back to the file; a read-only file mounts write-protected.
+  - **Drives:** 0 and 1 are units 0 and 1 in CLI `disk mount`, MCP `mount_disk` and the GUI drive pane ("Drv 0", file filter `*.ssd;*.dsd`).
+  - **Checked:** `*CAT`, `SAVE` and `CHAIN` on a blank disc, and SHIFT+BREAK booting b-em's demo disc.
+  - **Tests:** `bbc_dfs_image_layout`, `bbc_dfs_save_and_chain`.
 - **BBC Micro Model B** (#13): profile `bbcb`, new plugin `mmemu-plugin-bbc.so`, after b-em (GPL-2.0-or-later). It starts at BASIC's `>` prompt in Mode 7.
   - **CPU and memory:** an NMOS 6502 at 2 MHz with 32 KB RAM. OS 1.20 at `&C000`, and sideways ROMs at `&8000` chosen by ROMSEL (`&FE30`), with BASIC 2 in slot 15. ROMs and the teletext font are from b-em, in `roms/bbc/`.
   - **I/O:** `&FC00-&FEFF`, with the 1 MHz bus adding 1-2 cycles to FRED, JIM and the slow SHEILA devices.

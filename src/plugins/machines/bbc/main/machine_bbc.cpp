@@ -4,6 +4,7 @@
 
 #include "machine_bbc.h"
 #include "bbc_via.h"
+#include "bbc_disc.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -231,8 +232,8 @@ class BbcBus : public IBus {
 public:
     std::function<void(bool)> onIrq;
 
-    BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn)
-        : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn) {
+    BbcBus(std::vector<uint8_t> os, BbcVideo* video, BbcKeyboard* kbd, Sn76489* sn, I8271* fdc)
+        : m_os(std::move(os)), m_video(video), m_kbd(kbd), m_sn(sn), m_fdc(fdc) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x8000, 0);
         for (auto& r : m_roms) r.clear();
@@ -271,6 +272,7 @@ public:
         m_uservia.reset();
         m_video->reset();
         m_sn->reset();
+        m_fdc->reset();
         m_video->setScreenSize(0);
     }
 
@@ -343,6 +345,7 @@ private:
         m_sysvia.poll((int)d);
         m_uservia.poll((int)d);
         m_sn->advance(d);
+        m_fdc->clock(d);
         if (onIrq) onIrq(irqLine());
     }
 
@@ -376,6 +379,9 @@ private:
                 break;
             case 0xFE60:                                        // User VIA
                 if (wr) m_uservia.write(a, *wr); else r = m_uservia.read(a);
+                break;
+            case 0xFE80:                                        // 8271 disc controller
+                if (wr) m_fdc->write(a, *wr); else r = m_fdc->read(a);
                 break;
             default:
                 break;
@@ -444,6 +450,7 @@ private:
     BbcVideo* m_video;
     BbcKeyboard* m_kbd;
     Sn76489* m_sn;
+    I8271* m_fdc;
     BbcVia m_sysvia, m_uservia;
     int m_romsel = 0;
     uint8_t m_ic32 = 0, m_sdb = 0, m_sdbOut = 0;
@@ -457,16 +464,18 @@ private:
 }  // namespace
 
 MachineDescriptor* create(Model, std::string* err) {
-    std::vector<uint8_t> os, basic;
+    std::vector<uint8_t> os, basic, dfs;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
+    // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
+    if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
     desc->machineId = "bbcb";
     desc->displayName = "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {};
+    desc->uiPanes = {"drive"};
     desc->clockHz = CPU_HZ;
 
     auto* video = new BbcVideo();
@@ -475,22 +484,26 @@ MachineDescriptor* create(Model, std::string* err) {
     auto* sn = new Sn76489();
     auto* display = new BbcDisplay(video);
     auto* sound = new BbcSound(sn);
-    auto* bus = new BbcBus(std::move(os), video, kbd, sn);
+    auto* fdc = new I8271();
+    auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc);
     bus->setRom(15, std::move(basic));
+    bus->setRom(14, std::move(dfs));            // Acorn DFS 0.90 for the 8271
     desc->buses.push_back({"system", bus});
     auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
     cpu->setCodeBus(bus);
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
     bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
+    fdc->onNmi = [cpu](bool on) { cpu->setNmiLine(on); };
 
     auto* io = new IORegistry();
     desc->ioRegistry = io;
     io->registerHandler(display);
     io->registerHandler(kbd);
     io->registerHandler(sound);
-    desc->deleters.push_back([video, display, kbd, sn, sound]() {
-        delete display; delete video; delete kbd; delete sound; delete sn;
+    io->registerHandler(fdc);
+    desc->deleters.push_back([video, display, kbd, sn, sound, fdc]() {
+        delete display; delete video; delete kbd; delete sound; delete sn; delete fdc;
     });
 
     // BREAK resets the 6502 only: the MOS tells it from power-on by the
