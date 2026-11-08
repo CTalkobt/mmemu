@@ -16,6 +16,7 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 | `bbca` | BBC Micro Model A: 16 KB, OS 1.20 and BASIC 2; no User VIA, ADC or disc |
 | `bbcb` | BBC Micro Model B: OS 1.20, Acorn DFS 0.90 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
 | `bbcb-6502` | A Model B with the 6502 Second Processor on the Tube; DNFS 1.00 instead of DFS 0.90 |
+| `bbcb-z80` | A Model B with the Z80 Second Processor on the Tube (CP/M); DNFS 1.00 |
 
 The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM; the Model A's 16 KB is seen at both `&0000` and `&4000`, as b-em maps it (A14 is not decoded; the screen is at the top).
 
@@ -25,6 +26,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 - `dfs09.rom`: Acorn DFS 0.90 for the 8271, sideways slot 14. It is 8 KB and appears twice in its 16 KB slot. DFS raises PAGE to `&1900`.
 - `dnfs100.rom`: DNFS 1.00 (DFS 1.00 and NFS 3.40; b-em's `usdnfs.rom`), slot 14 on `bbcb-6502`. Unlike DFS 0.90, it has the Tube host code.
 - `6502tube.rom`: the 6502 Second Processor's 2 KB boot ROM (b-em `roms/tube`).
+- `z80tube121.rom`: the Z80 Second Processor's 4 KB client ROM, version 1.21 (b-em `roms/tube/Z80_121.rom`).
 - `saa5050.fnt`: b-em's teletext font, a capture of the SAA5050's output, character rounding included (from BeebEm).
 
 ## Memory map
@@ -44,7 +46,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 | `&FE60-&FE7F` | User VIA |
 | `&FE80-&FE9F` | 8271 disc controller (status/command, result/parameter, reset, data) |
 | `&FEC0-&FEDF` | uPD7002 ADC (the analogue port) |
-| `&FEE0-&FEFF` | The Tube, host side (`bbcb-6502`) |
+| `&FEE0-&FEFF` | The Tube, host side (`bbcb-6502`, `bbcb-z80`) |
 | `&FF00-&FFFF` | OS ROM |
 
 Other SHEILA addresses read `&FE`, as in b-em.
@@ -190,6 +192,22 @@ The control register sets or clears these flags:
 
 **What runs where.** DNFS's Tube host code finds it and the banner reads "Acorn TUBE 6502 64K". BASIC is copied across and runs on the second processor: `PAGE` is `&800` and `HIMEM` is `&8000`. The BBC handles the screen, keyboard, sound and discs. The debugger sees the second processor as CPU `tube` on bus `tube`.
 
+## The Z80 Second Processor
+
+`bbcb-z80` adds the Z80 Second Processor (b-em `z80.c`).
+- **The CPU:** a Z80 at 6 MHz, three cycles for each of the BBC's, with 64 KB of RAM. The debugger sees it as CPU `tube`, on bus `tube` for memory and `tube-io` for I/O.
+- **The client ROM:** 4 KB, version 1.21. It covers `$0000-$0FFF` until the Z80 first runs code above `$7FFF`, and pages back in whenever an NMI is taken, since its NMI handler is at `$0066`.
+- **The Tube:** on every Z80 I/O port, by the port's low three bits.
+- **Interrupts:**
+  - The client runs in IM 2 with I = `$FF`. The data bus reads `$FE` when an interrupt is acknowledged, so the vector is at `$FFFE`, as in b-em.
+  - The Tube's IRQ and NMI go to the Z80's /INT and /NMI. The NMI moves register 3's data, one byte per NMI.
+
+**Booting.**
+- **Without a disc:** the banner reads "Acorn TUBE Z80 64K 1.21". BASIC (a 6502 language) is copied across to `$8000`, then the client asks "Insert CP/M System disc in drive A".
+- **With Acorn's CP/M system disc in drive 0:** for example b-em's `discs/cpm1.dsd`, an 80-track double-sided `.dsd`. Mount it, then power on or press BREAK. The client loads CP/M through OSWORD `&7F`, and "Acorn CP/M 2.2 - Bios 1.20" and `A>` appear in an 80-column mode. `DIR` lists the disc.
+
+The CP/M discs are not in this repository.
+
 ## Tests
 
 `src/plugins/machines/bbc/test/test_bbc_machine.cpp`:
@@ -204,6 +222,7 @@ The control register sets or clears these flags:
   - the Tube banner;
   - BASIC on the second processor (`PAGE`, `HIMEM`, a sum), with the program in its memory;
   - BREAK.
+- `bbc_tube_z80_cpm`: BASIC copied to the Z80's memory. With b-em's `discs/cpm1.dsd` beside this tree, CP/M 2.2's BIOS loads from the disc.
 
 `test_bbc_disc.cpp`:
 - `bbc_dfs_image_layout`: where `.ssd` and `.dsd` sectors are in the file.

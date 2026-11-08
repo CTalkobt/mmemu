@@ -94,6 +94,10 @@ public:
     void setTiming(IZ80Timing* t) { m_timing = t; }
     /** Set the T-state clock (a machine counting T-states in a frame, tests). */
     void setCycles(uint64_t t) { m_cycles = t; }
+    /** The byte on the data bus when an interrupt is acknowledged (IM 2's
+     *  vector is I * 256 + it): $FF by default (a floating bus, as on the
+     *  Spectrum); the BBC's Z80 Second Processor gives $FE (b-em z80.c). */
+    void setInterruptVector(uint8_t v) { m_intVector = v; }
     /** Enter the HALT state (snapshots, tests): PC stays on the HALT. */
     void setHalted() { m_halted = true; }
 
@@ -192,6 +196,7 @@ private:
     uint16_t m_af2 = 0xFFFF, m_bc2 = 0, m_de2 = 0, m_hl2 = 0;
     uint16_t m_ix = 0xFFFF, m_iy = 0xFFFF, m_sp = 0xFFFF, m_pc = 0, m_wz = 0;
     uint8_t m_i = 0, m_r = 0, m_im = 0;
+    uint8_t m_intVector = 0xFF;
     bool m_iff1 = false, m_iff2 = false;
     bool m_halted = false;
     bool m_irqLine = false, m_nmiLine = false, m_nmiPending = false;

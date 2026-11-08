@@ -212,3 +212,38 @@ TEST_CASE(bbc_tube_6502) {
     EXPECT_TRUE(screenHas(m, "Acorn TUBE 6502 64K"));
     delete m;
 }
+
+// The Z80 Second Processor (b-em z80.c, client ROM 1.21). Its client sets
+// a bitmap mode, so the test reads the Z80's memory: the host's language
+// (BASIC) copied over the Tube to &8000; with Acorn's CP/M system disc in
+// drive 0 (b-em discs/cpm1.dsd, when the b-em reference tree is beside this
+// one) CP/M 2.2 boots: the client reads the disc through OSWORD &7F and
+// Tube NMI transfers. (CP/M's prompt comes later; the CLI shows DIR working.)
+bool ramHas(IBus* bus, const std::string& text) {
+    std::string mem;
+    for (uint32_t a = 0; a < 0x10000; ++a) mem += (char)(bus->peek8(a) & 0x7F);
+    return mem.find(text) != std::string::npos;
+}
+TEST_CASE(bbc_tube_z80_cpm) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::BZ80, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 40000000);                                   // BASIC is copied over the Tube first
+    IBus* z80mem = m->buses[1].bus;
+    EXPECT_TRUE(z80mem->peek8(0x8009) == 'B' && z80mem->peek8(0x800A) == 'A');   // "BASIC"
+    const char* disc = "../refs/b-em/discs/cpm1.dsd";
+    if (FILE* f = std::fopen(disc, "rb")) {
+        std::fclose(f);
+        delete m;                                       // power on with the disc in
+        m = bbc::create(bbc::Model::BZ80, &err);
+        z80mem = m->buses[1].bus;
+        IOHandler* fdc = m->ioRegistry->findHandler("8271 FDC");
+        ASSERT(fdc && fdc->mountDisk(0, disc));
+        run(m, 50000000);
+        // The BIOS's banner: loaded from the disc (the client ROM has no such text)
+        EXPECT_TRUE(ramHas(z80mem, "Acorn CP/M 2.2"));
+    } else {
+        printf("  (CP/M part skipped: no %s)\n", disc);
+    }
+    delete m;
+}

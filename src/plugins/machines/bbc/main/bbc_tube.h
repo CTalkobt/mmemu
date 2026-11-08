@@ -82,4 +82,56 @@ private:
     bool m_romIn = true;
 };
 
+/**
+ * The Z80 Second Processor's memory (b-em z80.c): 64 KB of RAM, the 4 KB
+ * client ROM over $0000-$0FFF until the Z80 first runs code above $7FFF
+ * (romOut(), from the scheduler).
+ */
+class Z80ParasiteBus : public IBus {
+public:
+    explicit Z80ParasiteBus(std::vector<uint8_t> rom);
+    void reset() override { m_romIn = true; }
+    void powerOn();
+    void romOut() { m_romIn = false; }
+    bool romIn() const { return m_romIn; }
+
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "tube"; }
+    uint8_t read8(uint32_t addr) override;
+    uint8_t peek8(uint32_t addr) override;
+    void write8(uint32_t addr, uint8_t v) override;
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+
+private:
+    BusConfig m_cfg;
+    std::vector<uint8_t> m_rom, m_ram;
+    bool m_romIn = true;
+};
+
+/** The Z80's I/O space: the Tube's parasite registers on every port (A0-A2). */
+class Z80TubeIo : public IBus {
+public:
+    explicit Z80TubeIo(TubeUla* tube) : m_tube(tube) { m_cfg = {16, 8, BusRole::IO_PORT, true, 0xFFFF}; }
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "tube-io"; }
+    uint8_t read8(uint32_t addr) override { return m_tube->parasiteRead((uint16_t)addr); }
+    uint8_t peek8(uint32_t) override { return 0xFF; }
+    void write8(uint32_t addr, uint8_t v) override { m_tube->parasiteWrite((uint16_t)addr, v); }
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+
+private:
+    BusConfig m_cfg;
+    TubeUla* m_tube;
+};
+
 }  // namespace bbc

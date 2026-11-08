@@ -7,6 +7,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### BBC Micro
+- **The Z80 Second Processor** (#13): profile `bbcb-z80`, after b-em's `z80.c`.
+  - **Hardware:** a Z80 at 6 MHz with 64 KB. The client ROM 1.21 (`roms/bbc/z80tube121.rom`, from b-em) is paged in at `$0000` until the Z80 runs above `$7FFF`, and again on NMI.
+  - **Tube:** on the Z80's I/O ports. IM 2 takes its vector from `$FFFE` (the Z80 core's new `setInterruptVector`).
+  - **CP/M:** with Acorn's CP/M system disc (b-em `discs/cpm1.dsd`), CP/M 2.2 boots and `DIR` lists the disc.
+  - **Second processors generally:** the BBC's code now takes each kind's CPU, buses, reset and clock ratio.
+  - **Test:** `bbc_tube_z80_cpm`.
+
 ### ZX Spectrum
 - **The 128K's AY-3-8912** (#242), after Fuse's `ay_engine.c`:
   - tone, noise, envelope and mixer, at the CPU clock / 2, stepped every 32 T-states;
