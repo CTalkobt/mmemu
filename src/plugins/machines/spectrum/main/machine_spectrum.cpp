@@ -6,6 +6,9 @@
 // timings from libspectrum timings.c.
 
 #include "machine_spectrum.h"
+#include "spectrum_tape.h"
+#include "libcore/main/image_loader.h"
+#include "libdevices/main/disk_file.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -527,8 +530,8 @@ private:
 // ---------------------------------------------------------------------------
 class SpecIo : public IBus {
 public:
-    SpecIo(Memory* mem, SpecUla* ula, SpecKeyboard* kbd, Z80* cpu)
-        : m_mem(mem), m_ula(ula), m_kbd(kbd), m_cpu(cpu) {
+    SpecIo(Memory* mem, SpecUla* ula, SpecKeyboard* kbd, Z80* cpu, SpectrumTape* tape)
+        : m_mem(mem), m_ula(ula), m_kbd(kbd), m_cpu(cpu), m_tape(tape) {
         m_cfg = {16, 8, BusRole::IO_PORT, true, 0xFFFF};
     }
     uint8_t kempston = 0;                        // right 1, left 2, down 4, up 8, fire 16
@@ -541,7 +544,9 @@ public:
         uint8_t v = 0xFF, attached = 0;
         if (!(port & 1)) {                       // the ULA: keys, EAR
             v &= ulaDefault() & (uint8_t)(m_kbd->read((uint8_t)(port >> 8)) | 0xE0);
-            if (m_earIn) v ^= 0x40;
+            const uint64_t now = m_cpu->cycles();
+            m_tape->earRead(now, (uint8_t)(m_cpu->regRead(Z80::R_BC) >> 8));
+            if (m_tape->ear(now)) v ^= 0x40;       // Fuse ula_read: tape_microphone
             attached = 0xFF;
         }
         if (!(port & 0xE0)) { v &= kempston; attached = 0xFF; }
@@ -566,8 +571,6 @@ public:
     void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
     void clearWriteLog() override {}
 
-    void setEar(bool on) { m_earIn = on; }
-
 private:
     // Fuse ula_write: bit 6 (EAR in) follows the last EAR output (Issue 3;
     // Issue 2 also MIC); the 128K acts as an Issue 3
@@ -582,7 +585,26 @@ private:
     SpecUla* m_ula;
     SpecKeyboard* m_kbd;
     Z80* m_cpu;
-    bool m_earIn = false;
+    SpectrumTape* m_tape;
+};
+
+// The machine's parts, for the snapshot and tape loaders
+class SpecParts : public IOHandler {
+public:
+    Memory* mem = nullptr;
+    SpecUla* ula = nullptr;
+    Z80* cpu = nullptr;
+    SpectrumTape* tape = nullptr;
+    SpecKeyboard* kbd = nullptr;
+    MachineDescriptor* desc = nullptr;
+    bool is128 = false;
+    const char* name() const override { return "Spectrum"; }
+    uint32_t baseAddr() const override { return 0; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override {}
+    void tick(uint64_t) override {}
 };
 
 // The ULA as the frontends find it (video and sound)
@@ -628,14 +650,18 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->displayName = model == Model::S48 ? "ZX Spectrum 48K" : model == Model::S128 ? "ZX Spectrum 128K" : "ZX Spectrum +2";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {};
     desc->clockHz = tim.cpuHz;
 
     auto* cpu = new Z80();
     auto* kbd = new SpecKeyboard();
     auto* ula = new SpecUla(tim, mem);
     auto* bus = new SpecBus(mem, ula, cpu);
-    auto* iobus = new SpecIo(mem, ula, kbd, cpu);
+    auto* tape = new SpectrumTape(tim.cpuHz);
+    tape->set48k(!is128);
+    auto* iobus = new SpecIo(mem, ula, kbd, cpu, tape);
+    auto* parts = new SpecParts();
+    parts->mem = mem; parts->ula = ula; parts->cpu = cpu; parts->tape = tape; parts->kbd = kbd;
+    parts->desc = desc; parts->is128 = is128;
     auto* video = new UlaHandle(ula);
     kbd->peek = [mem](uint16_t a) { return mem->read(a); };
     kbd->poke = [mem](uint16_t a, uint8_t v) { if (mem->bankAt(a) >= 0) mem->ram[(size_t)mem->bankAt(a) * 0x4000 + (a & 0x3FFF)] = v; };
@@ -651,7 +677,12 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->ioRegistry = io;
     io->registerHandler(video);
     io->registerHandler(kbd);
-    desc->deleters.push_back([video, kbd, ula, mem]() { delete video; delete kbd; delete ula; delete mem; });
+    io->registerHandler(tape);
+    io->registerHandler(parts);
+    desc->deleters.push_back([video, kbd, ula, mem, tape, parts]() {
+        delete video; delete kbd; delete ula; delete mem; delete tape; delete parts;
+    });
+    desc->uiPanes = {"tape"};
 
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"escape"}, "BREAK: Caps Shift + Space (stops a BASIC program)."}};
@@ -681,14 +712,31 @@ MachineDescriptor* create(Model model, std::string* err) {
     // Each ROM's key-read point, for typed text
     std::vector<std::pair<int, bool>> keyRead;
     for (const auto& r : mem->roms) { bool tok = false; int pc = keyReadPoint(r, tok); keyRead.push_back({pc, tok}); }
-    desc->schedulerStep = [cpu, ula, kbd, tim, mem, keyRead](MachineDescriptor&) -> int {
-        if (kbd->typing() && cpu->pc() < 0x4000) {
-            const auto& k = keyRead[(size_t)mem->rom];
-            if ((int)cpu->pc() == k.first) kbd->atKeyRead(k.second);
+    // The tape traps, in the 48 BASIC ROM (Fuse trap_check_rom: LD-BYTES's
+    // RET NZ at $056B, SA-BYTES's EX AF,AF' at $04D0)
+    std::vector<bool> tapeRom;
+    for (const auto& r : mem->roms) tapeRom.push_back(r[0x056B] == 0xC0 && r[0x04D0] == 0x08);
+    desc->schedulerStep = [cpu, ula, kbd, tim, mem, keyRead, tape, tapeRom](MachineDescriptor&) -> int {
+        const uint16_t pc = (uint16_t)cpu->pc();
+        if (pc < 0x4000) {
+            if (kbd->typing()) {
+                const auto& k = keyRead[(size_t)mem->rom];
+                if ((int)pc == k.first) kbd->atKeyRead(k.second);
+            }
+            if ((pc == 0x056B || pc == 0x04D0) && tapeRom[(size_t)mem->rom]) {
+                auto rd = [mem](uint16_t a) { return mem->read(a); };
+                auto wr = [mem](uint16_t a, uint8_t v) {
+                    const int b = mem->bankAt(a);
+                    if (b >= 0) mem->ram[(size_t)b * 0x4000 + (a & 0x3FFF)] = v;
+                };
+                if (pc == 0x056B && tape->mounted()) tape->trapLoad(*cpu, rd, wr);
+                else if (pc == 0x04D0) tape->trapSave(*cpu, rd);
+            }
         }
         // /INT is held for the first 32 (36) T-states of the frame
         cpu->setIrqLine(ula->ft(cpu->cycles()) < tim.interruptLength);
         const int c = cpu->step();
+        if (tape->playing()) tape->advance(cpu->cycles());
         if (ula->ft(cpu->cycles()) >= tim.frame()) {
             ula->endFrame();
         }
@@ -696,6 +744,215 @@ MachineDescriptor* create(Model model, std::string* err) {
     };
     if (desc->onReset) desc->onReset(*desc);
     return desc;
+}
+
+
+// ---------------------------------------------------------------------------
+// Loaders: tapes (mount, reset, LOAD ""), snapshots (.sna, .z80 v1-v3; the
+// formats as libspectrum's snapshot readers take them)
+// ---------------------------------------------------------------------------
+namespace {
+
+SpecParts* partsOf(MachineDescriptor* m) {
+    if (!m || !m->ioRegistry) return nullptr;
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    for (auto* h : hs) if (auto* p = dynamic_cast<SpecParts*>(h)) return p;
+    return nullptr;
+}
+
+uint16_t w16(const std::vector<uint8_t>& b, size_t at) { return (uint16_t)(b[at] | b[at + 1] << 8); }
+
+void putBank(Memory* mem, int bank, const uint8_t* src) { std::memcpy(mem->bank(bank), src, 0x4000); }
+
+// The registers both formats hold, and the state around them
+void startFrom(SpecParts* p, uint8_t border, uint8_t port7ffd) {
+    p->mem->port7ffd = p->is128 ? port7ffd : 0;
+    p->mem->map();
+    p->ula->reset(p->cpu->cycles());
+    p->ula->out(p->cpu->cycles(), border & 7);
+    p->tape->stop();
+}
+
+bool loadSna(SpecParts* p, const std::vector<uint8_t>& b, std::string& err) {
+    const bool snap128 = b.size() == 131103 || b.size() == 147487;
+    if (b.size() != 49179 && !snap128) { err = "not a .sna snapshot (wrong size)"; return false; }
+    if (snap128 && !p->is128) { err = "a 128K snapshot needs spectrum128"; return false; }
+    Z80& c = *p->cpu;
+    c.reset();
+    c.regWrite(Z80::R_I, b[0]);
+    c.regWrite(Z80::R_HL2, w16(b, 1)); c.regWrite(Z80::R_DE2, w16(b, 3));
+    c.regWrite(Z80::R_BC2, w16(b, 5)); c.regWrite(Z80::R_AF2, w16(b, 7));
+    c.regWrite(Z80::R_HL, w16(b, 9)); c.regWrite(Z80::R_DE, w16(b, 11)); c.regWrite(Z80::R_BC, w16(b, 13));
+    c.regWrite(Z80::R_IY, w16(b, 15)); c.regWrite(Z80::R_IX, w16(b, 17));
+    const bool iff = b[19] & 0x04;
+    c.regWrite(Z80::R_IFF, iff ? 3 : 0);
+    c.regWrite(Z80::R_R, b[20]);
+    c.regWrite(Z80::R_AF, w16(b, 21));
+    uint16_t sp = w16(b, 23);
+    c.regWrite(Z80::R_IM, b[25] & 3);
+    Memory* mem = p->mem;
+    uint8_t port = 0;
+    if (!snap128) {
+        if (p->is128) port = 0x30;                       // 48K mode: ROM 1, locked
+        putBank(mem, 5, &b[27]); putBank(mem, 2, &b[27 + 0x4000]); putBank(mem, 0, &b[27 + 0x8000]);
+        startFrom(p, b[26], port);
+        // The PC is on the stack (the snapshot was taken in an interrupt)
+        const uint16_t pc = (uint16_t)(mem->read(sp) | mem->read((uint16_t)(sp + 1)) << 8);
+        sp = (uint16_t)(sp + 2);
+        c.regWrite(Z80::R_SP, sp);
+        c.setPc(pc);
+        return true;
+    }
+    port = b[49181];
+    const int paged = port & 7;
+    putBank(mem, 5, &b[27]); putBank(mem, 2, &b[27 + 0x4000]); putBank(mem, paged, &b[27 + 0x8000]);
+    size_t at = 49183;
+    for (int bank = 0; bank < 8; ++bank) {
+        if (bank == 5 || bank == 2 || bank == paged) continue;
+        if (at + 0x4000 > b.size()) break;
+        putBank(mem, bank, &b[at]);
+        at += 0x4000;
+    }
+    startFrom(p, b[26], port);
+    c.regWrite(Z80::R_SP, sp);
+    c.setPc(w16(b, 49179));
+    return true;
+}
+
+// .z80 RLE: ED ED nn bb is nn copies of bb
+std::vector<uint8_t> unrle(const uint8_t* src, size_t n, size_t want) {
+    std::vector<uint8_t> out;
+    out.reserve(want);
+    for (size_t i = 0; i < n && out.size() < want;) {
+        if (i + 3 < n && src[i] == 0xED && src[i + 1] == 0xED) {
+            out.insert(out.end(), src[i + 2], src[i + 3]);
+            i += 4;
+        } else {
+            out.push_back(src[i++]);
+        }
+    }
+    out.resize(want, 0);
+    return out;
+}
+
+bool loadZ80(SpecParts* p, const std::vector<uint8_t>& b, std::string& err) {
+    if (b.size() < 30) { err = "not a .z80 snapshot"; return false; }
+    Z80& c = *p->cpu;
+    uint8_t flags = b[12] == 0xFF ? 1 : b[12];
+    uint16_t pc = w16(b, 6);
+    Memory* mem = p->mem;
+    bool snap128 = false;
+    uint8_t port = 0;
+    size_t at = 30;
+    std::vector<std::pair<int, std::vector<uint8_t>>> banks;    // RAM bank, contents
+    if (pc) {                                                    // version 1: 48K
+        std::vector<uint8_t> ram = (flags & 0x20) ? unrle(&b[30], b.size() - 30, 0xC000)
+                                                  : std::vector<uint8_t>(b.begin() + 30, b.end());
+        ram.resize(0xC000, 0);
+        banks.push_back({5, std::vector<uint8_t>(ram.begin(), ram.begin() + 0x4000)});
+        banks.push_back({2, std::vector<uint8_t>(ram.begin() + 0x4000, ram.begin() + 0x8000)});
+        banks.push_back({0, std::vector<uint8_t>(ram.begin() + 0x8000, ram.end())});
+    } else {                                                     // versions 2 and 3
+        if (b.size() < 34) { err = "truncated .z80 snapshot"; return false; }
+        const size_t extra = w16(b, 30);
+        if (32 + extra > b.size()) { err = "truncated .z80 snapshot"; return false; }
+        pc = w16(b, 32);
+        const int hw = b[34];
+        snap128 = extra == 23 ? (hw == 3 || hw == 4) : (hw >= 4 && hw <= 6) || hw == 12;
+        if (extra == 23 ? hw > 4 : (hw > 6 && hw != 12)) { err = "unsupported .z80 hardware (+3, Timex or another)"; return false; }
+        port = b[35];
+        at = 32 + extra;
+        while (at + 3 <= b.size()) {
+            const size_t len = w16(b, at);
+            const int page = b[at + 2];
+            at += 3;
+            std::vector<uint8_t> data;
+            if (len == 0xFFFF) {
+                if (at + 0x4000 > b.size()) break;
+                data.assign(b.begin() + (long)at, b.begin() + (long)(at + 0x4000));
+                at += 0x4000;
+            } else {
+                if (at + len > b.size()) break;
+                data = unrle(&b[at], len, 0x4000);
+                at += len;
+            }
+            int bank = -1;
+            if (snap128) { if (page >= 3 && page <= 10) bank = page - 3; }
+            else if (page == 8) bank = 5;
+            else if (page == 4) bank = 2;
+            else if (page == 5) bank = 0;
+            if (bank >= 0) banks.push_back({bank, std::move(data)});
+        }
+    }
+    if (snap128 && !p->is128) { err = "a 128K snapshot needs spectrum128"; return false; }
+    c.reset();
+    c.regWrite(Z80::R_AF, (uint32_t)(b[0] << 8 | b[1]));
+    c.regWrite(Z80::R_BC, w16(b, 2)); c.regWrite(Z80::R_HL, w16(b, 4));
+    c.regWrite(Z80::R_SP, w16(b, 8));
+    c.regWrite(Z80::R_I, b[10]);
+    c.regWrite(Z80::R_R, (uint32_t)((b[11] & 0x7F) | ((flags & 1) << 7)));
+    c.regWrite(Z80::R_DE, w16(b, 13));
+    c.regWrite(Z80::R_BC2, w16(b, 15)); c.regWrite(Z80::R_DE2, w16(b, 17)); c.regWrite(Z80::R_HL2, w16(b, 19));
+    c.regWrite(Z80::R_AF2, (uint32_t)(b[21] << 8 | b[22]));
+    c.regWrite(Z80::R_IY, w16(b, 23)); c.regWrite(Z80::R_IX, w16(b, 25));
+    c.regWrite(Z80::R_IFF, (b[27] ? 1 : 0) | (b[28] ? 2 : 0));
+    c.regWrite(Z80::R_IM, b[29] & 3);
+    for (auto& [bank, data] : banks) putBank(mem, bank, data.data());
+    startFrom(p, (uint8_t)((flags >> 1) & 7), snap128 ? port : (p->is128 ? 0x30 : 0));
+    c.setPc(pc);
+    return true;
+}
+
+class SnapshotLoader : public IImageLoader {
+public:
+    bool canLoad(const std::string& path) const override {
+        const std::string e = diskfile::imageExt(path);
+        return e == "sna" || e == "z80";
+    }
+    bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
+        SpecParts* p = partsOf(m);
+        if (!p) return false;
+        std::vector<uint8_t> b;
+        std::string err;
+        if (!diskfile::read(path, b, &err)) return false;
+        const bool ok = diskfile::imageExt(path) == "sna" ? loadSna(p, b, err) : loadZ80(p, b, err);
+        if (!ok) std::fprintf(stderr, "%s: %s\n", path.c_str(), err.c_str());
+        return ok;
+    }
+    const char* name() const override { return "ZX Spectrum Snapshot Loader"; }
+};
+
+// A tape: mounted, the machine reset, and loading started as a user would
+// (48K: LOAD ""; 128K: the menu's Tape Loader)
+class TapeLoader : public IImageLoader {
+public:
+    bool canLoad(const std::string& path) const override {
+        const std::string e = diskfile::imageExt(path);
+        return e == "tap" || e == "tzx";
+    }
+    bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
+        SpecParts* p = partsOf(m);
+        if (!p || !p->tape->mountTape(path)) return false;
+        if (m->onReset) m->onReset(*m);
+        p->kbd->enqueueText(p->is128 ? "\n" : "LOAD \"\"\n");
+        return true;
+    }
+    const char* name() const override { return "ZX Spectrum Tape Loader"; }
+};
+
+}  // namespace
+
+IImageLoader* createSnapshotLoader() { return new SnapshotLoader(); }
+IImageLoader* createTapeLoader() { return new TapeLoader(); }
+
+bool loadSnapshot(MachineDescriptor* m, const std::vector<uint8_t>& bytes, bool z80, std::string* err) {
+    SpecParts* p = partsOf(m);
+    if (!p) { if (err) *err = "not a ZX Spectrum"; return false; }
+    std::string e;
+    const bool ok = z80 ? loadZ80(p, bytes, e) : loadSna(p, bytes, e);
+    if (!ok && err) *err = e;
+    return ok;
 }
 
 }  // namespace spectrum

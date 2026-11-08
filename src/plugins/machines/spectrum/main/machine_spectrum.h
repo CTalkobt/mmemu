@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
+
+class IImageLoader;
 
 class MachineDescriptor;
 
@@ -18,5 +22,12 @@ enum class Model { S48, S128, Plus2 };
  * roms/spectrum/. See doc/README-SPECTRUM.md.
  */
 MachineDescriptor* create(Model model, std::string* err = nullptr);
+
+/** `load` for snapshots: `.sna` (48K, 128K) and `.z80` (versions 1-3, 48K and 128K). */
+IImageLoader* createSnapshotLoader();
+/** `load` for tapes: `.tap` and `.tzx`, mounted, the machine reset, loading started. */
+IImageLoader* createTapeLoader();
+/** A snapshot into a running Spectrum (tests). */
+bool loadSnapshot(MachineDescriptor* m, const std::vector<uint8_t>& bytes, bool z80, std::string* err = nullptr);
 
 }  // namespace spectrum

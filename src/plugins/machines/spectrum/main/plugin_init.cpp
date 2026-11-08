@@ -2,8 +2,13 @@
 #include "machine_spectrum.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "util/logging.h"
+#include "libcore/main/image_loader.h"
 
 static const char* s_deps[] = { "z80", nullptr };
+
+static IImageLoader* makeSnapshotLoader() { return spectrum::createSnapshotLoader(); }
+static IImageLoader* makeTapeLoader() { return spectrum::createTapeLoader(); }
+static ImageLoaderPluginInfo s_loaders[] = { { makeSnapshotLoader }, { makeTapeLoader } };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
@@ -16,7 +21,7 @@ static SimPluginManifest s_manifest = {
     0, nullptr,     // toolchains
     0, nullptr,     // devices
     0, nullptr,     // machines (registered below)
-    0, nullptr,     // loaders
+    2, s_loaders,   // loaders
     0, nullptr      // cartridges
 };
 

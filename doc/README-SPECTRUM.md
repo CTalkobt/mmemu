@@ -74,6 +74,33 @@ The 40 keys are on 8 half-rows. Host keys map by position:
 
 The host's first joystick or gamepad is the Kempston at port `$1F`.
 
+## Tape
+
+`.tap` and `.tzx` files, plain, gzipped or in a zip, after Fuse's `tape.c`, `tape_traps.c` and `loader.c` and libspectrum's tape readers. They go in through CLI `tape mount|play|stop|rewind`, the GUI tape pane, or `load` (see below).
+- **Pulses:** the tape plays as edges on EAR (bit 6 of port `$FE`), in TZX's 3.5 MHz T-states. On the 128K they are scaled to its clock, as Fuse does.
+- **TZX blocks:**
+  - Played: standard (`0x10`) and turbo (`0x11`) data, pure tone (`0x12`), pulse sequence (`0x13`), pure data (`0x14`) and direct recording (`0x15`).
+  - Tape control: pause, and stop the tape (`0x20`); stop if 48K (`0x2A`); set level (`0x2B`); loops (`0x24`/`0x25`).
+  - Skipped: text, archive and other information blocks; the CSW and generalized-data blocks (`0x18`, `0x19`) are skipped too.
+- **`.tap`:** each block is a standard block with a 1-second pause.
+- **The ROM traps:** these act when the 48 BASIC ROM is paged, which Fuse's `trap_check_rom` checks by its bytes.
+  - **LD-BYTES:** at the `RET NZ` at `$056B`, a standard block at the tape's position is loaded, or verified, straight into memory. The registers and flags are left as the ROM leaves them (Fuse `tape_trap_load_block`), and it returns through `$05E2`.
+  - **SA-BYTES:** at the `EX AF,AF'` at `$04D0`, the block being saved (flag, data, parity) is kept, and it returns through `$053E`. `tape save <file>.tap` writes the blocks. `tape record` starts a new set.
+  - **Not trapped:** a non-standard block, or a tape already playing, is read by the ROM from the pulses.
+- **Loader detection** (Fuse `loader.c`): reads of port `$FE` in a tight loop, less than 500 T-states apart with B counting by one, start the tape. Ten reads that look like something else stop it. Turbo loaders therefore load without pressing play.
+
+## Snapshots and `load`
+
+CLI `load`, `--mount` and MCP take these:
+
+| File | What happens |
+|------|--------------|
+| `.tap`, `.tzx` | Mounted. The machine is reset and loading starts: `LOAD ""` on the 48K, the menu's Tape Loader on the 128K. |
+| `.sna` | 48K (49179 bytes): the registers, RAM and border, with PC taken from the stack. 128K (131103 or 147487 bytes): also `$7FFD` and every bank. |
+| `.z80` | Versions 1 (48K, RLE-compressed), 2 and 3: 48K and 128K/+2 pages, `$7FFD`, the border. The +3 and Timex models are refused. |
+
+A 48K snapshot runs on the 128K in 48K mode: `$7FFD` = `$30` (ROM 1, locked). A 128K snapshot is refused on the 48K.
+
 ## Tests
 
 `bin/mmemu-test "spectrum*"`:
@@ -83,13 +110,15 @@ The host's first joystick or gamepad is the Kempston at port `$1F`.
 - `spectrum48_contention` (NOP timings across a screen line)
 - `spectrum48_floating_bus`
 - `spectrum128_boots_and_pages` (the menu, then 128 BASIC through the menu, then RAM banks at `$C000` through `$7FFD`)
+- `spectrum48_tape_trap_save_load` (SAVE, then LOAD "" through the traps)
+- `spectrum48_tape_pulses_load` (the same tape read by the ROM from the pulses)
+- `spectrum_tzx_blocks`
+- `spectrum48_sna_snapshot`
+- `spectrum_z80_snapshots` (version 1 compressed, version 3 128K)
 
 `z80_fuse_core_tests` checks the Z80's per-cycle timing against Fuse's core tests.
 
 ## Not yet
 
-- **Tape:** `.tap`/`.tzx` loading and saving.
-- **Snapshots:** `.sna`, `.z80`.
 - **Sound:** the 128K's AY-3-8912.
-
-These follow in #242.
+- **Saving:** snapshots, and recording a tape's pulses from MIC. A custom saver's blocks are not kept; the ROM's SAVE goes through the trap.

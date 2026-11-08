@@ -133,6 +133,7 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
 
 PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
+	src/plugins/machines/spectrum/main/spectrum_tape.cpp \
 	src/plugins/machines/spectrum/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
@@ -471,6 +472,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/bbc/test/test_bbc_tape.cpp \
 	src/plugins/machines/bbc/test/test_electron.cpp \
 	src/plugins/machines/spectrum/test/test_spectrum.cpp \
+	src/plugins/machines/spectrum/test/test_spectrum_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -587,6 +589,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/bbc/main/machine_electron.o \
 	src/plugins/devices/bbc_video/main/bbc_video.o \
 	src/plugins/machines/spectrum/main/machine_spectrum.o \
+	src/plugins/machines/spectrum/main/spectrum_tape.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \

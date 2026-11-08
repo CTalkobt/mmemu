@@ -8,6 +8,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### ZX Spectrum
+- **Spectrum tapes and snapshots** (#242), after Fuse and libspectrum.
+  - **Tapes:** `.tap` and `.tzx` (also gzipped or zipped) are played as EAR pulses. TZX blocks 0x10-0x15, pause/stop, set level and loops are supported; information blocks are skipped. They go through CLI `tape`, the GUI tape pane and `load`.
+  - **ROM traps:** LD-BYTES and SA-BYTES traps load and save standard blocks at once, with the registers as the ROM leaves them. `tape save` writes SAVEd blocks as a `.tap`.
+  - **Loader detection:** turbo loaders start and stop the tape themselves, as in Fuse's `loader.c`.
+  - **Snapshots:** `load` takes `.sna` (48K, 128K) and `.z80` (versions 1-3, 48K and 128K/+2); a `.tap`/`.tzx` resets the machine and starts loading.
+  - **Tests:** `spectrum48_tape_trap_save_load`, `spectrum48_tape_pulses_load`, `spectrum_tzx_blocks`, `spectrum48_sna_snapshot`, `spectrum_z80_snapshots`. libspectrum's malformed test tapes mount without crashing.
 - **ZX Spectrum 48K, 128K and +2** (#242): profiles `spectrum48`, `spectrum128`, `spectrumplus2`, in `mmemu-plugin-spectrum.so`, after Fuse (GPL-2.0-or-later) and libspectrum's timings. See `doc/README-SPECTRUM.md`.
   - **Memory:** the 16 KB ROM and 48 KB of RAM. The 128K and +2 add eight RAM banks and two ROMs, paged through `$7FFD` (with the screen in bank 5 or 7, and the lock bit). ROMs from Fuse (Amstrad permits their distribution) are in `roms/spectrum/`.
   - **Contention:** memory and I/O contention in Fuse's 6,5,4,3,2,1,0,0 pattern, applied per Z80 bus cycle. Frames are 69888 T-states (48K) or 70908 (128K), with /INT held for 32 or 36 T-states.
