@@ -1,4 +1,4 @@
-// BBC Micro Model B, after b-em (GPL-2.0-or-later): 6502.c (the memory map,
+// BBC Micro Model A and B, after b-em (GPL-2.0-or-later): 6502.c (the memory map,
 // the 1 MHz bus), sysvia.c (the slow data bus, IC32), keyboard.c (the
 // matrix), mem.c (sideways ROMs).
 
@@ -262,6 +262,10 @@ public:
     }
 
     void setRom(int slot, std::vector<uint8_t> rom) { m_roms[slot & 15] = std::move(rom); }
+    /** Model A: 16 KB of RAM seen at &0000 and &4000 (A14 not decoded: b-em
+     *  maps both to the top half, where the video finds its screen); no
+     *  User VIA, ADC or disc */
+    void setModelA(bool a) { m_modelA = a; }
 
     void powerOn() {
         std::fill(m_ram.begin(), m_ram.end(), 0);
@@ -271,6 +275,9 @@ public:
         m_tape->reset();
         m_sdb = m_sdbOut = 0;
         m_cycles = m_devCycle = 0;
+        m_adcStatus = 0x40;
+        m_adcHigh = m_adcLow = 0;
+        m_adcLeft = 0;
         m_sysvia.reset();
         m_uservia.reset();
         m_video->reset();
@@ -280,6 +287,10 @@ public:
     }
 
     void setFire(int n, bool down) { m_fire[n & 1] = down; }
+    /** An analogue channel (0-3: joystick 1 X, Y, joystick 2 X, Y), 0-65535:
+     *  high for left and up, as the BBC's sticks read */
+    void setAxis(int ch, uint16_t v) { m_axis[ch & 3] = v; }
+    uint8_t adcStatus() const { return m_adcStatus; }
 
     // Instruction framing: accesses are counted so I/O happens on its cycle
     void begin() { m_access = 0; m_stretch = 0; }
@@ -311,7 +322,7 @@ public:
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t a = addr & 0xFFFF;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
-        if (a < 0x8000) m_ram[a] = v;
+        if (a < 0x8000) m_ram[ramIndex(a)] = v;
         else if (a >= 0xFC00 && a < 0xFF00) io(a, &v);
         ++m_access;
     }
@@ -330,8 +341,10 @@ public:
     BbcVia& uservia() { return m_uservia; }
 
 private:
+    uint16_t ramIndex(uint16_t a) const { return m_modelA ? (uint16_t)(0x4000 | (a & 0x3FFF)) : a; }
+
     uint8_t peekMem(uint16_t a) const {
-        if (a < 0x8000) return m_ram[a];
+        if (a < 0x8000) return m_ram[ramIndex(a)];
         if (a < 0xC000) {
             const auto& r = m_roms[m_romsel];
             return r.empty() ? 0 : r[(a - 0x8000) % r.size()];
@@ -350,6 +363,7 @@ private:
         m_sn->advance(d);
         m_fdc->clock(d);
         m_tape->clock(d);
+        if (m_adcLeft > 0 && (m_adcLeft -= (int64_t)d) <= 0) adcDone();
         if (onIrq) onIrq(irqLine());
     }
 
@@ -386,9 +400,15 @@ private:
                 if (wr) m_sysvia.write(a, *wr); else r = m_sysvia.read(a);
                 break;
             case 0xFE60:                                        // User VIA
+                if (m_modelA) break;
                 if (wr) m_uservia.write(a, *wr); else r = m_uservia.read(a);
                 break;
+            case 0xFEC0:                                        // uPD7002 ADC
+                if (m_modelA) break;
+                if (wr) adcWrite(a, *wr); else r = adcRead(a);
+                break;
             case 0xFE80:                                        // 8271 disc controller
+                if (m_modelA) break;
                 if (wr) m_fdc->write(a, *wr); else r = m_fdc->read(a);
                 break;
             default:
@@ -396,6 +416,33 @@ private:
         }
         if (onIrq) onIrq(irqLine());
         return wr ? 0 : r;
+    }
+
+    // The uPD7002 ADC (b-em adc.c): writing &FEC0 starts a conversion of the
+    // channel in bits 0-1, 10 ms for 10 bits (bit 3) else 4 ms; the status
+    // has busy (bit 7), not-busy (bit 6) and the top two bits of the result;
+    // end of conversion is the System VIA's CB1 (low when done)
+    void adcWrite(uint16_t a, uint8_t v) {
+        if (a & 3) return;
+        m_adcLeft = (int64_t)((v & 8) ? 156 : 62) * 128;
+        m_adcStatus = (uint8_t)((v & 0xF) | 0x80);
+        m_sysvia.setCb1(1);
+    }
+    uint8_t adcRead(uint16_t a) const {
+        switch (a & 3) {
+            case 0: return m_adcStatus;
+            case 1: return m_adcHigh;
+            case 2: return m_adcLow;
+        }
+        return 0x40;
+    }
+    void adcDone() {
+        m_adcLeft = 0;
+        const uint16_t v = m_axis[m_adcStatus & 3];
+        m_adcStatus = (uint8_t)((m_adcStatus & 0xF) | 0x40 | ((v & 0xC000) >> 10));
+        m_adcHigh = (uint8_t)(v >> 8);
+        m_adcLow = (uint8_t)(v & 0xFF);
+        m_sysvia.setCb1(0);
     }
 
     bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || m_acia.irq(); }
@@ -454,25 +501,30 @@ private:
     uint8_t m_ic32 = 0, m_sdb = 0, m_sdbOut = 0;
     int m_keyRow = 0, m_keyCol = 0, m_cb2 = 0;
     bool m_fire[2] = {};
+    bool m_modelA = false;
+    uint16_t m_axis[4] = {0x7FF8, 0x7FF8, 0x7FF8, 0x7FF8};
+    uint8_t m_adcStatus = 0x40, m_adcHigh = 0, m_adcLow = 0;
+    int64_t m_adcLeft = 0;
     uint64_t m_cycles = 0, m_devCycle = 0;
     int m_access = 0, m_stretch = 0;
 };
 
 }  // namespace
 
-MachineDescriptor* create(Model, std::string* err) {
+MachineDescriptor* create(Model model, std::string* err) {
+    const bool modelA = model == Model::A;
     std::vector<uint8_t> os, basic, dfs;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
     // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
-    if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
+    if (!modelA && !loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = "bbcb";
-    desc->displayName = "BBC Micro Model B";
+    desc->machineId = modelA ? "bbca" : "bbcb";
+    desc->displayName = modelA ? "BBC Micro Model A" : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
-    desc->uiPanes = {"drive", "tape"};
+    desc->uiPanes = modelA ? std::vector<std::string>{"tape"} : std::vector<std::string>{"drive", "tape"};
     desc->clockHz = CPU_HZ;
 
     auto* video = new BbcVideo();
@@ -485,8 +537,9 @@ MachineDescriptor* create(Model, std::string* err) {
     auto* acia = new Acia6850();
     auto* tape = new BbcTape(acia);
     auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc, *acia, tape);
+    bus->setModelA(modelA);
     bus->setRom(15, std::move(basic));
-    bus->setRom(14, std::move(dfs));            // Acorn DFS 0.90 for the 8271
+    if (!modelA) bus->setRom(14, std::move(dfs));   // Acorn DFS 0.90 for the 8271
     desc->buses.push_back({"system", bus});
     auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
@@ -500,7 +553,7 @@ MachineDescriptor* create(Model, std::string* err) {
     io->registerHandler(display);
     io->registerHandler(kbd);
     io->registerHandler(sound);
-    io->registerHandler(fdc);
+    if (!modelA) io->registerHandler(fdc);
     io->registerHandler(tape);
     desc->deleters.push_back([video, display, kbd, sn, sound, fdc, tape, acia]() {
         delete display; delete video; delete kbd; delete sound; delete sn; delete fdc;
@@ -513,10 +566,16 @@ MachineDescriptor* create(Model, std::string* err) {
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"break"}, "BREAK: the 6502 restarts (a soft reset; the program in memory stays)."}};
 
-    // Joystick fire buttons on the System VIA (the analogue sticks need the ADC: not yet)
-    desc->joystickPorts = 2;
+    // Joysticks: the fire buttons on the System VIA, the sticks on the ADC
+    desc->joystickPorts = modelA ? 0 : 2;          // the Model A has no analogue port
     desc->primaryJoystickPort = 0;
-    desc->onJoystick = [bus](int port, uint8_t bits) { bus->setFire(port, !(bits & 0x10)); };
+    // Digital sticks drive the analogue channels to their ends
+    desc->onJoystick = [bus](int port, uint8_t bits) {
+        const int p = (port & 1) * 2;
+        bus->setAxis(p, !(bits & 0x04) ? 0xFFF0 : !(bits & 0x08) ? 0x0000 : 0x7FF8);
+        bus->setAxis(p + 1, !(bits & 0x01) ? 0xFFF0 : !(bits & 0x02) ? 0x0000 : 0x7FF8);
+        bus->setFire(port, !(bits & 0x10));
+    };
 
     desc->onReset = [bus, io, cpu](MachineDescriptor&) {     // power on
         bus->powerOn();

@@ -8,6 +8,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **BBC Micro joysticks and Model A** (#13):
+  - **ADC:** the uPD7002 at `&FEC0` (b-em `adc.c`): conversions of 4 or 10 ms, ending on the System VIA's CB1. The frontends' joysticks drive its channels, so `ADVAL(1)` and `ADVAL(2)` read the sticks; the fire buttons are on the System VIA as before.
+  - **Model A:** new profile `bbca`. 16 KB seen at `&0000` and `&4000`, OS 1.20 and BASIC 2, and no User VIA, ADC or disc.
+  - **Tests:** `bbc_joystick_adc`, `bbc_model_a`.
 - **BBC Micro cassette** (#13):
   - **Tapes:** UEF tapes, gzipped or plain, after b-em (`uef.c`, `tape.c`, `serial.c`, `acia.c`). Mount with CLI `tape mount` or the GUI tape pane (`*.uef` in its file dialogs).
   - **Serial ULA:** the motor relay and the RS423/cassette switch, at `&FE10`.

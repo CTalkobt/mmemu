@@ -76,8 +76,8 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Hardware**: MOS 6502 at 1.02 MHz, 48 KB RAM and a 16 KB language card, the soft switches, keyboard latch, speaker, paddles and buttons, the floating bus, the IIe's 64 KB aux RAM, 80 columns and double hi-res, the NTSC video (text, lo-res, hi-res, mixed) and the Disk II (slot 6, two drives, `.dsk`/`.do`/`.po`/`.nib`/`.woz`, read and write) after AppleWin. See `doc/README-APPLE2.md`.
 
 ### BBC Micro
-- **Profiles**: `bbcb` (Model B, OS 1.20, BASIC 2).
-- **Hardware**: MOS 6502 at 2 MHz, 32 KB RAM, sideways ROMs, the 6845, video ULA and SAA5050 teletext (Modes 0-7), the System and User VIAs, the keyboard matrix on the slow data bus, the SN76489, the 1 MHz bus, the 8271 with Acorn DFS and `.ssd`/`.dsd` discs, and UEF cassettes, after b-em. See `doc/README-BBC.md`.
+- **Profiles**: `bbca` (Model A, 16 KB), `bbcb` (Model B, OS 1.20, DFS, BASIC 2).
+- **Hardware**: MOS 6502 at 2 MHz, 32 KB RAM, sideways ROMs, the 6845, video ULA and SAA5050 teletext (Modes 0-7), the System and User VIAs, the keyboard matrix on the slow data bus, the SN76489, the 1 MHz bus, the 8271 with Acorn DFS and `.ssd`/`.dsd` discs, UEF cassettes and the ADC (analogue joysticks), after b-em. See `doc/README-BBC.md`.
 
 ### Atari 2600
 - **Profiles**: `atari2600`, `atari2600-pal`.

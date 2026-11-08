@@ -20,12 +20,17 @@ static SimPluginManifest s_manifest = {
     0, nullptr      // cartridges
 };
 
-extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
-    MachineRegistry::instance().registerMachine("bbcb", []() -> MachineDescriptor* {
+static void reg(const char* id, bbc::Model model, const char* desc) {
+    MachineRegistry::instance().registerMachine(id, [model, id]() -> MachineDescriptor* {
         std::string err;
-        MachineDescriptor* m = bbc::create(bbc::Model::B, &err);
-        if (!m) LogRegistry::instance().getLogger("bbc")->error("bbcb: {}", err);
+        MachineDescriptor* m = bbc::create(model, &err);
+        if (!m) LogRegistry::instance().getLogger("bbc")->error("{}: {}", id, err);
         return m;
-    }, "BBC Micro Model B (OS 1.20, BASIC 2)");
+    }, desc);
+}
+
+extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
+    reg("bbca", bbc::Model::A, "BBC Micro Model A (16 KB, OS 1.20, BASIC 2)");
+    reg("bbcb", bbc::Model::B, "BBC Micro Model B (32 KB, OS 1.20, DFS 0.90, BASIC 2)");
     return &s_manifest;
 }

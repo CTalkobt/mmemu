@@ -13,9 +13,10 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 
 | Profile | Machine |
 |---------|---------|
+| `bbca` | BBC Micro Model A: 16 KB, OS 1.20 and BASIC 2; no User VIA, ADC or disc |
 | `bbcb` | BBC Micro Model B: OS 1.20, Acorn DFS 0.90 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
 
-The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM.
+The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM; the Model A's 16 KB is seen at both `&0000` and `&4000`, as b-em maps it (A14 is not decoded; the screen is at the top).
 
 ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good faith; they are not under its GPL.
 - `os12.rom`: OS 1.20, 16 KB at `&C000`.
@@ -39,6 +40,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 | `&FE40-&FE5F` | System VIA |
 | `&FE60-&FE7F` | User VIA |
 | `&FE80-&FE9F` | 8271 disc controller (status/command, result/parameter, reset, data) |
+| `&FEC0-&FEDF` | uPD7002 ADC (the analogue port) |
 | `&FF00-&FFFF` | OS ROM |
 
 Other SHEILA addresses read `&FE`, as in b-em.
@@ -57,6 +59,15 @@ The System VIA's port A is the slow data bus, shared by the keyboard and the SN7
 | 6-7 | The Caps Lock and Shift Lock LEDs (on when low) |
 
 Port B bits 4 and 5 are the joystick fire buttons, low when pressed.
+
+## Joysticks and the ADC
+
+The analogue port's four channels go through the uPD7002 ADC (b-em `adc.c`):
+- **Channels:** joystick 1's X and Y are channels 0 and 1, and joystick 2's are 2 and 3. A channel reads high when its stick is to the left or up.
+- **Conversions:** writing `&FEC0` starts converting the channel in bits 0-1. A 10-bit conversion (bit 3) takes 10 ms, otherwise 4 ms.
+- **Status:** busy (bit 7), not busy (bit 6), and the result's top two bits. End of conversion is the System VIA's CB1.
+
+The frontends' digital joysticks (ports 0 and 1) drive the channels to their ends and work the fire buttons, so `ADVAL(1)` reads 65520 with the stick left and 0 with it right. The Model A has no analogue port.
 
 CA1 is the 6845's vertical sync and CA2 the keyboard. CB2 latches the light pen on a rising edge.
 
@@ -160,6 +171,8 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 - `bbc_mode1_graphics`: a Mode 1 filled rectangle in the picture.
 - `bbc_typed_text_case`: typed text keeps its case.
 - `bbc_sound_tone`: `SOUND` gives 449.6 Hz on the audio output.
+- `bbc_joystick_adc`: `ADVAL` reads the stick positions and the fire buttons.
+- `bbc_model_a`: the 16K banner, no DFS, and `PAGE`/`HIMEM` (`&E00`, `&3C00`).
 
 `test_bbc_disc.cpp`:
 - `bbc_dfs_image_layout`: where `.ssd` and `.dsd` sectors are in the file.
@@ -172,5 +185,5 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 ## Not yet
 
 - **Storage:** CSW tapes, the RS423 port, the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
-- **Other hardware:** the ADC (analogue joysticks), the Tube, Econet.
-- **Other models:** the Model A, the B+, the Master, and the Electron.
+- **Other hardware:** the Tube, Econet, the printer port.
+- **Other models:** the B+, the Master, and the Electron.
