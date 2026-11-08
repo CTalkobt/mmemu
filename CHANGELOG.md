@@ -8,6 +8,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Apple II
+- **WDC 65C816 core** (#12, for the Apple IIgs): `mmemu-plugin-65816.so`.
+  - **Coverage:** native and emulation modes, every instruction and addressing mode, and decimal mode. Each bus cycle comes in the data sheet's order, including the conditional ones.
+  - **Checked:** all 5,080,400 of Tom Harte's SingleStepTests match on registers, memory, cycle counts and the full sequence of bus accesses. The suite is kept beside the repository.
+  - **Also:** a disassembler, the `raw65816` machine, and an interrupt test. See `doc/README-65816.md`.
 - **Apple IIc** (#12): profile `apple2c`, after MAME's `apple2e.cpp`. It's an enhanced IIe with the IIc's differences:
   - the internal `$C100-$CFFF` ROM is always in;
   - the IOU's switches and interrupts (VBL, mouse);
