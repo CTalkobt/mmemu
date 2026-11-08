@@ -44,3 +44,7 @@ roms/x16
 # Written by tests/45gs02/validate.py (make test)
 /mmsim.dump
 /xmega65.dump
+
+# Apple IIc / IIgs ROMs: local only (Apple copyright); see doc/README-APPLE2.md
+roms/apple2/apple2c-*.rom
+roms/apple2/apple2gs-*.rom

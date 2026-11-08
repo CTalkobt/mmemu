@@ -16,6 +16,7 @@
 #include "plugins/devices/apple2_video/main/apple2_video.h"
 #include "disk2.h"
 #include <algorithm>
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include <cctype>
 #include <cstring>
 #include <deque>
@@ -227,9 +228,9 @@ public:
     // `rom`: 12 KB at $D000 (II/II+), or 16 KB at $C000 (IIe: the internal
     // $C100-$CFFF ROM, then $D000-$FFFF)
     Apple2Bus(std::vector<uint8_t> rom, Apple2Video* video, Apple2Keyboard* kbd, Apple2Speaker* spk,
-              Disk2Card* disk, bool iie, bool enhanced)
+              Disk2Card* disk, bool iie, bool enhanced, bool iic = false)
         : m_rom(std::move(rom)), m_video(video), m_kbd(kbd), m_spk(spk), m_disk(disk),
-          m_iie(iie), m_enhanced(enhanced) {
+          m_iie(iie), m_enhanced(enhanced), m_iic(iic) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.assign(0x10000, 0);
         m_lc.assign(0x4000, 0);
@@ -256,12 +257,25 @@ public:
         m_annunciators = 0;
     }
 
+    // IIc: the serial ports' ACIAs (slots 1 and 2) and the CPU's /IRQ
+    void setAcias(Acia6551* a1, Acia6551* a2) { m_acia[0] = a1; m_acia[1] = a2; }
+    std::function<void(bool)> onIrq;
+
     // Instruction framing: accesses are counted so I/O happens on its cycle
     void begin() { m_access = 0; ++m_instr; }
     void end(int c) {
         m_cycles += (uint64_t)c;
         syncVideo(m_cycles);
         m_spk->advance(m_cycles);
+        if (m_iic) {
+            // The IOU's VBL interrupt: on entering vertical blanking, if enabled
+            const bool vbl = !m_video->vblBar();
+            if (vbl && !m_lastVbl && m_vblMask) m_irqMask |= IRQ_VBL;
+            m_lastVbl = vbl;
+            bool line = m_irqMask != 0;
+            for (Acia6551* a : m_acia) if (a && a->irqAsserted()) line = true;
+            if (onIrq) onIrq(line);
+        }
     }
     uint64_t cycles() const { return m_cycles; }
 
@@ -293,7 +307,7 @@ public:
         if (a < 0xC100) return m_video->floatingBus();
         if (a < 0xD000) {
             const int src = cxSource(a);
-            return src == CX_INTERNAL ? m_rom[a - 0xC000] : src == CX_DISK ? m_disk->rom((uint8_t)a)
+            return src == CX_INTERNAL ? m_rom[romBank() + a - 0xC000] : src == CX_DISK ? m_disk->rom((uint8_t)a)
                                                                            : m_video->floatingBus();
         }
         return highRead(a);
@@ -334,6 +348,12 @@ private:
         m_lcReadRam = false; m_lcBank2 = true; m_lcWriteRam = true; m_lcPrewrite = false;
         m_80store = m_auxRead = m_auxWrite = m_intCxRom = m_altZp = m_slotC3Rom = m_intC8Rom = false;
         m_altChar = false;
+        // IIc IOU (MAME machine_reset): IOUDIS on, interrupts off, ROM bank 0
+        m_iouDis = true;
+        m_vblMask = m_xyMask = m_x0Edge = m_y0Edge = false;
+        m_irqMask = 0;
+        m_romSwitch = false;
+        if (m_iic) m_intCxRom = true;
         m_video->setAltCharSet(false);
         m_vf = Apple2Video::VF_TEXT;
         m_video->setMode(m_vf);
@@ -359,10 +379,12 @@ private:
 
     // $D000-$FFFF: ROM or the language card's RAM (aux with ALTZP)
     uint8_t highRead(uint16_t a) const {
-        if (!m_lcReadRam) return m_rom[a - romBase()];
+        if (!m_lcReadRam) return m_rom[romBank() + a - romBase()];
         return m_altZp ? m_aux[auxLcIndex(a)] : m_lc[lcIndex(a)];
     }
     uint32_t romBase() const { return m_iie ? 0xC000 : 0xD000; }
+    // IIc 32 KB ROMs: $C028 swaps in the second 16 KB
+    uint32_t romBank() const { return (m_romSwitch && m_rom.size() >= 0x8000) ? 0x4000u : 0u; }
     // $D000-$DFFF: bank 1 at 0, bank 2 at $1000; $E000-$FFFF at $2000
     uint32_t lcIndex(uint16_t a) const {
         if (a >= 0xE000) return 0x2000u + (a - 0xE000u);
@@ -381,10 +403,11 @@ private:
     int cxSource(uint16_t a) const {
         if (a < 0xC800) {
             const int slot = (a >> 8) & 7;
+            if (m_iic) return CX_INTERNAL;                  // the IIc: always the internal ROM
             if (m_iie && (m_intCxRom || (slot == 3 && !m_slotC3Rom))) return CX_INTERNAL;
             return slot == 6 ? CX_DISK : CX_FLOATING;
         }
-        if (m_iie && (m_intCxRom || m_intC8Rom)) return CX_INTERNAL;
+        if (m_iic || (m_iie && (m_intCxRom || m_intC8Rom))) return CX_INTERNAL;
         return CX_FLOATING;     // no card has a $C800 ROM
     }
     uint8_t cx(uint16_t a, uint64_t at) {
@@ -393,7 +416,7 @@ private:
             else if (a >= 0xC300 && a < 0xC400 && !m_slotC3Rom) m_intC8Rom = true;
         }
         const int src = cxSource(a);
-        if (src == CX_INTERNAL) return m_rom[a - 0xC000];
+        if (src == CX_INTERNAL) return m_rom[romBank() + a - 0xC000];
         if (src == CX_DISK) return m_disk->rom((uint8_t)a);
         return floating(at);
     }
@@ -411,6 +434,12 @@ private:
     // $C011-$C01F (IORead_C01x): a switch in bit 7, the key code below
     uint8_t status(int n, uint64_t at) {
         bool r = false;
+        if (m_iic && (n == 0x5 || n == 0x7)) {         // mouse X0 / Y0 interrupt flags (read and clear)
+            m_irqMask &= ~IRQ_MOUSE;
+            return (uint8_t)(m_kbd->data() & 0x7F);
+        }
+        if (m_iic && n == 0x9)                          // VBLINT (not cleared by reading)
+            return (uint8_t)((m_kbd->data() & 0x7F) | ((m_irqMask & IRQ_VBL) ? 0x80 : 0));
         switch (n) {
             case 0x1: r = m_lcBank2; break;
             case 0x2: r = m_lcReadRam; break;
@@ -462,15 +491,36 @@ private:
                     return (uint8_t)((m_kbd->data() & 0x7F) | (m_kbd->anyKeyDown() ? 0x80 : 0));
                 }
                 return status(a & 0x0F, at);
-            case 0x2:                                   // cassette output: not emulated
+            case 0x2:                                   // cassette output (IIc: the ROM bank)
+                if (m_iic) m_romSwitch = !m_romSwitch;
                 return wr ? 0 : floating(at);
             case 0x3:                                   // speaker
                 m_spk->toggle(at);
                 return wr ? 0 : floating(at);
             case 0x4:
+                if (m_iic) {
+                    if ((a & 0x0F) == 0x8) { m_irqMask &= ~IRQ_MOUSE; return wr ? 0 : floating(at); }   // clear XY
+                    if (!wr && (a & 0x0F) <= 3) {       // XYMask, VBL mask, X0Edge, Y0Edge
+                        const bool v = (a & 3) == 0 ? m_xyMask : (a & 3) == 1 ? m_vblMask : (a & 3) == 2 ? m_x0Edge : m_y0Edge;
+                        return (uint8_t)((floating(at) & 0x7F) | (v ? 0x80 : 0));
+                    }
+                }
                 return wr ? 0 : floating(at);
             case 0x5: {
                 const int s = a & 0x0F;
+                if (m_iic && !m_iouDis && s >= 8) {     // $C058-$C05F: the IOU's interrupt switches
+                    switch (s) {
+                        case 0x8: m_xyMask = false; break;
+                        case 0x9: m_xyMask = true; break;
+                        case 0xA: m_irqMask &= ~IRQ_VBL; m_vblMask = false; break;
+                        case 0xB: m_vblMask = true; break;
+                        case 0xC: m_x0Edge = false; break;
+                        case 0xD: m_x0Edge = true; break;
+                        case 0xE: m_y0Edge = false; break;
+                        case 0xF: m_y0Edge = true; break;
+                    }
+                    return wr ? 0 : floating(at);
+                }
                 switch (s) {
                     case 0x0: setVideo(0, Apple2Video::VF_TEXT, at); break;
                     case 0x1: setVideo(Apple2Video::VF_TEXT, 0, at); break;
@@ -493,6 +543,13 @@ private:
             case 0x6: {                                 // cassette in, buttons, paddles (bit 3 ignored)
                 if (wr) return 0;
                 const uint8_t fb = floating(at) & 0x7F;
+                if (m_iic) {
+                    switch (a & 0x07) {
+                        case 0x0: return fb;            // the 40/80 switch: 40 columns
+                        case 0x3: return (uint8_t)(fb | 0x80);   // mouse button: up (inverted)
+                        case 0x6: case 0x7: return fb;  // mouse X1, Y1
+                    }
+                }
                 switch (a & 0x07) {
                     case 0x0: return fb;                // TAPEIN: no tape
                     case 0x1: case 0x2: case 0x3: {
@@ -509,6 +566,12 @@ private:
             }
             case 0x7:                                   // paddle timers start
                 m_ptrig = at;
+                if (m_iic) {
+                    m_irqMask &= ~IRQ_VBL;              // any $C07x clears the VBL interrupt
+                    if (wr && (a & 0x0F) >= 8) m_iouDis = !(a & 1);   // $C078/A/C/E set IOUDIS, odd clear
+                    if (!wr && (a & 0x0F) >= 8 && !(a & 1))
+                        return (uint8_t)((floating(at) & 0x7F) | (m_iouDis ? 0x80 : 0));
+                }
                 if (wr) return 0;
                 if (m_enhanced && (a & 0x0F) == 0xF)    // $C07F: double hi-res in bit 7
                     return (uint8_t)((floating(at) & 0x7F) | ((m_vf & Apple2Video::VF_DHIRES) ? 0x80 : 0));
@@ -528,6 +591,18 @@ private:
                 if (!wr) { m_lcLastRead = a; m_lcLastInstr = m_instr; }
                 return wr ? 0 : floating(at);
             }
+            case 0x9: case 0xA:                         // IIc: the serial ports' ACIAs (slots 1, 2)
+                if (m_iic && (a & 0x0F) >= 8 && (a & 0x0F) <= 0xB) {
+                    Acia6551* acia = m_acia[((a >> 4) & 0xF) - 9];
+                    if (acia) {
+                        uint8_t v = wr ? *wr : 0;
+                        const uint32_t reg = acia->baseAddr() + (a & 3);
+                        if (wr) acia->ioWrite(this, reg, v);
+                        else acia->ioRead(this, reg, &v);
+                        return wr ? 0 : v;
+                    }
+                }
+                return wr ? 0 : floating(at);
             case 0xE: {                                 // slot 6: the Disk II
                 const int r = m_disk->io(a, wr, at);
                 return wr ? 0 : r < 0 ? floating(at) : (uint8_t)r;
@@ -543,7 +618,13 @@ private:
     Apple2Keyboard* m_kbd;
     Apple2Speaker* m_spk;
     Disk2Card* m_disk;
-    const bool m_iie, m_enhanced;
+    const bool m_iie, m_enhanced, m_iic;
+    // IIc: the IOU and the ACIAs
+    static constexpr uint8_t IRQ_VBL = 1, IRQ_MOUSE = 2;
+    Acia6551* m_acia[2] = {nullptr, nullptr};
+    bool m_iouDis = true, m_vblMask = false, m_xyMask = false, m_x0Edge = false, m_y0Edge = false;
+    bool m_lastVbl = false, m_romSwitch = false;
+    uint8_t m_irqMask = 0;
     uint32_t m_vf = Apple2Video::VF_TEXT;
     uint64_t m_cycles = 0, m_videoCycle = 0, m_instr = 0, m_ptrig = 0;
     int m_access = 0;
@@ -561,13 +642,29 @@ private:
 }  // namespace
 
 MachineDescriptor* create(Model model, std::string* err) {
-    const bool iie = model == Model::IIe || model == Model::IIeEnhanced;
-    const bool enhanced = model == Model::IIeEnhanced;
+    const bool iic = model == Model::IIc;
+    const bool iie = model == Model::IIe || model == Model::IIeEnhanced || iic;
+    const bool enhanced = model == Model::IIeEnhanced || iic;
     std::vector<uint8_t> rom, chars, disk2;
     const char* romFile = model == Model::II ? "roms/apple2/Apple2.rom"
                         : model == Model::IIPlus ? "roms/apple2/Apple2_Plus.rom"
-                        : model == Model::IIe ? "roms/apple2/Apple2e.rom" : "roms/apple2/Apple2e_Enhanced.rom";
-    if (!loadFile(romFile, iie ? 0x4000 : 0x3000, rom, err)) return nullptr;
+                        : model == Model::IIe ? "roms/apple2/Apple2e.rom"
+                        : model == Model::IIc ? "roms/apple2/apple2c-ff.rom" : "roms/apple2/Apple2e_Enhanced.rom";
+    if (iic) {
+        // The IIc ROM is Apple's and not distributed here: 16 KB (ROM FF) or
+        // 32 KB (03, 04); see doc/README-APPLE2.md for where to get it
+        std::ifstream f(romFile, std::ios::binary);
+        if (f) rom.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        if (rom.size() == 0x8000) {
+            if (err) *err = "a 32 KB Apple IIc ROM (00, 03, 04) needs the 3.5\" drive or the memory expansion, "
+                            "not emulated yet: use ROM FF (16 KB)";
+            return nullptr;
+        }
+        if (rom.size() != 0x4000) {
+            if (err) *err = std::string("missing Apple IIc ROM ") + romFile + " (local only; see doc/README-APPLE2.md)";
+            return nullptr;
+        }
+    } else if (!loadFile(romFile, iie ? 0x4000 : 0x3000, rom, err)) return nullptr;
     // The IIe's 4 KB video ROM (the alternate set; MouseText on the enhanced
     // IIe only: the video leaves it out for the original IIe)
     if (!loadFile(iie ? "roms/apple2/Apple2e_Enhanced_Video.rom" : "roms/apple2/Apple2_Video.rom",
@@ -576,8 +673,8 @@ MachineDescriptor* create(Model model, std::string* err) {
     std::vector<uint8_t> disk13;                       // DOS 3.2 (13 sectors), for WOZ disks that need it
     loadFile("roms/apple2/DISK2-13sector.rom", 0x100, disk13, nullptr);
 
-    static const char* const IDS[] = {"apple2", "apple2plus", "apple2e", "apple2e-enhanced"};
-    static const char* const NAMES[] = {"Apple ][", "Apple ][+", "Apple //e", "Apple //e (enhanced)"};
+    static const char* const IDS[] = {"apple2", "apple2plus", "apple2e", "apple2e-enhanced", "apple2c"};
+    static const char* const NAMES[] = {"Apple ][", "Apple ][+", "Apple //e", "Apple //e (enhanced)", "Apple //c"};
     auto* desc = new MachineDescriptor();
     desc->machineId = IDS[(int)model];
     desc->displayName = NAMES[(int)model];
@@ -587,14 +684,15 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->clockHz = CPU_HZ;
 
     static const Apple2Video::Model VIDEO[] = {Apple2Video::Model::II, Apple2Video::Model::IIPlus,
-                                               Apple2Video::Model::IIe, Apple2Video::Model::IIeEnhanced};
+                                               Apple2Video::Model::IIe, Apple2Video::Model::IIeEnhanced,
+                                               Apple2Video::Model::IIeEnhanced};
     auto* video = new Apple2Video(VIDEO[(int)model]);
     video->setCharRom(std::move(chars));
     auto* kbd = new Apple2Keyboard(iie);
     auto* spk = new Apple2Speaker();
     auto* display = new Apple2Display(video);
     auto* disk = new Disk2Card(std::move(disk2), std::move(disk13));
-    auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk, disk, iie, enhanced);
+    auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk, disk, iie, enhanced, iic);
     desc->buses.push_back({"system", bus});
     // The enhanced IIe has a 65C02
     MOS6502* cpu = enhanced ? new MOS65C02() : new MOS6502();
@@ -611,6 +709,20 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->deleters.push_back([video, display, kbd, spk, disk]() {
         delete display; delete video; delete kbd; delete spk; delete disk;
     });
+    if (iic) {
+        // The serial ports: 6551s (MAME: $C098 slot 1, $C0A8 slot 2)
+        auto* a1 = new Acia6551(0xC090);
+        auto* a2 = new Acia6551(0xC0A0);
+        a1->setName("ACIA (port 1)");
+        a2->setName("ACIA (port 2)");
+        a1->setClockHz(CPU_HZ);
+        a2->setClockHz(CPU_HZ);
+        bus->setAcias(a1, a2);
+        io->registerHandler(a1);
+        io->registerHandler(a2);
+        desc->deleters.push_back([a1, a2]() { delete a1; delete a2; });
+        bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
+    }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the
     // language card and the video modes reset (a II/II+ keeps them); the

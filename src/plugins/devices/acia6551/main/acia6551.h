@@ -48,6 +48,8 @@ public:
     void setBaseAddr(uint32_t b) override { m_base = b; }
     void setClockHz(uint32_t hz) override { m_clockHz = hz; updateCharTime(); }
     void setIrqLine(ISignalLine* l) override { m_irqLine = l; }
+    /** The chip's /IRQ output (for machines that OR it in themselves). */
+    bool irqAsserted() const { return m_irq; }
 
     bool ioRead(IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioPeek(IBus* bus, uint32_t addr, uint8_t* val) override;

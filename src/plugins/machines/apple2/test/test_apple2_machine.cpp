@@ -279,3 +279,62 @@ TEST_CASE(apple2e_keyboard_and_80_columns) {
     EXPECT_EQ(m1 & 0x7F, 'D');
     delete m;
 }
+
+// The Apple IIc (ROM FF, roms/apple2/apple2c-ff.rom, local only: skipped
+// without it). Power-on: "Apple //c", and the empty drive's "Check Disk
+// Drive."; with DOS 3.3's System Master it boots and CATALOGs
+TEST_CASE(apple2c_boots) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIc, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 3000000);
+    EXPECT_TRUE(screenHas(m, "Apple //c"));
+    run(m, 9000000);                                 // the drive gives up after a few seconds
+    EXPECT_TRUE(screenHas(m, "Check Disk Drive."));
+    delete m;
+    const std::string master = "../refs/apple2/AppleWin/bin/DOS 3.3 System Master - 680-0210-A.dsk";
+    if (FILE* f = std::fopen(master.c_str(), "rb")) {
+        std::fclose(f);
+        m = apple2::create(apple2::Model::IIc, &err);
+        IOHandler* disk = m->ioRegistry->findHandler("Disk II");
+        ASSERT(disk && disk->mountDisk(1, master));
+        run(m, 12000000);
+        find<IKeyboardMatrix>(m)->enqueueText("CATALOG\n");
+        run(m, 6000000);
+        if (!screenHas(m, "HELLO")) for (int r = 0; r < 24; ++r) printf("    |%s|\n", textRow(m, r).c_str());
+        EXPECT_TRUE(screenHas(m, "HELLO"));
+        delete m;
+    }
+}
+
+// The IIc's IOU (MAME apple2e.cpp): with IOUDIS cleared ($C07F),
+// $C05B enables the VBL interrupt; at vertical blanking VBLINT ($C019
+// bit 7) rises and /IRQ is held until a $C07x access; $C041 reads the
+// mask. The ACIAs answer at $C098 and $C0A8 (transmit empty after reset)
+TEST_CASE(apple2c_iou_and_serial) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIc, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 1000000);
+    IBus* bus = m->buses[0].bus;
+    ICore* cpu = m->cpus[0].cpu;
+    bus->write8(0x300, 0x4C); bus->write8(0x301, 0x00); bus->write8(0x302, 0x03);   // JMP $300
+    cpu->setPc(0x300);
+    cpu->regWriteByName("P", 0x34);                  // interrupts masked
+    bus->write8(0xC07F, 0);                          // CLRIOUDIS
+    bus->write8(0xC05B, 0);                          // EnVBL
+    EXPECT_TRUE(bus->read8(0xC041) & 0x80);
+    run(m, 20000);                                   // a frame (17030 cycles)
+    EXPECT_TRUE(bus->read8(0xC019) & 0x80);
+    EXPECT_TRUE(bus->read8(0xC019) & 0x80);          // reading does not clear it
+    bus->read8(0xC070);
+    EXPECT_TRUE(!(bus->read8(0xC019) & 0x80));
+    bus->write8(0xC05A, 0);                          // DisVBL
+    run(m, 20000);
+    EXPECT_TRUE(!(bus->read8(0xC019) & 0x80));
+    bus->write8(0xC07E, 0);                          // SETIOUDIS
+    EXPECT_TRUE(bus->read8(0xC07E) & 0x80);
+    EXPECT_TRUE(bus->read8(0xC099) & 0x10);          // port 1's ACIA: transmit data register empty
+    EXPECT_TRUE(bus->read8(0xC0A9) & 0x10);          // port 2's
+    delete m;
+}
