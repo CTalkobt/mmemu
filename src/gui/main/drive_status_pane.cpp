@@ -21,11 +21,13 @@ DriveStatusPane::DriveStatusPane(wxWindow* parent)
 
 namespace {
 bool s_apple2 = false;     // the Apple II's Disk II drives (units 1, 2)
+bool s_bbc = false;        // the BBC Micro's 8271 drives (units 0, 1)
 
 /** "Unit 8: IDLE T:18 S:00"; Atari drives (units 1-4) as "D1: IDLE S:0001";
- *  the Apple II's as "S6,D1: IDLE T:17". */
+ *  the Apple II's as "S6,D1: IDLE T:17"; the BBC's as "Drv 0: IDLE T:00". */
 wxString unitLabel(int unit, const char* state, int t, int s) {
     if (s_apple2) return wxString::Format("S6,D%d: %s T:%02d", unit, state, t);
+    if (s_bbc) return wxString::Format("Drv %d: %s T:%02d", unit, state, t);
     if (unit < 8) return wxString::Format("D%d: %s S:%04d", unit, state, s);
     return wxString::Format("Unit %d: %s T:%02d S:%02d", unit, state, t, s);
 }
@@ -34,14 +36,15 @@ wxString unitLabel(int unit, const char* state, int t, int s) {
 void DriveStatusPane::SetMachine(MachineDescriptor* md) {
     m_md = md;
     s_apple2 = md && md->machineId.rfind("apple2", 0) == 0;
+    s_bbc = md && md->machineId.rfind("bbc", 0) == 0;
     m_drives.clear();
     m_mainSizer->Clear(true);
 
     if (m_md && m_md->ioRegistry) {
         std::vector<IOHandler*> handlers;
         m_md->ioRegistry->enumerate(handlers);
-        // Atari D1:-D4: (units 1-4) and the common Commodore drive units
-        std::vector<int> units = {1, 2, 3, 4, 8, 9, 10, 11};
+        // BBC drive 0, Atari D1:-D4: (units 1-4) and the common Commodore drive units
+        std::vector<int> units = {0, 1, 2, 3, 4, 8, 9, 10, 11};
         for (int unit : units) {
             for (auto* h : handlers) {
                 int t, s;
@@ -130,6 +133,7 @@ void DriveStatusPane::OnMount(wxCommandEvent& event) {
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
                        s_apple2 ? "Apple II disk images (*.dsk;*.do;*.po;*.nib;*.woz)|"
                                   "*.dsk;*.do;*.po;*.nib;*.woz;*.DSK;*.DO;*.PO;*.NIB;*.WOZ"
+                       : s_bbc ? "BBC DFS disc images (*.ssd;*.dsd)|*.ssd;*.dsd;*.SSD;*.DSD"
                        : unit < 8 ? "Atari disk images (*.atr)|*.atr;*.ATR"
                                 : "Disk images (*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg)|"
                                   "*.d64;*.d71;*.d80;*.d81;*.d82;*.g64;*.imd;*.img;*.prg;"

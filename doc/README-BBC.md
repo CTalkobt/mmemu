@@ -5,19 +5,21 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 - the video: the 6845, the video ULA and the SAA5050 (`video.c`);
 - the VIAs (`via.c`, `sysvia.c`);
 - the keyboard matrix (`keyboard.c`);
-- the SN76489 register handling (`sn76489.c`).
+- the SN76489 register handling (`sn76489.c`);
+- the 8271 disc controller (`i8271.c`, with the sector-image timing of `disc.c` and `sdf-acc.c`).
 
 ## Profiles
 
 | Profile | Machine |
 |---------|---------|
-| `bbcb` | BBC Micro Model B: OS 1.20 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
+| `bbcb` | BBC Micro Model B: OS 1.20, Acorn DFS 0.90 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
 
 The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM.
 
 ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good faith; they are not under its GPL.
 - `os12.rom`: OS 1.20, 16 KB at `&C000`.
 - `basic2.rom`: BASIC 2, sideways slot 15.
+- `dfs09.rom`: Acorn DFS 0.90 for the 8271, sideways slot 14. It is 8 KB and appears twice in its 16 KB slot. DFS raises PAGE to `&1900`.
 - `saa5050.fnt`: b-em's teletext font, a capture of the SAA5050's output, character rounding included (from BeebEm).
 
 ## Memory map
@@ -34,6 +36,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 | `&FE30-&FE3F` | ROMSEL (write only) |
 | `&FE40-&FE5F` | System VIA |
 | `&FE60-&FE7F` | User VIA |
+| `&FE80-&FE9F` | 8271 disc controller (status/command, result/parameter, reset, data) |
 | `&FF00-&FFFF` | OS ROM |
 
 Other SHEILA addresses read `&FE`, as in b-em.
@@ -109,6 +112,23 @@ A byte with bit 7 set latches a register. As in b-em, a byte without it sets the
 
 OS 1.20's pitch table is slightly sharp: `SOUND 1,-15,89,…`, an A, writes N = 278, which is 449.6 Hz.
 
+## Discs
+
+**The 8271 controller.** It follows b-em:
+- **Commands:** the ones DFS uses. Read and write, of one 128-byte sector or several sectors of any size, with or without deleted data. Verify, read ID, format, seek, specify, read drive status, and read and write special register.
+- **Data transfer:** data moves by NMI, as on a BBC without DMA. The 8271 raises its interrupt for each byte, and the 6502's NMI line follows it.
+- **Timing:** a byte every 272 cycles (b-em's sector-image rate). Seeks take the step and settle times DFS specifies. The motor stops the specified number of revolutions after the last command, and not-found errors come after 500 byte times.
+
+**Drives and images.** Drives 0 and 1 are units 0 and 1 in CLI `disk mount <unit> <path>`, MCP `mount_disk` and the GUI drive pane ("Drv 0").
+- **Sides:** the drive control output's side select picks the side. DFS drives 2 and 3 are the second sides of drives 0 and 1.
+- **Image formats:**
+  - `.ssd`: single-sided, one track after another.
+  - `.dsd`: double-sided, with the two sides' tracks alternating.
+  - Both have 10 sectors of 256 bytes on 40 or 80 tracks, the count taken from the size. Short images are padded.
+- **Writes:** writes go back to the file when a sector completes. A read-only file mounts write-protected, and the 8271 then returns "write protected".
+
+SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT` runs `*BASIC` and `CHAIN"LOAD"`; the program loads and reports that it wants a Master 128, which is right for that disc.
+
 ## Tests
 
 `src/plugins/machines/bbc/test/test_bbc_machine.cpp`:
@@ -118,8 +138,12 @@ OS 1.20's pitch table is slightly sharp: `SOUND 1,-15,89,…`, an A, writes N = 
 - `bbc_typed_text_case`: typed text keeps its case.
 - `bbc_sound_tone`: `SOUND` gives 449.6 Hz on the audio output.
 
+`test_bbc_disc.cpp`:
+- `bbc_dfs_image_layout`: where `.ssd` and `.dsd` sectors are in the file.
+- `bbc_dfs_save_and_chain`: on a blank disc, DFS's banner, `*CAT`, `SAVE` writing the catalogue and file to the image, then `CHAIN` loading and running it.
+
 ## Not yet
 
-- **Storage:** cassette (the ACIA and serial ULA), and disc (the 8271 or 1770 with DFS).
+- **Storage:** cassette (the ACIA and serial ULA), the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
 - **Other hardware:** the ADC (analogue joysticks), the Tube, Econet.
 - **Other models:** the Model A, the B+, the Master, and the Electron.
