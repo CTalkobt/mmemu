@@ -7,6 +7,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### BBC Micro
+- **BBC Micro Model B** (#13): profile `bbcb`, new plugin `mmemu-plugin-bbc.so`, after b-em (GPL-2.0-or-later). It starts at BASIC's `>` prompt in Mode 7.
+  - **CPU and memory:** an NMOS 6502 at 2 MHz with 32 KB RAM. OS 1.20 at `&C000`, and sideways ROMs at `&8000` chosen by ROMSEL (`&FE30`), with BASIC 2 in slot 15. ROMs and the teletext font are from b-em, in `roms/bbc/`.
+  - **I/O:** `&FC00-&FEFF`, with the 1 MHz bus adding 1-2 cycles to FRED, JIM and the slow SHEILA devices.
+  - **Video:** `BbcVideo` (`src/plugins/devices/bbc_video`), a port of b-em's `video.c`. The 6845 CRTC, the video ULA (Modes 0-6, the palette, flashing colours, the cursor) and the SAA5050 for Mode 7 (colours, graphics, hold, double height, backgrounds, flash, with the SAA5050's character rounding). The picture is 832 x 624.
+  - **VIAs:** both 6522s as b-em has them, counting in 2 MHz half-cycles. The System VIA's slow data bus carries the keyboard and the SN76489, and its IC32 latch sets sound enable, keyboard autoscan, the screen size and the LEDs. Vsync is on CA1 and the keyboard on CA2.
+  - **Keyboard:** the matrix, with named keys placed by position (b-em's physical map) and BREAK, which resets only the 6502 (a program survives it). Typed text keeps its case, pressing CAPS LOCK when needed; Shift reverses Caps Lock only in SHIFT+CAPS LOCK mode.
+  - **Sound:** the SN76489 at 4 MHz on 44.1 kHz audio, with the BBC's 15-bit noise register.
+  - **Other:** a 6850 ACIA with nothing attached (the OS's IRQ handler polls it first), and joystick fire buttons.
+  - **Checked:** OS 1.20 and BASIC 2 boot. Mode 7 colours, graphics and double height, Mode 1 and Mode 2 graphics, BREAK and `OLD`, and `SOUND` were looked at in screenshots and on the audio output. The GUI runs it, with a BREAK button.
+  - **Not yet:** cassette, disc, the ADC, the Tube, and other models (A, B+, Master, Electron).
+  - **Tests:** `bbc_boots_basic`, `bbc_break_keeps_program`, `bbc_mode1_graphics`, `bbc_typed_text_case`, `bbc_sound_tone`.
+
 ### MEGA65
 - **45GS02 cycle-accurate instruction timing** (#4): each instruction now takes the cycles in xemu's timing tables (`cpu65.c`, `cpu65_mega65_timings.h`), chosen by the CPU speed. Before, the count came from ad-hoc per-instruction increments.
   - 1 and 2 MHz: 6502 timing, plus the page-crossing cycle for indexed reads.

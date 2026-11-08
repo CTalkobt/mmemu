@@ -132,6 +132,12 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
 
+PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
+	src/plugins/machines/bbc/main/bbc_via.cpp \
+	src/plugins/machines/bbc/main/sn76489.cpp \
+	src/plugins/devices/bbc_video/main/bbc_video.cpp \
+	src/plugins/machines/bbc/main/plugin_init.cpp
+
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/z80/main/plugin_init.cpp
@@ -452,6 +458,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
+	src/plugins/machines/bbc/test/test_bbc_machine.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -559,6 +566,10 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/apple2/main/machine_apple2.o \
 	src/plugins/machines/apple2/main/disk2.o \
 	src/plugins/devices/apple2_video/main/apple2_video.o \
+	src/plugins/machines/bbc/main/machine_bbc.o \
+	src/plugins/machines/bbc/main/bbc_via.o \
+	src/plugins/machines/bbc/main/sn76489.o \
+	src/plugins/devices/bbc_video/main/bbc_video.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
@@ -698,6 +709,7 @@ PLUGIN_C128_OBJS   = $(PLUGIN_C128_SRCS:.cpp=.o)
 PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
+PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -760,6 +772,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-z80.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
+	$(LIBDIR)/mmemu-plugin-bbc.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -891,6 +904,9 @@ $(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
