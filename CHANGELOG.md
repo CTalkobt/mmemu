@@ -7,6 +7,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### ZX Spectrum
+- **Z80 timing per bus cycle** (#242), for the Spectrum's contended memory.
+  - **Per access:** the core now advances its T-state clock on each bus cycle in Fuse's order: the M1, memory reads and writes, the internal cycles with the address left on the bus, and I/O. A bus sees each access's T-state.
+  - **Contention hook:** a machine adds wait states through `IZ80Timing`.
+  - **Smaller changes:** PUSH writes the high byte first, as the Z80 does. HALT keeps PC on itself and refetches every 4 T-states, as in Fuse.
+  - **Tests:** `z80_fuse_core_tests` runs Fuse's 1356 core tests (`tests/z80/fuse`, GPL-2.0-or-later). Every bus event, T-state, register and memory change matches. ZEXDOC and ZEXALL still pass.
+
 ### Disk images
 - **Disk images inside `.gz` and `.zip` files** (#233), after AppleWin's `CheckGZipFile`/`CheckZipFile`.
   - **Formats:** every disk format: the Commodore `.d64`/`.d71`/`.d80`/`.d81`/`.d82`/`.g64`/`.imd`, Atari `.atr`, Apple II `.dsk`/`.do`/`.po`/`.nib`/`.woz`, BBC `.ssd`/`.dsd`, the MEGA65 F011's `.d81` and the X16's SD card image.

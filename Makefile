@@ -457,6 +457,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/machines/c128/test/test_c128_machine.cpp \
 	src/plugins/z80/test/test_z80.cpp \
+	src/plugins/z80/test/test_z80_fuse.cpp \
 	src/plugins/devices/riot6532/test/test_riot6532.cpp \
 	src/plugins/devices/tia/test/test_tia.cpp \
 	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \

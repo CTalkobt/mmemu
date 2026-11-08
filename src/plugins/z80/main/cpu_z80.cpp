@@ -132,6 +132,15 @@ void Z80::loadState(const uint8_t* b) {
 
 uint16_t& Z80::idx() { return m_prefix == 1 ? m_ix : m_iy; }
 
+uint16_t Z80::dispAddr() {
+    const int8_t d = (int8_t)fetch();
+    idle((uint16_t)(m_pc - 1), 5);
+    m_dispAddr = (uint16_t)(idx() + d);
+    m_wz = m_dispAddr;
+    m_dispFetched = true;
+    return m_dispAddr;
+}
+
 uint8_t Z80::reg8(int r) {
     switch (r) {
         case 0: return m_b;
@@ -142,11 +151,7 @@ uint8_t Z80::reg8(int r) {
         case 5: return m_prefix ? (uint8_t)idx() : m_l;
         case 6: {
             if (!m_prefix) return rd(hlReg());
-            if (!m_dispFetched) {
-                m_dispAddr = (uint16_t)(idx() + (int8_t)fetch());
-                m_wz = m_dispAddr;
-                m_dispFetched = true;
-            }
+            if (!m_dispFetched) dispAddr();
             return rd(m_dispAddr);
         }
         default: return m_a;
@@ -163,11 +168,7 @@ void Z80::setReg8(int r, uint8_t v) {
         case 5: if (m_prefix) idx() = (uint16_t)((idx() & 0xFF00) | v); else m_l = v; break;
         case 6:
             if (!m_prefix) { wr(hlReg(), v); break; }
-            if (!m_dispFetched) {
-                m_dispAddr = (uint16_t)(idx() + (int8_t)fetch());
-                m_wz = m_dispAddr;
-                m_dispFetched = true;
-            }
+            if (!m_dispFetched) dispAddr();
             wr(m_dispAddr, v);
             break;
         default: m_a = v; break;
@@ -319,11 +320,12 @@ void Z80::bit(int n, uint8_t v, uint8_t xy) {
 // ---------------------------------------------------------------------------
 
 int Z80::interrupt() {
-    m_halted = false;
+    if (m_halted) { m_halted = false; m_pc++; }             // past the HALT
     if (m_nmiPending) {
         m_nmiPending = false;
         m_iff1 = false;
         incR();
+        m_cycles += 5;
         push(m_pc);
         m_pc = 0x0066;
         m_wz = m_pc;
@@ -331,20 +333,12 @@ int Z80::interrupt() {
     }
     m_iff1 = m_iff2 = false;
     incR();
-    switch (m_im) {
-        case 2: {
-            push(m_pc);
-            uint16_t vec = (uint16_t)(m_i << 8 | 0xFF);
-            m_pc = rd16(vec);
-            m_wz = m_pc;
-            return 19;
-        }
-        default:                                             // 0 (RST 38h from $FF) and 1
-            push(m_pc);
-            m_pc = 0x0038;
-            m_wz = m_pc;
-            return m_im == 0 ? 13 : 13;
-    }
+    m_cycles += 7;                                           // the acknowledge M1
+    push(m_pc);
+    if (m_im == 2) m_pc = rd16((uint16_t)(m_i << 8 | 0xFF)); // $FF on the data bus
+    else m_pc = 0x0038;                                      // IM 1, and IM 0's RST 38h
+    m_wz = m_pc;
+    return m_im == 2 ? 19 : 13;
 }
 
 int Z80::step() {
@@ -352,18 +346,19 @@ int Z80::step() {
         m_cycles += 4;
         return 4;
     }
+    const uint64_t start = m_cycles;
     // Interrupts are taken between instructions (not right after EI)
     if (m_nmiPending || (m_irqLine && m_iff1 && !m_eiDelay)) {
-        int t = interrupt();
-        m_cycles += t;
+        interrupt();
         m_q = m_qNext = 0;
-        return t;
+        return (int)(m_cycles - start);
     }
     m_eiDelay = false;
-    if (m_halted) {                                          // HALT runs NOPs
+    if (m_halted) {                                          // HALT fetches itself again
+        m1();
+        m_pc--;
         incR();
-        m_cycles += 4;
-        return 4;
+        return (int)(m_cycles - start);
     }
 
     if (m_observer) {
@@ -376,25 +371,24 @@ int Z80::step() {
         }
     }
 
+    // The exec functions return the documented totals; the clock, advanced
+    // per bus cycle, is what counts
     m_q = m_qNext;
     m_qNext = 0;
     m_prefix = 0;
     m_dispFetched = false;
-    int t = 0;
-    uint8_t op = fetch();
+    uint8_t op = m1();
     incR();
     while (op == 0xDD || op == 0xFD) {                       // the last prefix wins
         m_prefix = op == 0xDD ? 1 : 2;
-        t += 4;
-        op = fetch();
+        op = m1();
         incR();
     }
-    if (op == 0xCB) t += m_prefix ? execIndexCB() : execCB();
-    else if (op == 0xED) { m_prefix = 0; t += execED(); }
-    else t += execMain(op);
+    if (op == 0xCB) { if (m_prefix) execIndexCB(); else execCB(); }
+    else if (op == 0xED) { m_prefix = 0; execED(); }
+    else execMain(op);
     m_prefix = 0;
-    m_cycles += t;
-    return t;
+    return (int)(m_cycles - start);
 }
 
 int Z80::execMain(uint8_t op) {
@@ -411,20 +405,20 @@ int Z80::execMain(uint8_t op) {
                 m_a = m_af2 >> 8; m_f = m_af2 & 0xFF; m_af2 = t;
                 return 4;
             }
-            case 2: {                                        // DJNZ d
-                int8_t d = (int8_t)fetch();
-                if (--m_b) { m_pc = (uint16_t)(m_pc + d); m_wz = m_pc; return 13; }
+            case 2:                                          // DJNZ d
+                idle(ir(), 1);
+                if (--m_b) { jr(); return 13; }
+                mcycle(m_pc++);
                 return 8;
-            }
-            case 3: { int8_t d = (int8_t)fetch(); m_pc = (uint16_t)(m_pc + d); m_wz = m_pc; return 12; }
-            default: {                                       // JR cc,d
-                int8_t d = (int8_t)fetch();
-                if (cond(y - 4)) { m_pc = (uint16_t)(m_pc + d); m_wz = m_pc; return 12; }
+            case 3: jr(); return 12;
+            default:                                         // JR cc,d
+                if (cond(y - 4)) { jr(); return 12; }
+                mcycle(m_pc++);
                 return 7;
-            }
             }
         case 1:
             if (!q) { setRp(p, fetch16()); return 10; }      // LD rp,nn
+            idle(ir(), 7);
             if (m_prefix == 1) add16(m_ix, rp(p));           // ADD HL/IX/IY,rp
             else if (m_prefix == 2) add16(m_iy, rp(p));
             else { uint16_t h = hlReg(); add16(h, rp(p)); setHl(h); }
@@ -441,16 +435,22 @@ int Z80::execMain(uint8_t op) {
             default: { uint16_t a = fetch16(); m_a = rd(a); m_wz = (uint16_t)(a + 1); return 13; }
             }
         case 3:                                              // INC/DEC rp
+            idle(ir(), 2);
             setRp(p, (uint16_t)(rp(p) + (q ? -1 : 1)));
             return 6;
-        case 4: { uint8_t v = reg8(y); setReg8(y, inc8(v)); return y == 6 ? 11 + ext : 4; }
-        case 5: { uint8_t v = reg8(y); setReg8(y, dec8(v)); return y == 6 ? 11 + ext : 4; }
+        case 4: case 5: {                                    // INC/DEC r
+            uint8_t v = reg8(y);
+            if (y == 6) idle(m_prefix ? m_dispAddr : hlReg(), 1);
+            setReg8(y, z == 4 ? inc8(v) : dec8(v));
+            return y == 6 ? 11 + ext : 4;
+        }
         case 6: {                                            // LD r,n
             if (y == 6 && m_prefix) {                        // d comes before n
                 m_dispAddr = (uint16_t)(idx() + (int8_t)fetch());
                 m_wz = m_dispAddr;
                 m_dispFetched = true;
                 uint8_t n = fetch();
+                idle((uint16_t)(m_pc - 1), 2);
                 wr(m_dispAddr, n);
                 return 15;
             }
@@ -508,12 +508,12 @@ int Z80::execMain(uint8_t op) {
             }
         }
     case 1:
-        if (y == 6 && z == 6) { m_halted = true; return 4; } // HALT
+        if (y == 6 && z == 6) { m_halted = true; m_pc--; return 4; }   // HALT: PC stays on it
         if (y == 6 || z == 6) {                              // LD (IX+d),r / LD r,(IX+d): plain H, L
             int save = m_prefix;
             if (y == 6) {
                 uint16_t addr;
-                if (save) { addr = (uint16_t)(idx() + (int8_t)fetch()); m_wz = addr; } else addr = hlReg();
+                addr = save ? dispAddr() : hlReg();
                 m_prefix = 0;
                 uint8_t v = reg8(z);
                 m_prefix = save;
@@ -534,6 +534,7 @@ int Z80::execMain(uint8_t op) {
     default:
         switch (z) {
         case 0:                                              // RET cc
+            idle(ir(), 1);
             if (cond(y)) { m_pc = pop(); m_wz = m_pc; return 11; }
             return 5;
         case 1:
@@ -548,7 +549,7 @@ int Z80::execMain(uint8_t op) {
                 return 4;
             }
             case 2: m_pc = rp(2); return 4;                  // JP (HL)
-            default: m_sp = rp(2); return 6;                 // LD SP,HL
+            default: idle(ir(), 2); m_sp = rp(2); return 6;  // LD SP,HL
             }
         case 2: {                                            // JP cc,nn
             uint16_t a = fetch16();
@@ -564,8 +565,13 @@ int Z80::execMain(uint8_t op) {
             case 3: { uint8_t n = fetch(); uint16_t port = (uint16_t)(m_a << 8 | n);
                       m_a = in(port); m_wz = (uint16_t)(port + 1); return 11; }
             case 4: {                                        // EX (SP),HL
-                uint16_t v = rd16(m_sp);
-                wr16(m_sp, rp(2));
+                const uint16_t sp1 = (uint16_t)(m_sp + 1), r = rp(2);
+                uint8_t lo = rd(m_sp), hi = rd(sp1);
+                idle(sp1, 1);
+                wr(sp1, r >> 8);
+                wr(m_sp, r & 0xFF);
+                idle(m_sp, 2);
+                uint16_t v = (uint16_t)(hi << 8 | lo);
                 setRp(2, v);
                 m_wz = v;
                 return 19;
@@ -578,27 +584,26 @@ int Z80::execMain(uint8_t op) {
             case 7: m_iff1 = m_iff2 = true; m_eiDelay = true; return 4;   // EI
             default: return 4;                               // CB: handled in step()
             }
-        case 4: {                                            // CALL cc,nn
-            uint16_t a = fetch16();
-            m_wz = a;
-            if (cond(y)) { push(m_pc); m_pc = a; return 17; }
+        case 4:                                              // CALL cc,nn
+            if (cond(y)) { call(); return 17; }
+            m_wz = fetch16();
             return 10;
-        }
         case 5:
-            if (!q) { push(rp2(p)); return 11; }            // PUSH rp2
-            if (p == 0) { uint16_t a = fetch16(); m_wz = a; push(m_pc); m_pc = a; return 17; }   // CALL
+            if (!q) { idle(ir(), 1); push(rp2(p)); return 11; }   // PUSH rp2
+            if (p == 0) { call(); return 17; }               // CALL
             return 4;                                        // DD/ED/FD: handled in step()
         case 6: alu(y, fetch()); return 7;
-        default: push(m_pc); m_pc = (uint16_t)(y * 8); m_wz = m_pc; return 11;   // RST
+        default: idle(ir(), 1); push(m_pc); m_pc = (uint16_t)(y * 8); m_wz = m_pc; return 11;   // RST
         }
     }
 }
 
 int Z80::execCB() {
-    uint8_t op = fetch();
+    uint8_t op = m1();
     incR();
     const int x = op >> 6, y = (op >> 3) & 7, z = op & 7;
     uint8_t v = reg8(z);
+    if (z == 6) idle(hlReg(), 1);
     switch (x) {
         case 0: setReg8(z, rot(y, v)); return z == 6 ? 15 : 8;
         case 1: bit(y, v, z == 6 ? (uint8_t)(m_wz >> 8) : v); return z == 6 ? 12 : 8;
@@ -613,8 +618,10 @@ int Z80::execIndexCB() {
     uint16_t addr = (uint16_t)(idx() + (int8_t)fetch());
     m_wz = addr;
     uint8_t op = fetch();                                    // not an M1: R is not incremented
+    idle((uint16_t)(m_pc - 1), 2);
     const int x = op >> 6, y = (op >> 3) & 7, z = op & 7;
     uint8_t v = rd(addr), r;
+    idle(addr, 1);
     switch (x) {
         case 0: r = rot(y, v); break;
         case 1: bit(y, v, (uint8_t)(addr >> 8)); return 16;  // + 4 for the prefix = 20
@@ -627,7 +634,7 @@ int Z80::execIndexCB() {
 }
 
 int Z80::execED() {
-    uint8_t op = fetch();
+    uint8_t op = m1();
     incR();
     const int x = op >> 6, y = (op >> 3) & 7, z = op & 7, p = y >> 1, q = y & 1;
     if (x == 1) {
@@ -643,7 +650,7 @@ int Z80::execED() {
             out(bc(), y == 6 ? 0 : reg8(y));
             m_wz = (uint16_t)(bc() + 1);
             return 12;
-        case 2: if (q) adc16(rp(p)); else sbc16(rp(p)); return 15;
+        case 2: idle(ir(), 7); if (q) adc16(rp(p)); else sbc16(rp(p)); return 15;
         case 3: {
             uint16_t a = fetch16();
             if (q) setRp(p, rd16(a)); else wr16(a, rp(p));
@@ -655,13 +662,14 @@ int Z80::execED() {
         case 6: { static const uint8_t IM[8] = {0, 0, 1, 2, 0, 0, 1, 2}; m_im = IM[y]; return 8; }
         default:
             switch (y) {
-            case 0: m_i = m_a; return 9;                     // LD I,A
-            case 1: m_r = m_a; return 9;                     // LD R,A
-            case 2: m_a = m_i; setF((uint8_t)((m_f & FC) | sz53(m_a) | (m_iff2 ? FP : 0))); return 9;
-            case 3: m_a = m_r; setF((uint8_t)((m_f & FC) | sz53(m_a) | (m_iff2 ? FP : 0))); return 9;
+            case 0: idle(ir(), 1); m_i = m_a; return 9;      // LD I,A
+            case 1: idle(ir(), 1); m_r = m_a; return 9;      // LD R,A
+            case 2: idle(ir(), 1); m_a = m_i; setF((uint8_t)((m_f & FC) | sz53(m_a) | (m_iff2 ? FP : 0))); return 9;
+            case 3: idle(ir(), 1); m_a = m_r; setF((uint8_t)((m_f & FC) | sz53(m_a) | (m_iff2 ? FP : 0))); return 9;
             case 4: {                                        // RRD
                 uint16_t h = hlReg();
                 uint8_t v = rd(h);
+                idle(h, 4);
                 wr(h, (uint8_t)((m_a << 4) | (v >> 4)));
                 m_a = (uint8_t)((m_a & 0xF0) | (v & 0x0F));
                 setF((uint8_t)((m_f & FC) | sz53p(m_a)));
@@ -671,6 +679,7 @@ int Z80::execED() {
             case 5: {                                        // RLD
                 uint16_t h = hlReg();
                 uint8_t v = rd(h);
+                idle(h, 4);
                 wr(h, (uint8_t)((v << 4) | (m_a & 0x0F)));
                 m_a = (uint8_t)((m_a & 0xF0) | (v >> 4));
                 setF((uint8_t)((m_f & FC) | sz53p(m_a)));
@@ -689,17 +698,20 @@ int Z80::execED() {
         switch (z) {
         case 0: {                                            // LDI LDD LDIR LDDR
             uint8_t v = rd(h);
-            wr(de(), v);
+            const uint16_t d0 = de();
+            wr(d0, v);
+            idle(d0, 2);
             setHl((uint16_t)(h + dir));
             uint16_t d = (uint16_t)(de() + dir); m_d = d >> 8; m_e = d & 0xFF;
             --b16; m_b = b16 >> 8; m_c = b16 & 0xFF;
             uint8_t n = (uint8_t)(v + m_a);
             setF((uint8_t)((m_f & (FS | FZ | FC)) | (b16 ? FP : 0) | (n & FX) | ((n << 4) & FY)));
-            if (rep && b16) { m_pc = (uint16_t)(m_pc - 2); m_wz = (uint16_t)(m_pc + 1); return 21; }
+            if (rep && b16) { idle(d0, 5); m_pc = (uint16_t)(m_pc - 2); m_wz = (uint16_t)(m_pc + 1); return 21; }
             return 16;
         }
         case 1: {                                            // CPI CPD CPIR CPDR
             uint8_t v = rd(h);
+            idle(h, 5);
             uint8_t r = (uint8_t)(m_a - v);
             setHl((uint16_t)(h + dir));
             --b16; m_b = b16 >> 8; m_c = b16 & 0xFF;
@@ -708,10 +720,11 @@ int Z80::execED() {
             setF((uint8_t)((m_f & FC) | (r & FS) | (r ? 0 : FZ) | hf | FN | (b16 ? FP : 0) |
                            (n & FX) | ((n << 4) & FY)));
             m_wz = (uint16_t)(m_wz + dir);
-            if (rep && b16 && r) { m_pc = (uint16_t)(m_pc - 2); m_wz = (uint16_t)(m_pc + 1); return 21; }
+            if (rep && b16 && r) { idle(h, 5); m_pc = (uint16_t)(m_pc - 2); m_wz = (uint16_t)(m_pc + 1); return 21; }
             return 16;
         }
         case 2: {                                            // INI IND INIR INDR
+            idle(ir(), 1);
             uint8_t v = in(b16);
             m_wz = (uint16_t)(b16 + dir);
             wr(h, v);
@@ -720,10 +733,11 @@ int Z80::execED() {
             uint16_t k = (uint16_t)(v + (uint8_t)(m_c + dir));
             setF((uint8_t)(sz53(m_b) | ((v & 0x80) ? FN : 0) | (k > 0xFF ? (FH | FC) : 0) |
                            parity((uint8_t)((k & 7) ^ m_b))));
-            if (rep && m_b) { m_pc = (uint16_t)(m_pc - 2); return 21; }
+            if (rep && m_b) { idle(h, 5); m_pc = (uint16_t)(m_pc - 2); return 21; }
             return 16;
         }
         default: {                                           // OUTI OUTD OTIR OTDR
+            idle(ir(), 1);
             uint8_t v = rd(h);
             m_b = (uint8_t)(m_b - 1);
             out(bc(), v);
@@ -732,7 +746,7 @@ int Z80::execED() {
             uint16_t k = (uint16_t)(v + m_l);
             setF((uint8_t)(sz53(m_b) | ((v & 0x80) ? FN : 0) | (k > 0xFF ? (FH | FC) : 0) |
                            parity((uint8_t)((k & 7) ^ m_b))));
-            if (rep && m_b) { m_pc = (uint16_t)(m_pc - 2); return 21; }
+            if (rep && m_b) { idle(bc(), 5); m_pc = (uint16_t)(m_pc - 2); return 21; }
             return 16;
         }
         }
