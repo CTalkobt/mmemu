@@ -33,6 +33,7 @@ static void reg(const char* id, bbc::Model model, const char* desc) {
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
     reg("bbca", bbc::Model::A, "BBC Micro Model A (16 KB, OS 1.20, BASIC 2)");
     reg("bbcb", bbc::Model::B, "BBC Micro Model B (32 KB, OS 1.20, DFS 0.90, BASIC 2)");
+    reg("bbcb-6502", bbc::Model::BTube, "BBC Micro Model B with the 6502 Second Processor (DNFS, Tube)");
     MachineRegistry::instance().registerMachine("electron", []() -> MachineDescriptor* {
         std::string err;
         MachineDescriptor* m = electron::create(&err);

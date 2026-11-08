@@ -6,7 +6,9 @@ class MachineDescriptor;
 
 namespace bbc {
 
-enum class Model { A, B };
+/** A: 16 KB; B: 32 KB with DFS 0.90; BTube: a B with DNFS and the 6502
+ *  Second Processor on the Tube */
+enum class Model { A, B, BTube };
 
 /**
  * A BBC Micro, after b-em (GPL-2.0-or-later). Model B: a 2 MHz 6502, 32 KB

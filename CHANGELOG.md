@@ -8,6 +8,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **BBC Micro Tube and 6502 Second Processor** (#13): profile `bbcb-6502`, after b-em (`tube.c`, `6502tube.c`).
+  - **The Tube ULA:** at `&FEE0`, with its four FIFOs and the control flags, giving the BBC an IRQ and the second processor an IRQ and NMI.
+  - **The second processor:** a 65C02 at 3 MHz with 64 KB and its 2 KB boot ROM (`roms/bbc/6502tube.rom`).
+  - **DNFS:** DNFS 1.00 (`roms/bbc/dnfs100.rom`) replaces DFS 0.90 for its Tube host code.
+  - **Checked:** "Acorn TUBE 6502 64K"; BASIC runs on the second processor (`PAGE` `&800`, `HIMEM` `&8000`).
+  - **BREAK:** it now also restarts the video and the 8271, as b-em's does, and the second processor if there is one.
+  - **Tests:** `bbc_tube_6502`.
 - **Acorn Electron** (#13): profile `electron`, in the BBC plugin, after Elkulator (GPL-2.0-or-later). It starts at BASIC's `>` prompt in Mode 6. See `doc/README-ELECTRON.md`.
   - **CPU and memory:** a 2 MHz 6502 with 32 KB RAM the ULA shares; the CPU waits for it (Modes 0-3 hold it off each visible line, otherwise RAM runs at 1 MHz). OS 1.00 and BASIC 2 (`roms/electron/`).
   - **The ULA:**

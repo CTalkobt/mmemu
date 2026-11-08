@@ -6,6 +6,7 @@
 #include "bbc_via.h"
 #include "bbc_disc.h"
 #include "bbc_tape.h"
+#include "bbc_tube.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -16,6 +17,7 @@
 #include "libdebug/main/execution_observer.h"
 #include "libmem/main/ibus.h"
 #include "plugins/6502/main/cpu6502.h"
+#include "plugins/6502/main/cpu65c02.h"
 #include "plugins/devices/bbc_video/main/bbc_video.h"
 #include <algorithm>
 #include <cctype>
@@ -266,6 +268,13 @@ public:
      *  maps both to the top half, where the video finds its screen); no
      *  User VIA, ADC or disc */
     void setModelA(bool a) { m_modelA = a; }
+    /** A second processor on the Tube (&FEE0-&FEFF) */
+    void setTube(TubeUla* t) { m_tube = t; }
+    /** The parasite changed the Tube: the host's IRQ follows */
+    void tubeChanged() { if (onIrq) onIrq(irqLine()); }
+    /** BREAK (b-em main_key_break): the 6502, the video and the disc
+     *  controller restart; the VIAs keep their state */
+    void breakKey() { m_video->reset(); m_fdc->reset(); }
 
     void powerOn() {
         std::fill(m_ram.begin(), m_ram.end(), 0);
@@ -408,6 +417,10 @@ private:
                 if (m_modelA) break;
                 if (wr) adcWrite(a, *wr); else r = adcRead(a);
                 break;
+            case 0xFEE0:                                        // the Tube (host side)
+                if (!m_tube) break;
+                if (wr) m_tube->hostWrite(a, *wr); else r = m_tube->hostRead(a);
+                break;
             case 0xFE80:                                        // 8271 disc controller
                 if (m_modelA) break;
                 if (wr) m_fdc->write(a, *wr); else r = m_fdc->read(a);
@@ -455,7 +468,9 @@ private:
         m_tape->setMotor(v & 0x80, cassette);
     }
 
-    bool irqLine() const { return m_sysvia.irq() || m_uservia.irq() || m_acia.irq(); }
+    bool irqLine() const {
+        return m_sysvia.irq() || m_uservia.irq() || m_acia.irq() || (m_tube && m_tube->hostIrq());
+    }
 
     // The slow data bus (sysvia.c): the System VIA's port A, the keyboard
     // pulling bit 7 low when the addressed key is up (with the keyboard enabled)
@@ -513,6 +528,7 @@ private:
     int m_keyRow = 0, m_keyCol = 0, m_cb2 = 0;
     bool m_fire[2] = {};
     bool m_modelA = false;
+    TubeUla* m_tube = nullptr;
     uint16_t m_axis[4] = {0x7FF8, 0x7FF8, 0x7FF8, 0x7FF8};
     uint8_t m_adcStatus = 0x40, m_adcHigh = 0, m_adcLow = 0;
     int64_t m_adcLeft = 0;
@@ -524,15 +540,23 @@ private:
 
 MachineDescriptor* create(Model model, std::string* err) {
     const bool modelA = model == Model::A;
-    std::vector<uint8_t> os, basic, dfs;
+    const bool tubed = model == Model::BTube;
+    std::vector<uint8_t> os, basic, dfs, tubeRom;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
-    // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
-    if (!modelA && !loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
+    if (tubed) {
+        // DNFS 1.00 (DFS 1.00 and NFS 3.40): DFS 0.90 has no Tube host code
+        if (!loadFile("roms/bbc/dnfs100.rom", 0x4000, dfs, err)) return nullptr;
+        if (!loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
+    } else if (!modelA) {
+        // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
+        if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
+    }
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = modelA ? "bbca" : "bbcb";
-    desc->displayName = modelA ? "BBC Micro Model A" : "BBC Micro Model B";
+    desc->machineId = modelA ? "bbca" : tubed ? "bbcb-6502" : "bbcb";
+    desc->displayName = modelA ? "BBC Micro Model A" : tubed ? "BBC Micro Model B with 6502 Second Processor"
+                                                             : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = modelA ? std::vector<std::string>{"tape"} : std::vector<std::string>{"drive", "tape"};
@@ -554,7 +578,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* bus = new BbcBus(std::move(os), video, kbd, sn, fdc, *acia, tape);
     bus->setModelA(modelA);
     bus->setRom(15, std::move(basic));
-    if (!modelA) bus->setRom(14, std::move(dfs));   // Acorn DFS 0.90 for the 8271
+    if (!modelA) bus->setRom(14, std::move(dfs));   // Acorn DFS 0.90 (or DNFS) for the 8271
     desc->buses.push_back({"system", bus});
     auto* cpu = new MOS6502();
     cpu->setDataBus(bus);
@@ -575,9 +599,31 @@ MachineDescriptor* create(Model model, std::string* err) {
         delete tape; delete acia;
     });
 
-    // BREAK resets the 6502 only: the MOS tells it from power-on by the
-    // System VIA's IER, which keeps its value (b-em main_key_break)
-    kbd->onBreak = [cpu]() { cpu->reset(); };
+    // The 6502 Second Processor: a 65C02 at 3 MHz with 64 KB (b-em 6502tube.c)
+    TubeUla* tube = nullptr;
+    TubeParasiteBus* pbus = nullptr;
+    MOS65C02* pcpu = nullptr;
+    if (tubed) {
+        tube = new TubeUla();
+        pbus = new TubeParasiteBus(tube, std::move(tubeRom));
+        pcpu = new MOS65C02();
+        pcpu->setDataBus(pbus);
+        pcpu->setCodeBus(pbus);
+        bus->setTube(tube);
+        desc->buses.push_back({"tube", pbus});
+        desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+        tube->onParasiteReset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+        desc->deleters.push_back([tube]() { delete tube; });
+    }
+
+    // BREAK: the 6502, the video, the disc controller and a second
+    // processor restart (b-em main_key_break). The MOS tells it from
+    // power-on by the System VIA's IER, which keeps its value
+    kbd->onBreak = [cpu, bus, pbus, pcpu]() {
+        bus->breakKey();
+        cpu->reset();
+        if (pcpu) { pbus->reset(); pcpu->reset(); }
+    };
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"break"}, "BREAK: the 6502 restarts (a soft reset; the program in memory stays)."}};
 
@@ -592,15 +638,36 @@ MachineDescriptor* create(Model model, std::string* err) {
         bus->setFire(port, !(bits & 0x10));
     };
 
-    desc->onReset = [bus, io, cpu](MachineDescriptor&) {     // power on
+    desc->onReset = [bus, io, cpu, tube, pbus, pcpu](MachineDescriptor&) {     // power on
         bus->powerOn();
         io->resetAll();
         cpu->reset();
+        if (tube) {
+            tube->reset();
+            pbus->powerOn();
+            pcpu->reset();
+        }
     };
-    desc->schedulerStep = [bus, cpu, io](MachineDescriptor&) -> int {
+    // The second processor runs 1.5 cycles for each of the BBC's (3 MHz
+    // against 2), unless the Tube holds it in reset
+    auto budget = std::make_shared<double>(0.0);
+    desc->schedulerStep = [bus, cpu, io, tube, pcpu, budget](MachineDescriptor&) -> int {
         bus->begin();
         const int c = bus->end(cpu->step());
         io->tickAll((uint64_t)c);
+        if (tube) {
+            if (tube->parasiteHeld()) {
+                *budget = 0;
+            } else {
+                *budget += c * 1.5;
+                while (*budget > 0) {
+                    pcpu->setIrqLine(tube->parasiteIrq());
+                    pcpu->setNmiLine(tube->parasiteNmi());
+                    *budget -= pcpu->step();
+                }
+                bus->tubeChanged();
+            }
+        }
         return c;
     };
     if (desc->onReset) desc->onReset(*desc);

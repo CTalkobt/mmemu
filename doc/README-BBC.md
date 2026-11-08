@@ -15,6 +15,7 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 |---------|---------|
 | `bbca` | BBC Micro Model A: 16 KB, OS 1.20 and BASIC 2; no User VIA, ADC or disc |
 | `bbcb` | BBC Micro Model B: OS 1.20, Acorn DFS 0.90 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
+| `bbcb-6502` | A Model B with the 6502 Second Processor on the Tube; DNFS 1.00 instead of DFS 0.90 |
 
 The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM; the Model A's 16 KB is seen at both `&0000` and `&4000`, as b-em maps it (A14 is not decoded; the screen is at the top).
 
@@ -22,6 +23,8 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 - `os12.rom`: OS 1.20, 16 KB at `&C000`.
 - `basic2.rom`: BASIC 2, sideways slot 15.
 - `dfs09.rom`: Acorn DFS 0.90 for the 8271, sideways slot 14. It is 8 KB and appears twice in its 16 KB slot. DFS raises PAGE to `&1900`.
+- `dnfs100.rom`: DNFS 1.00 (DFS 1.00 and NFS 3.40; b-em's `usdnfs.rom`), slot 14 on `bbcb-6502`. Unlike DFS 0.90, it has the Tube host code.
+- `6502tube.rom`: the 6502 Second Processor's 2 KB boot ROM (b-em `roms/tube`).
 - `saa5050.fnt`: b-em's teletext font, a capture of the SAA5050's output, character rounding included (from BeebEm).
 
 ## Memory map
@@ -41,6 +44,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 | `&FE60-&FE7F` | User VIA |
 | `&FE80-&FE9F` | 8271 disc controller (status/command, result/parameter, reset, data) |
 | `&FEC0-&FEDF` | uPD7002 ADC (the analogue port) |
+| `&FEE0-&FEFF` | The Tube, host side (`bbcb-6502`) |
 | `&FF00-&FFFF` | OS ROM |
 
 Other SHEILA addresses read `&FE`, as in b-em.
@@ -92,7 +96,7 @@ Named keys (`onKey`, the GUI, CLI `key`) go to the key in the same place on a BB
 | `'` key | `:` |
 | `` ` `` key | `_` |
 
-BREAK resets only the 6502. The OS tells a power-on from a BREAK by the System VIA's IER, which a BREAK leaves alone, so a program survives BREAK and `OLD` brings it back.
+BREAK restarts the 6502, the video, the disc controller and a second processor (b-em `main_key_break`); the VIAs keep their state. The OS tells a power-on from a BREAK by the System VIA's IER, which a BREAK leaves alone, so a program survives BREAK and `OLD` brings it back.
 
 Typed text (CLI `type`, MCP) presses one key at a time, holding it for 40 ms and releasing it for 30 ms. The OS scans every 10 ms and misses keys, including a repeated key, at 25/15 ms. Letters keep their case. With Caps Lock on, which it is at power-on, capitals need no Shift. On a BBC, Shift doesn't reverse Caps Lock unless SHIFT+CAPS LOCK has set that mode, so for lower case, typing presses CAPS LOCK first.
 
@@ -163,6 +167,29 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 - `*TAPE`, `SAVE` onto a recording, then `CHAIN ""` on a fresh machine loads it and runs it.
 - b-em's `Welcome_B.uef` (gzipped) loads with `*TAPE` and `CHAIN ""`, and runs through to "Welcome to the BBC Microcomputer".
 
+## The Tube and the 6502 Second Processor
+
+`bbcb-6502` adds the 6502 Second Processor (b-em `tube.c`, `6502tube.c`).
+
+**The Tube ULA.** It has four FIFOs between the BBC (`&FEE0-&FEE7`) and the second processor (`&FEF8-&FEFF` on its side):
+- register 1 holds 24 bytes from the second processor to the BBC;
+- register 3 holds one or two bytes (flag V).
+
+The control register sets or clears these flags:
+
+| Flag | Effect |
+|------|--------|
+| Q | The BBC's IRQ from register 4 |
+| I, J | The second processor's IRQ from registers 1 and 4 |
+| M | Its NMI from register 3 |
+| V | Two-byte register 3 |
+| P | Holds the second processor in reset |
+| T | Clears the FIFOs |
+
+**The second processor** is a 65C02 at 3 MHz, running 1.5 cycles for each of the BBC's, with 64 KB of RAM. Its 2 KB boot ROM covers `&F000-&FFFF` until it first reads the Tube's status register.
+
+**What runs where.** DNFS's Tube host code finds it and the banner reads "Acorn TUBE 6502 64K". BASIC is copied across and runs on the second processor: `PAGE` is `&800` and `HIMEM` is `&8000`. The BBC handles the screen, keyboard, sound and discs. The debugger sees the second processor as CPU `tube` on bus `tube`.
+
 ## Tests
 
 `src/plugins/machines/bbc/test/test_bbc_machine.cpp`:
@@ -173,6 +200,10 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 - `bbc_sound_tone`: `SOUND` gives 449.6 Hz on the audio output.
 - `bbc_joystick_adc`: `ADVAL` reads the stick positions and the fire buttons.
 - `bbc_model_a`: the 16K banner, no DFS, and `PAGE`/`HIMEM` (`&E00`, `&3C00`).
+- `bbc_tube_6502`:
+  - the Tube banner;
+  - BASIC on the second processor (`PAGE`, `HIMEM`, a sum), with the program in its memory;
+  - BREAK.
 
 `test_bbc_disc.cpp`:
 - `bbc_dfs_image_layout`: where `.ssd` and `.dsd` sectors are in the file.
@@ -185,5 +216,5 @@ SHIFT+BREAK boots a disc's `!BOOT`. Checked with b-em's demo disc, whose `!BOOT`
 ## Not yet
 
 - **Storage:** CSW tapes, the RS423 port, the 1770 controller (B+, Master), ADFS, and other disc image formats (`.adf`, `.hfe`, `.fsd`).
-- **Other hardware:** the Tube, Econet, the printer port.
+- **Other hardware:** other second processors (Z80, 6809, ARM, 32016), Econet, the printer port.
 - **Other models:** the B+ and the Master. (The Electron is in [README-ELECTRON.md](README-ELECTRON.md).)

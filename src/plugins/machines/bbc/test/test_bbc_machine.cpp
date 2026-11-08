@@ -184,3 +184,31 @@ TEST_CASE(bbc_model_a) {
     EXPECT_TRUE(screenHas(m, "E00 3C00"));
     delete m;
 }
+
+// The 6502 Second Processor on the Tube: DNFS's Tube host finds it ("Acorn
+// TUBE 6502 64K"), BASIC is copied across to &8000 and runs there (PAGE
+// &800, HIMEM &8000); BREAK restarts both
+TEST_CASE(bbc_tube_6502) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::BTube, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 4000000);
+    ASSERT(screenHas(m, "Acorn TUBE 6502 64K"));
+    ASSERT(screenHas(m, ">"));
+    auto* kbd = find<IKeyboardMatrix>(m);
+    ASSERT(kbd);
+    kbd->enqueueText("PRINT ~PAGE;\" \";~HIMEM;\" \";6*7\n");
+    run(m, 12000000);
+    EXPECT_TRUE(screenHas(m, "800 8000 42"));
+    // The program is in the second processor's memory, not the BBC's
+    kbd->enqueueText("10 REM TUBE\n");
+    run(m, 6000000);
+    IBus* tube = m->buses.size() > 1 ? m->buses[1].bus : nullptr;
+    ASSERT(tube);
+    EXPECT_EQ(tube->peek8(0x0800), 0x0D);           // BASIC's program start
+    m->onKey("break", true);
+    m->onKey("break", false);
+    run(m, 4000000);
+    EXPECT_TRUE(screenHas(m, "Acorn TUBE 6502 64K"));
+    delete m;
+}
