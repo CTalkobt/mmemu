@@ -262,3 +262,18 @@ TEST_CASE(bbc_tube_6809) {
     EXPECT_TRUE(screenHas(m, "OS 1.20"));
     delete m;
 }
+
+// The ARM Evaluation System (b-em arm.c, ARMeval 1.00): its banner and
+// prompt; *HELP typed there lists the Supervisor and Executive
+TEST_CASE(bbc_tube_arm) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::BArm, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 24000000);
+    EXPECT_TRUE(screenHas(m, "Acorn ARM Second Processor 4096K"));
+    find<IKeyboardMatrix>(m)->enqueueText("HELP\n");
+    run(m, 24000000);
+    EXPECT_TRUE(screenHas(m, "Supervisor 1.00"));
+    EXPECT_TRUE(screenHas(m, "Executive version 1.00"));
+    delete m;
+}

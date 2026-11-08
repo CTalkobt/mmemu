@@ -36,7 +36,7 @@ static MachineDescriptor* createMachineRaw6809() {
 
 static CorePluginInfo s_cores[] = { {"6809", "NMOS", "open", createCore6809} };
 static ToolchainPluginInfo s_toolchains[] = { {"6809", nullptr, createDisasm6809, nullptr} };
-static MachinePluginInfo s_machines[] = { {"raw6809", createMachineRaw6809} };
+static MachinePluginInfo s_machines[] = { {"raw6809", createMachineRaw6809, "Raw 6809 with 64 KB of RAM"} };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,

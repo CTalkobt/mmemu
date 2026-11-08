@@ -145,6 +145,40 @@ private:
     bool m_romIn = true;
 };
 
+/**
+ * The ARM Evaluation System's memory (b-em arm.c): 4 MB of RAM at 0, the
+ * 16 KB ROM at $3000000 (copied into RAM at power-on and reset, where the
+ * ARM starts), the Tube's parasite registers as bytes at $1000000-$100001F
+ * (register = A2-A4). Word reads outside RAM and the ROM read $FFFFFFFF;
+ * $400000-$40000F reads $FF (b-em readarmfl).
+ */
+class ArmParasiteBus : public IBus {
+public:
+    ArmParasiteBus(TubeUla* tube, std::vector<uint8_t> rom);
+    void reset() override { std::copy(m_rom.begin(), m_rom.end(), m_ram.begin()); }
+    void powerOn();
+
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "tube"; }
+    uint8_t read8(uint32_t addr) override;
+    uint8_t peek8(uint32_t addr) override;
+    void write8(uint32_t addr, uint8_t v) override;
+    uint32_t read32(uint32_t addr) override;
+    void write32(uint32_t addr, uint32_t v) override;
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+
+private:
+    static constexpr uint32_t RAM_SIZE = 0x400000, ROM_BASE = 0x3000000;
+    BusConfig m_cfg;
+    TubeUla* m_tube;
+    std::vector<uint8_t> m_rom, m_ram;
+};
+
 /** The Z80's I/O space: the Tube's parasite registers on every port (A0-A2). */
 class Z80TubeIo : public IBus {
 public:

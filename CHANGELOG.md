@@ -8,6 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **Acorn ARM core and the ARM Evaluation System** (#13).
+  - **The core:** `mmemu-plugin-arm.so`, an ARM1/ARM2 with the 26-bit PSR in R15. It covers data processing with the barrel shifter, MUL/MLA (ARM2), LDR/STR, LDM/STM with `^`, B/BL, SWI, the four modes with banked registers, and the exceptions, plus a disassembler. On about 160,000 random instructions it agrees with b-em's `arm.c`, apart from that core's documented departures from the datasheet. That comparison found two bugs in the new core, both fixed. See `doc/README-ARM.md`.
+  - **The system:** profile `bbcb-arm`, after b-em's `arm.c`. It has 4 MB of RAM; the 16 KB ROM (`roms/bbc/armeval100.rom`, from b-em) is copied to 0 at reset; the Tube is at `$1000000`.
+  - **Booting:** it boots to "Acorn ARM Second Processor 4096K" and the Supervisor's `A*` prompt.
+  - **Tests:** `arm2_*`, `bbc_tube_arm`.
 - **Motorola 6809 core and the 6809 Second Processor** (#13).
   - **The core:** `mmemu-plugin-6809.so`, after the MC6809 data sheet: all documented instructions and indexed modes with their cycle counts, FIRQ/IRQ/NMI (NMI armed by loading S), CWAI, SYNC, SWI1-3, and a disassembler. On about 160,000 random instructions it agrees with GCC6809's simulator (b-em's mc6809nc) in registers, memory and cycles, apart from that simulator's DAA bug. See `doc/README-6809.md`.
   - **The second processor:** profile `bbcb-6809`, after b-em's `6809tube.c`. The ROM is at `$F800` until the Tube is touched, the Tube is at `$FEE0`, and the vectors are at `$FEF0`. The Tube's IRQ goes to FIRQ and its NMI to IRQ.

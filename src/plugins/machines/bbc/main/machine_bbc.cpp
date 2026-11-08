@@ -9,6 +9,7 @@
 #include "bbc_tube.h"
 #include "plugins/z80/main/cpu_z80.h"
 #include "plugins/6809/main/cpu6809.h"
+#include "plugins/arm/main/cpu_arm2.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -542,7 +543,7 @@ private:
 
 MachineDescriptor* create(Model model, std::string* err) {
     const bool modelA = model == Model::A;
-    const bool tubed = model == Model::BTube || model == Model::BZ80 || model == Model::B6809;
+    const bool tubed = model == Model::BTube || model == Model::BZ80 || model == Model::B6809 || model == Model::BArm;
     std::vector<uint8_t> os, basic, dfs, tubeRom;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
@@ -552,6 +553,7 @@ MachineDescriptor* create(Model model, std::string* err) {
         if (model == Model::BTube && !loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
         if (model == Model::BZ80 && !loadFile("roms/bbc/z80tube121.rom", 0x1000, tubeRom, err)) return nullptr;
         if (model == Model::B6809 && !loadFile("roms/bbc/6809tube.rom", 0x800, tubeRom, err)) return nullptr;
+        if (model == Model::BArm && !loadFile("roms/bbc/armeval100.rom", 0x4000, tubeRom, err)) return nullptr;
     } else if (!modelA) {
         // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
         if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
@@ -559,11 +561,12 @@ MachineDescriptor* create(Model model, std::string* err) {
 
     auto* desc = new MachineDescriptor();
     desc->machineId = modelA ? "bbca" : model == Model::BTube ? "bbcb-6502" : model == Model::BZ80 ? "bbcb-z80"
-                    : model == Model::B6809 ? "bbcb-6809" : "bbcb";
+                    : model == Model::B6809 ? "bbcb-6809" : model == Model::BArm ? "bbcb-arm" : "bbcb";
     desc->displayName = modelA ? "BBC Micro Model A"
                       : model == Model::BTube ? "BBC Micro Model B with 6502 Second Processor"
                       : model == Model::BZ80 ? "BBC Micro Model B with Z80 Second Processor"
                       : model == Model::B6809 ? "BBC Micro Model B with 6809 Second Processor"
+                      : model == Model::BArm ? "BBC Micro Model B with ARM Evaluation System"
                       : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
@@ -614,6 +617,9 @@ MachineDescriptor* create(Model model, std::string* err) {
     //  - 6809: 1.5 cycles a BBC cycle, 64 KB, the ROM at $F800 until the Tube
     //    is touched, the vectors at $FEF0, the Tube's IRQ on FIRQ and its NMI
     //    on IRQ (6809tube.c)
+    //  - ARM: the ARM Evaluation System, an ARM1 at about 2.4 cycles a BBC
+    //    cycle, 4 MB, the ROM copied to 0 at reset, the Tube at $1000000,
+    //    its IRQ on IRQ and its NMI on FIQ (arm.c)
     struct Parasite {
         ICore* cpu = nullptr;
         std::function<void()> powerOn, reset, beforeStep;
@@ -636,6 +642,16 @@ MachineDescriptor* create(Model model, std::string* err) {
             par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
             par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
             par->ratio = 1.5;
+        } else if (model == Model::BArm) {
+            auto* pbus = new ArmParasiteBus(tube, std::move(tubeRom));
+            auto* pcpu = new Arm2(true);                                // the ARM1: no MUL
+            pcpu->setDataBus(pbus);
+            desc->buses.push_back({"tube", pbus});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->ratio = 4.83 / 2;
         } else if (model == Model::B6809) {
             auto* pbus = new M6809ParasiteBus(tube, std::move(tubeRom));
             auto* pcpu = new M6809();

@@ -18,6 +18,7 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 | `bbcb-6502` | A Model B with the 6502 Second Processor on the Tube; DNFS 1.00 instead of DFS 0.90 |
 | `bbcb-z80` | A Model B with the Z80 Second Processor on the Tube (CP/M); DNFS 1.00 |
 | `bbcb-6809` | A Model B with the 6809 Second Processor on the Tube; DNFS 1.00 |
+| `bbcb-arm` | A Model B with the ARM Evaluation System (an ARM1 second processor); DNFS 1.00 |
 
 The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM; the Model A's 16 KB is seen at both `&0000` and `&4000`, as b-em maps it (A14 is not decoded; the screen is at the top).
 
@@ -29,6 +30,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 - `6502tube.rom`: the 6502 Second Processor's 2 KB boot ROM (b-em `roms/tube`).
 - `z80tube121.rom`: the Z80 Second Processor's 4 KB client ROM, version 1.21 (b-em `roms/tube/Z80_121.rom`).
 - `6809tube.rom`: the 6809 Second Processor's 2 KB client ROM, J.G. Harston's 1.05a (b-em `roms/tube/6809Tube.rom`).
+- `armeval100.rom`: the ARM Evaluation System's 16 KB ROM, Supervisor and Executive 1.00 (b-em `roms/tube/ARMeval_100.rom`).
 - `saa5050.fnt`: b-em's teletext font, a capture of the SAA5050's output, character rounding included (from BeebEm).
 
 ## Memory map
@@ -218,7 +220,17 @@ The CP/M discs are not in this repository.
 - **The board:** the Tube's parasite registers are at `$FEE0-$FEE7`. The board fetches the 6809's vectors from `$FEF0-$FEFF`, which is inside the ROM.
 - **Interrupts:** the Tube's IRQ goes to the 6809's FIRQ, and its NMI to IRQ.
 
-It boots to "6809 TUBE 64K 1.05a" and the client's `6809>*` prompt. Commands typed there run on the BBC; for example, `HELP` lists the DFS and OS 1.20.
+It boots to "6809 TUBE 64K 1.05a" and the client's `6809>*` prompt.
+
+## The ARM Evaluation System
+
+`bbcb-arm` adds Acorn's ARM Evaluation System (b-em `arm.c`), running the new ARM core as an ARM1 (`mmemu-plugin-arm.so`; see `doc/README-ARM.md`).
+- **The CPU:** about 2.4 cycles for each of the BBC's, with 4 MB of RAM.
+- **The ROM:** 16 KB at `$3000000`, copied to address 0 at power-on and BREAK; the ARM starts there.
+- **The Tube:** its parasite registers are bytes at `$1000000-$100001F`, the register picked by A2-A4. A word read there reads `$FFFFFFFF`, with no side effects.
+- **Interrupts:** the Tube's IRQ goes to the ARM's IRQ, and its NMI to FIQ.
+
+It boots to "Acorn ARM Second Processor 4096K" and the Supervisor's `A*` prompt. `HELP` lists "Supervisor 1.00", "Executive version 1.00 (6th June 1986)", the DFS and OS 1.20. ARM BASIC came on the system's ADFS discs (b-em `discs/ARMEvaluationSystem-Disc*.adl`); this BBC has no ADFS yet. Commands typed there run on the BBC; for example, `HELP` lists the DFS and OS 1.20.
 
 ## Tests
 
@@ -235,6 +247,7 @@ It boots to "6809 TUBE 64K 1.05a" and the client's `6809>*` prompt. Commands typ
   - BASIC on the second processor (`PAGE`, `HIMEM`, a sum), with the program in its memory;
   - BREAK.
 - `bbc_tube_6809`: the banner and prompt; `*HELP` from the 6809's prompt.
+- `bbc_tube_arm`: the banner; `*HELP` from the ARM's prompt.
 - `bbc_tube_z80_cpm`: BASIC copied to the Z80's memory. With b-em's `discs/cpm1.dsd` beside this tree, CP/M 2.2's BIOS loads from the disc.
 
 `test_bbc_disc.cpp`:

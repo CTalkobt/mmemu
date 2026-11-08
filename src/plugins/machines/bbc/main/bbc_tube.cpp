@@ -307,4 +307,54 @@ void M6809ParasiteBus::write8(uint32_t addr, uint8_t v) {
     else m_ram[a] = v;
 }
 
+// ---------------------------------------------------------------------------
+// ArmParasiteBus (b-em arm.c readarmb / readarml / writearmb / writearml)
+// ---------------------------------------------------------------------------
+ArmParasiteBus::ArmParasiteBus(TubeUla* tube, std::vector<uint8_t> rom) : m_tube(tube), m_rom(std::move(rom)) {
+    m_cfg = {26, 8, BusRole::DATA, true, 0x03FFFFFF};
+    m_ram.assign(RAM_SIZE, 0);
+    if (m_rom.empty()) m_rom.assign(0x4000, 0);
+}
+
+void ArmParasiteBus::powerOn() {
+    std::fill(m_ram.begin(), m_ram.end(), 0);
+    reset();
+}
+
+uint8_t ArmParasiteBus::peek8(uint32_t addr) {
+    const uint32_t a = addr & 0x03FFFFFF;
+    if (a < RAM_SIZE) return m_ram[a];
+    if (a >= ROM_BASE && a < ROM_BASE + m_rom.size()) return m_rom[a - ROM_BASE];
+    return 0xFF;
+}
+
+uint8_t ArmParasiteBus::read8(uint32_t addr) {
+    const uint32_t a = addr & 0x03FFFFFF;
+    uint8_t v;
+    if ((a & ~0x1Fu) == 0x1000000) v = m_tube->parasiteRead((uint16_t)((a & 0x1C) >> 2));
+    else v = peek8(a);
+    if (m_observer) m_observer->onMemoryRead(this, a, v);
+    return v;
+}
+
+void ArmParasiteBus::write8(uint32_t addr, uint8_t v) {
+    const uint32_t a = addr & 0x03FFFFFF;
+    if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
+    if (a < RAM_SIZE) m_ram[a] = v;
+    else if ((a & ~0x1Fu) == 0x1000000) m_tube->parasiteWrite((uint16_t)((a & 0x1C) >> 2), v);
+}
+
+uint32_t ArmParasiteBus::read32(uint32_t addr) {
+    const uint32_t a = addr & 0x03FFFFFC;
+    if (a < RAM_SIZE || (a >= ROM_BASE && a < ROM_BASE + m_rom.size()))
+        return (uint32_t)peek8(a) | (uint32_t)peek8(a + 1) << 8 | (uint32_t)peek8(a + 2) << 16 | (uint32_t)peek8(a + 3) << 24;
+    return 0xFFFFFFFF;                                                  // the Tube and nothing: no side effects
+}
+
+void ArmParasiteBus::write32(uint32_t addr, uint32_t v) {
+    const uint32_t a = addr & 0x03FFFFFC;
+    if (a >= RAM_SIZE) return;
+    for (int i = 0; i < 4; ++i) m_ram[a + (uint32_t)i] = (uint8_t)(v >> (8 * i));
+}
+
 }  // namespace bbc
