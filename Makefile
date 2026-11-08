@@ -132,6 +132,10 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
 
+PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
+	src/plugins/machines/spectrum/main/spectrum_tape.cpp \
+	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
+	src/plugins/machines/spectrum/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
 	src/plugins/machines/bbc/main/sn76489.cpp \
@@ -457,6 +461,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/machines/c128/test/test_c128_machine.cpp \
 	src/plugins/z80/test/test_z80.cpp \
+	src/plugins/z80/test/test_z80_fuse.cpp \
 	src/plugins/devices/riot6532/test/test_riot6532.cpp \
 	src/plugins/devices/tia/test/test_tia.cpp \
 	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \
@@ -467,6 +472,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/bbc/test/test_bbc_disc.cpp \
 	src/plugins/machines/bbc/test/test_bbc_tape.cpp \
 	src/plugins/machines/bbc/test/test_electron.cpp \
+	src/plugins/machines/spectrum/test/test_spectrum.cpp \
+	src/plugins/machines/spectrum/test/test_spectrum_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -582,6 +589,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/bbc/main/bbc_tube.o \
 	src/plugins/machines/bbc/main/machine_electron.o \
 	src/plugins/devices/bbc_video/main/bbc_video.o \
+	src/plugins/machines/spectrum/main/machine_spectrum.o \
+	src/plugins/machines/spectrum/main/spectrum_tape.o \
+	src/plugins/machines/spectrum/main/spectrum_ay.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
@@ -722,6 +732,7 @@ PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
+PLUGIN_SPECTRUM_OBJS = $(PLUGIN_SPECTRUM_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -785,6 +796,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
+	$(LIBDIR)/mmemu-plugin-spectrum.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -920,6 +932,9 @@ $(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS) -lz
+
+$(LIBDIR)/mmemu-plugin-spectrum.so: $(PLUGIN_SPECTRUM_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)

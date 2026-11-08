@@ -18,7 +18,32 @@
  * I * 256 + $FF), an edge-triggered /NMI, HALT, and EI's one-instruction
  * delay. I/O goes to the I/O bus with the full 16-bit port address (B or A
  * in the high byte), as the C128 decodes it. step() returns T-states.
+ *
+ * Timing is kept per bus cycle (cycles() runs during an instruction, so a
+ * bus sees the T-state of each access), in Fuse's order, with an optional
+ * IZ80Timing adding contention; checked event by event against Fuse's
+ * core tests (tests/z80/fuse). HALT keeps PC on the HALT and fetches it
+ * again every 4 T-states, as Fuse does.
  */
+/**
+ * Bus timing a machine may give the Z80 (the ZX Spectrum's ULA contention).
+ * The core times every bus cycle as Fuse does (z80/z80.pl, coretest.c):
+ * an M1 takes 4 T-states, a memory read or write 3, each internal cycle 1
+ * with the address the Z80 leaves on the bus, an I/O cycle 4. Before each
+ * memory or internal cycle the machine may add wait states.
+ */
+class IZ80Timing {
+public:
+    virtual ~IZ80Timing() = default;
+    /** Wait states before a cycle at `addr` starting at T-state `t`:
+     *  `mreq` for a memory read/write/M1, false for an internal cycle. */
+    virtual int contend(uint16_t addr, uint64_t t, bool mreq) = 0;
+    /** An I/O cycle at `port` from `t`: T-states before the access is made... */
+    virtual int ioBefore(uint16_t port, uint64_t t, bool write) { (void)port; (void)t; (void)write; return 1; }
+    /** ...and after it (1 + 3 uncontended). */
+    virtual int ioAfter(uint16_t port, uint64_t t, bool write) { (void)port; (void)t; (void)write; return 3; }
+};
+
 class Z80 : public ICore {
 public:
     Z80();
@@ -65,6 +90,12 @@ public:
     IBus* getCodeBus() const override { return m_bus; }
     IBus* getIoBus()   const override { return m_io; }
     uint64_t cycles() const override { return m_cycles; }
+    /** Contention (the Spectrum); nullptr for none. */
+    void setTiming(IZ80Timing* t) { m_timing = t; }
+    /** Set the T-state clock (a machine counting T-states in a frame, tests). */
+    void setCycles(uint64_t t) { m_cycles = t; }
+    /** Enter the HALT state (snapshots, tests): PC stays on the HALT. */
+    void setHalted() { m_halted = true; }
 
     size_t stateSize() const override { return 40; }
     void   saveState(uint8_t* buf) const override;
@@ -80,17 +111,48 @@ public:
     uint16_t hl() const { return (uint16_t)(m_h << 8 | m_l); }
 
 private:
-    // Memory and I/O
-    uint8_t rd(uint16_t a) { return m_bus ? m_bus->read8(a) : 0xFF; }
-    void    wr(uint16_t a, uint8_t v) { if (m_bus) m_bus->write8(a, v); }
-    uint16_t rd16(uint16_t a) { return (uint16_t)(rd(a) | rd((uint16_t)(a + 1)) << 8); }
+    // Memory and I/O, timed per bus cycle
+    int wait(uint16_t a, bool mreq) { return m_timing ? m_timing->contend(a, m_cycles, mreq) : 0; }
+    uint8_t rd(uint16_t a) { m_cycles += wait(a, true) + 3; return m_bus ? m_bus->read8(a) : 0xFF; }
+    void    wr(uint16_t a, uint8_t v) { m_cycles += wait(a, true) + 3; if (m_bus) m_bus->write8(a, v); }
+    /** An M1 opcode fetch. */
+    uint8_t m1() { m_cycles += wait(m_pc, true) + 4; uint8_t v = m_bus ? m_bus->read8(m_pc) : 0xFF; m_pc++; return v; }
+    /** A memory cycle that reads nothing (JR/DJNZ not taken: Fuse's contend_read(PC, 3)). */
+    void    mcycle(uint16_t a) { m_cycles += wait(a, true) + 3; }
+    /** `n` internal cycles, `a` on the address bus (Fuse's contend_*_no_mreq). */
+    void    idle(uint16_t a, int n) { while (n-- > 0) m_cycles += wait(a, false) + 1; }
+    uint16_t ir() const { return (uint16_t)(m_i << 8 | m_r); }
+    uint16_t rd16(uint16_t a) { uint8_t l = rd(a); return (uint16_t)(l | rd((uint16_t)(a + 1)) << 8); }
     void    wr16(uint16_t a, uint16_t v) { wr(a, v & 0xFF); wr((uint16_t)(a + 1), v >> 8); }
-    uint8_t in(uint16_t port) { return m_io ? m_io->read8(port) : 0xFF; }
-    void    out(uint16_t port, uint8_t v) { if (m_io) m_io->write8(port, v); }
+    uint8_t in(uint16_t port) {
+        m_cycles += m_timing ? m_timing->ioBefore(port, m_cycles, false) : 1;
+        uint8_t v = m_io ? m_io->read8(port) : 0xFF;
+        m_cycles += m_timing ? m_timing->ioAfter(port, m_cycles, false) : 3;
+        return v;
+    }
+    void out(uint16_t port, uint8_t v) {
+        m_cycles += m_timing ? m_timing->ioBefore(port, m_cycles, true) : 1;
+        if (m_io) m_io->write8(port, v);
+        m_cycles += m_timing ? m_timing->ioAfter(port, m_cycles, true) : 3;
+    }
     uint8_t fetch() { return rd(m_pc++); }
     uint16_t fetch16() { uint16_t v = rd16(m_pc); m_pc = (uint16_t)(m_pc + 2); return v; }
-    void push(uint16_t v) { m_sp = (uint16_t)(m_sp - 2); wr16(m_sp, v); }
+    // The high byte goes first, to SP-1 (as the Z80 and Fuse do)
+    void push(uint16_t v) { wr(--m_sp, v >> 8); wr(--m_sp, v & 0xFF); }
     uint16_t pop() { uint16_t v = rd16(m_sp); m_sp = (uint16_t)(m_sp + 2); return v; }
+    /** (IX+d): fetch d, then 5 internal cycles on its address. */
+    uint16_t dispAddr();
+    /** JR's displacement: read, 5 internal cycles on its address, jump. */
+    void jr() { int8_t d = (int8_t)fetch(); idle((uint16_t)(m_pc - 1), 5); m_pc = (uint16_t)(m_pc + d); m_wz = m_pc; }
+    /** CALL nn once taken: an internal cycle on nn's high byte, push, jump. */
+    void call() {
+        uint8_t lo = fetch(), hi = rd(m_pc);
+        idle(m_pc, 1);
+        m_pc++;
+        push(m_pc);
+        m_pc = (uint16_t)(hi << 8 | lo);
+        m_wz = m_pc;
+    }
     void incR() { m_r = (uint8_t)((m_r & 0x80) | ((m_r + 1) & 0x7F)); }
 
     // Register access by the opcode's 3-bit field (6 = (HL)/(IX+d))
@@ -124,6 +186,7 @@ private:
 
     IBus* m_bus = nullptr;
     IBus* m_io = nullptr;
+    IZ80Timing* m_timing = nullptr;
 
     uint8_t m_a = 0xFF, m_f = 0xFF, m_b = 0, m_c = 0, m_d = 0, m_e = 0, m_h = 0, m_l = 0;
     uint16_t m_af2 = 0xFFFF, m_bc2 = 0, m_de2 = 0, m_hl2 = 0;

@@ -62,8 +62,9 @@ void TapePane::RefreshStatus() {
 void TapePane::OnMount(wxCommandEvent&) {
     if (!m_tape) return;
     wxFileDialog openFileDialog(this, "Mount Tape", "", "",
-                       "Tapes (*.tap;*.uef)|*.tap;*.uef;*.TAP;*.UEF|"
-                       "Commodore tapes (*.tap)|*.tap;*.TAP|BBC Micro tapes (*.uef)|*.uef;*.UEF",
+                       "Tapes (*.tap;*.tzx;*.uef)|*.tap;*.tzx;*.uef;*.TAP;*.TZX;*.UEF;*.tzx.gz;*.tap.gz;*.zip|"
+                       "Commodore tapes (*.tap)|*.tap;*.TAP|BBC Micro tapes (*.uef)|*.uef;*.UEF|"
+                       "ZX Spectrum tapes (*.tap;*.tzx)|*.tap;*.tzx;*.TAP;*.TZX;*.tap.gz;*.tzx.gz;*.zip",
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);
     if (openFileDialog.ShowModal() == wxID_OK) {
         std::string path = openFileDialog.GetPath().ToStdString();
@@ -100,7 +101,7 @@ void TapePane::OnSaveRecording(wxCommandEvent&) {
     if (!m_tape) return;
     m_tape->stopTapeRecord();
     wxFileDialog dlg(this, "Save Tape Recording", "", "",
-                     "Commodore tapes (*.tap)|*.tap|BBC Micro tapes (*.uef)|*.uef",
+                     "Commodore tapes (*.tap)|*.tap|BBC Micro tapes (*.uef)|*.uef|ZX Spectrum tapes (*.tap)|*.tap",
                      wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
     if (dlg.ShowModal() == wxID_OK) {
         std::string path = dlg.GetPath().ToStdString();

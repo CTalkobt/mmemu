@@ -7,3 +7,8 @@ flags, ZEXALL all of them. Copies from the z80emu project
 (github.com/anotherlin/z80emu, `testfiles/`).
 
 Run with `MMEMU_ZEX=1 bin/mmemu-test z80_zex` (see `doc/README-Z80.md`).
+
+`fuse/tests.in` / `fuse/tests.expected`: Fuse's Z80 core tests (Fuse
+`z80/tests`, Philip Kendall and contributors, GNU GPL version 2 or
+later). Each test's bus events with their T-states, registers and changed
+memory; run by `bin/mmemu-test z80_fuse_core_tests`.
