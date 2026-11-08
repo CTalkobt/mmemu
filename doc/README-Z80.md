@@ -16,7 +16,18 @@ A Z80 core (#22: the C128's second CPU), its disassembler, and a bare
   (Patrik Rak). References: "The Undocumented Z80 Documented" (Sean Young),
   the Zilog manual, "Decoding Z80 Opcodes" (Cristian Dinu).
 - **Timing**: `step()` returns T-states (the Zilog figures, including taken
-  and not-taken branches and the repeating block instructions).
+  and not-taken branches and the repeating block instructions). The clock
+  (`cycles()`) advances per bus cycle in Fuse's order (`z80/z80.pl`):
+  - an M1 takes 4 T-states, a memory read or write 3, an I/O cycle 4;
+  - each internal cycle takes 1, with the address the Z80 leaves on the bus
+    (IR, PC, HL, SP, the (IX+d) address);
+  - so a bus sees each access at its own T-state.
+
+  A machine with contended memory gives the core an `IZ80Timing`
+  (`setTiming`): it adds wait states before each memory or internal cycle,
+  and times the I/O cycle around the access. The ZX Spectrum's ULA uses it.
+- **HALT**: PC stays on the HALT, which is fetched again every 4 T-states
+  (Fuse's model); an interrupt pushes the address after it.
 - **Interrupts**: a level-sensitive /INT (`setIrqLine`) in modes 0, 1 and 2,
   with the data bus reading `$FF` (mode 0 runs `RST 38h`, mode 2 takes the
   vector at I x 256 + `$FF`); an edge-triggered /NMI to `$0066`; HALT; EI's
@@ -40,3 +51,13 @@ MMEMU_ZEX=1 bin/mmemu-test z80_zex      # both (MMEMU_ZEX=doc or all for one)
 ```
 
 Both report every group OK.
+
+`src/plugins/z80/test/test_z80_fuse.cpp` runs Fuse's core tests
+(`tests/z80/fuse/tests.in`, `tests.expected`: 1356 tests). For each test it
+checks the bus events with their T-states (memory reads and writes, port
+reads and writes, the contention points), the registers, the final T-state
+and the changed memory; all match:
+
+```bash
+bin/mmemu-test z80_fuse_core_tests
+```

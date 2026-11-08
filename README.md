@@ -79,6 +79,10 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Profiles**: `bbca` (Model A, 16 KB), `bbcb` (Model B, OS 1.20, DFS, BASIC 2), `bbcb-6502` (with the 6502 Second Processor on the Tube), `electron` (Acorn Electron, after Elkulator; see `doc/README-ELECTRON.md`).
 - **Hardware**: MOS 6502 at 2 MHz, 32 KB RAM, sideways ROMs, the 6845, video ULA and SAA5050 teletext (Modes 0-7), the System and User VIAs, the keyboard matrix on the slow data bus, the SN76489, the 1 MHz bus, the 8271 with Acorn DFS and `.ssd`/`.dsd` discs, UEF cassettes and the ADC (analogue joysticks), after b-em. See `doc/README-BBC.md`.
 
+### ZX Spectrum
+- **Profiles**: `spectrum48`, `spectrum128`, `spectrumplus2`.
+- **Hardware**: Z80 timed per bus cycle against the ULA's contended memory and I/O, the ULA screen and border drawn as the beam passes, the floating bus, port `$FE` (keyboard, border, beeper), Kempston joystick, 128K `$7FFD` paging, after Fuse. See `doc/README-SPECTRUM.md`.
+
 ### Atari 2600
 - **Profiles**: `atari2600`, `atari2600-pal`.
 - **Hardware**: MOS 6507 CPU, TIA video/sound/inputs, RIOT 6532 (RAM, ports, timer), two joysticks, the console switches, bank-switched cartridges (`.a26`/`.bin`: 2K, 4K, F8/F6/F4 with or without Superchip RAM, E0, 3F, FA). See `doc/README-A2600.md`.

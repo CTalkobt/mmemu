@@ -8,6 +8,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### ZX Spectrum
+- **ZX Spectrum 48K, 128K and +2** (#242): profiles `spectrum48`, `spectrum128`, `spectrumplus2`, in `mmemu-plugin-spectrum.so`, after Fuse (GPL-2.0-or-later) and libspectrum's timings. See `doc/README-SPECTRUM.md`.
+  - **Memory:** the 16 KB ROM and 48 KB of RAM. The 128K and +2 add eight RAM banks and two ROMs, paged through `$7FFD` (with the screen in bank 5 or 7, and the lock bit). ROMs from Fuse (Amstrad permits their distribution) are in `roms/spectrum/`.
+  - **Contention:** memory and I/O contention in Fuse's 6,5,4,3,2,1,0,0 pattern, applied per Z80 bus cycle. Frames are 69888 T-states (48K) or 70908 (128K), with /INT held for 32 or 36 T-states.
+  - **The ULA:** the 256 × 192 screen with its border, 320 × 240, drawn as the beam passes, so mid-frame border and screen changes show. FLASH and BRIGHT are supported, along with the floating bus.
+  - **Ports:**
+    - `$FE`: the keyboard half-rows, EAR in, the border, MIC and the beeper.
+    - `$1F`: the Kempston joystick, from the host joystick.
+  - **Typed text:** typed text goes to the ROM's key buffer (`LAST_K`) at the moment the ROM reads a key. In 48 BASIC the keywords become tokens, as K mode enters them.
+  - **Host keys:** letters, digits and Enter as on the Spectrum. Shift is Caps Shift; Ctrl, Alt and the right Shift are Symbol Shift; Backspace, the arrow keys and Escape (BREAK) are their Caps Shift combinations.
+  - **Tests:** `spectrum48_boots`, `spectrum48_typed_basic`, `spectrum48_beep`, `spectrum48_contention`, `spectrum48_floating_bus`, `spectrum128_boots_and_pages`.
 - **Z80 timing per bus cycle** (#242), for the Spectrum's contended memory.
   - **Per access:** the core now advances its T-state clock on each bus cycle in Fuse's order: the M1, memory reads and writes, the internal cycles with the address left on the bus, and I/O. A bus sees each access's T-state.
   - **Contention hook:** a machine adds wait states through `IZ80Timing`.
