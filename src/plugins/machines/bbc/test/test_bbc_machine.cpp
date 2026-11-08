@@ -247,3 +247,18 @@ TEST_CASE(bbc_tube_z80_cpm) {
     }
     delete m;
 }
+
+// The 6809 Second Processor (b-em 6809tube.c, J.G. Harston's client 1.05a):
+// its banner and command prompt; *HELP typed there runs on the BBC
+TEST_CASE(bbc_tube_6809) {
+    std::string err;
+    MachineDescriptor* m = bbc::create(bbc::Model::B6809, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 24000000);
+    EXPECT_TRUE(screenHas(m, "6809 TUBE 64K"));
+    EXPECT_TRUE(screenHas(m, "6809>*"));
+    find<IKeyboardMatrix>(m)->enqueueText("HELP\n");
+    run(m, 24000000);
+    EXPECT_TRUE(screenHas(m, "OS 1.20"));
+    delete m;
+}

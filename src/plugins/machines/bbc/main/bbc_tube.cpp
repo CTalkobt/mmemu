@@ -269,4 +269,42 @@ void Z80ParasiteBus::write8(uint32_t addr, uint8_t v) {
     m_ram[a] = v;                                                // writes go to RAM under the ROM
 }
 
+// ---------------------------------------------------------------------------
+// M6809ParasiteBus (b-em 6809tube.c readmem / writemem)
+// ---------------------------------------------------------------------------
+M6809ParasiteBus::M6809ParasiteBus(TubeUla* tube, std::vector<uint8_t> rom) : m_tube(tube), m_rom(std::move(rom)) {
+    m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
+    m_ram.assign(0x10000, 0);
+    if (m_rom.empty()) m_rom.assign(0x800, 0);
+}
+
+void M6809ParasiteBus::powerOn() {
+    std::fill(m_ram.begin(), m_ram.end(), 0);
+    m_romIn = true;
+}
+
+uint8_t M6809ParasiteBus::peek8(uint32_t addr) {
+    const uint16_t a = addr & 0xFFFF;
+    if ((a & ~7) == 0xFEE0) return 0xFF;
+    if (a >= 0xF800 && m_romIn) return m_rom[a & 0x7FF];
+    return m_ram[a];
+}
+
+uint8_t M6809ParasiteBus::read8(uint32_t addr) {
+    const uint16_t a = addr & 0xFFFF;
+    uint8_t v;
+    if ((a & ~7) == 0xFEE0) { v = m_tube->parasiteRead(a); m_romIn = false; }
+    else if (a >= 0xF800 && m_romIn) v = m_rom[a & 0x7FF];
+    else v = m_ram[a];
+    if (m_observer) m_observer->onMemoryRead(this, a, v);
+    return v;
+}
+
+void M6809ParasiteBus::write8(uint32_t addr, uint8_t v) {
+    const uint16_t a = addr & 0xFFFF;
+    if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
+    if ((a & ~7) == 0xFEE0) { m_romIn = false; m_tube->parasiteWrite(a, v); }
+    else m_ram[a] = v;
+}
+
 }  // namespace bbc

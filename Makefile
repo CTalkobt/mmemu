@@ -146,6 +146,8 @@ PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/devices/bbc_video/main/bbc_video.cpp \
 	src/plugins/machines/bbc/main/plugin_init.cpp
 
+PLUGIN_6809_SRCS = src/plugins/6809/main/cpu6809.cpp \
+	src/plugins/6809/main/plugin_init.cpp
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/z80/main/plugin_init.cpp
@@ -462,6 +464,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/c128/test/test_c128_machine.cpp \
 	src/plugins/z80/test/test_z80.cpp \
 	src/plugins/z80/test/test_z80_fuse.cpp \
+	src/plugins/6809/test/test_cpu6809.cpp \
 	src/plugins/devices/riot6532/test/test_riot6532.cpp \
 	src/plugins/devices/tia/test/test_tia.cpp \
 	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \
@@ -573,6 +576,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/c128/main/machine_c128.o \
 	src/plugins/machines/c128/main/c128_carts.o \
 	src/plugins/z80/main/cpu_z80.o \
+	src/plugins/6809/main/cpu6809.o \
 	src/plugins/devices/riot6532/main/riot6532.o \
 	src/plugins/devices/tia/main/tia.o \
 	src/plugins/devices/tia/main/tia_objects.o \
@@ -729,6 +733,7 @@ PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
 PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_C128_OBJS   = $(PLUGIN_C128_SRCS:.cpp=.o)
 PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
+PLUGIN_6809_OBJS   = $(PLUGIN_6809_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
@@ -793,6 +798,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-plus4.so \
 	$(LIBDIR)/mmemu-plugin-c128.so \
 	$(LIBDIR)/mmemu-plugin-z80.so \
+	$(LIBDIR)/mmemu-plugin-6809.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
@@ -923,6 +929,9 @@ $(LIBDIR)/mmemu-plugin-c128.so: $(PLUGIN_C128_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-6809.so: $(PLUGIN_6809_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)

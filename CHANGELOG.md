@@ -8,6 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### BBC Micro
+- **Motorola 6809 core and the 6809 Second Processor** (#13).
+  - **The core:** `mmemu-plugin-6809.so`, after the MC6809 data sheet: all documented instructions and indexed modes with their cycle counts, FIRQ/IRQ/NMI (NMI armed by loading S), CWAI, SYNC, SWI1-3, and a disassembler. On about 160,000 random instructions it agrees with GCC6809's simulator (b-em's mc6809nc) in registers, memory and cycles, apart from that simulator's DAA bug. See `doc/README-6809.md`.
+  - **The second processor:** profile `bbcb-6809`, after b-em's `6809tube.c`. The ROM is at `$F800` until the Tube is touched, the Tube is at `$FEE0`, and the vectors are at `$FEF0`. The Tube's IRQ goes to FIRQ and its NMI to IRQ.
+  - **Booting:** it boots to J.G. Harston's client 1.05a (`roms/bbc/6809tube.rom`, from b-em) and its `6809>*` prompt.
+  - **Tests:** `m6809_*`, `bbc_tube_6809`.
 - **The Z80 Second Processor** (#13): profile `bbcb-z80`, after b-em's `z80.c`.
   - **Hardware:** a Z80 at 6 MHz with 64 KB. The client ROM 1.21 (`roms/bbc/z80tube121.rom`, from b-em) is paged in at `$0000` until the Z80 runs above `$7FFF`, and again on NMI.
   - **Tube:** on the Z80's I/O ports. IM 2 takes its vector from `$FFFE` (the Z80 core's new `setInterruptVector`).

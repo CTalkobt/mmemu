@@ -26,6 +26,7 @@ Plugins that implement the `ICore` interface.
 |-------------|-------------|---------------|
 | `lib/mmemu-plugin-6502.so` | MOS 6502 (NMOS) with illegal opcode support; also provides MOS 6510 and WDC 65C02. | [README-6502.md](README-6502.md) · [README-6510.md](README-6510.md) |
 | `lib/mmemu-plugin-z80.so` | Zilog Z80 with the undocumented instructions and flags (ZEXALL clean), its disassembler, and the `rawz80` machine. | [README-Z80.md](README-Z80.md) |
+| `lib/mmemu-plugin-6809.so` | Motorola 6809 (data-sheet instructions, indexed modes and cycles; checked against GCC6809's simulator), its disassembler, and the `raw6809` machine. | [README-6809.md](README-6809.md) |
 | `lib/mmemu-plugin-45gs02.so` | MEGA65 45GS02 CPU: 65CE02 extensions, 28-bit mapping (MAP), 32-bit Quad operations. | [README-45GS02.md](README-45GS02.md) |
 
 ### 1.2 Device Plugins (I/O & Video)

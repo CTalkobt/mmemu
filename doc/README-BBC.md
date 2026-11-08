@@ -17,6 +17,7 @@ The Acorn BBC Micro (#13), after b-em (GPL-2.0-or-later):
 | `bbcb` | BBC Micro Model B: OS 1.20, Acorn DFS 0.90 and BASIC 2, starting at BASIC's `>` prompt in Mode 7 |
 | `bbcb-6502` | A Model B with the 6502 Second Processor on the Tube; DNFS 1.00 instead of DFS 0.90 |
 | `bbcb-z80` | A Model B with the Z80 Second Processor on the Tube (CP/M); DNFS 1.00 |
+| `bbcb-6809` | A Model B with the 6809 Second Processor on the Tube; DNFS 1.00 |
 
 The CPU is an NMOS 6502 at 2 MHz with 32 KB of RAM; the Model A's 16 KB is seen at both `&0000` and `&4000`, as b-em maps it (A14 is not decoded; the screen is at the top).
 
@@ -27,6 +28,7 @@ ROMs, in `roms/bbc/`, are from b-em's `roms/`. b-em distributes them in good fai
 - `dnfs100.rom`: DNFS 1.00 (DFS 1.00 and NFS 3.40; b-em's `usdnfs.rom`), slot 14 on `bbcb-6502`. Unlike DFS 0.90, it has the Tube host code.
 - `6502tube.rom`: the 6502 Second Processor's 2 KB boot ROM (b-em `roms/tube`).
 - `z80tube121.rom`: the Z80 Second Processor's 4 KB client ROM, version 1.21 (b-em `roms/tube/Z80_121.rom`).
+- `6809tube.rom`: the 6809 Second Processor's 2 KB client ROM, J.G. Harston's 1.05a (b-em `roms/tube/6809Tube.rom`).
 - `saa5050.fnt`: b-em's teletext font, a capture of the SAA5050's output, character rounding included (from BeebEm).
 
 ## Memory map
@@ -208,6 +210,16 @@ The control register sets or clears these flags:
 
 The CP/M discs are not in this repository.
 
+## The 6809 Second Processor
+
+`bbcb-6809` adds the 6809 Second Processor (b-em `6809tube.c`), running the new Motorola 6809 core (`mmemu-plugin-6809.so`; see `doc/README-6809.md`).
+- **The CPU:** 1.5 cycles for each of the BBC's, with 64 KB of RAM.
+- **The ROM:** the 2 KB client ROM covers `$F800-$FFFF` until the first access to the Tube.
+- **The board:** the Tube's parasite registers are at `$FEE0-$FEE7`. The board fetches the 6809's vectors from `$FEF0-$FEFF`, which is inside the ROM.
+- **Interrupts:** the Tube's IRQ goes to the 6809's FIRQ, and its NMI to IRQ.
+
+It boots to "6809 TUBE 64K 1.05a" and the client's `6809>*` prompt. Commands typed there run on the BBC; for example, `HELP` lists the DFS and OS 1.20.
+
 ## Tests
 
 `src/plugins/machines/bbc/test/test_bbc_machine.cpp`:
@@ -222,6 +234,7 @@ The CP/M discs are not in this repository.
   - the Tube banner;
   - BASIC on the second processor (`PAGE`, `HIMEM`, a sum), with the program in its memory;
   - BREAK.
+- `bbc_tube_6809`: the banner and prompt; `*HELP` from the 6809's prompt.
 - `bbc_tube_z80_cpm`: BASIC copied to the Z80's memory. With b-em's `discs/cpm1.dsd` beside this tree, CP/M 2.2's BIOS loads from the disc.
 
 `test_bbc_disc.cpp`:

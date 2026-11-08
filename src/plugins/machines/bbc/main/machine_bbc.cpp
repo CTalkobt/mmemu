@@ -8,6 +8,7 @@
 #include "bbc_tape.h"
 #include "bbc_tube.h"
 #include "plugins/z80/main/cpu_z80.h"
+#include "plugins/6809/main/cpu6809.h"
 #include "sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -541,7 +542,7 @@ private:
 
 MachineDescriptor* create(Model model, std::string* err) {
     const bool modelA = model == Model::A;
-    const bool tubed = model == Model::BTube || model == Model::BZ80;
+    const bool tubed = model == Model::BTube || model == Model::BZ80 || model == Model::B6809;
     std::vector<uint8_t> os, basic, dfs, tubeRom;
     if (!loadFile("roms/bbc/os12.rom", 0x4000, os, err)) return nullptr;
     if (!loadFile("roms/bbc/basic2.rom", 0x4000, basic, err)) return nullptr;
@@ -550,16 +551,19 @@ MachineDescriptor* create(Model model, std::string* err) {
         if (!loadFile("roms/bbc/dnfs100.rom", 0x4000, dfs, err)) return nullptr;
         if (model == Model::BTube && !loadFile("roms/bbc/6502tube.rom", 0x800, tubeRom, err)) return nullptr;
         if (model == Model::BZ80 && !loadFile("roms/bbc/z80tube121.rom", 0x1000, tubeRom, err)) return nullptr;
+        if (model == Model::B6809 && !loadFile("roms/bbc/6809tube.rom", 0x800, tubeRom, err)) return nullptr;
     } else if (!modelA) {
         // DFS 0.90 is an 8 KB ROM: it appears twice in its 16 KB slot
         if (!loadFile("roms/bbc/dfs09.rom", 0x2000, dfs, err)) return nullptr;
     }
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = modelA ? "bbca" : model == Model::BTube ? "bbcb-6502" : model == Model::BZ80 ? "bbcb-z80" : "bbcb";
+    desc->machineId = modelA ? "bbca" : model == Model::BTube ? "bbcb-6502" : model == Model::BZ80 ? "bbcb-z80"
+                    : model == Model::B6809 ? "bbcb-6809" : "bbcb";
     desc->displayName = modelA ? "BBC Micro Model A"
                       : model == Model::BTube ? "BBC Micro Model B with 6502 Second Processor"
                       : model == Model::BZ80 ? "BBC Micro Model B with Z80 Second Processor"
+                      : model == Model::B6809 ? "BBC Micro Model B with 6809 Second Processor"
                       : "BBC Micro Model B";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
@@ -607,9 +611,13 @@ MachineDescriptor* create(Model model, std::string* err) {
     // BBC cycle = speed multiplier / 2):
     //  - 6502: a 65C02 at 3 MHz with 64 KB (6502tube.c);
     //  - Z80: 6 MHz, 64 KB, the client ROM until it runs above $7FFF (z80.c)
+    //  - 6809: 1.5 cycles a BBC cycle, 64 KB, the ROM at $F800 until the Tube
+    //    is touched, the vectors at $FEF0, the Tube's IRQ on FIRQ and its NMI
+    //    on IRQ (6809tube.c)
     struct Parasite {
         ICore* cpu = nullptr;
         std::function<void()> powerOn, reset, beforeStep;
+        std::function<void()> setLines;              // the Tube's IRQ/NMI to the CPU (default: /IRQ, /NMI)
         double ratio = 1.5;
     };
     std::shared_ptr<Parasite> par;
@@ -627,6 +635,21 @@ MachineDescriptor* create(Model model, std::string* err) {
             par->cpu = pcpu;
             par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
             par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->ratio = 1.5;
+        } else if (model == Model::B6809) {
+            auto* pbus = new M6809ParasiteBus(tube, std::move(tubeRom));
+            auto* pcpu = new M6809();
+            pcpu->setDataBus(pbus);
+            pcpu->setVectorBase(0xFEF0);
+            desc->buses.push_back({"tube", pbus});
+            desc->cpus.push_back({"tube", pcpu, pbus, pbus, nullptr, false, 1});
+            par->cpu = pcpu;
+            par->powerOn = [pbus, pcpu]() { pbus->powerOn(); pcpu->reset(); };
+            par->reset = [pbus, pcpu]() { pbus->reset(); pcpu->reset(); };
+            par->setLines = [pcpu, tube]() {
+                pcpu->setFirqLine(tube->parasiteIrq());
+                pcpu->setIrqLine(tube->parasiteNmi());
+            };
             par->ratio = 1.5;
         } else {
             auto* pbus = new Z80ParasiteBus(std::move(tubeRom));
@@ -701,8 +724,11 @@ MachineDescriptor* create(Model model, std::string* err) {
             } else {
                 *budget += c * par->ratio;
                 while (*budget > 0) {
-                    par->cpu->setIrqLine(tube->parasiteIrq());
-                    par->cpu->setNmiLine(tube->parasiteNmi());
+                    if (par->setLines) par->setLines();
+                    else {
+                        par->cpu->setIrqLine(tube->parasiteIrq());
+                        par->cpu->setNmiLine(tube->parasiteNmi());
+                    }
                     if (par->beforeStep) par->beforeStep();
                     *budget -= par->cpu->step();
                 }

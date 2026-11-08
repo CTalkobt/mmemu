@@ -113,6 +113,38 @@ private:
     bool m_romIn = true;
 };
 
+/**
+ * The 6809 Second Processor's memory (b-em 6809tube.c): 64 KB of RAM, the
+ * 2 KB client ROM over $F800-$FFFF until the first access to the Tube's
+ * registers, which are at $FEE0-$FEE7 on this board. (The board also
+ * fetches the vectors from $FEF0-$FEFF: M6809::setVectorBase.)
+ */
+class M6809ParasiteBus : public IBus {
+public:
+    M6809ParasiteBus(TubeUla* tube, std::vector<uint8_t> rom);
+    void reset() override { m_romIn = true; }
+    void powerOn();
+    bool romIn() const { return m_romIn; }
+
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "tube"; }
+    uint8_t read8(uint32_t addr) override;
+    uint8_t peek8(uint32_t addr) override;
+    void write8(uint32_t addr, uint8_t v) override;
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+
+private:
+    BusConfig m_cfg;
+    TubeUla* m_tube;
+    std::vector<uint8_t> m_rom, m_ram;
+    bool m_romIn = true;
+};
+
 /** The Z80's I/O space: the Tube's parasite registers on every port (A0-A2). */
 class Z80TubeIo : public IBus {
 public:
