@@ -32,6 +32,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
 ### Apple II
+- **SmartPort devices on the disk port: the UniDisk 3.5** (#12), for the IIc's 32 KB ROMs and the IIgs. High-level, after Clemens (`clem_smartport.c`) and the IIgs Firmware Reference. See "SmartPort devices on the disk port" in `doc/README-APPLE2.md`.
+  - **The device "UniDisk"** (`smartport_bus.{h,cpp}`, units 1-4): the IWM's phases drive the bus (reset, enable, REQ) and its sense line reads ACK. The bytes it writes and reads are packets: INIT (the last unit replies `$FF`), STATUS (the DIB), READBLOCK, WRITEBLOCK, FORMAT and CONTROL, standard and extended. They are served from `.po`, `.hdv` or `.2mg` images of any size, and written back to the file.
+  - **IIc:** ProDOS 2.4.3 boots from it as slot 5 (`apple2c_unidisk_boots`).
+  - **IIgs:** when only the UniDisk holds disks, there are no Apple 3.5 drives (their registers read 1, as with none connected). Slot 5 then boots the UniDisk, and GS/OS 6.0.1 comes up to the Finder and writes to it (`apple2gs_unidisk_gsos`).
+  - **The DIB's type:** a UniDisk 3.5's own DIB type (`$01`) makes GS/OS use its UniDisk driver, which needs the drive's 65C02 firmware. So units report type `$02`, a block device, still named "UNIDISK 3.5".
+  - **CLI:** `disk mount <unit> <path> [device]`. The third word, any part of a drive's name, picks the drive: `disk mount 1 disk.po unidisk`.
+  - **Test:** `smartport_bus_packets` drives the bus as the firmware does.
 - **Apple IIc ROMs 00, 03 and 04** (#12), as MAME runs them.
   - **Profiles:** `apple2c-rom00`, `-rom03` and `-rom04`.
   - **The IWM in slot 6:** its mode, status and handshake registers sit in front of the 5.25" drives. The SmartPort bus answers as empty.

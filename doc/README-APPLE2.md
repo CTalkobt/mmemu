@@ -129,15 +129,23 @@ original once the keys are let go.
 
 **The 32 KB ROMs** (profiles `apple2c-rom00`, `apple2c-rom03`, `apple2c-rom04`; `roms/apple2/apple2c-00.rom`, `-03.rom`, `-04.rom`), as MAME runs them (`apple2c0`, `apple2c3`, `apple2c4`):
 - **`$C028`:** swaps between the ROM's two 16 KB halves.
-- **The IWM in slot 6:** the Disk II emulation behind its mode, status and handshake registers. The SmartPort bus (phases 1 and 3) answers as with nothing fitted (KEGS `iwm.c`).
+- **The IWM in slot 6:** the Disk II emulation behind its mode, status and handshake registers. With phases 1 and 3 on, it talks to the SmartPort bus: UniDisk 3.5s and other block devices (see "SmartPort devices on the disk port" below), or, with none, the answers of an empty bus (KEGS `iwm.c`).
 - **ROMs 03 and 04** (version byte `$FBBF` 3 or more) also get the 1 MB memory expansion (MAME `memexp_r`/`memexp_w`): `$C0C0-$C0C2` hold a 24-bit pointer, whose top byte reads with `$F0` ORed in, and `$C0C3` is the data, the pointer stepping on.
-- **Booting:** each comes up with "Check Disk Drive.", and DOS 3.3 boots (`apple2c_32k_roms`).
+- **Booting:** each comes up with "Check Disk Drive.", and DOS 3.3 boots (`apple2c_32k_roms`). With the internal drive empty and a disk on the UniDisk, ProDOS boots from it as slot 5 (`apple2c_unidisk_boots`).
 
 **The ROM.** Apple's IIc ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM FF, "Apple IIc ROM FF - 342-0272-A.bin" (16 KB), and if wanted ROMs 00, 03 and 04 (32 KB each), from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIc/ROM%20Images/>. Save it as `roms/apple2/apple2c-ff.rom`. The video ROM is the enhanced IIe's, which is included.
 
-**Not yet:**
-- **The UniDisk 3.5:** the 32 KB ROMs' SmartPort drives aren't emulated; their bus answers as empty. MAME doesn't emulate it for the IIc either.
+**SmartPort devices on the disk port** (the IIc's 32 KB ROMs and the IIgs; the device "UniDisk", units 1-4), high-level, after Clemens (`clem_smartport.c`, MIT) and the IIgs Firmware Reference, chapter 7:
+- **What it is:** a UniDisk 3.5 has its own 65C02 and talks packets over the disk port; the host never sees its disk's nibbles. Here the packets are served from disk images, without the drive's firmware.
+- **The bus:** phases 0 and 2 alone reset it (the units forget their IDs), phases 1 and 3 enable it, phase 0 is REQ, and the sense line (status bit 7) is ACK. Each transaction is ACK high, REQ up, a packet, ACK down, REQ down; replies are read the same way.
+- **Packets:** sync, `$C3`, the header (destination, source, type, standard or extended, status, the counts), the data in 7-bit groups with a byte of high bits each, the checksum, `$C8`. Bytes take 8 bit cells (4 us, or 2 in the IWM's fast mode).
+- **Commands:** INIT (the next unit without an ID takes it; the last on the chain replies `$FF`, as FujiNet's), STATUS (codes 0 and 3, the DIB), READBLOCK, WRITEBLOCK and CONTROL (each followed by a data packet), FORMAT; standard and extended forms. Errors: offline `$2F`, bad block `$2D`, write protected `$2B`, bad command `$01`.
+- **Units:** the bus has as many units as the highest one holding a disk. Images are `.po`, `.hdv`, `.img` or `.2mg` of any size; writes go straight back to the file. An 800 KB disk is named "UNIDISK 3.5" in its DIB, others "MMEMU HARD DISK".
+- **The DIB's type:** a real UniDisk 3.5 reports type `$01`, subtype `$00`. GS/OS then uses its UniDisk driver, which programs the drive's 65C02, and that firmware isn't emulated. So every unit reports a block device, type `$02` (subtype `$00` removable for 800 KB disks, `$20` fixed for others), which GS/OS drives through the SmartPort firmware.
+- **Mounting:** name the device, since the other drives take an image first: CLI `disk mount 1 disk.po unidisk`, or the GUI drive pane. On the IIc an 800 KB image goes to it anyway, as the Disk II refuses it.
+- **On the IIgs:** the bus is used with `$C031` bit 6 clear (the 3.5" drives deselected). When only the UniDisk holds disks, the IIgs has no Apple 3.5 drives (all their status registers read 1, as with nothing connected), so the bus's first unit is slot 5's unit 1 and boots. GS/OS 6.0.1 boots from it to the Finder (`apple2gs_unidisk_gsos`). With a disk in a 3.5" drive, those drives come first on the chain, as on a real IIgs, and slot 5 boots them.
+- **Test:** `smartport_bus_packets` drives the bus as the firmware does (INIT, the DIB, reads, a write, a bad block, a bad checksum, another unit's ID, a bus reset).
 
 
 ## IIgs
@@ -197,7 +205,7 @@ original once the keys are let go.
   - **Writing:** each byte written puts 8 bits at the head, keeping the track's length, and the handshake register paces them (ready after 8 bit times, underrun after 16). When write mode ends, the track goes back into the image: decoded into its sectors and patched into the file, or as bits into the WOZ.
   - The ROM's SmartPort firmware boots and reads and writes these disks.
   - GS/OS System 6.0.1 (Apple's freely distributed System Disk, an 800 KB `.2mg`) boots to the Finder. The test `apple2gs_boots_gsos` boots it from `../refs/apple2gs/sys601-2.2mg` when that file is present.
-  - `disk mount` tries the 3.5" drives first, then the 5.25" drives, then the SmartPort card. The 3.5" drives take only 800 KB images and 3.5" WOZs; the 5.25" drives take 140 KB images and 5.25" WOZs; everything else goes to the SmartPort card.
+  - `disk mount` tries the 3.5" drives first, then the 5.25" drives, then the SmartPort card, then the disk port's UniDisk. The 3.5" drives take only 800 KB images and 3.5" WOZs; the 5.25" drives take 140 KB images and 5.25" WOZs; everything else goes to the SmartPort card. A third word names the drive: `disk mount 1 disk.po unidisk`.
   - Copy-protected originals from the woz-a-day collection boot: Qix (its key disk check) and Block Out. The test `apple2gs_boots_woz_originals` boots them from `../refs/apple2gs/woz` when they are present.
 - **The SmartPort card** (slot 7, the device "SmartPort", units 1-4), after KEGS (`config.c` `g_rom_c700`, `smartport.c`): images of any size, for hard disks and 1.44 MB disks.
   - **Why a virtual card:** a real IIgs would need a SCSI card or the SuperDrive card for these. Like KEGS, this card serves them through the firmware's block interface instead.
@@ -222,7 +230,7 @@ original once the keys are let go.
 **ROM 03** (profile `apple2gs-rom03`): 256 KB in banks `$FC-$FF`. KEGS lists what differs from ROM 01:
 - **ADB:** version 6, an 8-byte sync, commands `$12`/`$13`, the inverted repeat rate, and the special-keys byte at ADB RAM `$0C`.
 - **`$C036`:** bit 6 is a power-on flag.
-- **SmartPort bus:** ROM 03 polls the disk port for SmartPort devices (phases 1 and 3, "ENABLE2"). With none fitted, the IWM answers as KEGS's does: sense 1, data `$FF`, and the handshake `$C0` three times, then `$80`.
+- **SmartPort bus:** ROM 03 polls the disk port for SmartPort devices (phases 1 and 3, "ENABLE2"). With none fitted, the IWM answers as KEGS's does: sense 1, data `$FF`, and the handshake `$C0` three times, then `$80`. With UniDisks, they answer (see "SmartPort devices on the disk port").
 
 GS/OS 6.0.1 boots on it to the Finder (`apple2gs_rom03_boots`).
 
@@ -231,7 +239,7 @@ GS/OS 6.0.1 boots on it to the Finder (`apple2gs_rom03_boots`).
 **The ROMs.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. For ROM 03, download "Apple IIGS ROM 3 Banks FC-FD - 341-0728.bin" and "... Banks FF-FE - 341-0748.bin" from the same folder, then join them as banks `$FC-$FF`: `cat 341-0728.bin <(tail -c 65536 341-0748.bin) <(head -c 65536 341-0748.bin) > roms/apple2/apple2gs-rom03.rom` (MAME loads them this way). The tests skip without them.
 
-**Not yet:** SmartPort devices on the disk port (the UniDisk 3.5), and ROM 00.
+**Not yet:** ROM 00; the UniDisk 3.5's own firmware (the bus is served high-level).
 
 ## Keyboard
 
@@ -363,5 +371,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
-- The IIc's UniDisk 3.5; RamWorks memory; the IIe without its 80-column card.
+- The UniDisk 3.5's 65C02 firmware (its packets are served high-level); RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.

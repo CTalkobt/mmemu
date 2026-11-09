@@ -1436,13 +1436,22 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 int unit;
                 std::string path;
                 if (ss >> unit >> path) {
+                    // An optional device name (any part of it, any case)
+                    // picks the drive; otherwise the first that takes it
+                    std::string device;
+                    ss >> device;
+                    auto lower = [](std::string t) {
+                        for (char& c : t) c = (char)std::tolower((unsigned char)c);
+                        return t;
+                    };
                     if (m_ctx.machine->ioRegistry) {
                         std::vector<IOHandler*> handlers;
                         m_ctx.machine->ioRegistry->enumerate(handlers);
                         bool handled = false;
                         for (auto* handler : handlers) {
+                            if (!device.empty() && lower(handler->name()).find(lower(device)) == std::string::npos) continue;
                             if (handler->mountDisk(unit, path)) {
-                                m_output("Mounted disk '" + path + "' on unit " + std::to_string(unit) + "\n");
+                                m_output("Mounted disk '" + path + "' on unit " + std::to_string(unit) + " (" + handler->name() + ")\n");
                                 handled = true;
                                 break;
                             }
@@ -1452,7 +1461,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                         }
                     }
                 } else {
-                    m_output("Usage: disk mount <unit> <path>\n");
+                    m_output("Usage: disk mount <unit> <path> [device]\n");
                 }
             } else if (sub == "eject") {
                 int unit;
@@ -3416,7 +3425,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  cart <path>         - Attach a cartridge image\n"
                  "  eject               - Eject currently attached cartridge\n"
                  "  rom [socket] [path|remove] - List the board's ROM sockets, or fit/remove a ROM (C128 function ROM)\n"
-                 "  disk mount <unit> <path> - Mount a disk image to drive unit (also .gz / .zip)\n"
+                 "  disk mount <unit> <path> [device] - Mount a disk image to drive unit (also .gz / .zip); device: part of the drive's name\n"
                  "  disk eject <unit>   - Eject a disk image\n"
                  "  tape mount <path>   - Mount a .tap file for playback\n"
                  "  tape play           - Start/resume tape playback\n"

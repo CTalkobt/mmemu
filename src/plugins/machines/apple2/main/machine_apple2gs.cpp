@@ -27,6 +27,7 @@
 #include "disk2.h"
 #include "gs_drive35.h"
 #include "gs_smartport.h"
+#include "smartport_bus.h"
 #include "gs_doc.h"
 #include "gs_scc.h"
 #include "libcore/main/intercept.h"
@@ -575,6 +576,7 @@ public:
     void setDisk(Disk2Card* d) { m_disk = d; }
     void setDrives35(Gs35Drives* d) { m_drives35 = d; }
     void setSmartPort(GsSmartPort* sp) { m_smartport = sp; }
+    void setSmartPortBus(SmartPortBus* b) { m_spBus = b; }
     void setSound(GsSound* s) { m_sound = s; }
     void setScc(GsScc* s) { m_scc = s; }
     /** Slot 7's card (the SmartPort device) answers at $C700: picked in
@@ -1041,6 +1043,13 @@ private:
             if (on) m_iwmPhases |= 1u << (loc >> 1);
             else m_iwmPhases &= ~(1u << (loc >> 1));
         }
+        // SmartPort devices on the disk port (UniDisk 3.5 and the like), with
+        // the 3.5" drives deselected: the bus sees the phases; enabled, it
+        // has the IWM's data and sense line
+        if (m_spBus && !(m_c031 & 0x40)) {
+            if (loc < 8) m_spBus->phases(m_iwmPhases, m_ticks);
+            else if (m_spBus->active()) return iwmBus(loc, wr);
+        }
         // Phases 1 and 3 on: ENABLE2, the SmartPort bus (UniDisk 3.5 and the
         // like) that ROM 03 polls; none is fitted: the sense line reads 1,
         // data $FF, the handshake $C0 three times then $80, writes are
@@ -1108,6 +1117,33 @@ private:
         }
     }
 
+    // The IWM with the SmartPort bus enabled: data to and from the units,
+    // ACK on the sense line (status bit 7)
+    uint8_t iwmBus(int loc, const uint8_t* wr) {
+        const bool on = loc & 1;
+        switch (loc >> 1) {
+            case 4: m_iwmMotor = on; break;
+            case 5: m_iwmDrive2 = on; break;
+            case 6: m_iwmQ6 = on; break;
+            case 7: m_iwmQ7 = on; break;
+        }
+        if (wr) {
+            if (on && m_iwmQ6 && m_iwmQ7) {
+                if (m_iwmMotor) m_spBus->write(*wr, m_ticks);
+                else m_iwmMode = *wr & 0x1F;
+            }
+            m_spBus->setMode(m_iwmMode);
+            return 0;
+        }
+        if (on) return 0;
+        switch ((m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0)) {
+            case 0: return m_iwmMotor ? m_spBus->read(m_ticks) : 0xFF;
+            case 1: return (uint8_t)((m_spBus->ack(m_ticks) ? 0x80 : 0) | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+            case 2: return m_spBus->handshake(m_ticks);
+            default: return 0;
+        }
+    }
+
     // The 3.5" drives ($C031 bit 6; iwm.c): the phase lines CA0-CA2 and SEL
     // ($C031 bit 7) pick a drive register; phase 3 (LSTRB) rising runs it as
     // a command, the status register reads it in bit 7
@@ -1116,6 +1152,13 @@ private:
     }
     uint8_t iwm35(int loc, const uint8_t* wr) {
         const bool on = loc & 1;
+        // With disks only on the SmartPort bus, the IIgs has no Apple 3.5
+        // drives (as with only UniDisks fitted), so slot 5 boots the bus's
+        // first unit
+        const bool fitted = !m_spBus || !m_spBus->units() || m_drives35->drive[0].hasDisk() ||
+                            m_drives35->drive[1].hasDisk();
+        m_drives35->drive[0].setInstalled(fitted);
+        m_drives35->drive[1].setInstalled(fitted);
         Gs35Drive& d = m_drives35->drive[m_iwmDrive2 ? 1 : 0];
         switch (loc >> 1) {
             case 3: if (on && m_iwmMotor) d.command(drive35Reg(), m_ticks); break;
@@ -1159,6 +1202,7 @@ private:
     Disk2Card* m_disk = nullptr;
     Gs35Drives* m_drives35 = nullptr;
     GsSmartPort* m_smartport = nullptr;
+    SmartPortBus* m_spBus = nullptr;
     uint32_t m_iwmPhases = 0;
     int m_enable2Hs = 0;
     GsClock m_clock;
@@ -1337,6 +1381,12 @@ MachineDescriptor* createIIgs(std::string* err, int romVersion) {
     smartport->romVisibleNow = [bus]() { return bus->slot7Card(); };
     bus->setSmartPort(smartport);
     io->registerHandler(smartport);
+    // The disk port's SmartPort bus (UniDisk 3.5s, hard disks): last, so
+    // images go to it when named (`disk mount 1 x.po unidisk`)
+    auto* spBus = new SmartPortBus(14.31818);
+    bus->setSmartPortBus(spBus);
+    io->registerHandler(spBus);
+    desc->deleters.push_back([spBus]() { delete spBus; });
     auto* hook = new PcInterceptHook(desc);
     hook->add(smartport);
     cpu->setPcInterceptHook(hook);

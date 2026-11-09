@@ -336,6 +336,7 @@ void Gs35Drive::deriveNibbles() {
 
 // iwm_read_status35: reg = CA1 CA0 SEL CA2
 int Gs35Drive::status(int reg, uint64_t now) {
+    if (!m_installed) return 1;                          // no drive: the sense line floats high
     switch (reg) {
         case 0x0: return m_stepOut ? 1 : 0;              // step direction
         case 0x1: m_side = 0; return 1;                  // lower head
@@ -355,7 +356,7 @@ int Gs35Drive::status(int reg, uint64_t now) {
             const uint64_t bit = (uint64_t)((double)now / TICKS_PER_BIT);
             return (int)((bit >> 7) & 1);
         }
-        case 0xF: return m_installed ? 0 : 1;            // the drive is there
+        case 0xF: return 0;                              // the drive is there
         default: return 1;
     }
 }

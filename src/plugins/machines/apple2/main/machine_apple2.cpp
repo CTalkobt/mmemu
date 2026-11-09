@@ -3,6 +3,7 @@
 // Keyboard.cpp, Speaker.cpp, Joystick.cpp.
 
 #include "machine_apple2.h"
+#include "smartport_bus.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -551,6 +552,12 @@ private:
         const int loc = a & 0x0F;
         const bool on = loc & 1;
         if (loc < 8) { if (on) m_iwmPhases |= 1u << (loc >> 1); else m_iwmPhases &= ~(1u << (loc >> 1)); }
+        // SmartPort devices on the disk port (UniDisk 3.5 and the like): the
+        // bus sees the phases; enabled, it has the IWM's data and sense line
+        if (m_spBus) {
+            if (loc < 8) m_spBus->phases(m_iwmPhases, at);
+            else if (m_spBus->active()) return iwmBus(loc, wr, at);
+        }
         const bool enable2 = (m_iwmPhases & 0xA) == 0xA && loc >= 8;
         const int r = enable2 ? -1 : m_disk->io(a, wr, at);
         switch (loc >> 1) {
@@ -569,6 +576,31 @@ private:
             case 2:
                 if (enable2) { if (++m_enable2Hs > 3) { m_enable2Hs = 0; return 0x80; } return 0xC0; }
                 return 0x80;
+            default: return 0;
+        }
+    }
+    // The IWM with the SmartPort bus enabled: data to and from the units,
+    // ACK on the sense line (status bit 7)
+    uint8_t iwmBus(int loc, const uint8_t* wr, uint64_t at) {
+        const bool on = loc & 1;
+        switch (loc >> 1) {
+            case 4: m_iwmMotor = on; break;
+            case 6: m_iwmQ6 = on; break;
+            case 7: m_iwmQ7 = on; break;
+        }
+        if (wr) {
+            if (on && m_iwmQ6 && m_iwmQ7) {
+                if (m_iwmMotor) m_spBus->write(*wr, at);
+                else m_iwmMode = *wr & 0x1F;
+            }
+            m_spBus->setMode(m_iwmMode);
+            return 0;
+        }
+        if (on) return 0;
+        switch ((m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0)) {
+            case 0: return m_iwmMotor ? m_spBus->read(at) : 0xFF;
+            case 1: return (uint8_t)((m_spBus->ack(at) ? 0x80 : 0) | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+            case 2: return m_spBus->handshake(at);
             default: return 0;
         }
     }
@@ -603,9 +635,11 @@ private:
 public:
     /** The IIc's 32 KB ROMs: the IWM in slot 6 and (03, 04) the memory expansion. */
     void setIwm(bool on) { m_iwm = on; }
+    void setSmartPortBus(SmartPortBus* b) { m_spBus = b; }
     void setMemoryExpansion(size_t bytes) { m_memExp.assign(bytes, 0); }
 
 private:
+    SmartPortBus* m_spBus = nullptr;
     bool m_iwm = false, m_iwmMotor = false, m_iwmQ6 = false, m_iwmQ7 = false;
     uint8_t m_iwmMode = 0;
     uint32_t m_iwmPhases = 0;
@@ -743,6 +777,14 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->deleters.push_back([video, display, kbd, spk, disk]() {
         delete display; delete video; delete kbd; delete spk; delete disk;
     });
+    if (rom32k) {
+        // The disk port's SmartPort bus (UniDisk 3.5s, hard disks), as the
+        // 32 KB ROMs drive it
+        auto* spBus = new SmartPortBus(CPU_HZ / 1e6);
+        bus->setSmartPortBus(spBus);
+        io->registerHandler(spBus);
+        desc->deleters.push_back([spBus]() { delete spBus; });
+    }
     if (iic) {
         // The serial ports: 6551s (MAME: $C098 slot 1, $C0A8 slot 2)
         auto* a1 = new Acia6551(0xC090);
