@@ -8,6 +8,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Apple II
+- **Apple IIgs: WOZ, 1.44 MB disks and hard disks** (#12).
+  - **3.5" WOZ2:** the drive now works on bit streams. The IWM's latch rule makes nibbles from them, writes put 8 bits a byte at the head and keep a track's length, and a track goes back as bits to the WOZ or decoded into the sectors of a `.po`. The Disk II's WOZ parser accepts INFO disk type 2 and the 5.25" drive refuses it.
+  - **Weak bits:** after three zero bits, a bit reads as noise (the MC3470, as KEGS models it), so tracks with weak bits read differently on each revolution. Qix's copy protection passes and Block Out boots, both woz-a-day originals.
+  - **The SmartPort card in slot 7,** after KEGS `smartport.c`:
+    - **Images:** any size (hard disks, 1.44 MB), as `.po`, `.hdv` or `.2mg`.
+    - **Calls:** boot, ProDOS calls and SmartPort calls (standard and extended Status with the DIB, Read, Write, Format, Control), served at the ROM's `$C70F` trap by a PC intercept.
+    - **Booting:** GS/OS System 6 boots from a 5 MB hard disk image to the Finder.
+  - **Writes:** the 3.5" drive now writes back only the changed sectors (`diskfile::patch`).
+  - **Tests:** `apple2gs_woz35_weak_bits`, `apple2gs_boots_woz_originals`, `apple2gs_smartport_boots` (1.44 MB, through both entries) and `apple2gs_boots_hard_disk`.
 - **Apple IIgs: the drives** (#12).
   - **5.25" (slot 6):** the Disk II emulation behind the IWM. The IWM's mode and status registers sit in front, and CYAREG's slot 6 motor bit slows the CPU to 1 MHz. DOS 3.3 boots.
   - **3.5" (slot 5), after KEGS `iwm.c`:**

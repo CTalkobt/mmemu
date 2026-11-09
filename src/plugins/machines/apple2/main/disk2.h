@@ -42,6 +42,8 @@ public:
     int maxTrackBytes() const { return m_maxTrackBytes; }
     /** WOZ: a bit cell in 125 ns units (32 = 4 us). */
     int optimalBitTiming() const { return m_bitTiming; }
+    /** WOZ: INFO's disk type, 1 = 5.25", 2 = 3.5" (1 for the other formats). */
+    int diskType() const { return m_diskType; }
     /** WOZ: the disk boots with the 13-sector ROM (DOS 3.2). */
     bool bootSector13() const { return m_boot13; }
 
@@ -77,6 +79,7 @@ private:
     int m_maxTrackBytes = MAX_NIBBLES;
     // WOZ
     bool m_woz1 = false, m_boot13 = false;
+    int m_diskType = 1;
     int m_bitTiming = 32;
     size_t m_tmap = 0, m_trks = 0, m_trksHdr = 0;
     bool m_trksLast = false;

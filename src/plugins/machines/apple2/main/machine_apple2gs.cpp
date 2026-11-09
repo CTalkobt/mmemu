@@ -14,7 +14,8 @@
 // scan-line interrupt (sim65816.c do_scan_int).
 //
 // Drives: the 5.25" drives (slot 6) through Disk2Card, the 3.5" drives
-// (slot 5) through Gs35Drive (gs_drive35.cpp).
+// (slot 5) through Gs35Drive (gs_drive35.cpp), images of any size through
+// the SmartPort card in slot 7 (gs_smartport.cpp).
 //
 // Not yet: DOC sound, the mouse, the serial ports (the SCC
 // answers as idle).
@@ -23,6 +24,8 @@
 #include "apple2_parts.h"
 #include "disk2.h"
 #include "gs_drive35.h"
+#include "gs_smartport.h"
+#include "libcore/main/intercept.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -574,6 +577,12 @@ public:
     bool fast() const { return (m_c036 & 0x80) && !((m_c036 & 0x04) && m_disk && m_disk->motorOn() && !(m_c031 & 0x40)); }
     void setDisk(Disk2Card* d) { m_disk = d; }
     void setDrives35(Gs35Drives* d) { m_drives35 = d; }
+    void setSmartPort(GsSmartPort* sp) { m_smartport = sp; }
+    /** Slot 7's card (the SmartPort device) answers at $C700: picked in
+     *  $C02D, INTCXROM off, a disk mounted. */
+    bool slot7Card() const {
+        return m_smartport && (m_c02d & 0x80) && !(m_state & INTCX) && m_smartport->anyMounted();
+    }
     double speedMHz() const { return fast() ? 2.8 : 1.0; }
 
     const BusConfig& config() const override { return m_cfg; }
@@ -837,6 +846,7 @@ private:
         uint8_t v;
         if (s < 8) {
             if (access && s == 3 && !(m_c02d & 0x08) && !(m_state & INTC8ROM)) m_state |= INTC8ROM;
+            if (s == 7 && slot7Card()) return m_smartport->rom()[a & 0xFF];
             v = (!((m_c02d >> s) & 1) || (m_state & INTCX)) ? romFF(a) : (access ? floating() : 0);
         } else {
             v = (m_state & (INTCX | INTC8ROM)) ? romFF(a) : (access ? floating() : 0);
@@ -1120,6 +1130,7 @@ private:
     const W65C816* m_cpu = nullptr;
     Disk2Card* m_disk = nullptr;
     Gs35Drives* m_drives35 = nullptr;
+    GsSmartPort* m_smartport = nullptr;
     uint32_t m_iwmPhases = 0;
     GsClock m_clock;
     GsDoc m_doc;
@@ -1271,9 +1282,20 @@ MachineDescriptor* createIIgs(std::string* err) {
     auto* disk = new Disk2Card(std::move(disk2));
     bus->setDisk(disk);
     io->registerHandler(disk);
+    // Slot 7: the SmartPort card for images of any size (hard disks, 1.44 MB),
+    // mounted after the 3.5" and 5.25" drives have declined an image
+    auto* smartport = new GsSmartPort();
+    smartport->setIdentity("apple2gs.smartport", "smartport");
+    smartport->romVisibleNow = [bus]() { return bus->slot7Card(); };
+    bus->setSmartPort(smartport);
+    io->registerHandler(smartport);
+    auto* hook = new PcInterceptHook(desc);
+    hook->add(smartport);
+    cpu->setPcInterceptHook(hook);
     desc->deleters.push_back([video, display, adb, spk, disk, drives35]() {
         delete display; delete video; delete adb; delete spk; delete disk; delete drives35;
     });
+    desc->deleters.push_back([smartport, hook, cpu]() { cpu->setPcInterceptHook(nullptr); delete hook; delete smartport; });
 
     bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
     // Control-Reset; with Command (Open Apple) the ROM cold-starts

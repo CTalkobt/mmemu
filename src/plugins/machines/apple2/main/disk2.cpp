@@ -311,7 +311,8 @@ bool Disk2Image::parseWoz(std::string* err) {
             if (info) return fail("two INFO chunks");
             info = true;
             infoVersion = d[body];
-            if (d[body + 1] != 1) return fail("not a 5.25\" disk");
+            m_diskType = d[body + 1];
+            if (m_diskType != 1 && m_diskType != 2) return fail("not a 5.25\" or 3.5\" disk");
             if (d[body + 2] == 1) m_protect = true;
             if (infoVersion >= 2 && size >= 46) {
                 m_boot13 = d[body + 38] == 2;
@@ -942,7 +943,7 @@ bool Disk2Card::insert(int drive, std::unique_ptr<Disk2Image> image) {
 bool Disk2Card::mountDisk(int unit, const std::string& path) {
     if (unit != 1 && unit != 2) return false;
     auto img = Disk2Image::open(path);
-    if (!img) return false;
+    if (!img || img->diskType() != 1) return false;     // a 3.5" WOZ is not for the Disk II
     return insert(unit - 1, std::move(img));
 }
 

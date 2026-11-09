@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "disk2.h"
+
 namespace apple2 {
 
 /**
@@ -15,14 +17,20 @@ namespace apple2 {
  * iwm_nibblize_track_35, iwm_denib_track35).
  *
  * - Images: 819,200-byte ProDOS-order images (.po, .hdv), .2mg (the 2IMG
- *   header's data offset), DiskCopy 4.2 (.dc, .dc42, .image: 84-byte header).
+ *   header's data offset), DiskCopy 4.2 (.dc, .dc42, .image: 84-byte header),
+ *   and 3.5" WOZ2 (INFO disk type 2: each track side's bit stream, TMAP
+ *   indexed by track * 2 + side).
  * - Tracks: 80 a side, 12/11/10/9/8 sectors by zone of 16 tracks, 2:1
  *   interleave, nibblized as the ROM writes them (address field D5 AA 96,
  *   data field D5 AA AD with 12 tag bytes and 512 data bytes in the 3.5"
  *   GCR code, 10-bit sync bytes). A track is generated when the head
  *   reaches it; a written track is decoded back into the image's sectors.
- * - Timing: one bit every 2 us; reads see the nibble the disk is passing,
- *   each once (the IWM's latch mode).
+ * - A track side is a bit stream (generated, or the WOZ's own): the IWM
+ *   latches a nibble when its shift register's top bit is set (so 10-bit
+ *   syncs self-synchronize); a bit every 2 us; reads see each nibble once.
+ *   Writes put 8 bits a byte at the head, keeping the track's length; when
+ *   write mode ends the track goes back into the image (decoded into its
+ *   sectors, or as bits into the WOZ).
  * - The drive's registers (the phase lines CA0-CA2, SEL from $C031 bit 7):
  *   status reads and LSTRB commands (step direction, step, motor, eject,
  *   disk-switched reset).
@@ -40,8 +48,10 @@ public:
     /** A disk from bytes (tests): ProDOS order, 819,200 bytes. */
     bool insertBytes(std::vector<uint8_t> blocks, bool writeProtected = false);
     void eject();
-    bool hasDisk() const { return !m_blocks.empty(); }
+    bool hasDisk() const { return !m_blocks.empty() || m_woz; }
+    bool isWoz() const { return (bool)m_woz; }
     const std::string& path() const { return m_path; }
+    /** The disk's blocks (ProDOS order; empty for a WOZ). */
     const std::vector<uint8_t>& blocks() const { return m_blocks; }
     bool writeProtected() const { return m_protect; }
 
@@ -74,25 +84,35 @@ public:
     static int denibblize(const std::vector<uint8_t>& nib, int track, int side, uint8_t* sectors);
 
 private:
-    void loadTrack(uint64_t now);
-    uint64_t trackBits() const { return m_trackBits; }
-    void flush();
+    void loadTrack();
+    void deriveNibbles();
+    uint32_t bitAt(uint64_t now) const { return (uint32_t)((uint64_t)((double)now / TICKS_PER_BIT) % m_trackBits); }
+    bool getBit(uint32_t i) const { return (m_stream[i >> 3] >> (7 - (i & 7))) & 1; }
+    void setBit(uint32_t i, bool v) {
+        if (v) m_stream[i >> 3] |= (uint8_t)(0x80 >> (i & 7));
+        else m_stream[i >> 3] &= (uint8_t)~(0x80 >> (i & 7));
+    }
 
-    std::vector<uint8_t> m_blocks;
+    std::vector<uint8_t> m_blocks;          // the 800 KB (not for a WOZ)
+    std::vector<uint8_t> m_file;            // the image file as read (written back by patching)
+    std::unique_ptr<Disk2Image> m_woz;      // a 3.5" WOZ
     std::string m_path;
     size_t m_fileOffset = 0;
     bool m_protect = false, m_switched = false;
-    bool m_dirty = false;
     int m_track = 0, m_side = 0;
     bool m_stepOut = false, m_motor = false;
-    // The current track side's nibbles
+    // The current track side: its bits, and the nibbles the IWM latches
     int m_loadedTrack = -1, m_loadedSide = -1;
-    std::vector<uint8_t> m_nib, m_bits;
-    std::vector<uint32_t> m_start;       // each nibble's first bit
-    uint64_t m_trackBits = 1;
+    std::vector<uint8_t> m_stream;
+    uint32_t m_trackBits = 1;
+    std::vector<uint8_t> m_nib;
+    std::vector<uint32_t> m_end;            // the bit after each nibble's last
     size_t m_lastRead = SIZE_MAX;
+    bool m_hasWeakBits = false;
+    uint64_t m_revolution = 0;
+    uint32_t m_rand = 0x1234567;
     bool m_trackDirty = false, m_writing = false;
-    size_t m_writeCursor = SIZE_MAX;
+    uint32_t m_writeBit = UINT32_MAX;
     uint64_t m_lastWrite = 0;
 };
 
