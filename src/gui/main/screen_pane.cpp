@@ -190,11 +190,12 @@ void ScreenPane::OnPaint(wxPaintEvent&) {
         return;
     }
 
-    m_video->renderFrame(m_pixelBuf.data());
-
+    // The size can change from frame to frame (the SNES's hi-res and interlace)
     auto dim = m_video->getDimensions();
     int srcW = dim.width;
     int srcH = dim.height;
+    if (m_pixelBuf.size() != (size_t)srcW * srcH) m_pixelBuf.assign((size_t)srcW * srcH, 0u);
+    m_video->renderFrame(m_pixelBuf.data());
 
     auto* rgb = static_cast<unsigned char*>(malloc((size_t)srcW * srcH * 3));
     for (int i = 0; i < srcW * srcH; ++i) {

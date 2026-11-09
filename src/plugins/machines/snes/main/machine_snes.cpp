@@ -25,8 +25,6 @@ namespace {
 
 constexpr uint64_t MASTER_HZ = 21477272;
 constexpr int LINE_CLOCKS = 1364;
-constexpr int LINES = 262;
-constexpr int VBLANK_LINE = 225;
 constexpr int REFRESH_AT = 538;
 constexpr int HDMA_AT = 276 * 4;
 
@@ -199,6 +197,7 @@ public:
     void powerOn() {
         std::fill(m_wram.begin(), m_wram.end(), 0);
         m_master = 0; m_hClock = 0; m_line = 0;
+        m_lines = 262; m_vblankLine = 225; m_lineClocks = LINE_CLOCKS;
         m_refreshDone = m_hdmaDone = false;
         m_irqFired = false;
         m_nmitimen = 0; m_wrio = 0xFF;
@@ -231,7 +230,7 @@ public:
     // ------------------------------------------------------------------
     void advance(int clocks) {
         while (clocks > 0) {
-            int next = LINE_CLOCKS;
+            int next = m_lineClocks;
             if (!m_refreshDone) next = REFRESH_AT;
             else if (!m_hdmaDone) next = HDMA_AT;
             const int step = std::min(clocks, std::max(0, next - m_hClock));
@@ -246,8 +245,7 @@ public:
                     m_master += 40;
                 } else if (!m_hdmaDone) {
                     m_hdmaDone = true;
-                    if (m_line >= 1 && m_line < VBLANK_LINE) m_ppu->renderLine(m_line);
-                    if (m_line < VBLANK_LINE) hdmaLine();
+                    if (m_line < m_vblankLine) { m_ppu->endLine(m_line); hdmaLine(); }
                 } else {
                     endOfLine();
                 }
@@ -286,6 +284,13 @@ public:
     void clearWriteLog() override {}
 
 private:
+    /** The H counter: 4 clocks a dot, but dots 323 and 327 take 6. */
+    int dot() const {
+        if (m_hClock <= 1292) return m_hClock >> 2;
+        if (m_hClock <= 1310) return (m_hClock - 2) >> 2;
+        return (m_hClock - 4) >> 2;
+    }
+
     int speed(uint32_t addr) const {
         const uint8_t bank = (uint8_t)(addr >> 16);
         const uint16_t a = (uint16_t)addr;
@@ -346,6 +351,11 @@ private:
 
     // The B bus ($21xx): the PPU, the APU ports, the WRAM port
     uint8_t bRead(uint8_t r, bool peek) {
+        if (r == 0x37) {
+            // SLHV: latch the H/V counters (when WRIO bit 7 is set); open bus
+            if (!peek && (m_wrio & 0x80)) m_ppu->latchCounters(dot(), m_line);
+            return m_openBus;
+        }
         if (r < 0x40) return peek ? m_ppu->peek(r) : m_ppu->read(r);
         if (r < 0x80) { syncApu(); return m_apu->cpuRead(r & 3); }
         if (r == 0x80) {
@@ -356,7 +366,11 @@ private:
         return m_openBus;
     }
     void bWrite(uint8_t r, uint8_t v) {
-        if (r < 0x40) { m_ppu->write(r, v); return; }
+        if (r < 0x40) {
+            if (r < 0x34) m_ppu->sync(m_line, m_hClock >> 2);     // the pixels so far with the old value
+            m_ppu->write(r, v);
+            return;
+        }
         if (r < 0x80) { syncApu(); m_apu->cpuWrite(r & 3, v); return; }
         switch (r) {
         case 0x80: m_wram[m_wramAddr & 0x1FFFF] = v; m_wramAddr = (m_wramAddr + 1) & 0x1FFFF; break;
@@ -380,7 +394,7 @@ private:
             return v;
         }
         case 0x4212: {
-            const bool vblank = m_line >= VBLANK_LINE;
+            const bool vblank = m_line >= m_vblankLine;
             const bool hblank = m_hClock < 4 || m_hClock >= 274 * 4;
             return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
         }
@@ -402,7 +416,7 @@ private:
             m_cpu->setNmiLine(m_nmiFlag && (v & 0x80));
             break;
         case 0x4201:
-            if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(m_hClock / 4, m_line);
+            if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(dot(), m_line);
             m_wrio = v;
             break;
         case 0x4202: m_mpyA = v; break;
@@ -550,16 +564,22 @@ private:
     }
 
     void endOfLine() {
-        m_hClock -= LINE_CLOCKS;
+        m_hClock -= m_lineClocks;
         m_refreshDone = m_hdmaDone = false;
         m_irqFired = false;
         if (m_joyBusy > 0) --m_joyBusy;
-        if (++m_line == LINES) {
+        if (++m_line == m_lines) {
             m_line = 0;
             m_nmiFlag = false;
+            // A frame is 262 lines; interlaced, the even field's is 263
+            m_ppu->startFrame();
+            m_vblankLine = m_ppu->vblankLine();
+            m_lines = (m_ppu->interlace() && !m_ppu->oddField()) ? 263 : 262;
             hdmaInit();
         }
-        if (m_line == VBLANK_LINE) {
+        // Not interlaced, line 240 of the odd field is 4 clocks short
+        m_lineClocks = (m_line == 240 && m_ppu->oddField() && !m_ppu->interlace()) ? LINE_CLOCKS - 4 : LINE_CLOCKS;
+        if (m_line == m_vblankLine) {
             m_ppu->startVblank();
             m_nmiFlag = true;
             if (m_nmitimen & 0x01) {
@@ -583,6 +603,7 @@ private:
 
     uint64_t m_master = 0, m_apuSynced = 0;
     int m_hClock = 0, m_line = 0;
+    int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
     bool m_refreshDone = false, m_hdmaDone = false, m_irqFired = false;
 
     uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;

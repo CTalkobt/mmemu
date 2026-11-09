@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES picture
+
+- **Drawn to the dot:** the PPU draws each line up to the current dot before
+  every register write, so mid-line changes (by the CPU, DMA or HDMA) split
+  the line. Sprites are fetched in the previous line's horizontal blank.
+- **Hi-res:** modes 5 and 6 and pseudo-hires give true 512-pixel lines, the
+  sub screen in the even pixels.
+- **Interlace:** 448-row pictures, a field a frame, with double-height BGs in
+  modes 5/6 and OBJ interlace. Interlaced frames alternate 262 and 263
+  lines; otherwise line 240 of every other frame is 4 clocks short.
+- **Overscan:** 239 lines, and vertical blank starting at line 240.
+- **Colour math and brightness as Mesen:** clip-to-black cancels halving,
+  and brightness 0 is black.
+- **`$2137`** latches the H/V counters (with `WRIO` bit 7), on Mesen's dot
+  count. krom's H-IRQ palette demos (64/128 colours a tile row) now show
+  their pictures.
+- **Changing picture sizes:** the GUI follows the frame size from frame to
+  frame (256x224 up to 512x478).
+- **`MMEMU_SNES_SHOTS=<dir>`:** saves a PNG of every krom PPU demo.
+
 ### Front ends
 - **Expansion slots can save and load images:**
   - CLI: `expansion <slot> save <path>`.

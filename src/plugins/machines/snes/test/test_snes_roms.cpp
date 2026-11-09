@@ -3,7 +3,8 @@
 // default ../refs/snes-krom. Each test prints a table of results with PASS
 // or FAIL into BG1's tilemap (ASCII tile numbers); the survey runs each ROM
 // for a few seconds and counts them. Skipped when the directory is missing;
-// runs with MMEMU_SNES_SURVEY=1 (about 25 s).
+// runs with MMEMU_SNES_SURVEY=1 (about 25 s). MMEMU_SNES_SHOTS=<dir> saves a
+// PNG of each PPU demo.
 
 #include "test_harness.h"
 #include "plugins/machines/snes/main/machine_snes.h"
@@ -11,6 +12,7 @@
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/iaudio_output.h"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -121,4 +123,36 @@ TEST_CASE(snes_krom_spc_music) {
     EXPECT_TRUE(samples > 44100 * 2);
     EXPECT_TRUE(rms > 0.01);
     delete m;
+}
+
+// krom's PPU demos, run for 3 seconds each and saved as PNGs into
+// MMEMU_SNES_SHOTS (a directory) to look at; skipped without it
+TEST_CASE(snes_krom_ppu_shots) {
+    const char* out = std::getenv("MMEMU_SNES_SHOTS");
+    const fs::path dir = fs::path(romDir()) / "PPU";
+    if (!out || !fs::exists(dir)) { std::printf("  (set MMEMU_SNES_SHOTS=<dir> to run)\n"); return; }
+    std::vector<fs::path> roms;
+    for (auto& e : fs::recursive_directory_iterator(dir))
+        if (e.path().extension() == ".sfc") roms.push_back(e.path());
+    std::sort(roms.begin(), roms.end());
+    for (auto& rom : roms) {
+        std::ifstream f(rom, std::ios::binary);
+        std::vector<uint8_t> img((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::string err;
+        MachineDescriptor* m = snes::create(false, &err);
+        if (!snes::insertCartridge(m, img, rom.filename().string(), err)) { delete m; continue; }
+        std::vector<IOHandler*> hs;
+        m->ioRegistry->enumerate(hs);
+        snes::Ppu* ppu = nullptr;
+        for (auto* h : hs) if ((ppu = dynamic_cast<snes::Ppu*>(h))) break;
+        const auto t0 = std::chrono::steady_clock::now();
+        uint64_t t = 0;
+        while (t < 21477272ull * 3) t += (uint64_t)m->schedulerStep(*m);
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        const auto d = ppu->getDimensions();
+        const std::string png = (fs::path(out) / (rom.stem().string() + ".png")).string();
+        ppu->exportPng(png);
+        std::printf("  %-40s %dx%d %5.1fx real time\n", rom.stem().string().c_str(), d.width, d.height, 3.0 / secs);
+        delete m;
+    }
 }
