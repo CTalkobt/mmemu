@@ -188,6 +188,10 @@ public:
             // The IOU's VBL interrupt: on entering vertical blanking, if enabled
             const bool vbl = !m_video->vblBar();
             if (vbl && !m_lastVbl && m_vblMask) m_irqMask |= IRQ_VBL;
+            // The mouse moves a step an axis a scanline (MAME update_iic_mouse)
+            const uint64_t scan = m_cycles / Apple2Video::CYCLES_PER_LINE;
+            for (uint64_t l = m_mouseLine; l < scan && (m_mouseDx || m_mouseDy); ++l) mouseStep();
+            m_mouseLine = scan;
             m_lastVbl = vbl;
             bool line = m_irqMask != 0;
             for (Acia6551* a : m_acia) if (a && a->irqAsserted()) line = true;
@@ -202,6 +206,8 @@ public:
     void setButton(int n, bool down) { m_button[n % 3] = down; }
     // IIe: Open Apple and Closed Apple are buttons 0 and 1
     void setAppleKey(int n, bool down) { m_appleKey[n & 1] = down; }
+    // IIc: the mouse, moves to step through and the button
+    void mouse(int dx, int dy, bool button) { m_mouseDx += dx; m_mouseDy += dy; m_mouseButton = button; }
 
     const BusConfig& config() const override { return m_cfg; }
     const char* name() const override { return "system"; }
@@ -268,6 +274,8 @@ private:
         // IIc IOU (MAME machine_reset): IOUDIS on, interrupts off, ROM bank 0
         m_iouDis = true;
         m_vblMask = m_xyMask = m_x0Edge = m_y0Edge = false;
+        m_x1 = m_y1 = m_xIrq = m_yIrq = false;
+        m_mouseDx = m_mouseDy = 0;
         m_irqMask = 0;
         m_romSwitch = false;
         if (m_iic) m_intCxRom = true;
@@ -351,9 +359,10 @@ private:
     // $C011-$C01F (IORead_C01x): a switch in bit 7, the key code below
     uint8_t status(int n, uint64_t at) {
         bool r = false;
-        if (m_iic && (n == 0x5 || n == 0x7)) {         // mouse X0 / Y0 interrupt flags (read and clear)
+        if (m_iic && (n == 0x5 || n == 0x7)) {         // mouse X0 / Y0 interrupt flags (the IRQ released)
             m_irqMask &= ~IRQ_MOUSE;
-            return (uint8_t)(m_kbd->data() & 0x7F);
+            const bool f = n == 0x5 ? m_xIrq : m_yIrq;
+            return (uint8_t)((m_kbd->data() & 0x7F) | (f ? 0x80 : 0));
         }
         if (m_iic && n == 0x9)                          // VBLINT (not cleared by reading)
             return (uint8_t)((m_kbd->data() & 0x7F) | ((m_irqMask & IRQ_VBL) ? 0x80 : 0));
@@ -416,7 +425,7 @@ private:
                 return wr ? 0 : floating(at);
             case 0x4:
                 if (m_iic) {
-                    if ((a & 0x0F) == 0x8) { m_irqMask &= ~IRQ_MOUSE; return wr ? 0 : floating(at); }   // clear XY
+                    if ((a & 0x0F) == 0x8) { m_irqMask &= ~IRQ_MOUSE; m_xIrq = m_yIrq = false; return wr ? 0 : floating(at); }   // clear XY
                     if (!wr && (a & 0x0F) <= 3) {       // XYMask, VBL mask, X0Edge, Y0Edge
                         const bool v = (a & 3) == 0 ? m_xyMask : (a & 3) == 1 ? m_vblMask : (a & 3) == 2 ? m_x0Edge : m_y0Edge;
                         return (uint8_t)((floating(at) & 0x7F) | (v ? 0x80 : 0));
@@ -463,8 +472,9 @@ private:
                 if (m_iic) {
                     switch (a & 0x07) {
                         case 0x0: return fb;            // the 40/80 switch: 40 columns
-                        case 0x3: return (uint8_t)(fb | 0x80);   // mouse button: up (inverted)
-                        case 0x6: case 0x7: return fb;  // mouse X1, Y1
+                        case 0x3: return (uint8_t)(fb | (m_mouseButton ? 0 : 0x80));   // mouse button (inverted)
+                        case 0x6: return (uint8_t)(fb | (m_x1 ? 0x80 : 0));    // mouse X1: the direction
+                        case 0x7: return (uint8_t)(fb | (m_y1 ? 0x80 : 0));    // mouse Y1
                     }
                 }
                 switch (a & 0x07) {
@@ -541,6 +551,27 @@ private:
     Acia6551* m_acia[2] = {nullptr, nullptr};
     bool m_iouDis = true, m_vblMask = false, m_xyMask = false, m_x0Edge = false, m_y0Edge = false;
     bool m_lastVbl = false, m_romSwitch = false;
+    // IIc mouse (MAME apple2e.cpp update_iic_mouse): each step toggles X0/Y0,
+    // X1/Y1 give the direction; an interrupt on X0/Y0's chosen edge
+    int m_mouseDx = 0, m_mouseDy = 0;
+    bool m_x0 = false, m_x1 = false, m_y0 = false, m_y1 = false, m_xIrq = false, m_yIrq = false, m_mouseButton = false;
+    uint64_t m_mouseLine = 0;
+    void mouseStep() {
+        bool irq = false;
+        if (m_mouseDx) {
+            if (m_mouseDx < 0) { ++m_mouseDx; m_x1 = false; } else { --m_mouseDx; m_x1 = true; }
+            if ((m_x0 && m_x0Edge) || (!m_x0 && !m_x0Edge))        // falling / rising, as chosen
+                if (m_xyMask) { m_xIrq = true; irq = true; }
+            m_x0 = !m_x0;
+        }
+        if (m_mouseDy) {
+            if (m_mouseDy < 0) { ++m_mouseDy; m_y1 = true; } else { --m_mouseDy; m_y1 = false; }
+            if ((m_y0 && m_y0Edge) || (!m_y0 && !m_y0Edge))
+                if (m_xyMask) { m_yIrq = true; irq = true; }
+            m_y0 = !m_y0;
+        }
+        if (irq) m_irqMask |= IRQ_MOUSE;
+    }
     uint8_t m_irqMask = 0;
     uint32_t m_vf = Apple2Video::VF_TEXT;
     uint64_t m_cycles = 0, m_videoCycle = 0, m_instr = 0, m_ptrig = 0;
@@ -641,6 +672,16 @@ MachineDescriptor* create(Model model, std::string* err) {
         io->registerHandler(a2);
         desc->deleters.push_back([a1, a2]() { delete a1; delete a2; });
         bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
+        // The mouse: moves in picture pixels (560 wide), halved to the
+        // 280-dot screen
+        desc->onMouse = [bus, fx = 0.0, fy = 0.0](int dx, int dy, uint8_t buttons, int) mutable {
+            fx += dx * 0.5;
+            fy += dy * 0.5;
+            const int ix = (int)fx, iy = (int)fy;
+            fx -= ix;
+            fy -= iy;
+            bus->mouse(ix, iy, buttons & 1);
+        };
     }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the

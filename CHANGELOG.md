@@ -12,6 +12,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
+- **Apple IIc: the mouse** (#12, after MAME `apple2e.cpp` `update_iic_mouse`).
+  - **Movement:** steps toggle X0/Y0, one an axis a scanline, with the direction on X1/Y1 (`$C066`/`$C067`).
+  - **Interrupts:** the XY interrupt fires on the chosen edge. `$C015`/`$C017` read the flags and `$C048` clears them.
+  - **Button:** `$C063`, inverted.
+  - **Firmware:** the ROM's mouse firmware reads it from Applesoft.
+  - **Test:** `apple2c_mouse_firmware`.
 - **Apple IIgs ROM 03 and saved battery RAM** (#12).
   - **ROM 03:** profile `apple2gs-rom03`, 256 KB in banks `$FC-$FF`, with KEGS's ROM 03 differences:
     - **ADB:** version 6, an 8-byte sync, commands `$12`/`$13`, the inverted repeat rate and the special keys at `$0C`.
