@@ -205,12 +205,29 @@ void ScreenPane::OnPaint(wxPaintEvent&) {
     }
     wxImage img(srcW, srcH, rgb);
 
-    wxRect canvas = GetClientRect();
-    // Below the controls (taller with key buttons under Capture Keyboard)
-    int btnH = m_ratioBtn->GetSize().y + 8;
-    if (!m_keyButtons.empty()) btnH = std::max(btnH, m_keyButtons.back()->btn->GetRect().GetBottom() + 5);
-    canvas.y      += btnH;
-    canvas.height -= btnH;
+    // Below the controls, or (with key buttons stacked under Capture
+    // Keyboard) beside that column, whichever gives the larger picture
+    const wxRect client = GetClientRect();
+    const int rowH = m_ratioBtn->GetSize().y + 8;
+    wxRect canvas = client;
+    canvas.y += rowH;
+    canvas.height -= rowH;
+    if (!m_keyButtons.empty()) {
+        const int colBottom = std::max(rowH, m_keyButtons.back()->btn->GetRect().GetBottom() + 5);
+        int colLeft = client.GetRight();
+        for (const auto& kb : m_keyButtons) colLeft = std::min(colLeft, kb->btn->GetRect().GetLeft());
+        colLeft = std::min(colLeft, m_captureBtn->GetRect().GetLeft()) - 4;
+        wxRect below = client, beside = client;
+        below.y += colBottom;
+        below.height -= colBottom;
+        beside.y += rowH;
+        beside.height -= rowH;
+        beside.width = colLeft - beside.x;
+        auto fit = [&](const wxRect& r) {
+            return r.width <= 0 || r.height <= 0 ? 0.0 : std::min((double)r.width / srcW, (double)r.height / srcH);
+        };
+        canvas = fit(beside) > fit(below) ? beside : below;
+    }
     if (canvas.width <= 0 || canvas.height <= 0) return;
 
     int dstX = canvas.x;

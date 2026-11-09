@@ -8,6 +8,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Front ends
+- **GUI screen pane:** with key buttons stacked under Capture Keyboard (the IIgs's RESET and REBOOT, for example), the picture now sits beside that column when that's larger, instead of always below the lowest button. The IIgs picture grows from about 688 to 805 pixels wide in a 1280-pixel window.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
