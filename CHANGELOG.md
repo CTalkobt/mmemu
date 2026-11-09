@@ -21,6 +21,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
 ### Apple II
+- **Apple IIc: the mouse** (#12, after MAME `apple2e.cpp` `update_iic_mouse`).
+  - **Movement:** steps toggle X0/Y0, one an axis a scanline, with the direction on X1/Y1 (`$C066`/`$C067`).
+  - **Interrupts:** the XY interrupt fires on the chosen edge. `$C015`/`$C017` read the flags and `$C048` clears them.
+  - **Button:** `$C063`, inverted.
+  - **Firmware:** the ROM's mouse firmware reads it from Applesoft.
+  - **Test:** `apple2c_mouse_firmware`.
 - **Apple IIgs ROM 03 and saved battery RAM** (#12).
   - **ROM 03:** profile `apple2gs-rom03`, 256 KB in banks `$FC-$FF`, with KEGS's ROM 03 differences:
     - **ADB:** version 6, an 8-byte sync, commands `$12`/`$13`, the inverted repeat rate and the special keys at `$0C`.

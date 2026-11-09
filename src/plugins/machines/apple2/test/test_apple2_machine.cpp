@@ -1071,3 +1071,39 @@ TEST_CASE(apple2gs_bram_persists) {
     for (uint8_t b : bram) nonzero += b != 0;
     EXPECT_TRUE(nonzero > 0);                        // the ROM's defaults and checksum
 }
+
+// The IIc mouse (MAME apple2e.cpp update_iic_mouse) through the ROM's own
+// mouse firmware (slot 4): Applesoft turns it on (PR#4: PRINT CHR$(1)),
+// the mouse moves right and down, IN#4 / INPUT reads the position back
+TEST_CASE(apple2c_mouse_firmware) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIc, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 3000000);
+    m->onKey("control", true); m->onKey("reset", true); m->onKey("reset", false); m->onKey("control", false);
+    run(m, 1000000);
+    auto* kbd = find<IKeyboardMatrix>(m);
+    // A program: the mouse on, wait for a key (the mouse moves meanwhile), read it
+    kbd->enqueueText("10 PR#4: PRINT CHR$(1): PR#0\n20 GET A$\n30 IN#4: INPUT \"\";X,Y,S: IN#0\n"
+                     "40 PRINT \"POS \";X;\" \";Y\nRUN\n");
+    run(m, 4000000);
+    m->onMouse(200, 120, 0, 0);                      // +100, +60 dots
+    run(m, 3000000);
+    kbd->enqueueText(" ");
+    run(m, 4000000);
+    bool found = false;
+    int x = -1, y = -1;
+    for (int r = 0; r < 24 && !found; ++r) {
+        const std::string row = textRow(m, r);
+        const size_t at = row.find("POS ");
+        if (at != std::string::npos && std::sscanf(row.c_str() + at, "POS %d %d", &x, &y) == 2) found = true;
+    }
+    if (!found) for (int r = 0; r < 24; ++r) printf("    |%s|\n", textRow(m, r).c_str());
+    ASSERT(found);
+    // Right and down, in proportion (the firmware counts the interrupts it
+    // sees; steps come a scanline apart, as MAME makes them)
+    EXPECT_TRUE(x > 10);
+    EXPECT_TRUE(y > 5);
+    EXPECT_TRUE(x > y);
+    delete m;
+}

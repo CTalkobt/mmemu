@@ -118,9 +118,14 @@ original once the keys are let go.
   - `$C040-$C043` read the XY mask, the VBL mask and the X0/Y0 edges. `$C015`/`$C017` read and clear the mouse interrupt flags, and `$C048` clears them too.
 - **The serial ports:** two 6551 ACIAs, port 1 at `$C098-$C09B` and port 2 at `$C0A8-$C0AB`. Their interrupts go to /IRQ. They're the devices "ACIA (port 1)" and "ACIA (port 2)", and `serial attach` connects them.
 - **The drive:** the IIc's internal 5.25" drive is the Disk II-compatible slot 6, drive 1; a second drive is unit 2. With no disk the firmware shows "Check Disk Drive.". DOS 3.3 and ProDOS boot.
+- **The mouse** (after MAME `apple2e.cpp` `update_iic_mouse`):
+  - **Movement:** moves step through one count an axis a scanline. Each step toggles X0 or Y0, and X1/Y1 (`$C066`/`$C067`) give the direction.
+  - **Interrupts:** with the XY mask on, X0 or Y0 passing its chosen edge raises the interrupt. `$C015`/`$C017` read the X and Y flags, and `$C048` clears them.
+  - **Button:** `$C063` reads it, inverted.
+  - **Scaling:** the front ends' picture-pixel moves are halved to the 280-dot screen.
+  - **Firmware:** the ROM's own mouse firmware (slot 4) reads it from Applesoft (`apple2c_mouse_firmware`).
 - **Other switches:**
   - `$C060` reads the 40/80 switch as 40 columns.
-  - `$C063` reads the mouse button, up, inverted.
   - `$C02x` swaps a 32 KB ROM's halves.
 
 **The ROM.** Apple's IIc ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM FF, "Apple IIc ROM FF - 342-0272-A.bin" (16 KB), from the Apple II Documentation Project mirror:
@@ -128,7 +133,7 @@ original once the keys are let go.
 
 **Not yet:**
 - **The later 32 KB ROMs** (00, 03, 04): ROM 00 needs the IWM's 3.5" drive (UniDisk / SmartPort), and 03/04 need the memory expansion (`$C0C0-$C0C3`). A 32 KB ROM is refused for now.
-- **The mouse:** its movement and button; the switches are there.
+
 
 ## IIgs
 
