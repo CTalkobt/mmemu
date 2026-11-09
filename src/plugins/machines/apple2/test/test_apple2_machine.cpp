@@ -8,6 +8,8 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libcore/main/icore.h"
 #include <cstdio>
+#include <cstring>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -473,5 +475,157 @@ TEST_CASE(apple2gs_super_hires) {
     EXPECT_EQ(bus->read8(0x00C023) & 0xA2, 0xA2);    // VGC and scan-line interrupt flags
     bus->write8(0x00C032, 0x00);
     EXPECT_EQ(bus->read8(0x00C023) & 0xA0, 0x00);
+    delete m;
+}
+
+// The IIgs's 5.25" drives (the Disk II emulation behind the IWM): DOS 3.3's
+// System Master boots from slot 6 and CATALOGs
+TEST_CASE(apple2gs_boots_525) {
+    const std::string master = "../refs/apple2/AppleWin/bin/DOS 3.3 System Master - 680-0210-A.dsk";
+    FILE* f = std::fopen(master.c_str(), "rb");
+    if (!f) { printf("  (skipped: no %s)\n", master.c_str()); return; }
+    std::fclose(f);
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IOHandler* disk = m->ioRegistry->findHandler("Disk II");
+    ASSERT(disk && disk->mountDisk(1, master));
+    run(m, 40000000);
+    find<IKeyboardMatrix>(m)->enqueueText("CATALOG\n");
+    run(m, 20000000);
+    if (!gsHas(m, "HELLO")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "HELLO"));
+    delete m;
+}
+
+#include "plugins/machines/apple2/main/gs_drive35.h"
+
+// The 3.5" format (KEGS iwm_nibblize_track_35 / iwm_denib_track35): every
+// track side of an 800 KB disk nibblizes and decodes back; a track's
+// nibbles rewritten (a sector's data changed) decode into the image; the
+// drive's status and commands
+TEST_CASE(apple2gs_drive35_format) {
+    using apple2::Gs35Drive;
+    std::vector<uint8_t> img(Gs35Drive::IMAGE_BYTES);
+    for (size_t i = 0; i < img.size(); ++i) img[i] = (uint8_t)(i * 7 + (i >> 9) * 13);
+    EXPECT_EQ(Gs35Drive::firstBlock(79, 1) + Gs35Drive::sectorsOn(79), 1600);
+    int bad = 0;
+    std::vector<uint8_t> nib, bits, out(12 * 512);
+    for (int t = 0; t < Gs35Drive::TRACKS; ++t)
+        for (int s = 0; s < 2; ++s) {
+            const uint8_t* src = &img[(size_t)Gs35Drive::firstBlock(t, s) * 512];
+            Gs35Drive::nibblize(src, t, s, nib, bits);
+            std::fill(out.begin(), out.end(), 0);
+            const int n = Gs35Drive::denibblize(nib, t, s, out.data());
+            if (n != Gs35Drive::sectorsOn(t) || std::memcmp(out.data(), src, (size_t)n * 512) != 0) ++bad;
+        }
+    EXPECT_EQ(bad, 0);
+    // 10-bit syncs, D5 AA 96 address fields: 12 on track 0
+    Gs35Drive::nibblize(img.data(), 0, 0, nib, bits);
+    int fields = 0;
+    for (size_t i = 0; i + 2 < nib.size(); ++i) fields += nib[i] == 0xD5 && nib[i + 1] == 0xAA && nib[i + 2] == 0x96;
+    EXPECT_EQ(fields, 12);
+    EXPECT_EQ(bits[0], 10);
+
+    Gs35Drive d;
+    EXPECT_EQ(d.status(0x2, 0), 1);                  // no disk
+    ASSERT(d.insertBytes(img));
+    EXPECT_EQ(d.status(0x2, 0), 0);
+    EXPECT_EQ(d.status(0xA, 0), 0);                  // track 0
+    d.command(0x8, 0);                               // motor on
+    EXPECT_EQ(d.status(0x8, 0), 0);
+    d.command(0x0, 0); d.command(0x4, 0); d.command(0x4, 0);   // step in twice
+    EXPECT_EQ(d.track(), 2);
+    EXPECT_EQ(d.status(0xA, 0), 1);
+    d.status(0x3, 0);                                // upper head
+    EXPECT_EQ(d.side(), 1);
+    // Read a while: the address fields go by
+    int seen = 0;
+    uint8_t prev2 = 0, prev = 0;
+    for (uint64_t t = 0; t < 14318180 / 5; t += 100) {           // a fifth of a second
+        const uint8_t v = d.readNibble(t);
+        if (!v) continue;
+        if (prev2 == 0xD5 && prev == 0xAA && v == 0x96) ++seen;
+        prev2 = prev; prev = v;
+    }
+    EXPECT_TRUE(seen >= 12);
+}
+
+// The IIgs boots a 3.5" disk from slot 5 (the ROM's SmartPort firmware
+// through the IWM): block 0 at $0800 shows "BOOT OK", then reads the last
+// block (1599: track 79, side 1) through the slot 5 block driver
+TEST_CASE(apple2gs_boots_35) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    std::vector<uint8_t> img(apple2::Gs35Drive::IMAGE_BYTES, 0);
+    const uint8_t boot[] = {
+        0x01,
+        0xA9, 0x01, 0x85, 0x42,             // LDA #1 / STA $42: read
+        0x86, 0x43,                         // STX $43: the unit (slot 5, drive 1)
+        0xA9, 0x00, 0x85, 0x44,             // buffer $1000
+        0xA9, 0x10, 0x85, 0x45,
+        0xA9, 0x3F, 0x85, 0x46,             // block $063F
+        0xA9, 0x06, 0x85, 0x47,
+        0xAD, 0xFF, 0xC5,                   // LDA $C5FF: the driver's offset
+        0x8D, 0x1E, 0x08,                   // STA $081E
+        0x20, 0x00, 0xC5,                   // $081D JSR $C5xx
+        0xA2, 0x00,                         // $0820 LDX #0
+        0xBD, 0x00, 0x10,                   // LDA $1000,X
+        0x9D, 0x00, 0x04,                   // STA $0400,X
+        0xE8, 0xE0, 0x08, 0xD0, 0xF5,       // INX / CPX #8 / BNE
+        0xA2, 0x00,                         // $082D LDX #0
+        0xBD, 0x40, 0x08,                   // LDA $0840,X
+        0x9D, 0x80, 0x04,                   // STA $0480,X
+        0xE8, 0xE0, 0x07, 0xD0, 0xF5,       // INX / CPX #7 / BNE
+        0x4C, 0x3A, 0x08};                  // $083A JMP $083A
+    std::copy(boot, boot + sizeof boot, img.begin());
+    const char* ok = "BOOT OK";
+    for (int i = 0; i < 7; ++i) img[0x40 + i] = (uint8_t)(ok[i] | 0x80);
+    const char* last = "BLK1599!";
+    for (int i = 0; i < 8; ++i) img[1599 * 512 + i] = (uint8_t)(last[i] | 0x80);
+    auto* drives = dynamic_cast<apple2::Gs35Drives*>(m->ioRegistry->findHandler("3.5\" Drive"));
+    ASSERT(drives);
+    ASSERT(drives->drive[0].insertBytes(img));
+    run(m, 30000000);
+    if (!gsHas(m, "BLK1599!")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "BOOT OK"));
+    EXPECT_TRUE(gsHas(m, "BLK1599!"));
+    delete m;
+}
+
+// Writing a 3.5" disk: the boot block writes itself (from $0800) to block
+// 1000 through the slot 5 block driver; the image then holds it there
+TEST_CASE(apple2gs_writes_35) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    std::vector<uint8_t> img(apple2::Gs35Drive::IMAGE_BYTES, 0);
+    const uint8_t boot[] = {
+        0x01,
+        0xA9, 0x02, 0x85, 0x42,             // LDA #2 / STA $42: write
+        0x86, 0x43,                         // STX $43
+        0xA9, 0x00, 0x85, 0x44,             // buffer $0800 (this block)
+        0xA9, 0x08, 0x85, 0x45,
+        0xA9, 0xE8, 0x85, 0x46,             // block $03E8 (1000)
+        0xA9, 0x03, 0x85, 0x47,
+        0xAD, 0xFF, 0xC5,                   // LDA $C5FF
+        0x8D, 0x1E, 0x08,                   // STA $081E
+        0x20, 0x00, 0xC5,                   // $081D JSR $C5xx
+        0xA9, 0xD7, 0x90, 0x02, 0xA9, 0xC5, // $0820 LDA #'W' / BCC +2 / LDA #'E'
+        0x8D, 0x00, 0x04,                   // STA $0400
+        0x4C, 0x29, 0x08};                  // $0829 JMP $0829
+    std::copy(boot, boot + sizeof boot, img.begin());
+    for (int i = 0x100; i < 0x200; ++i) img[i] = (uint8_t)(i * 3);   // something in the second half
+    auto* drives = dynamic_cast<apple2::Gs35Drives*>(m->ioRegistry->findHandler("3.5\" Drive"));
+    ASSERT(drives && drives->drive[0].insertBytes(img));
+    run(m, 30000000);
+    if (!gsHas(m, "W")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "W"));
+    const auto& b = drives->drive[0].blocks();
+    int diff = 0;                                    // the block as it is in memory (its JSR patched)
+    for (int i = 0; i < 512; ++i) diff += b[1000 * 512 + i] != m->buses[0].bus->peek8(0x000800u + (uint32_t)i);
+    EXPECT_EQ(diff, 0);
+    EXPECT_EQ(b[1000 * 512 + 0x100], img[0x100]);
     delete m;
 }

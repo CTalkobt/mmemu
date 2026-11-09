@@ -155,7 +155,19 @@ original once the keys are let go.
 - **The DOC:** `$C03C-$C03F` reach the DOC's registers and its 64 KB of sound RAM. The data register reads one access behind. No sound is produced yet.
 - **Other devices:**
   - The SCC (`$C038-$C03B`) answers as idle.
-  - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers, but no drives. With no startup device the ROM shows "Check startup device!".
+  - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers. `$C031` bit 6 picks the 5.25" or the 3.5" drives. With no startup device the ROM shows "Check startup device!".
+- **5.25" drives** (slot 6, the device "Disk II"): the IIgs ROM's slot 6 firmware drives them through the IWM, using the Apple II's Disk II emulation (`.dsk`, `.do`, `.po`, `.nib`, `.woz`).
+  - The IWM's mode and status registers sit in front.
+  - While the motor runs with CYAREG bit 2 set, the CPU drops to 1 MHz, as the IIgs does.
+  - DOS 3.3 and ProDOS boot.
+- **3.5" drives** (slot 5, the device `3.5" Drive`, units 1 and 2), after KEGS `iwm.c`:
+  - **Images:** 800 KB ProDOS-order images (`.po`, `.hdv`), `.2mg`, and DiskCopy 4.2.
+  - **Track format:** 80 tracks a side, with 12, 11, 10, 9 or 8 sectors by zone and 2:1 interleave. Tracks are nibblised as the ROM writes them (a port of its code at `$FF:6320`), with 10-bit syncs.
+  - **Timing:** a nibble passes the head every 16-20 us (2 us a bit), and each is read once (latch mode).
+  - **Drive registers:** CA0-CA2 (phases 0-2) with SEL (`$C031` bit 7) pick a drive register. The status register reads it in bit 7 (disk in place, write protect, track 0, motor, sides, tachometer, disk switched). Phase 3 rising (LSTRB) runs the commands (step direction, step, motor on/off, eject).
+  - **Writing:** written nibbles follow the head, and the handshake register paces them (ready after 8 bit times, underrun after 16). When write mode ends, the track is decoded back into the image's sectors and the file is saved.
+  - The ROM's SmartPort firmware boots and reads and writes these disks.
+  - `disk mount` tries the 3.5" drives first. They take only 800 KB images, so a 140 KB disk goes to the 5.25" drives.
 - **Video:** the Apple II modes, through the IIe video, with the enhanced IIe's character set (MouseText). Text uses `$C022`'s colours, and the picture has the `$C034` border.
 - **Super Hi-Res** (stage 2, KEGS `video.c`): `$C029` bit 7 turns it on. Bank `$E1` holds it:
   - **Layout:** 200 lines of 160 bytes at `$2000`. The scan-line control bytes are at `$9D00`: bit 7 selects 640 pixels, bit 6 the interrupt, bit 5 fill mode, and bits 0-3 the palette. The 16 palettes of 16 colours are at `$9E00` (`$0RGB`, low byte first).
@@ -170,7 +182,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** the DOC's oscillators and sound, the IWM's 5.25" and 3.5" drives and SmartPort, the mouse, the serial ports, ROM 03, and saving the battery RAM.
+**Not yet (the later stages):** the DOC's oscillators and sound, 3.5" WOZ images and 1.44 MB disks, SmartPort hard disks, the mouse, the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 

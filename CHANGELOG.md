@@ -8,6 +8,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Apple II
+- **Apple IIgs: the drives** (#12).
+  - **5.25" (slot 6):** the Disk II emulation behind the IWM. The IWM's mode and status registers sit in front, and CYAREG's slot 6 motor bit slows the CPU to 1 MHz. DOS 3.3 boots.
+  - **3.5" (slot 5), after KEGS `iwm.c`:**
+    - **Images:** 800 KB `.po`/`.hdv`, `.2mg` and DiskCopy 4.2.
+    - **Track format:** the ROM's own GCR nibblisation, with zoned sector counts, 2:1 interleave and 10-bit syncs, at 2 us a bit.
+    - **Drive registers:** status reads and LSTRB commands through the phases and `$C031` SEL.
+    - **Writing:** paced by the handshake register, and decoded back into the image.
+    - **Firmware:** the ROM's SmartPort firmware boots, reads and writes these disks.
+  - **Tests:** `apple2gs_boots_525`, `apple2gs_drive35_format` (all 160 track sides round-trip), `apple2gs_boots_35` (a boot block that reads block 1599, on track 79 side 1) and `apple2gs_writes_35`.
 - **Apple IIgs, stage 2: Super Hi-Res** (#12, after KEGS `video.c` and `sim65816.c`).
   - **Modes:** 320 and 640 pixels, with 16 palettes from bank `$E1` and fill mode, shown as 640 x 400 inside the border.
   - **Line by line:** each line is drawn as the beam reaches it, so palette and SCB changes between lines show.
