@@ -123,6 +123,53 @@ struct MachineDescriptor {
         return nullptr;
     }
 
+    /**
+     * Expansion slots that take an optional device once the machine is made
+     * (the IIe's auxiliary slot: the extended 80-column card or a RamWorks
+     * III; later the C64's REU, RS-232 cartridges): CLI `expansion`, the
+     * GUI's Control > Expansions, MCP `expansion`. A device may come in
+     * options (a memory size: "512K", "1M"; see parseMemorySize). install()
+     * fits `device` with `option` ("" for its default; device "" empties
+     * the slot) or returns false with `err` set; the frontends reset after
+     * a change. info() describes what is fitted ("" for nothing).
+     */
+    struct ExpansionDevice {
+        std::string id;
+        std::string description;
+        std::vector<std::string> options;   // the choices offered, e.g. sizes
+        std::string defaultOption;
+    };
+    struct ExpansionSlot {
+        std::string name;
+        std::string description;
+        std::vector<ExpansionDevice> devices;
+        bool canEmpty = true;                // whether the slot may be left empty
+        std::function<bool(const std::string& device, const std::string& option, std::string& err)> install;
+        std::function<std::string()> info;
+        const ExpansionDevice* device(const std::string& id) const {
+            for (auto& d : devices) if (d.id == id) return &d;
+            return nullptr;
+        }
+    };
+    std::vector<ExpansionSlot> expansionSlots;
+    ExpansionSlot* expansionSlot(const std::string& name) {
+        for (auto& s : expansionSlots) if (s.name == name) return &s;
+        return nullptr;
+    }
+    /** "512K", "1M", "16MB", "65536": bytes, or 0 if it is not a size. */
+    static uint64_t parseMemorySize(const std::string& s) {
+        size_t i = 0;
+        uint64_t n = 0;
+        while (i < s.size() && s[i] >= '0' && s[i] <= '9') { n = n * 10 + (uint64_t)(s[i] - '0'); if (n > (1ull << 40)) return 0; ++i; }
+        if (i == 0) return 0;
+        std::string unit = s.substr(i);
+        for (auto& c : unit) c = (char)toupper((unsigned char)c);
+        if (unit == "" || unit == "B") return n;
+        if (unit == "K" || unit == "KB") return n << 10;
+        if (unit == "M" || unit == "MB") return n << 20;
+        return 0;
+    }
+
     /** Memory as RAM, also under ROM, for KERNAL file calls that fetch the
      *  file name and SAVE data from RAM whatever is banked in (the Plus/4's
      *  KERNAL does). Empty: they read through the bus. */

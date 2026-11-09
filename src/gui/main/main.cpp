@@ -132,6 +132,7 @@ private:
     void OnAttachCart(wxCommandEvent& event);
     void OnEjectCart(wxCommandEvent& event);
     void OnRomSockets(wxCommandEvent& event);
+    void OnExpansions(wxCommandEvent& event);
     void OnKbdFocus(const wxCommandEvent& event);
     void OnViewPane(wxCommandEvent& event);
     void rebuildViewMenu();
@@ -669,6 +670,7 @@ MmemuFrame::MmemuFrame()
     menuControl->Append(ID_ATTACH_CART, "Attach Cartridge...");
     menuControl->Append(ID_EJECT_CART, "Eject Cartridge");
     menuControl->Append(ID_ROM_SOCKETS, "ROM Sockets...", "Fit or remove an optional ROM on the board (the C128's internal function ROM)");
+    menuControl->Append(ID_EXPANSIONS, "Expansions...", "Fit or remove a device in an expansion slot (the IIe's RamWorks III)");
     menuControl->AppendSeparator();
     menuControl->AppendCheckItem(ID_SWAP_JOYSTICKS, "Swap Joystick Ports",
         "Host controllers: the first one goes to the port most software reads (the C64's control port 2); swap the first two");
@@ -928,6 +930,7 @@ MmemuFrame::MmemuFrame()
     Bind(wxEVT_MENU, &MmemuFrame::OnAttachCart, this, ID_ATTACH_CART);
     Bind(wxEVT_MENU, &MmemuFrame::OnEjectCart, this, ID_EJECT_CART);
     Bind(wxEVT_MENU, &MmemuFrame::OnRomSockets, this, ID_ROM_SOCKETS);
+    Bind(wxEVT_MENU, &MmemuFrame::OnExpansions, this, ID_EXPANSIONS);
     Bind(wxEVT_MENU, &MmemuFrame::OnKbdFocus,   this, ID_KBD_FOCUS);
     Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_SHOW_BP_PANE, ID_SHOW_MEGA65_PANE);
     Bind(wxEVT_MENU, &MmemuFrame::OnViewPane, this, ID_VIEW_PANE_FIRST, ID_VIEW_PANE_LAST);
@@ -1363,6 +1366,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
             mb->Enable(ID_ATTACH_CART, carts);
             mb->Enable(ID_EJECT_CART, carts);
             mb->Enable(ID_ROM_SOCKETS, !m_machine->romSockets.empty());
+            mb->Enable(ID_EXPANSIONS, !m_machine->expansionSlots.empty());
         }
         // Enable Reset to Monitor menu only for MEGA65
         if (m_resetToMonitorItem) {
@@ -2222,6 +2226,57 @@ void MmemuFrame::OnRomSockets(wxCommandEvent&) {
     for (auto* p : m_memPanes) p->RefreshValues();
     info = sock.info ? sock.info() : "";
     SetStatusText(data.empty() ? "ROM socket " + sock.name + " emptied." : "ROM socket " + sock.name + ": " + info);
+}
+
+void MmemuFrame::OnExpansions(wxCommandEvent&) {
+    if (!m_machine || m_machine->expansionSlots.empty()) return;
+    auto& slots = m_machine->expansionSlots;
+    size_t pick = 0;
+    if (slots.size() > 1) {
+        wxArrayString names;
+        for (auto& sl : slots) {
+            std::string info = sl.info ? sl.info() : "";
+            names.Add(sl.name + ": " + (info.empty() ? "(empty)" : info));
+        }
+        wxSingleChoiceDialog dlg(this, "Slot:", "Expansions", names);
+        if (dlg.ShowModal() != wxID_OK) return;
+        pick = (size_t)dlg.GetSelection();
+    }
+    auto& slot = slots[pick];
+    std::string info = slot.info ? slot.info() : "";
+    // The devices that fit (and "empty the slot" if it may be)
+    wxArrayString devices;
+    for (auto& d : slot.devices) devices.Add(d.id + ": " + d.description);
+    if (slot.canEmpty) devices.Add("(remove the device)");
+    wxSingleChoiceDialog dd(this, slot.description + "\n\nNow: " + (info.empty() ? "(empty)" : info),
+                            "Expansion slot: " + slot.name, devices);
+    if (dd.ShowModal() != wxID_OK) return;
+    const size_t sel = (size_t)dd.GetSelection();
+    std::string device, option;
+    if (sel < slot.devices.size()) {
+        const auto& d = slot.devices[sel];
+        device = d.id;
+        if (!d.options.empty()) {
+            wxArrayString opts;
+            int def = 0;
+            for (size_t i = 0; i < d.options.size(); ++i) {
+                opts.Add(d.options[i]);
+                if (d.options[i] == d.defaultOption) def = (int)i;
+            }
+            wxSingleChoiceDialog od(this, "Option for " + d.id + ":", slot.name + ": " + d.id, opts);
+            od.SetSelection(def);
+            if (od.ShowModal() != wxID_OK) return;
+            option = d.options[(size_t)od.GetSelection()];
+        }
+    }
+    std::string err;
+    if (!slot.install(device, option, err)) { wxMessageBox(err, "Error", wxICON_ERROR); return; }
+    if (m_machine->onReset) m_machine->onReset(*m_machine);
+    m_regPane->RefreshValues();
+    m_disasmPane->RefreshValues(m_cpu->pc());
+    for (auto* p : m_memPanes) p->RefreshValues();
+    info = slot.info ? slot.info() : "";
+    SetStatusText("Expansion slot " + slot.name + ": " + (info.empty() ? "(empty)" : info));
 }
 
 void MmemuFrame::setKeyCapture(bool active) {

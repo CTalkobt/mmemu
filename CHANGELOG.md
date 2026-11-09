@@ -8,6 +8,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Front ends
+- **Expansion slots: devices fitted after a machine is made.** A machine lists them in `MachineDescriptor::expansionSlots`, each with the devices that fit and their options (a memory size, for example, through `parseMemorySize`).
+  - **CLI:** `expansion [slot] [device [option]|remove]`.
+  - **MCP:** the `expansion` tool.
+  - **GUI:** Control > Expansions....
+  - The machine resets after a change.
+  - The first use is the IIe's RamWorks III. The C64/C128 REU will follow (#264).
 - **GUI screen pane:** with key buttons stacked under Capture Keyboard (the IIgs's RESET and REBOOT, for example), the picture now sits beside that column when that's larger, instead of always below the lowest button. The IIgs picture grows from about 688 to 805 pixels wide in a 1280-pixel window.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
@@ -32,6 +38,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
 ### Apple II
+- **RamWorks III in the IIe's aux slot,** fitted once the machine is made. The IIe and enhanced IIe now have an `aux` expansion slot that takes `ext80` (the extended 80-column card, the default) or `ramworks3` with 128 KB to 16 MB.
+  - Writes to `$C071/3/5/7` select a 64 KB bank for the aux switches; the video stays on bank 0.
+  - Banks past the fitted memory float.
+  - A power cycle selects bank 0.
+  - See `doc/README-APPLE2.md`.
 - **SmartPort devices on the disk port: the UniDisk 3.5** (#12), for the IIc's 32 KB ROMs and the IIgs. High-level, after Clemens (`clem_smartport.c`) and the IIgs Firmware Reference. See "SmartPort devices on the disk port" in `doc/README-APPLE2.md`.
   - **The device "UniDisk"** (`smartport_bus.{h,cpp}`, units 1-4): the IWM's phases drive the bus (reset, enable, REQ) and its sense line reads ACK. The bytes it writes and reads are packets: INIT (the last unit replies `$FF`), STATUS (the DIB), READBLOCK, WRITEBLOCK, FORMAT and CONTROL, standard and extended. They are served from `.po`, `.hdv` or `.2mg` images of any size, and written back to the file.
   - **IIc:** ProDOS 2.4.3 boots from it as slot 5 (`apple2c_unidisk_boots`).
