@@ -21,6 +21,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
 ### Apple II
+- **Apple IIc ROMs 00, 03 and 04** (#12), as MAME runs them.
+  - **Profiles:** `apple2c-rom00`, `-rom03` and `-rom04`.
+  - **The IWM in slot 6:** its mode, status and handshake registers sit in front of the 5.25" drives. The SmartPort bus answers as empty.
+  - **ROMs 03 and 04** also get the 1 MB memory expansion at `$C0C0-$C0C3`: a 24-bit pointer and an auto-incrementing data register.
+  - **Booting:** each comes up with "Check Disk Drive.", and DOS 3.3 boots. These ROMs were refused before.
+  - **Test:** `apple2c_32k_roms`.
 - **Apple IIc: the mouse** (#12, after MAME `apple2e.cpp` `update_iic_mouse`).
   - **Movement:** steps toggle X0/Y0, one an axis a scanline, with the direction on X1/Y1 (`$C066`/`$C067`).
   - **Interrupts:** the XY interrupt fires on the chosen edge. `$C015`/`$C017` read the flags and `$C048` clears them.

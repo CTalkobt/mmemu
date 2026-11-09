@@ -126,13 +126,18 @@ original once the keys are let go.
   - **Firmware:** the ROM's own mouse firmware (slot 4) reads it from Applesoft (`apple2c_mouse_firmware`).
 - **Other switches:**
   - `$C060` reads the 40/80 switch as 40 columns.
-  - `$C02x` swaps a 32 KB ROM's halves.
 
-**The ROM.** Apple's IIc ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM FF, "Apple IIc ROM FF - 342-0272-A.bin" (16 KB), from the Apple II Documentation Project mirror:
+**The 32 KB ROMs** (profiles `apple2c-rom00`, `apple2c-rom03`, `apple2c-rom04`; `roms/apple2/apple2c-00.rom`, `-03.rom`, `-04.rom`), as MAME runs them (`apple2c0`, `apple2c3`, `apple2c4`):
+- **`$C028`:** swaps between the ROM's two 16 KB halves.
+- **The IWM in slot 6:** the Disk II emulation behind its mode, status and handshake registers. The SmartPort bus (phases 1 and 3) answers as with nothing fitted (KEGS `iwm.c`).
+- **ROMs 03 and 04** (version byte `$FBBF` 3 or more) also get the 1 MB memory expansion (MAME `memexp_r`/`memexp_w`): `$C0C0-$C0C2` hold a 24-bit pointer, whose top byte reads with `$F0` ORed in, and `$C0C3` is the data, the pointer stepping on.
+- **Booting:** each comes up with "Check Disk Drive.", and DOS 3.3 boots (`apple2c_32k_roms`).
+
+**The ROM.** Apple's IIc ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM FF, "Apple IIc ROM FF - 342-0272-A.bin" (16 KB), and if wanted ROMs 00, 03 and 04 (32 KB each), from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIc/ROM%20Images/>. Save it as `roms/apple2/apple2c-ff.rom`. The video ROM is the enhanced IIe's, which is included.
 
 **Not yet:**
-- **The later 32 KB ROMs** (00, 03, 04): ROM 00 needs the IWM's 3.5" drive (UniDisk / SmartPort), and 03/04 need the memory expansion (`$C0C0-$C0C3`). A 32 KB ROM is refused for now.
+- **The UniDisk 3.5:** the 32 KB ROMs' SmartPort drives aren't emulated; their bus answers as empty. MAME doesn't emulate it for the IIc either.
 
 
 ## IIgs
@@ -358,6 +363,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
-- The IIc's 32 KB ROMs (the 3.5" drive, the memory expansion) and mouse; the
-  IIgs's later stages (see above); RamWorks memory; the IIe without its 80-column card.
+- The IIc's UniDisk 3.5; RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.

@@ -531,13 +531,88 @@ private:
                 }
                 return wr ? 0 : floating(at);
             case 0xE: {                                 // slot 6: the Disk II
+                if (m_iwm) return iwm(a, wr, at);
                 const int r = m_disk->io(a, wr, at);
                 return wr ? 0 : r < 0 ? floating(at) : (uint8_t)r;
             }
+            case 0xC:                                   // IIc ROMs 03, 04: the memory expansion
+                if (m_memExp.empty() || (a & 0x0F) > 3) return wr ? 0 : floating(at);
+                return memExp(a & 3, wr);
             default:                                    // the other slots: empty
                 return wr ? 0 : floating(at);
         }
     }
+
+    // The IWM in slot 6 (the IIc's 32 KB ROMs, as MAME's apple2c_iwm): the
+    // Disk II emulation behind its mode, status and handshake registers, and
+    // the SmartPort bus (phases 1 and 3, ENABLE2) answering as with nothing
+    // fitted (KEGS iwm.c)
+    uint8_t iwm(uint16_t a, const uint8_t* wr, uint64_t at) {
+        const int loc = a & 0x0F;
+        const bool on = loc & 1;
+        if (loc < 8) { if (on) m_iwmPhases |= 1u << (loc >> 1); else m_iwmPhases &= ~(1u << (loc >> 1)); }
+        const bool enable2 = (m_iwmPhases & 0xA) == 0xA && loc >= 8;
+        const int r = enable2 ? -1 : m_disk->io(a, wr, at);
+        switch (loc >> 1) {
+            case 4: m_iwmMotor = on; break;
+            case 6: m_iwmQ6 = on; break;
+            case 7: m_iwmQ7 = on; break;
+        }
+        if (wr) {
+            if (on && m_iwmQ6 && m_iwmQ7 && !m_iwmMotor) m_iwmMode = *wr & 0x1F;
+            return 0;
+        }
+        if (on) return 0;
+        switch ((m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0)) {
+            case 0: return enable2 ? 0xFF : r >= 0 ? (uint8_t)r : 0xFF;
+            case 1: return (uint8_t)(((enable2 || r < 0) ? 0x80 : (r & 0x80)) | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+            case 2:
+                if (enable2) { if (++m_enable2Hs > 3) { m_enable2Hs = 0; return 0x80; } return 0xC0; }
+                return 0x80;
+            default: return 0;
+        }
+    }
+    // The IIc memory expansion (MAME apple2e.cpp memexp_r / memexp_w):
+    // $C0C0-$C0C2 a 24-bit pointer (the top byte reads with $F0 ORed in),
+    // $C0C3 the data, the pointer stepping on
+    uint8_t memExp(int r, const uint8_t* wr) {
+        auto regs = [&]() {
+            m_expRegs[0] = (uint8_t)m_expLive;
+            m_expRegs[1] = (uint8_t)(m_expLive >> 8);
+            m_expRegs[2] = (uint8_t)((m_expLive >> 16) | 0xF0);
+        };
+        if (wr) {
+            if (r < 3) {
+                const int sh = 8 * r;
+                m_expWptr = (m_expWptr & ~(0xFFu << sh)) | ((uint32_t)*wr << sh);
+                m_expLive = m_expWptr;
+            } else {
+                if (m_expLive < m_memExp.size()) m_memExp[m_expLive] = *wr;
+                ++m_expLive;
+            }
+            regs();
+            return 0;
+        }
+        if (r < 3) return m_expRegs[r];
+        const uint8_t v = m_expLive < m_memExp.size() ? m_memExp[m_expLive] : 0xFF;
+        ++m_expLive;
+        regs();
+        return v;
+    }
+
+public:
+    /** The IIc's 32 KB ROMs: the IWM in slot 6 and (03, 04) the memory expansion. */
+    void setIwm(bool on) { m_iwm = on; }
+    void setMemoryExpansion(size_t bytes) { m_memExp.assign(bytes, 0); }
+
+private:
+    bool m_iwm = false, m_iwmMotor = false, m_iwmQ6 = false, m_iwmQ7 = false;
+    uint8_t m_iwmMode = 0;
+    uint32_t m_iwmPhases = 0;
+    int m_enable2Hs = 0;
+    std::vector<uint8_t> m_memExp;
+    uint32_t m_expWptr = 0, m_expLive = 0;
+    uint8_t m_expRegs[4] = {0, 0, 0xF0, 0};
 
     BusConfig m_cfg;
     std::vector<uint8_t> m_rom, m_ram, m_lc, m_aux;
@@ -590,6 +665,13 @@ private:
 }  // namespace
 
 MachineDescriptor* create(Model model, std::string* err) {
+    // The IIc's later ROMs: the IIc, with its ROM file and profile
+    const char* iicRom = model == Model::IIcRom00 ? "roms/apple2/apple2c-00.rom"
+                       : model == Model::IIcRom03 ? "roms/apple2/apple2c-03.rom"
+                       : model == Model::IIcRom04 ? "roms/apple2/apple2c-04.rom" : nullptr;
+    const char* iicId = model == Model::IIcRom00 ? "apple2c-rom00" : model == Model::IIcRom03 ? "apple2c-rom03" : "apple2c-rom04";
+    const char* iicName = model == Model::IIcRom00 ? "Apple //c (ROM 00)" : model == Model::IIcRom03 ? "Apple //c (ROM 03)" : "Apple //c (ROM 04)";
+    if (iicRom) model = Model::IIc;
     if (model == Model::IIgs) return createIIgs(err, 1);
     if (model == Model::IIgsRom03) return createIIgs(err, 3);
     const bool iic = model == Model::IIc;
@@ -599,18 +681,13 @@ MachineDescriptor* create(Model model, std::string* err) {
     const char* romFile = model == Model::II ? "roms/apple2/Apple2.rom"
                         : model == Model::IIPlus ? "roms/apple2/Apple2_Plus.rom"
                         : model == Model::IIe ? "roms/apple2/Apple2e.rom"
-                        : model == Model::IIc ? "roms/apple2/apple2c-ff.rom" : "roms/apple2/Apple2e_Enhanced.rom";
+                        : model == Model::IIc ? (iicRom ? iicRom : "roms/apple2/apple2c-ff.rom") : "roms/apple2/Apple2e_Enhanced.rom";
     if (iic) {
         // The IIc ROM is Apple's and not distributed here: 16 KB (ROM FF) or
         // 32 KB (03, 04); see doc/README-APPLE2.md for where to get it
         std::ifstream f(romFile, std::ios::binary);
         if (f) rom.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-        if (rom.size() == 0x8000) {
-            if (err) *err = "a 32 KB Apple IIc ROM (00, 03, 04) needs the 3.5\" drive or the memory expansion, "
-                            "not emulated yet: use ROM FF (16 KB)";
-            return nullptr;
-        }
-        if (rom.size() != 0x4000) {
+        if (rom.size() != 0x4000 && rom.size() != 0x8000) {
             if (err) *err = std::string("missing Apple IIc ROM ") + romFile + " (local only; see doc/README-APPLE2.md)";
             return nullptr;
         }
@@ -626,8 +703,8 @@ MachineDescriptor* create(Model model, std::string* err) {
     static const char* const IDS[] = {"apple2", "apple2plus", "apple2e", "apple2e-enhanced", "apple2c"};
     static const char* const NAMES[] = {"Apple ][", "Apple ][+", "Apple //e", "Apple //e (enhanced)", "Apple //c"};
     auto* desc = new MachineDescriptor();
-    desc->machineId = IDS[(int)model];
-    desc->displayName = NAMES[(int)model];
+    desc->machineId = iicRom ? iicId : IDS[(int)model];
+    desc->displayName = iicRom ? iicName : NAMES[(int)model];
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = {"drive"};
@@ -642,7 +719,14 @@ MachineDescriptor* create(Model model, std::string* err) {
     auto* spk = new Apple2Speaker();
     auto* display = new Apple2Display(video);
     auto* disk = new Disk2Card(std::move(disk2), std::move(disk13));
+    // The 32 KB ROMs (as MAME's apple2c0, apple2c3, apple2c4): the IWM in
+    // slot 6; ROMs 03 and 04 ($FBBF, the version byte, 3 or more) also the
+    // 1 MB memory expansion
+    const bool rom32k = iic && rom.size() == 0x8000;
+    const bool memExp = rom32k && rom[0x3BBF] >= 3 && rom[0x3BBF] != 0xFF;
     auto* bus = new Apple2Bus(std::move(rom), video, kbd, spk, disk, iie, enhanced, iic);
+    if (rom32k) bus->setIwm(true);
+    if (memExp) bus->setMemoryExpansion(1 << 20);
     desc->buses.push_back({"system", bus});
     // The enhanced IIe has a 65C02
     MOS6502* cpu = enhanced ? new MOS65C02() : new MOS6502();

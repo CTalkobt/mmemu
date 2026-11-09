@@ -34,7 +34,7 @@ struct MachineDescriptor;
  */
 namespace apple2 {
 
-enum class Model { II, IIPlus, IIe, IIeEnhanced, IIc, IIgs, IIgsRom03 };
+enum class Model { II, IIPlus, IIe, IIeEnhanced, IIc, IIgs, IIgsRom03, IIcRom00, IIcRom03, IIcRom04 };
 
 /** The Apple IIgs (machine_apple2gs.cpp): ROM 01 (roms/apple2/apple2gs-rom01.rom) or ROM 03
  *  (apple2gs-rom03.rom); local only. */
