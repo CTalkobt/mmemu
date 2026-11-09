@@ -8,8 +8,12 @@
 // Stage 1: ROM 01, the 65C816 at 2.8 MHz with 1 MHz slow-side accesses,
 // banks $00/$01 shadowed into $E0/$E1 (the Mega II), the Apple II video
 // modes through Apple2Video, ADB in high-level emulation, the clock, the
-// DOC's registers and RAM (no sound yet). Not yet: Super Hi-Res, DOC
-// sound, the IWM and its drives, the mouse, the serial ports (the SCC
+// DOC's registers and RAM (no sound yet).
+//
+// Stage 2: Super Hi-Res (video.c), 320 and 640 pixels, fill mode, the
+// scan-line interrupt (sim65816.c do_scan_int).
+//
+// Not yet: DOC sound, the IWM and its drives, the mouse, the serial ports (the SCC
 // answers as idle).
 
 #include "machine_apple2.h"
@@ -529,7 +533,7 @@ public:
         m_c023 = 0;
         m_c041 = 0;
         m_c046 = 0;
-        m_irqVbl = m_irq25 = m_irq1s = false;
+        m_irqVbl = m_irq25 = m_irq1s = m_irqScan = false;
         // video_reset: text, AN3 set (double hi-res off), white text
         m_vf = Apple2Video::VF_TEXT;
         m_altChar = false;
@@ -625,6 +629,11 @@ public:
     uint8_t tbColor() const { return m_tbColor; }
     uint32_t videoFlags() const { return m_vf; }
     uint8_t newVideo() const { return m_c029; }
+    /** The last complete Super Hi-Res frame (640 x 200), and which lines were Super Hi-Res. */
+    const std::vector<uint32_t>& shrFrame() const { return m_shrFront; }
+    bool shrLine(int line) const { return m_shrOnFront[line]; }
+    static constexpr int SHR_WIDTH = 640, SHR_LINES = 200;
+    static constexpr uint32_t VIS_START = Apple2Video::HORZ_START;
     uint8_t stateReg() const { return (uint8_t)m_state; }
     uint8_t shadowReg() const { return (uint8_t)m_shadow; }
     GsClock& clock() { return m_clock; }
@@ -638,9 +647,66 @@ private:
 
     void tick(bool slow) { m_ticks += (slow || !fast()) ? SLOW_TICKS : FAST_TICKS; }
 
+    // The video catches up with the CPU; on the way each Super Hi-Res line
+    // is drawn as the beam reaches its visible part (cycle 25 of the line),
+    // and a line's scan-line interrupt is raised as its line starts
     void syncVideo() {
         const uint64_t to = slowCycles();
-        if (to > m_videoCycle) { m_video->clock((uint32_t)(to - m_videoCycle)); m_videoCycle = to; }
+        while (m_videoCycle < to) {
+            const uint32_t h = m_video->horz();
+            uint64_t step = h < VIS_START ? VIS_START - h : Apple2Video::CYCLES_PER_LINE - h;
+            if (step > to - m_videoCycle) step = to - m_videoCycle;
+            m_video->clock((uint32_t)step);
+            m_videoCycle += step;
+            const int line = m_video->vert();
+            if (m_video->horz() == 0) lineStart(line);
+            else if (m_video->horz() == VIS_START && line < SHR_LINES) drawShrLine(line);
+        }
+    }
+
+    // do_scan_int: the first line from here whose SCB has bit 6, while
+    // $C023 bit 5 is clear
+    void lineStart(int line) {
+        if (line == SHR_LINES) { m_shrFront = m_shrBack; m_shrOnFront = m_shrOn; }
+        if (line >= SHR_LINES || !(m_c029 & 0x80) || (m_c023 & 0x20)) return;
+        if (!(m_slow[0x19D00 + line] & 0x40)) return;
+        m_c023 |= 0xA0;
+        if (m_c023 & 0x02) m_irqScan = true;
+    }
+
+    // Super Hi-Res ($C029 bit 7), bank $E1: pixels at $2000 (160 bytes a
+    // line), the scan-line control bytes at $9D00 (bit 7 640 pixels, 6 the
+    // interrupt, 5 fill mode, 0-3 the palette), 16 palettes of 16 colours at
+    // $9E00 ($0RGB, low byte first). 640 mode: four 2-bit pixels a byte,
+    // from colours 8-11, 12-15, 0-3, 4-7 of the palette in turn
+    void drawShrLine(int line) {
+        m_shrOn[line] = m_c029 & 0x80;
+        if (!m_shrOn[line]) return;
+        const uint8_t* e1 = &m_slow[0x10000];
+        const uint8_t scb = e1[0x9D00 + line];
+        const uint8_t* pal = &e1[0x9E00 + (scb & 0x0F) * 32];
+        uint32_t colors[16];
+        for (int i = 0; i < 16; ++i) {
+            const uint8_t lo = pal[i * 2], hi = pal[i * 2 + 1];
+            colors[i] = 0xFF000000u | (uint32_t)(hi & 0x0F) * 0x11u << 16 | (uint32_t)(lo >> 4) * 0x11u << 8 | (uint32_t)(lo & 0x0F) * 0x11u;
+        }
+        uint32_t* out = &m_shrBack[(size_t)line * SHR_WIDTH];
+        const uint8_t* px = &e1[0x2000 + line * 160];
+        if (scb & 0x80) {
+            static const int BASE[4] = {8, 12, 0, 4};
+            for (int x = 0; x < 160; ++x)
+                for (int k = 0; k < 4; ++k) *out++ = colors[BASE[k] + ((px[x] >> (6 - 2 * k)) & 3)];
+        } else {
+            int last = 0;
+            for (int x = 0; x < 160; ++x)
+                for (int k = 0; k < 2; ++k) {
+                    int c = k ? px[x] & 0x0F : px[x] >> 4;
+                    if ((scb & 0x20) && c == 0) c = last;           // fill mode: colour 0 repeats
+                    last = c;
+                    *out++ = colors[c];
+                    *out++ = colors[c];
+                }
+        }
     }
     uint8_t floating() { syncVideo(); return m_video->floatingBus(); }
     void setVideo(uint32_t set, uint32_t clear) {
@@ -669,7 +735,7 @@ private:
             if (m_c023 & 0x04) { m_c023 |= 0x80; m_irq1s = true; }
         }
     }
-    bool irqLine() const { return m_irqVbl || m_irq25 || m_irq1s || m_adb->irq(); }
+    bool irqLine() const { return m_irqVbl || m_irq25 || m_irq1s || m_irqScan || m_adb->irq(); }
 
     // $C000-$CFFF is I/O in banks $E0/$E1, and in $00/$01 unless $C035 bit 6
     bool isIo(int k, uint16_t a) const { return a >= 0xC000 && a < 0xD000 && (k >= 2 || !(m_shadow & 0x40)); }
@@ -836,7 +902,9 @@ private:
                     uint32_t t = (m_c023 & 0x70) | (val & 0x0F);
                     if ((t & 0x44) == 0x44) m_irq1s = true;
                     if (!(t & 0x04)) m_irq1s = false;
-                    if (m_irq1s) t |= 0x80;
+                    if ((t & 0x22) == 0x22) m_irqScan = true;
+                    if (!(t & 0x02)) m_irqScan = false;
+                    if (m_irq1s || m_irqScan) t |= 0x80;
                     m_c023 = t;
                     return 0;
                 }
@@ -858,8 +926,8 @@ private:
                 if (wr) {
                     uint32_t t = m_c023 & 0x7F;
                     if (!(val & 0x40) && (t & 0x40)) { m_irq1s = false; t &= 0xBF; }
-                    if (!(val & 0x20) && (t & 0x20)) t &= 0xDF;
-                    if (m_irq1s) t |= 0x80;
+                    if (!(val & 0x20) && (t & 0x20)) { m_irqScan = false; t &= 0xDF; }
+                    if (m_irq1s || m_irqScan) t |= 0x80;
                     m_c023 = t;
                 }
                 return 0;
@@ -982,7 +1050,10 @@ private:
     uint8_t m_c021 = 0, m_c029 = 0x01, m_c02b = 0x08, m_c02d = 0, m_c031 = 0, m_tbColor = 0xF0;
     uint32_t m_vf = Apple2Video::VF_TEXT;
     bool m_altChar = false, m_lastVbl = false;
-    bool m_irqVbl = false, m_irq25 = false, m_irq1s = false;
+    bool m_irqVbl = false, m_irq25 = false, m_irq1s = false, m_irqScan = false;
+    std::vector<uint32_t> m_shrBack = std::vector<uint32_t>((size_t)SHR_WIDTH * SHR_LINES, 0xFF000000u);
+    std::vector<uint32_t> m_shrFront = m_shrBack;
+    std::vector<bool> m_shrOn = std::vector<bool>(SHR_LINES, false), m_shrOnFront = m_shrOn;
     int m_cnt25 = 0, m_cnt1s = 0;
     bool m_iwmMotor = false, m_iwmDrive2 = false, m_iwmQ6 = false, m_iwmQ7 = false;
     uint8_t m_iwmMode = 0;
@@ -1003,12 +1074,13 @@ uint32_t gsArgb(int c) {
            ((uint32_t)(v & 15) * 0x11u);
 }
 
-// The picture: the Apple II screen inside the border ($C034), the text in
-// $C022's colours
+// The picture: the Apple II screen (the text in $C022's colours) or Super
+// Hi-Res, inside the border ($C034)
 class GsDisplay : public IOHandler, public IVideoOutput {
 public:
     static constexpr int W = 704, H = 456;
     static constexpr int X0 = (W - Apple2Video::FRAME_WIDTH) / 2, Y0 = (H - Apple2Video::FRAME_HEIGHT) / 2;
+    static constexpr int SHR_X0 = (W - 640) / 2, SHR_Y0 = (H - 400) / 2;
     GsDisplay(Apple2Video* v, GsBus* bus) : m_video(v), m_bus(bus), m_inner((size_t)Apple2Video::FRAME_WIDTH * Apple2Video::FRAME_HEIGHT) {}
     const char* name() const override { return "Video"; }
     uint32_t baseAddr() const override { return 0; }
@@ -1021,6 +1093,16 @@ public:
     void renderFrame(uint32_t* buf) override {
         const uint32_t border = gsArgb(m_bus->border());
         for (int i = 0; i < W * H; ++i) buf[i] = border;
+        if (m_bus->newVideo() & 0x80) {                // Super Hi-Res: 640 x 200, lines doubled
+            const auto& f = m_bus->shrFrame();
+            for (int y = 0; y < GsBus::SHR_LINES; ++y)
+                for (int d = 0; d < 2; ++d) {
+                    uint32_t* dst = &buf[(size_t)(SHR_Y0 + 2 * y + d) * W + SHR_X0];
+                    if (m_bus->shrLine(y)) std::memcpy(dst, &f[(size_t)y * GsBus::SHR_WIDTH], GsBus::SHR_WIDTH * sizeof(uint32_t));
+                    else std::fill(dst, dst + GsBus::SHR_WIDTH, 0xFF000000u);
+                }
+            return;
+        }
         m_video->renderFrame(m_inner.data());
         const uint32_t vf = m_bus->videoFlags();
         // Text lines: the white-on-black picture recoloured

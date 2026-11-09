@@ -132,7 +132,7 @@ original once the keys are let go.
 
 ## IIgs
 
-`apple2gs` follows KEGS by Kent Dickey (GPL-3.0, in the GSplus tree): `moremem.c`, `adb.c`, `clock.c`, `doc.c` and `sim65816.c`. It's a ROM 01 machine with the WDC 65C816 (`doc/README-65816.md`). This is stage 1: it boots to the start-up screen and to Applesoft.
+`apple2gs` follows KEGS by Kent Dickey (GPL-3.0, in the GSplus tree): `moremem.c`, `adb.c`, `clock.c`, `doc.c` and `sim65816.c`. It's a ROM 01 machine with the WDC 65C816 (`doc/README-65816.md`). Stage 1 boots to the start-up screen and to Applesoft; stage 2 adds Super Hi-Res.
 
 - **Speed:** the CPU runs at 2.8 MHz (CYAREG `$C036` bit 7) or 1 MHz. The Mega II side (banks `$E0`/`$E1`, `$C0xx` and shadowed writes) always takes 1 MHz cycles. Time is counted in 14.318 MHz ticks: 5 per fast cycle, 14 per slow one. The video, speaker and devices run on the 1 MHz clock, and the machine is paced by it.
 - **Memory:**
@@ -157,6 +157,12 @@ original once the keys are let go.
   - The SCC (`$C038-$C03B`) answers as idle.
   - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers, but no drives. With no startup device the ROM shows "Check startup device!".
 - **Video:** the Apple II modes, through the IIe video, with the enhanced IIe's character set (MouseText). Text uses `$C022`'s colours, and the picture has the `$C034` border.
+- **Super Hi-Res** (stage 2, KEGS `video.c`): `$C029` bit 7 turns it on. Bank `$E1` holds it:
+  - **Layout:** 200 lines of 160 bytes at `$2000`. The scan-line control bytes are at `$9D00`: bit 7 selects 640 pixels, bit 6 the interrupt, bit 5 fill mode, and bits 0-3 the palette. The 16 palettes of 16 colours are at `$9E00` (`$0RGB`, low byte first).
+  - **320 mode:** each byte holds two pixels. In fill mode, colour 0 repeats the pixel before it.
+  - **640 mode:** each byte holds four 2-bit pixels, taking colours 8-11, 12-15, 0-3 and 4-7 of the palette in turn.
+  - **Drawing:** each line is drawn when the beam reaches it, so palette and SCB changes between lines show. Lines are doubled to 640 x 400 inside the border.
+  - **The scan-line interrupt:** as a line starts, if its SCB has bit 6 and `$C023` bit 5 is clear, `$C023` gets bits 7 and 5, and /IRQ is raised when `$C023` bit 1 enables it. Writing `$C032` with bit 5 clear clears it.
 - **Keys:**
   - The screen buttons send Control-Reset (BASIC) and Control-Command-Reset (a cold start).
   - Control-Reset clears STATEREG, the shadow register, the slot ROM selection, the interrupt enables and the video switches, then resets the CPU (KEGS `do_reset`).
@@ -164,7 +170,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** Super Hi-Res and the scan-line interrupts, the DOC's oscillators and sound, the IWM's 5.25" and 3.5" drives and SmartPort, the mouse, the serial ports, ROM 03, and saving the battery RAM.
+**Not yet (the later stages):** the DOC's oscillators and sound, the IWM's 5.25" and 3.5" drives and SmartPort, the mouse, the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 
