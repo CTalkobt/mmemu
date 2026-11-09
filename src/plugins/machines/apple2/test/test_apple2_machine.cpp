@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <cstring>
 #include <algorithm>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -658,6 +659,171 @@ TEST_CASE(apple2gs_boots_gsos) {
     v->renderFrame(fb.data());
     const int x0 = (dim.width - 640) / 2, y0 = (dim.height - 400) / 2;
     int white = 0;                                   // the menu bar, line 5
+    for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
+    EXPECT_TRUE(white > 300);
+    delete m;
+    std::filesystem::remove(copy);
+}
+
+// A 3.5" WOZ2 (INFO disk type 2, TMAP by track * 2 + side): track 0 side
+// 0 has an address-field-like run with 16 zero bits in it; past three zero
+// bits the read amplifier gives noise, so those nibbles differ between
+// revolutions; a write keeps the track's length and lands in the file
+TEST_CASE(apple2gs_woz35_weak_bits) {
+    // 10-bit syncs (so the IWM falls into step), the mark, 16 zero bits, more syncs
+    std::vector<uint8_t> track(96, 0);
+    uint32_t nbits = 0;
+    auto out = [&](uint8_t v, int len) {
+        for (int k = 0; k < len; ++k, ++nbits)
+            if (k < 8 && ((v >> (7 - k)) & 1)) track[nbits >> 3] |= (uint8_t)(0x80 >> (nbits & 7));
+    };
+    for (int i = 0; i < 30; ++i) out(0xFF, 10);
+    for (uint8_t b : {0xD5, 0xAA, 0x96, 0x00, 0x00, 0xDE, 0xAA}) out(b, 8);
+    while (nbits + 10 <= 96 * 8) out(0xFF, 10);
+    nbits = 96 * 8;
+    std::vector<uint8_t> f(1536 + 512, 0);
+    auto put32 = [&](size_t at, uint32_t v) { for (int i = 0; i < 4; ++i) f[at + i] = (uint8_t)(v >> (8 * i)); };
+    std::memcpy(&f[0], "WOZ2\xFF\x0A\x0D\x0A", 8);
+    std::memcpy(&f[12], "INFO", 4); put32(16, 60);
+    f[20] = 2; f[21] = 2; f[22] = 0;                                 // version 2, a 3.5" disk, not protected
+    f[20 + 37] = 2; f[20 + 39] = 16; f[20 + 44] = 1;                 // two sides, 2 us bits, largest track 1 block
+    std::memcpy(&f[80], "TMAP", 4); put32(84, 160);
+    std::fill(f.begin() + 88, f.begin() + 248, 0xFF);
+    f[88] = 0;                                                       // track 0, side 0
+    std::memcpy(&f[248], "TRKS", 4); put32(252, 1280 + 512);
+    f[256] = 3; f[258] = 1; put32(260, nbits);  // block 3, 1 block
+    std::copy(track.begin(), track.end(), f.begin() + 1536);
+    put32(8, apple2::Disk2Image::crc32(f.data() + 12, f.size() - 12));
+    const std::string path = (std::filesystem::temp_directory_path() / "mmemu_test_35.woz").string();
+    { FILE* o = std::fopen(path.c_str(), "wb"); ASSERT(o); std::fwrite(f.data(), 1, f.size(), o); std::fclose(o); }
+
+    apple2::Gs35Drive d;
+    std::string err;
+    ASSERT(d.insert(path, &err));
+    EXPECT_TRUE(d.isWoz());
+    d.command(0x8, 0);                                               // motor on
+    const double nibble = apple2::Gs35Drive::TICKS_PER_BIT * 8;
+    std::set<std::string> seen;
+    std::string cur;
+    bool inField = false;
+    uint8_t p2 = 0, p1 = 0;
+    for (double t = 0; t < nibble * 96 * 12; t += nibble / 4) {      // about 12 revolutions
+        const uint8_t v = d.readNibble((uint64_t)t);
+        if (!v) continue;
+        if (inField) {                                               // the three nibbles after the mark
+            cur += (char)v;
+            if (cur.size() == 3) { seen.insert(cur); inField = false; }
+        }
+        if (p2 == 0xD5 && p1 == 0xAA && v == 0x96) { inField = true; cur.clear(); }
+        p2 = p1; p1 = v;
+    }
+    EXPECT_TRUE(seen.size() >= 2);                                   // the weak bits read differently
+
+    // Write mode: eight bytes at the head, then the track back to the file
+    for (int i = 0; i < 8; ++i) d.writeNibble(0xB7, (uint64_t)(nibble * (1000 + i)));
+    d.endWrite();
+    auto img = apple2::Disk2Image::open(path, &err);
+    ASSERT(img);
+    std::vector<uint8_t> bits(4096);
+    uint32_t count = 0;
+    img->wozReadTrack(0, bits.data(), count);
+    EXPECT_EQ(count, (uint32_t)track.size() * 8);
+    int b7 = 0;
+    for (size_t i = 0; i + 1 < track.size(); ++i) b7 += bits[i] != track[i];
+    EXPECT_TRUE(b7 > 0);
+    std::filesystem::remove(path);
+}
+
+// Copy-protected IIgs originals from the woz-a-day collection (Internet
+// Archive; read from ../refs/apple2gs/woz, skipped without them): Qix's key
+// disk check passes (its weak bits) and the title comes up instead of
+// "Please insert the QIX key disk"; Block Out reaches its title
+TEST_CASE(apple2gs_boots_woz_originals) {
+    struct Game { const char* file; int x, y; };
+    for (const Game& g : {Game{"qix.woz", 200, 150}, Game{"blockout.woz", 352, 170}}) {
+        const std::string src = std::string("../refs/apple2gs/woz/") + g.file;
+        FILE* f = std::fopen(src.c_str(), "rb");
+        if (!f) { printf("  (skipped: no %s)\n", src.c_str()); continue; }
+        std::fclose(f);
+        std::string err;
+        MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+        if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+        const std::string copy = (std::filesystem::temp_directory_path() / g.file).string();
+        std::filesystem::copy_file(src, copy, std::filesystem::copy_options::overwrite_existing);
+        ASSERT(m->ioRegistry->findHandler("3.5\" Drive")->mountDisk(1, copy));
+        run(m, 230000000);
+        EXPECT_EQ(m->buses[0].bus->read8(0x00C029) & 0x80, 0x80);
+        auto* v = find<IVideoOutput>(m);
+        const auto dim = v->getDimensions();
+        std::vector<uint32_t> fb((size_t)dim.width * dim.height);
+        v->renderFrame(fb.data());
+        const uint32_t px = fb[(size_t)g.y * dim.width + g.x] & 0xFFFFFF;
+        if (px == 0xFFDDAA) printf("    %s: the key disk notice\n", g.file);
+        EXPECT_TRUE(px != 0xFFDDAA && px != 0);
+        delete m;
+        std::filesystem::remove(copy);
+    }
+}
+
+#include "plugins/machines/apple2/main/gs_smartport.h"
+
+// The slot 7 SmartPort card (KEGS smartport.c) with a 1.44 MB image: the
+// IIgs boots it (block 0 at $0801, X = $70); the boot block reads the last
+// block (2879) through the ProDOS entry ($C70A) and block 2814 through the
+// SmartPort entry ($C70D, an inline command and list)
+TEST_CASE(apple2gs_smartport_boots) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    std::vector<uint8_t> img(2880 * 512, 0);
+    const uint8_t boot[] = {
+        0x01,
+        0xA9, 0x01, 0x85, 0x42, 0x86, 0x43,             // read, unit (X = $70)
+        0xA9, 0x00, 0x85, 0x44, 0xA9, 0x10, 0x85, 0x45, // buffer $1000
+        0xA9, 0x3F, 0x85, 0x46, 0xA9, 0x0B, 0x85, 0x47, // block $0B3F (2879)
+        0x20, 0x0A, 0xC7,                               // JSR $C70A
+        0x20, 0x0D, 0xC7, 0x01, 0x80, 0x08,             // JSR $C70D: read, list $0880
+        0xA2, 0x00,                                     // $0820 LDX #0
+        0xBD, 0x00, 0x10, 0x9D, 0x00, 0x04,             // LDA $1000,X / STA $0400,X
+        0xBD, 0x00, 0x11, 0x9D, 0x80, 0x04,             // LDA $1100,X / STA $0480,X
+        0xE8, 0xE0, 0x08, 0xD0, 0xEF,                   // INX / CPX #8 / BNE
+        0x4C, 0x33, 0x08};                              // $0833 JMP $0833
+    std::copy(boot, boot + sizeof boot, img.begin());
+    const uint8_t list[] = {0x03, 0x01, 0x00, 0x11, 0xFE, 0x0A, 0x00};   // 3 parameters, unit 1, $1100, block 2814
+    std::copy(list, list + sizeof list, img.begin() + 0x80);
+    for (int i = 0; i < 8; ++i) img[2879 * 512 + i] = (uint8_t)("PRODOS!!"[i] | 0x80);
+    for (int i = 0; i < 8; ++i) img[2814 * 512 + i] = (uint8_t)("SMARTPT!"[i] | 0x80);
+    auto* sp = dynamic_cast<apple2::GsSmartPort*>(m->ioRegistry->findHandler("SmartPort"));
+    ASSERT(sp && sp->insertBytes(1, img));
+    run(m, 20000000);
+    if (!gsHas(m, "SMARTPT!")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "PRODOS!!"));
+    EXPECT_TRUE(gsHas(m, "SMARTPT!"));
+    delete m;
+}
+
+// GS/OS System 6 on a 5 MB hard disk image (SYSTEM6.2MG from Asimov's
+// system6.hdv.zip; ../refs/apple2gs, skipped without it) boots from the
+// slot 7 SmartPort card to the Finder
+TEST_CASE(apple2gs_boots_hard_disk) {
+    const std::string disk = "../refs/apple2gs/SYSTEM6.2MG";
+    FILE* f = std::fopen(disk.c_str(), "rb");
+    if (!f) { printf("  (skipped: no %s)\n", disk.c_str()); return; }
+    std::fclose(f);
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    const std::string copy = (std::filesystem::temp_directory_path() / "mmemu_test_hd.2mg").string();
+    std::filesystem::copy_file(disk, copy, std::filesystem::copy_options::overwrite_existing);
+    ASSERT(m->ioRegistry->findHandler("SmartPort")->mountDisk(1, copy));
+    run(m, 300000000);
+    EXPECT_EQ(m->buses[0].bus->read8(0x00C029) & 0x80, 0x80);
+    auto* v = find<IVideoOutput>(m);
+    const auto dim = v->getDimensions();
+    std::vector<uint32_t> fb((size_t)dim.width * dim.height);
+    v->renderFrame(fb.data());
+    const int x0 = (dim.width - 640) / 2, y0 = (dim.height - 400) / 2;
+    int white = 0;                                   // the Finder's menu bar
     for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
     EXPECT_TRUE(white > 300);
     delete m;

@@ -220,20 +220,32 @@ bool Gs35Drive::insert(const std::string& path, std::string* err) {
     std::vector<uint8_t> data;
     if (!diskfile::read(path, data, err)) return false;
     const std::string ext = lowerExt(diskfile::imageName(path));
+    if (data.size() >= 8 && std::memcmp(data.data(), "WOZ2", 4) == 0) {                  // 3.5" WOZ
+        auto img = Disk2Image::open(path, err);
+        if (!img) return false;
+        if (img->diskType() != 2) { if (err) *err = "a 5.25\" WOZ"; return false; }
+        eject();
+        m_woz = std::move(img);
+        m_protect = m_woz->writeProtected();
+        m_path = path;
+        m_switched = false;
+        return true;
+    }
     size_t off = 0;
-    if (data.size() >= 64 && std::memcmp(data.data(), "2IMG", 4) == 0) {           // 2IMG
+    if (data.size() >= 64 && std::memcmp(data.data(), "2IMG", 4) == 0) {                  // 2IMG
         off = data[24] | data[25] << 8 | data[26] << 16 | (size_t)data[27] << 24;
         if (data[12] != 1) { if (err) *err = "2IMG: only ProDOS-order images"; return false; }
     } else if (data.size() == IMAGE_BYTES + 84 || ext == ".dc" || ext == ".dc42" || ext == ".image") {
-        off = 84;                                                                   // DiskCopy 4.2
+        off = 84;                                                                       // DiskCopy 4.2
     }
-    if (data.size() < off + IMAGE_BYTES) {
+    if (data.size() < off + IMAGE_BYTES || data.size() > off + IMAGE_BYTES + 4096) {
         if (err) *err = "not an 800 KB 3.5\" disk image";
         return false;
     }
     std::vector<uint8_t> blocks(data.begin() + (long)off, data.begin() + (long)(off + IMAGE_BYTES));
     insertBytes(std::move(blocks), !diskfile::writable(path));
     m_path = path;
+    m_file = std::move(data);
     m_fileOffset = off;
     return true;
 }
@@ -243,46 +255,83 @@ bool Gs35Drive::insertBytes(std::vector<uint8_t> blocks, bool writeProtected) {
     eject();
     m_blocks = std::move(blocks);
     m_protect = writeProtected;
-    m_path.clear();
-    m_fileOffset = 0;
     m_switched = false;
-    m_loadedTrack = -1;
     return true;
 }
 
 void Gs35Drive::eject() {
-    flush();
-    if (!m_blocks.empty()) m_switched = true;
+    if (m_writing) endWrite();
+    if (hasDisk()) m_switched = true;
     m_blocks.clear();
+    m_file.clear();
+    m_woz.reset();
     m_path.clear();
+    m_fileOffset = 0;
     m_loadedTrack = -1;
+    m_stream.clear();
     m_nib.clear();
+    m_end.clear();
 }
 
-// The image back to its file (the whole image; through diskfile, so
-// archives are rewritten)
-void Gs35Drive::flush() {
-    if (!m_dirty || m_path.empty()) { m_dirty = false; return; }
-    std::vector<uint8_t> data;
-    if (diskfile::read(m_path, data) && data.size() >= m_fileOffset + IMAGE_BYTES) {
-        std::copy(m_blocks.begin(), m_blocks.end(), data.begin() + (long)m_fileOffset);
-        diskfile::save(m_path, data);
-    }
-    m_dirty = false;
-}
-
-void Gs35Drive::loadTrack(uint64_t) {
+// The track side's bits: the WOZ's, or generated from the sectors (each
+// nibble's 8 bits, then the zero bits of a 10-bit sync)
+void Gs35Drive::loadTrack() {
     if (m_loadedTrack == m_track && m_loadedSide == m_side) return;
     m_loadedTrack = m_track;
     m_loadedSide = m_side;
     m_lastRead = SIZE_MAX;
     m_trackDirty = false;
-    if (m_blocks.empty()) { m_nib.clear(); m_bits.clear(); m_start.clear(); m_trackBits = 1; return; }
-    nibblize(&m_blocks[(size_t)firstBlock(m_track, m_side) * 512], m_track, m_side, m_nib, m_bits);
-    m_start.resize(m_nib.size());
-    uint32_t b = 0;
-    for (size_t i = 0; i < m_nib.size(); ++i) { m_start[i] = b; b += m_bits[i]; }
-    m_trackBits = b;
+    m_stream.clear();
+    m_trackBits = 1;
+    if (m_woz) {
+        m_stream.assign((size_t)std::max(m_woz->maxTrackBytes(), 1 << 16), 0);
+        uint32_t bits = 0;
+        const int bytes = m_woz->wozReadTrack(m_track * 2 + m_side, m_stream.data(), bits);
+        m_stream.resize((size_t)bytes);
+        m_trackBits = std::max<uint32_t>(bits, 8);
+    } else if (!m_blocks.empty()) {
+        std::vector<uint8_t> nib, len;
+        nibblize(&m_blocks[(size_t)firstBlock(m_track, m_side) * 512], m_track, m_side, nib, len);
+        uint32_t total = 0;
+        for (uint8_t l : len) total += l;
+        m_stream.assign((total + 7) / 8, 0);
+        m_trackBits = total;
+        uint32_t b = 0;
+        for (size_t i = 0; i < nib.size(); ++i) {
+            for (int k = 0; k < 8; ++k) setBit(b + (uint32_t)k, (nib[i] >> (7 - k)) & 1);
+            b += len[i];
+        }
+    }
+    if (m_stream.empty()) { m_stream.assign(1, 0); m_trackBits = 8; }
+    deriveNibbles();
+}
+
+// The IWM latches a nibble when its shift register's top bit is set; one
+// revolution to fall into step, the next recorded. After three zero bits
+// the read amplifier (MC3470) passes noise: such a bit reads as one about
+// 30% of the time (KEGS iwm_read_data), so weak bits differ between
+// revolutions
+void Gs35Drive::deriveNibbles() {
+    m_nib.clear();
+    m_end.clear();
+    m_hasWeakBits = false;
+    uint32_t sr = 0;
+    int zeros = 0;
+    for (uint32_t pass = 0; pass < 2; ++pass)
+        for (uint32_t i = 0; i < m_trackBits; ++i) {
+            bool bit = getBit(i);
+            if (bit) zeros = 0;
+            else if (++zeros > 3) {
+                m_hasWeakBits = true;
+                m_rand = m_rand * 1103515245u + 12345u;
+                bit = ((m_rand >> 16) & 0x7FFF) % 10 < 3;
+            }
+            sr = ((sr << 1) | (bit ? 1u : 0u)) & 0xFF;
+            if (sr & 0x80) {
+                if (pass) { m_nib.push_back((uint8_t)sr); m_end.push_back(i + 1); }
+                sr = 0;
+            }
+        }
 }
 
 // iwm_read_status35: reg = CA1 CA0 SEL CA2
@@ -290,7 +339,7 @@ int Gs35Drive::status(int reg, uint64_t now) {
     switch (reg) {
         case 0x0: return m_stepOut ? 1 : 0;              // step direction
         case 0x1: m_side = 0; return 1;                  // lower head
-        case 0x2: return m_blocks.empty() ? 1 : 0;       // disk in place: 0
+        case 0x2: return hasDisk() ? 0 : 1;              // disk in place: 0
         case 0x3: m_side = 1; return 1;                  // upper head
         case 0x4: return 1;                              // not stepping
         case 0x5: return 1;
@@ -328,36 +377,39 @@ void Gs35Drive::command(int reg, uint64_t) {
     }
 }
 
-// The nibble whose last bit the head has passed, once
+// The last nibble the head has passed, once
 uint8_t Gs35Drive::readNibble(uint64_t now) {
-    if (m_blocks.empty() || !m_motor) return 0;
-    loadTrack(now);
+    if (!hasDisk() || !m_motor) return 0;
+    loadTrack();
     if (m_nib.empty()) return 0;
-    const uint64_t bit = (uint64_t)((double)now / TICKS_PER_BIT) % m_trackBits;
-    // The nibble containing `bit` is still arriving: the one before it is complete
-    size_t i = (size_t)(std::upper_bound(m_start.begin(), m_start.end(), (uint32_t)bit) - m_start.begin());
-    i = (i + m_nib.size() - 2) % m_nib.size();
+    // A new revolution: tracks with weak bits read differently
+    const uint64_t rev = (uint64_t)((double)now / TICKS_PER_BIT) / m_trackBits;
+    if (m_hasWeakBits && rev != m_revolution && !m_writing) {
+        const size_t last = m_lastRead;
+        deriveNibbles();
+        m_lastRead = last < m_nib.size() ? last : SIZE_MAX;
+    }
+    m_revolution = rev;
+    const uint32_t bit = bitAt(now);
+    size_t i = (size_t)(std::upper_bound(m_end.begin(), m_end.end(), bit) - m_end.begin());
+    i = (i + m_nib.size() - 1) % m_nib.size();
     if (i == m_lastRead) return 0;
     m_lastRead = i;
     return m_nib[i];
 }
 
-// Write mode: the first nibble lands at the head, the rest follow it
-// (the firmware paces them with the handshake register)
+// Write mode: 8 bits a byte at the head (the firmware paces them with the
+// handshake register)
 void Gs35Drive::writeNibble(uint8_t v, uint64_t now) {
     m_lastWrite = now;
     m_writing = true;
-    if (m_blocks.empty() || m_protect) return;
-    loadTrack(now);
-    if (m_nib.empty()) return;
-    if (m_writeCursor == SIZE_MAX) {
-        const uint64_t bit = (uint64_t)((double)now / TICKS_PER_BIT) % m_trackBits;
-        m_writeCursor = (size_t)(std::upper_bound(m_start.begin(), m_start.end(), (uint32_t)bit) - m_start.begin());
-        m_writeCursor %= m_nib.size();
-    } else {
-        m_writeCursor = (m_writeCursor + 1) % m_nib.size();
+    if (!hasDisk() || m_protect) return;
+    loadTrack();
+    if (m_writeBit == UINT32_MAX) m_writeBit = bitAt(now);
+    for (int k = 0; k < 8; ++k) {
+        setBit(m_writeBit, (v >> (7 - k)) & 1);
+        m_writeBit = (m_writeBit + 1) % m_trackBits;
     }
-    m_nib[m_writeCursor] = v;
     m_trackDirty = true;
 }
 
@@ -370,19 +422,26 @@ uint8_t Gs35Drive::handshake(uint64_t now) const {
     return (uint8_t)((elapsed >= 8 ? 0x80 : 0) | (elapsed < 16 ? 0x40 : 0));
 }
 
+// Write mode ended: the track back into the image
 void Gs35Drive::endWrite() {
-    m_writeCursor = SIZE_MAX;
+    m_writeBit = UINT32_MAX;
     m_writing = false;
-    if (!m_trackDirty || m_blocks.empty()) return;
+    if (!m_trackDirty || !hasDisk()) return;
     m_trackDirty = false;
-    const int num = sectorsOn(m_track);
-    std::vector<uint8_t> sectors(&m_blocks[(size_t)firstBlock(m_track, m_side) * 512],
-                                 &m_blocks[(size_t)firstBlock(m_track, m_side) * 512] + num * 512);
-    denibblize(m_nib, m_track, m_side, sectors.data());
-    std::copy(sectors.begin(), sectors.end(), m_blocks.begin() + (long)firstBlock(m_track, m_side) * 512);
-    m_dirty = true;
-    m_loadedTrack = -1;                                  // regenerate from the image
-    flush();
+    deriveNibbles();
+    m_lastRead = SIZE_MAX;
+    if (m_woz) {
+        m_woz->wozWriteTrack(m_loadedTrack * 2 + m_loadedSide, m_stream.data(), (int)m_stream.size());
+        return;
+    }
+    const int num = sectorsOn(m_loadedTrack);
+    const size_t first = (size_t)firstBlock(m_loadedTrack, m_loadedSide) * 512;
+    denibblize(m_nib, m_loadedTrack, m_loadedSide, &m_blocks[first]);
+    if (!m_path.empty() && m_file.size() >= m_fileOffset + IMAGE_BYTES) {
+        std::copy(m_blocks.begin() + (long)first, m_blocks.begin() + (long)first + num * 512,
+                  m_file.begin() + (long)(m_fileOffset + first));
+        diskfile::patch(m_path, m_file, m_fileOffset + first, (size_t)num * 512);
+    }
 }
 
 bool Gs35Drives::mountDisk(int unit, const std::string& path) {

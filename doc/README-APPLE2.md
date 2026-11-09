@@ -161,14 +161,25 @@ original once the keys are let go.
   - While the motor runs with CYAREG bit 2 set, the CPU drops to 1 MHz, as the IIgs does.
   - DOS 3.3 and ProDOS boot.
 - **3.5" drives** (slot 5, the device `3.5" Drive`, units 1 and 2), after KEGS `iwm.c`:
-  - **Images:** 800 KB ProDOS-order images (`.po`, `.hdv`), `.2mg`, and DiskCopy 4.2.
+  - **Images:** 800 KB ProDOS-order images (`.po`, `.hdv`), `.2mg`, DiskCopy 4.2, and 3.5" WOZ2 (INFO disk type 2, with TMAP indexed by track × 2 + side).
   - **Track format:** 80 tracks a side, with 12, 11, 10, 9 or 8 sectors by zone and 2:1 interleave. Tracks are nibblised as the ROM writes them (a port of its code at `$FF:6320`), with 10-bit syncs.
-  - **Timing:** a nibble passes the head every 16-20 us (2 us a bit), and each is read once (latch mode).
+  - **Bit streams:** each track side is a bit stream, either generated or the WOZ's own. The IWM latches a nibble when its shift register's top bit is set, so 10-bit syncs fall into step. Bits pass at 2 us each, and each nibble is read once (latch mode).
+  - **Weak bits:** after three zero bits, the read amplifier passes noise: such a bit reads as one about 30% of the time (KEGS `iwm_read_data`). Tracks with such runs read differently on each revolution, which the copy protection on originals such as Qix checks.
   - **Drive registers:** CA0-CA2 (phases 0-2) with SEL (`$C031` bit 7) pick a drive register. The status register reads it in bit 7 (disk in place, write protect, track 0, motor, sides, tachometer, disk switched). Phase 3 rising (LSTRB) runs the commands (step direction, step, motor on/off, eject).
-  - **Writing:** written nibbles follow the head, and the handshake register paces them (ready after 8 bit times, underrun after 16). When write mode ends, the track is decoded back into the image's sectors and the file is saved.
+  - **Writing:** each byte written puts 8 bits at the head, keeping the track's length, and the handshake register paces them (ready after 8 bit times, underrun after 16). When write mode ends, the track goes back into the image: decoded into its sectors and patched into the file, or as bits into the WOZ.
   - The ROM's SmartPort firmware boots and reads and writes these disks.
   - GS/OS System 6.0.1 (Apple's freely distributed System Disk, an 800 KB `.2mg`) boots to the Finder. The test `apple2gs_boots_gsos` boots it from `../refs/apple2gs/sys601-2.2mg` when that file is present.
-  - `disk mount` tries the 3.5" drives first. They take only 800 KB images, so a 140 KB disk goes to the 5.25" drives.
+  - `disk mount` tries the 3.5" drives first, then the 5.25" drives, then the SmartPort card. The 3.5" drives take only 800 KB images and 3.5" WOZs; the 5.25" drives take 140 KB images and 5.25" WOZs; everything else goes to the SmartPort card.
+  - Copy-protected originals from the woz-a-day collection boot: Qix (its key disk check) and Block Out. The test `apple2gs_boots_woz_originals` boots them from `../refs/apple2gs/woz` when they are present.
+- **The SmartPort card** (slot 7, the device "SmartPort", units 1-4), after KEGS (`config.c` `g_rom_c700`, `smartport.c`): images of any size, for hard disks and 1.44 MB disks.
+  - **Why a virtual card:** a real IIgs would need a SCSI card or the SuperDrive card for these. Like KEGS, this card serves them through the firmware's block interface instead.
+  - **Images:** raw ProDOS-order files (`.po`, `.hdv`, `.img`) and `.2mg` (its data offset and length). Writes go straight back to the file.
+  - **The ROM:** the card's ROM has the SmartPort signature, the ProDOS entry at `$C70A` and the SmartPort entry at `$C70D`. Both end at `$C70F`, where an intercept serves the call. The flags say which call it is: V set for boot, C clear for ProDOS, C set for SmartPort.
+  - **Boot:** block 0 is loaded to `$0800` and entered at `$0801` with X = `$70`. With no disk, slot 5 boots instead.
+  - **ProDOS calls:** status, read, write, format.
+  - **SmartPort calls,** standard and extended: Status (the driver, a unit, the DIB), Read Block, Write Block, Format and Control.
+  - **When it answers:** the card's ROM appears at `$C700` when `$C02D` picks slot 7's card (the Control Panel's default, "Your Card") and a disk is mounted.
+  - GS/OS System 6 boots from a 5 MB hard disk image to the Finder (`apple2gs_boots_hard_disk`).
 - **Video:** the Apple II modes, through the IIe video, with the enhanced IIe's character set (MouseText). Text uses `$C022`'s colours, and the picture has the `$C034` border.
 - **Super Hi-Res** (stage 2, KEGS `video.c`): `$C029` bit 7 turns it on. Bank `$E1` holds it:
   - **Layout:** 200 lines of 160 bytes at `$2000`. The scan-line control bytes are at `$9D00`: bit 7 selects 640 pixels, bit 6 the interrupt, bit 5 fill mode, and bits 0-3 the palette. The 16 palettes of 16 colours are at `$9E00` (`$0RGB`, low byte first).
@@ -183,7 +194,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** the DOC's oscillators and sound, 3.5" WOZ images and 1.44 MB disks, SmartPort hard disks, the mouse, the serial ports, ROM 03, and saving the battery RAM.
+**Not yet (the later stages):** the DOC's oscillators and sound, the mouse, the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <vector>
 #include <cstdint>
 #include "io_handler.h"
@@ -24,6 +26,13 @@ public:
      * deleted when the registry is destroyed.
      */
     void registerOwnedHandler(IOHandler* handler);
+
+    /**
+     * Offer a disk image to `unit` of each device in turn (registration
+     * order) until one mounts it, as CLI `disk mount` does; the device that
+     * took it, or nullptr.
+     */
+    IOHandler* mountDisk(int unit, const std::string& path);
 
     /**
      * Dispatch a read to the first handler that matches the address.
