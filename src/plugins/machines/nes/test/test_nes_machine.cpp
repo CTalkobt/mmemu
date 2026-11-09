@@ -226,8 +226,11 @@ TEST_CASE(nes_oam_dma) {
     int cycles = 0;
     for (int i = 0; i < 100000 && m->cpus[0].cpu->pc() != dma; ++i) m->schedulerStep(*m);
     ASSERT_EQ(m->cpus[0].cpu->pc(), dma);
+    // STA $4014, then the DMA halts the CPU on the next read (JMP's opcode fetch)
     cycles = m->schedulerStep(*m);
-    EXPECT_TRUE(cycles == 4 + 513 || cycles == 4 + 514);
+    EXPECT_EQ(cycles, 4);
+    cycles = m->schedulerStep(*m);
+    EXPECT_TRUE(cycles == 3 + 513 || cycles == 3 + 514);
     auto* ppu = device<nes::Ppu>(m);
     EXPECT_EQ(ppu->oam(0x00), 0x00);
     EXPECT_EQ(ppu->oam(0x41), 0x41);

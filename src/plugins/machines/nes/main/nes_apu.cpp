@@ -55,7 +55,9 @@ void Apu::Envelope::tick() {
 }
 
 void Apu::Length::load(uint8_t index) {
-    if (enabled) counter = LENGTHS[index & 0x1F];
+    if (!enabled) return;
+    reloadValue = LENGTHS[index & 0x1F];
+    previous = counter;
 }
 
 uint16_t Apu::Pulse::target() const {
@@ -140,7 +142,6 @@ void Apu::reset() {
     m_frameWriteValue = 0;
     m_frameWriteDelay = 3;
     m_cycle = 0;
-    m_stall = 0;
     m_acc = 0;
     m_accCount = 0;
     m_phase = 0;
@@ -155,6 +156,7 @@ void Apu::softReset() {
     reset();
     m_tri.len.counter = tri.counter;
     m_tri.len.halt = tri.halt;
+    m_tri.len.newHalt = tri.newHalt;
     m_dmc.sampleAddr = sampleAddr;
     m_dmc.sampleLength = sampleLength;
     m_fiveStep = five;
@@ -166,7 +168,7 @@ void Apu::write(uint16_t addr, uint8_t v) {
     case 0x4000: case 0x4004: {
         Pulse& p = m_pulse[(addr >> 2) & 1];
         p.env.write(v);
-        p.len.halt = v & 0x20;
+        p.len.setHalt(v & 0x20);
         p.duty = v >> 6;
         break;
     }
@@ -194,7 +196,7 @@ void Apu::write(uint16_t addr, uint8_t v) {
     }
     case 0x4008:
         m_tri.control = v & 0x80;
-        m_tri.len.halt = v & 0x80;
+        m_tri.len.setHalt(v & 0x80);
         m_tri.linearPeriod = v & 0x7F;
         break;
     case 0x400A:
@@ -207,7 +209,7 @@ void Apu::write(uint16_t addr, uint8_t v) {
         break;
     case 0x400C:
         m_noise.env.write(v);
-        m_noise.len.halt = v & 0x20;
+        m_noise.len.setHalt(v & 0x20);
         break;
     case 0x400E:
         m_noise.mode = v & 0x80;
@@ -239,10 +241,14 @@ void Apu::write(uint16_t addr, uint8_t v) {
             if (!lens[i]->enabled) lens[i]->counter = 0;
         }
         m_dmcIrq = false;
-        if (v & 0x10) {
-            if (m_dmc.remaining == 0) dmcStart();
-        } else {
-            m_dmc.remaining = 0;
+        if (!(v & 0x10)) {
+            // Disabling takes effect a cycle or two later; a DMA starting
+            // meanwhile is cancelled (but still halts the CPU a cycle)
+            if (m_dmc.disableDelay == 0) m_dmc.disableDelay = cpuCycleEven() ? 2 : 3;
+        } else if (m_dmc.remaining == 0) {
+            dmcStart();
+            // The first fetch waits 2 or 3 cycles (dmc_dma_start_test)
+            m_dmc.startDelay = cpuCycleEven() ? 2 : 3;
         }
         break;
     }
@@ -250,7 +256,8 @@ void Apu::write(uint16_t addr, uint8_t v) {
         m_frameWriteValue = v;
         // "If the write occurs during an APU cycle, the effects occur 3 CPU
         // cycles after the write cycle; between APU cycles, 4"
-        m_frameWriteDelay = (m_cycle & 1) ? 4 : 3;
+        // (the CPU cycle's parity, as Mesen)
+        m_frameWriteDelay = cpuCycleEven() ? 3 : 4;
         m_irqInhibit = v & 0x40;
         if (m_irqInhibit) m_frameIrq = false;
         break;
@@ -345,18 +352,37 @@ void Apu::clockFrameCounter() {
     if (m_frameBlock) --m_frameBlock;
 }
 
-void Apu::dmcFetch() {
-    m_dmc.buffer = m_dmaRead ? m_dmaRead(m_dmc.addr) : 0;
-    m_dmc.empty = false;
-    m_stall += 4;
-    m_dmc.addr = m_dmc.addr == 0xFFFF ? 0x8000 : (uint16_t)(m_dmc.addr + 1);
-    if (--m_dmc.remaining == 0) {
-        if (m_dmc.loop) dmcStart();
-        else if (m_dmc.irqOn) m_dmcIrq = true;
+void Apu::dmcRequest() {
+    if (m_dmc.empty && m_dmc.remaining && m_dmaStart) m_dmaStart();
+}
+
+void Apu::dmcSetBuffer(uint8_t v) {
+    if (m_dmc.remaining) {
+        m_dmc.buffer = v;
+        m_dmc.empty = false;
+        m_dmc.addr = m_dmc.addr == 0xFFFF ? 0x8000 : (uint16_t)(m_dmc.addr + 1);
+        if (--m_dmc.remaining == 0) {
+            if (m_dmc.loop) dmcStart();         // a looped sample never raises the IRQ
+            else if (m_dmc.irqOn) m_dmcIrq = true;
+        }
+    }
+    if (m_dmc.sampleLength == 1 && !m_dmc.loop && m_dmc.bits == 1 && m_dmc.timer < 2) {
+        // The DMA ended on the APU cycle before the bit counter reloads: a
+        // DMA is requested and aborted a cycle later (one halted cycle)
+        m_dmc.shift = m_dmc.buffer;
+        m_dmc.empty = false;
+        dmcStart();
+        m_dmc.disableDelay = 3;
     }
 }
 
 void Apu::clockDmc() {
+    if (m_dmc.disableDelay && --m_dmc.disableDelay == 0) {
+        m_dmc.remaining = 0;
+        if (m_dmaStop) m_dmaStop();             // abort a transfer not fully started
+    }
+    if (m_dmc.startDelay && --m_dmc.startDelay == 0) dmcRequest();
+
     if (m_dmc.timer == 0) {
         m_dmc.timer = (uint16_t)(m_dmc.rate - 1);
         if (!m_dmc.silence) {
@@ -371,12 +397,13 @@ void Apu::clockDmc() {
                 m_dmc.silence = false;
                 m_dmc.shift = m_dmc.buffer;
                 m_dmc.empty = true;
+                // Not while a $4015 enable is still pending (it requests then)
+                if (m_dmc.startDelay == 0) dmcRequest();
             }
         }
     } else {
         --m_dmc.timer;
     }
-    if (m_dmc.empty && m_dmc.remaining) dmcFetch();
 }
 
 float Apu::mix() const {
@@ -388,6 +415,10 @@ float Apu::mix() const {
 void Apu::clock(uint32_t cycles) {
     while (cycles--) {
         clockFrameCounter();
+        m_pulse[0].len.reload();
+        m_pulse[1].len.reload();
+        m_tri.len.reload();
+        m_noise.len.reload();
         m_pulse[0].clock();
         m_pulse[1].clock();
         m_tri.clock();

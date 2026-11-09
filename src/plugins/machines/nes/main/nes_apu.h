@@ -6,9 +6,9 @@
 // TriangleChannel.h, NoiseChannel.h, DeltaModulationChannel.cpp,
 // ApuEnvelope.h, ApuLengthCounter.h; NesSoundMixer.cpp), GPL-3.0, Sour and
 // the Mesen contributors, and the nesdev wiki ("APU"). Left out: the
-// one-cycle delays of the length counter halt/reload and of $4015 enabling
-// the DMC, the DMC DMA's exact stall cycles (a flat 4), the frame counter's
-// odd/even write delay (always 3 cycles), expansion audio and PAL rates.
+// one-cycle delays of the length counter halt/reload, expansion audio and
+// PAL rates. The DMC asks the CPU for its sample bytes (the CPU's DMA,
+// nes_cpu.cpp), with Mesen's delays for $4015 enabling and disabling it.
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
@@ -28,8 +28,20 @@ public:
     Apu();
     ~Apu() override = default;
 
-    /** The DMC's sample fetches: read a byte of CPU memory (the machine stalls the CPU). */
-    void setDmaRead(std::function<uint8_t(uint16_t)> fn) { m_dmaRead = std::move(fn); }
+    /**
+     * The DMC's sample fetches go through the CPU's DMA: `start` asks for a
+     * byte (it arrives through dmcSetBuffer()), `stop` cancels a request,
+     * `cpuCycle` is the CPU's cycle count (the delays depend on its parity).
+     */
+    void setDmcDma(std::function<void()> start, std::function<void()> stop, std::function<uint64_t()> cpuCycle) {
+        m_dmaStart = std::move(start);
+        m_dmaStop = std::move(stop);
+        m_cpuCycle = std::move(cpuCycle);
+    }
+    /** The DMC's next sample byte's address. */
+    uint16_t dmcAddress() const { return m_dmc.addr; }
+    /** The byte the DMA fetched. */
+    void dmcSetBuffer(uint8_t value);
 
     // ------------------------------------------------------------------
     // Machine interface
@@ -43,8 +55,6 @@ public:
     uint8_t peekStatus(uint8_t openBus) const;
     /** /IRQ: the frame counter or the DMC. */
     bool irq() const { return m_frameIrq || m_dmcIrq; }
-    /** CPU cycles the DMC's fetches stole since the last call (the machine stalls the CPU). */
-    int takeStall() { int s = m_stall; m_stall = 0; return s; }
 
     /** Each channel's current output level (pulse 0-15, triangle 0-15, noise 0-15, DMC 0-127), for tests. */
     int output(int channel) const;
@@ -85,10 +95,23 @@ private:
         void tick();
         uint8_t level() const { return constant ? volume : decay; }
     };
+    /**
+     * Writes to the halt flag and loads take effect after the cycle's
+     * frame counter step (Mesen ApuLengthCounter); a load is dropped when a
+     * half frame clocked the counter in that same cycle.
+     */
     struct Length {
-        bool enabled = false, halt = false;
-        uint8_t counter = 0;
+        bool enabled = false, halt = false, newHalt = false;
+        uint8_t counter = 0, reloadValue = 0, previous = 0;
         void load(uint8_t index);
+        void setHalt(bool h) { newHalt = h; }
+        void reload() {
+            if (reloadValue) {
+                if (counter == previous) counter = reloadValue;
+                reloadValue = 0;
+            }
+            halt = newHalt;
+        }
         void tick() { if (counter && !halt) --counter; }
     };
     struct Pulse {
@@ -130,18 +153,21 @@ private:
         uint16_t addr = 0, remaining = 0;
         uint8_t buffer = 0, shift = 0, bits = 8;
         bool empty = true, silence = true;
+        int startDelay = 0, disableDelay = 0;     // CPU cycles until a $4015 write takes effect
     };
 
     void quarterFrame();
     void halfFrame();
     void clockFrameCounter();
     void clockDmc();
-    void dmcFetch();
+    void dmcRequest();
+    bool cpuCycleEven() const { return m_cpuCycle ? (m_cpuCycle() & 1) == 0 : true; }
     void dmcStart() { m_dmc.addr = m_dmc.sampleAddr; m_dmc.remaining = m_dmc.sampleLength; }
     float mix() const;
 
     std::string m_name = "apu";
-    std::function<uint8_t(uint16_t)> m_dmaRead;
+    std::function<void()> m_dmaStart, m_dmaStop;
+    std::function<uint64_t()> m_cpuCycle;
 
     Pulse m_pulse[2];
     Triangle m_tri;
@@ -158,7 +184,6 @@ private:
     bool m_frameIrq = false, m_dmcIrq = false;
 
     uint64_t m_cycle = 0;
-    int m_stall = 0;
 
     // Output: averaged over each output sample, a DC-blocking high-pass
     int m_sampleRate = DEFAULT_SAMPLE_RATE;

@@ -11,7 +11,7 @@
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
 #include "libmem/main/ibus.h"
-#include "plugins/6502/main/cpu6502.h"
+#include "nes_cpu.h"
 
 #include <algorithm>
 #include <array>
@@ -35,16 +35,19 @@ struct Controller {
 };
 
 /**
- * The 2A03's bus. The PPU and APU are brought up to the cycle of each read;
- * writes to them and to the cartridge are held until the instruction ends
- * and applied on its last cycles (where the 6502 writes).
+ * The 2A03's bus, and the rest of the console as the CPU drives it: the CPU
+ * (nes_cpu.cpp) makes every cycle's access through read()/write(), runs the
+ * PPU by the master clock and the APU by the cycle, and samples /NMI and
+ * /IRQ. The IBus side (read8/write8/peek8) is for the debugger and tools:
+ * at once, with no clocking.
  */
-class NesBus : public IBus {
+class NesBus : public IBus, public CpuSystem {
 public:
-    NesBus(Ppu* ppu, Apu* apu) : m_ppu(ppu), m_apu(apu) {
+    NesBus(Ppu* ppu, Apu* apu, Cpu* cpu) : m_ppu(ppu), m_apu(apu), m_cpu(cpu) {
         m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF};
         m_ram.fill(0);
-        m_apu->setDmaRead([this](uint16_t a) { return busRead(a); });
+        m_apu->setDmcDma([cpu]() { cpu->startDmcDma(); }, [cpu]() { cpu->stopDmcDma(); },
+                         [cpu]() { return cpu->cycleCount(); });
     }
 
     void setCart(std::unique_ptr<Cartridge> c, std::string label) {
@@ -56,92 +59,45 @@ public:
     const std::string& label() const { return m_label; }
     Controller& pad(int i) { return m_pads[i & 1]; }
 
-    uint64_t cycles() const { return m_cycles; }
-    void resetClock() {
-        m_cycles = m_synced = 0;
-        m_polledNmi = m_polledIrq = false;
-        m_pending.clear();
-        m_strobe = false;
-        m_dmaPage = -1;
-        // The 6502's reset sequence: 7 cycles before the first instruction
-        syncTo(RESET_CYCLES);
-        m_cycles = RESET_CYCLES;
+    /** Power on: RAM cleared (the cartridge's work RAM is kept), the PPU's clock restarted. */
+    void powerOn() { m_ram.fill(0); m_dataBus = 0; m_strobe = false; m_ppuMaster = 0; }
+    /** The RESET button: the PPU's master clock restarts with the CPU's. */
+    void resetClock() { m_ppuMaster = 0; }
+
+    // ------------------------------------------------------------------
+    // CpuSystem
+    // ------------------------------------------------------------------
+    void runPpu(uint64_t mc) override {
+        // At least a dot each time, as Mesen's NesPpu::Run
+        do {
+            m_ppu->clock(1);
+            m_ppuMaster += 4;
+        } while (m_ppuMaster + 4 <= mc);
     }
-    static constexpr uint64_t RESET_CYCLES = 7;
-
-    void begin() { m_access = 0; }
-    /**
-     * After an instruction of `c` cycles: the held writes, OAM DMA, DMC
-     * stalls; returns the stall. The interrupt lines are sampled where the
-     * 6502 polls them, before the instruction's last cycle (so an NMI or IRQ
-     * raised in that cycle waits an instruction more): polledNmi()/polledIrq().
-     */
-    int end(int c) {
-        const uint64_t base = m_cycles;
-        const uint64_t poll = base + (uint64_t)(c > 0 ? c - 1 : 0);
-        bool polled = false;
-        auto sample = [&]() {
-            syncTo(poll);
-            m_polledNmi = m_ppu->nmi();
-            m_polledIrq = irq();
-            polled = true;
-        };
-        const size_t n = m_pending.size();
-        for (size_t i = 0; i < n; ++i) {
-            const uint64_t at = base + (uint64_t)c - (n - i);
-            if (!polled && at >= poll) sample();
-            syncTo(at);
-            apply(m_pending[i].first, m_pending[i].second, at);
-        }
-        m_pending.clear();
-        if (!polled) sample();
-        uint64_t now = base + (uint64_t)c;
-        int stall = 0;
-        if (m_dmaPage >= 0) {
-            // OAM DMA: a halt cycle, an alignment cycle on odd cycles, then
-            // 256 read/write pairs (513 or 514 cycles)
-            const int align = (now & 1) ? 2 : 1;
-            for (int i = 0; i < 256; ++i) {
-                const uint64_t at = now + (uint64_t)align + (uint64_t)(i * 2);
-                syncTo(at);
-                const uint8_t v = busRead((uint16_t)((m_dmaPage << 8) | i));
-                syncTo(at + 1);
-                m_ppu->oamDmaWrite(v);
-            }
-            stall += 512 + align;
-            m_dmaPage = -1;
-        }
-        syncTo(now + (uint64_t)stall);
-        stall += m_apu->takeStall();
-        m_cycles = now + (uint64_t)stall;
-        if (stall) {
-            // The CPU was halted: it polls again on its way out
-            syncTo(m_cycles - 1);
-            m_polledNmi = m_polledNmi || m_ppu->nmi();
-            m_polledIrq = irq();
-        }
-        syncTo(m_cycles);
-        return stall;
-    }
-
-    bool polledNmi() const { return m_polledNmi; }
-    bool polledIrq() const { return m_polledIrq; }
-    /** Power on: RAM cleared (the cartridge's work RAM is battery-backed or not, but kept here). */
-    void powerOn() { m_ram.fill(0); m_dataBus = 0; resetClock(); }
-    bool nmi() const { return m_ppu->nmi(); }
-    bool irq() const { return m_apu->irq() || (m_cart && m_cart->irq()); }
-
-    const BusConfig& config() const override { return m_cfg; }
-    const char* name() const override { return "system"; }
-
-    uint8_t read8(uint32_t addr) override {
-        const uint16_t a = (uint16_t)addr;
-        const uint64_t at = m_cycles + m_access++;
-        if (a >= 0x2000 && a < 0x4020) syncTo(at);
+    void clockCycle() override { m_apu->clock(1); }
+    uint8_t read(uint16_t a) override {
         const uint8_t v = busRead(a);
         if (m_observer) m_observer->onMemoryRead(this, a, v);
         return v;
     }
+    void write(uint16_t a, uint8_t v) override {
+        if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
+        m_dataBus = v;
+        apply(a, v);
+    }
+    uint8_t openBus() const override { return m_dataBus; }
+    bool nmiLine() const override { return m_ppu->nmi(); }
+    bool irqLine() const override { return m_apu->irq() || (m_cart && m_cart->irq()); }
+    uint16_t dmcAddress() const override { return m_apu->dmcAddress(); }
+    void dmcBuffer(uint8_t v) override { m_apu->dmcSetBuffer(v); }
+
+    // ------------------------------------------------------------------
+    // IBus
+    // ------------------------------------------------------------------
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "system"; }
+
+    uint8_t read8(uint32_t addr) override { return busRead((uint16_t)addr); }
     uint8_t peek8(uint32_t addr) override {
         const uint16_t a = (uint16_t)addr;
         if (a < 0x2000) return m_ram[a & 0x7FF];
@@ -152,11 +108,8 @@ public:
     }
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t a = (uint16_t)addr;
-        ++m_access;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
-        m_dataBus = v;
-        if (a < 0x2000) { m_ram[a & 0x7FF] = v; return; }   // RAM: at once
-        m_pending.push_back({a, v});
+        apply(a, v);
     }
 
     size_t stateSize() const override { return 0; }
@@ -178,40 +131,30 @@ private:
         if (a != 0x4015) m_dataBus = v;
         return v;
     }
-    void syncTo(uint64_t cycle) {
-        if (cycle > m_synced) {
-            const uint64_t n = cycle - m_synced;
-            m_ppu->clock((uint32_t)(n * 3));
-            m_apu->clock((uint32_t)n);
-            m_synced = cycle;
-        }
-    }
-    void apply(uint16_t a, uint8_t v, uint64_t at) {
-        if (a < 0x4000) m_ppu->write(a & 7, v);
-        else if (a == 0x4014) m_dmaPage = v;
+    void apply(uint16_t a, uint8_t v) {
+        if (a < 0x2000) m_ram[a & 0x7FF] = v;
+        else if (a < 0x4000) m_ppu->write(a & 7, v);
+        else if (a == 0x4014) m_cpu->startOamDma(v);
         else if (a == 0x4016) {
             const bool strobe = v & 1;
             if (m_strobe && !strobe) for (auto& p : m_pads) p.shift = p.buttons;   // latched as strobe falls
             m_strobe = strobe;
             if (m_strobe) for (auto& p : m_pads) p.shift = p.buttons;
         } else if (a <= 0x4017) m_apu->write(a, v);
-        else if (a >= 0x4020 && m_cart) m_cart->cpuWrite(a, v, at);
+        else if (a >= 0x4020 && m_cart) m_cart->cpuWrite(a, v, m_cpu->cycleCount());
     }
 
     BusConfig m_cfg;
     Ppu* m_ppu;
     Apu* m_apu;
+    Cpu* m_cpu;
     std::unique_ptr<Cartridge> m_cart;
     std::string m_label;
     std::array<uint8_t, 0x800> m_ram{};
     std::array<Controller, 2> m_pads{};
     bool m_strobe = false;
-    int m_dmaPage = -1;
-    uint64_t m_cycles = 0, m_synced = 0;
-    uint32_t m_access = 0;
+    uint64_t m_ppuMaster = 0;
     uint8_t m_dataBus = 0;
-    bool m_polledNmi = false, m_polledIrq = false;
-    std::vector<std::pair<uint16_t, uint8_t>> m_pending;
 };
 
 NesBus* busOf(MachineDescriptor* m) {
@@ -242,10 +185,7 @@ void powerOn(MachineDescriptor* m) {
     m->ioRegistry->resetAll();
     if (bus->cart()) bus->cart()->reset();
     bus->powerOn();
-    auto* cpu = static_cast<MOS6502*>(m->cpus[0].cpu);
-    cpu->reset();
-    cpu->setNmiLine(false);
-    cpu->setIrqLine(false);
+    static_cast<Cpu*>(m->cpus[0].cpu)->reset();
 }
 
 }  // namespace
@@ -288,12 +228,12 @@ MachineDescriptor* create(bool famicom, std::string* /*err*/) {
 
     auto* ppu = new Ppu();
     auto* apu = new Apu();
-    auto* bus = new NesBus(ppu, apu);
+    auto* cpu = new Cpu();
+    auto* bus = new NesBus(ppu, apu, cpu);
     desc->buses.push_back({"system", bus});
-    auto* cpu = new MOS6502();
-    cpu->setDecimalDisabled(true);
-    cpu->setUnstableMagic(0xFF);
-    cpu->setIrqPollLatency(true);
+    cpu->setSystem(bus);
+    cpu->setFamicom(famicom);
+    cpu->setDecimalDisabled(true);      // for the base core's disassembly and tools
     cpu->setDataBus(bus);
     cpu->setCodeBus(bus);
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
@@ -361,18 +301,9 @@ MachineDescriptor* create(bool famicom, std::string* /*err*/) {
         ppu->softReset();
         apu->softReset();
         bus->resetClock();
-        cpu->softReset();
-        cpu->setNmiLine(false);
-        cpu->setIrqLine(false);
+        cpu->resetButton();
     };
-    desc->schedulerStep = [bus, cpu](MachineDescriptor&) -> int {
-        bus->begin();
-        const int c = cpu->step();
-        const int total = c + bus->end(c);
-        cpu->setNmiLine(bus->polledNmi());
-        cpu->setIrqLine(bus->polledIrq());
-        return total;
-    };
+    desc->schedulerStep = [cpu](MachineDescriptor&) -> int { return cpu->step(); };
     powerOn(desc);
     return desc;
 }

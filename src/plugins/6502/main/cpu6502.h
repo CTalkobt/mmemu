@@ -101,9 +101,12 @@ public:
 
     uint64_t cycles() const override { return m_state.cycles; }
 
-private:
+protected:
+    // Visible to variants with their own execution (the NES's cycle-exact 2A03)
     CPU6502State m_state;
     IBus*        m_bus = nullptr;
+
+private:
 
     // Internal helpers
     uint8_t  read(uint16_t addr);

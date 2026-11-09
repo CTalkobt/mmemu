@@ -135,6 +135,7 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 	src/plugins/machines/snes/main/plugin_init.cpp
 
 PLUGIN_NES_SRCS = src/plugins/machines/nes/main/machine_nes.cpp \
+	src/plugins/machines/nes/main/nes_cpu.cpp \
 	src/plugins/machines/nes/main/nes_ppu.cpp \
 	src/plugins/machines/nes/main/nes_apu.cpp \
 	src/plugins/machines/nes/main/nes_cart.cpp \
@@ -615,6 +616,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/tia/main/tia_palette.o \
 	src/plugins/machines/atari2600/main/machine_a2600.o \
 	src/plugins/machines/nes/main/machine_nes.o \
+	src/plugins/machines/nes/main/nes_cpu.o \
 	src/plugins/machines/nes/main/nes_ppu.o \
 	src/plugins/machines/nes/main/nes_apu.o \
 	src/plugins/machines/nes/main/nes_cart.o \

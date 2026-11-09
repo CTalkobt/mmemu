@@ -20,10 +20,18 @@ a cartridge powers the console on; the machine's reset is the RESET button.
 
 ## Hardware
 
-- **CPU**: the Ricoh 2A03, an NMOS 6502 (`MOS6502` with
-  `setDecimalDisabled`) without decimal mode: D sets and clears, ADC/SBC
-  stay binary. The unstable LXA/XAA use the magic constant `$FF`. IRQ
-  polling has the 6502's latency after CLI/SEI/PLP (`setIrqPollLatency`).
+- **CPU**: the Ricoh 2A03 (`nes::Cpu`, `nes_cpu.cpp`, after Mesen's
+  `NesCpu`), an NMOS 6502 without decimal mode (D sets and clears, ADC/SBC
+  stay binary), cycle by cycle:
+  - **Bus cycles:** every cycle is a bus access, as on the chip: the dummy
+    reads of indexed and implied addressing, the read-modify-write
+    instructions' double writes, the stack's dummy reads.
+  - **Interrupts:** NMI's edge and IRQ's level are sampled at the end of each
+    cycle; an interrupt follows the instruction whose second-to-last cycle
+    saw it. That gives CLI/SEI/PLP their latency, a taken branch's IRQ
+    delay, and NMI hijacking BRK.
+  - **Debugger:** registers, disassembly and the debugger come from the 6502
+    core (`MOS6502`), which the 2A03 extends.
 - **Memory map**:
 
 | Address | |
@@ -35,13 +43,19 @@ a cartridge powers the console on; the machine's reset is the RESET button.
 | `$4016` / `$4017` | controller strobe (write), controllers 1 / 2 (read) |
 | `$4020-$FFFF` | the cartridge: work RAM at `$6000`, PRG ROM at `$8000` |
 
-- **Timing**: as for the Atari 2600, the PPU and APU are clocked lazily.
-  Reads bring them up to the cycle of the access; writes to them and to the
-  cartridge are held and applied on the instruction's last cycles. NMI and
-  IRQ are sampled before an instruction's last cycle, as the 6502 polls them.
-  The reset sequence's 7 cycles run before the first instruction.
-- **OAM DMA**: 256 read/write pairs through `$2004`, stalling the CPU 513
-  cycles (514 on an odd cycle).
+- **Timing**: a master clock of 12 a CPU cycle and 4 a PPU dot. Each access
+  falls after two of the cycle's three dots (Mesen's alignment), and the APU
+  is clocked at the start of each cycle. Power-on and RESET run 8 cycles
+  before the first instruction.
+- **DMA**: both halt the CPU on its next read cycle and take its cycles
+  there.
+  - **OAM DMA:** 256 read/write pairs through `$2004`, 513 or 514 cycles.
+  - **The DMC's fetches:** a halt cycle, a dummy cycle, then the read on a
+    "get" cycle. They share cycles with OAM DMA, and enabling or disabling
+    the channel takes effect after Mesen's delays.
+  - **Side effects:** the halted CPU's repeated reads, which double-clock
+    `$2007` and the pads. The DMA unit's reads also reach `$4015`-`$4017`
+    when the CPU was halted on one.
 - **Controllers**: two standard pads (a 4021 shift register each: A, B,
   Select, Start, Up, Down, Left, Right, then 1s).
 - **Reset**: the RESET button keeps RAM, the cartridge and the CPU's A/X/Y.
@@ -56,13 +70,15 @@ Dot by dot, 341 dots a line, 262 lines:
   the 16-bit shift registers, fine X, the loopy `v`/`t`/`x`/`w` scroll
   registers and their increments and copies (dots 256, 257, 280-304).
 - **Sprites**: up to 8 a line, 8x8 or 8x16. Secondary OAM is evaluated for
-  the next line, with the overflow flag's diagonal-scan bug, and fetched at
+  the next line, with the overflow flag's diagonal-scan bug and set on the
+  dot the hardware's evaluation reaches the 9th sprite, and fetched at
   dots 257-320 (unused slots fetch tile `$FF`, which MMC3 counts on). Sprite
   0 hit (not at x = 255, not under the left-8 masks), priority, and the left
   8-pixel masks.
 - **Registers**: `$2002`'s vblank race (a read on the dot before suppresses
   the flag and NMI), `$2004` reads during rendering, the `$2007` read buffer
-  (palette reads immediate), `$2006`'s 3-dot delay to `v`, the `$2007`
+  (palette reads immediate; a second read within 6 dots is ignored),
+  `$2006`'s 3-dot delay to `v`, the `$2007`
   increment a dot later (during rendering: coarse X and Y), OAM writes
   during rendering ignored, open bus with per-bit decay after 3 frames.
 - **Frame**: vblank at line 241 dot 1, cleared at the pre-render line, odd
@@ -73,9 +89,10 @@ Dot by dot, 341 dots a line, 262 lines:
 
 Clocked every CPU cycle: two pulse channels (duty, envelope, sweep with
 pulse 1's ones' complement negate), the triangle (linear counter), noise
-(both LFSR modes), the DMC (sample fetches through the CPU's bus, a 4-cycle
-stall each, loop and IRQ), length counters, and the frame counter in 4- and
-5-step modes with its IRQ and the `$4017` write delay. Mixed with the nesdev
+(both LFSR modes), the DMC (sample fetches by the CPU's DMA, loop and IRQ),
+length counters (halt and reload writes take effect after the cycle's frame
+counter step), and the frame counter in 4- and 5-step modes with its IRQ and
+the `$4017` write delay (3 or 4 cycles by the CPU cycle's parity). Mixed with the nesdev
 nonlinear formulas, averaged to 44100 Hz and DC-blocked.
 
 ### Cartridges
@@ -105,31 +122,38 @@ not saved yet.
 
 - `src/plugins/machines/nes/test/test_nes_machine.cpp`: the header, RAM
   mirroring, binary ADC, vblank NMI, `$2006/$2007` and mirroring,
-  background rendering, sprite 0 hit, OAM DMA's stall, the controller, APU
+  background rendering, sprite 0 hit, OAM DMA's cycles, the controller, APU
   length counters and frame IRQ, audio output, MMC1, UxROM, CNROM, AxROM,
   and MMC3's scanline IRQ.
 - `test_nes_roms.cpp`: a survey of the
   [nes-test-roms](https://github.com/christopherpow/nes-test-roms)
-  collection (blargg's `$6000` protocol). Set `MMEMU_NES_TEST_ROMS` (default
-  `../refs/nes-test-roms`) and `MMEMU_NES_SURVEY=1`, or a path substring to
-  pick ROMs.
+  collection. Set `MMEMU_NES_TEST_ROMS` (default `../refs/nes-test-roms`)
+  and `MMEMU_NES_SURVEY=1`, or a path substring to pick ROMs; about 10
+  minutes for all. It reads results in three ways:
+  - **blargg's `$6000` protocol:** pressing RESET when a test asks.
+  - **The screen:** the first nametable as text ("Passed", "Failed", the
+    2005 tests' `$01`, `cpu_test5`'s failing opcodes).
+  - **CRCs:** the values the source lists for the tests that print only one.
 
-They pass `instr_test-v3` and `-v5` (all), `instr_timing`, `instr_misc`
-1-2, `apu_test` (all), `apu_reset` (4 of 6), `cpu_reset`, `ppu_vbl_nmi`
-01-04 and 09-10, `ppu_open_bus`, `oam_read`, `oam_stress`, `mmc3_test_2`
-1-3 and 5, `cpu_interrupts_v2` 1, and `cpu_exec_space_apu`.
+All 158 ROMs with a verdict pass:
+- **CPU:** `instr_test-v3`/`-v5`, `instr_timing`, `instr_misc`,
+  `nes_instr_test`, `blargg_nes_cpu_test5`, `cpu_timing_test6`,
+  `branch_timing_tests`, `cpu_interrupts_v2`, `cpu_dummy_reads`/`_writes`,
+  `cpu_exec_space`, `cpu_reset`.
+- **APU:** `apu_test`, `apu_reset`, `blargg_apu_2005.07.30`.
+- **PPU:** `ppu_vbl_nmi`, `vbl_nmi_timing`, `ppu_open_bus`,
+  `ppu_read_buffer`, `blargg_ppu_tests_2005.09.15b`, `oam_read`,
+  `oam_stress`, `sprite_hit_tests_2005.10.05`, `sprite_overflow_tests`.
+- **DMA:** `sprdma_and_dmc_dma`, `dmc_dma_during_read4`.
+- **MMC3:** `mmc3_test`, `mmc3_test_2`, `mmc3_irq_tests`.
+
+The three MMC3 tests of other chip revisions (`6-MMC3_alt`, `6-MMC6`,
+`5.MMC3_rev_A`) fail, as they do on an MMC3B. `read_joy3`'s
+`count_errors` and `test_buttons` give no verdict.
 
 ## Not yet
 
-- **6502 bus cycles**: the core does not make the 6502's dummy reads
-  (indexed page crossings) or its read-modify-write double writes.
-  `instr_misc` 3-4, `cpu_dummy_writes`, `cpu_dummy_reads` and MMC1 games
-  that reset with `INC` (Bill & Ted) need them.
-- **NMI/IRQ timing to the cycle**: `ppu_vbl_nmi` 05-08 and
-  `cpu_interrupts_v2` 2-5 are off by about a cycle.
-- **DMA interplay**: OAM DMA and DMC DMA together, and DMC DMA during
-  reads of `$2007` and `$4016`.
-- **MMC3**: `4-scanline_timing` is a dot or so out, and `6-MMC3_alt` tests
-  the older revision's IRQ behaviour.
+- **Revisions:** the CPU/PPU alignment is fixed (Mesen's default), not
+  random, and there is one MMC3 (rev B).
 - **Other**: PAL and Dendy, more mappers (MMC2/4/5, VRC, FDS...),
   expansion audio, the Zapper and other controllers, battery saves.

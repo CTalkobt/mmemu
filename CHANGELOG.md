@@ -11,6 +11,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **GUI screen pane:** with key buttons stacked under Capture Keyboard (the IIgs's RESET and REBOOT, for example), the picture now sits beside that column when that's larger, instead of always below the lowest button. The IIgs picture grows from about 688 to 805 pixels wide in a 1280-pixel window.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
+### NES accuracy
+- **A cycle-exact 2A03** (`nes::Cpu`, after Mesen's `NesCpu`) replaces the 6502 core's instruction-level run on the NES.
+  - **Bus cycles:** every cycle is a bus access, with the dummy reads, the read-modify-write double writes and the stack's dummy reads.
+  - **Clocks:** the PPU runs on a master clock between each access's halves, and the APU is clocked every cycle.
+  - **Interrupts:** NMI and IRQ are sampled at the end of each cycle.
+  - **DMA:** OAM DMA and the DMC's fetches take the CPU's read cycles, with the DMA unit's register side effects.
+  - **Base core:** `MOS6502`'s state is now `protected` so the 2A03 can extend it. Other machines are unchanged.
+- **APU:**
+  - The DMC's fetches are DMA requests, with Mesen's start/stop delays.
+  - Length counter halt and reload writes take effect after the frame counter step.
+  - The `$4017` write delay follows the CPU cycle's parity.
+- **PPU:**
+  - A second `$2007` read within 6 dots is ignored.
+  - The sprite overflow flag is set on the dot the evaluation reaches the 9th sprite.
+- **Test-ROM survey** (`MMEMU_NES_SURVEY=1`):
+  - **Coverage:** it now reads results from the screen and from CRCs as well, and covers 12 more suites (the 2005 blargg APU/PPU tests, sprite hit, VBL/NMI timing, branch and CPU timing, MMC3 v1 and IRQ, `cpu_test5`).
+  - **RESET timing:** it waits before pressing RESET again, so tests that measure after a reset get to finish.
+  - **Results:** 158 of 158 pass, up from 64 of about 100. The only failures are the 3 tests of other MMC3 revisions.
+- **Speed:** about 6.7× real time on the NES, down from about 9×.
+
 ### SNES / Super Famicom
 - **New machines: `snes` and `superfamicom`** (#15), after Mesen2 (GPL-3.0). See `doc/README-SNES.md`.
   - **CPU and timing:** the 65816 core on a master-clock bus, where accesses take 6, 8 or 12 clocks by region (FastROM included). Each 1364-clock line has its DRAM refresh, HDMA at hblank and NMI at line 225.
