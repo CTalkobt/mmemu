@@ -42,7 +42,9 @@ void W65C816::reset() {
     m_dbr = m_pbr = 0;
     m_wait = m_stop = false;
     m_nmiPending = false;
+    m_vpb = true;
     m_pc = (uint16_t)(read(0xFFFC) | read(0xFFFD) << 8);
+    m_vpb = false;
 }
 
 const RegDescriptor* W65C816::regDescriptor(int idx) const { return idx >= 0 && idx < R_COUNT ? &REGS[idx] : nullptr; }
@@ -107,8 +109,10 @@ void W65C816::interrupt(uint16_t nativeVec, uint16_t emuVec, bool hardware) {
     m_p = (uint8_t)((m_p | FI) & ~FD);
     m_pbr = 0;
     const uint16_t v = m_e ? emuVec : nativeVec;
+    m_vpb = true;                                         // /VP low for the vector's two reads
     const uint8_t lo = read(v);
     m_pc = (uint16_t)(lo | read((uint16_t)(v + 1)) << 8);
+    m_vpb = false;
 }
 
 int W65C816::step() {

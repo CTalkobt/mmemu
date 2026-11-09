@@ -79,6 +79,8 @@ public:
     uint16_t y() const { return m_y; }
     uint8_t p() const { return m_p; }
     bool emulation() const { return m_e; }
+    /** /VP (vector pull) is low: the current read is of an interrupt or reset vector. */
+    bool vectorPull() const { return m_vpb; }
     /** Internal (bus-idle) cycles happen here; tests can observe them. */
     struct IdleHook { virtual ~IdleHook() = default; virtual void idle(uint32_t addr) = 0; };
     void setIdleHook(IdleHook* h) { m_idleHook = h; }
@@ -133,6 +135,7 @@ private:
     uint8_t m_dbr = 0, m_pbr = 0, m_p = 0x34;
     bool m_e = true;
     bool m_irqLine = false, m_nmiLine = false, m_nmiPending = false, m_wait = false, m_stop = false;
+    bool m_vpb = false;
     uint32_t m_lastAddr = 0;
     uint64_t m_cycles = 0;
 };
