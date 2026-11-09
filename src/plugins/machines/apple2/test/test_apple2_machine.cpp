@@ -635,7 +635,7 @@ TEST_CASE(apple2gs_writes_35) {
 // GS/OS System 6.0.1 (Apple's freely distributed System Disk, 800 KB .2mg
 // from the Asimov archive; read from ../refs/apple2gs, skipped without it)
 // boots from the 3.5" drive to the Finder: Super Hi-Res 640 mode with the
-// white menu bar across the top
+// white menu bar across the top; the ADB mouse opens the Special menu
 TEST_CASE(apple2gs_boots_gsos) {
     const std::string disk = "../refs/apple2gs/sys601-2.2mg";
     FILE* f = std::fopen(disk.c_str(), "rb");
@@ -661,6 +661,19 @@ TEST_CASE(apple2gs_boots_gsos) {
     int white = 0;                                   // the menu bar, line 5
     for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
     EXPECT_TRUE(white > 300);
+    // The mouse: to the top left, across to "Special", the button held: the
+    // menu drops down (white where the desktop pattern was)
+    m->onMouse(-1500, -1000, 0, 0);
+    run(m, 10000000);
+    m->onMouse(330, 10, 0, 0);
+    run(m, 10000000);
+    m->onMouse(0, 0, 1, 0);
+    run(m, 10000000);
+    v->renderFrame(fb.data());
+    int menu = 0;                                    // line 36, below the title
+    for (int x = 330; x < 400; ++x) menu += (fb[(size_t)(y0 + 72) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
+    EXPECT_TRUE(menu > 60);
+    m->onMouse(0, 0, 0, 0);
     delete m;
     std::filesystem::remove(copy);
 }
@@ -828,4 +841,35 @@ TEST_CASE(apple2gs_boots_hard_disk) {
     EXPECT_TRUE(white > 300);
     delete m;
     std::filesystem::remove(copy);
+}
+
+// The ADB mouse (KEGS mouse_read_c024): $C027 bit 7 data waiting, bit 1
+// the Y delta next; $C024 the X then the Y delta (7 bits signed, at most 63
+// a read), the button (0 = down) in the Y read's bit 7; moves in picture
+// pixels, halved for 320 mode's X and the doubled lines' Y
+TEST_CASE(apple2gs_adb_mouse) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->read8(0x00C027) & 0x82, 0x00);
+    m->onMouse(10, 20, 0, 0);                        // 320 mode: 5, 10
+    EXPECT_EQ(bus->read8(0x00C027) & 0x82, 0x80);
+    EXPECT_EQ(bus->read8(0x00C024), 0x85);           // X +5
+    EXPECT_EQ(bus->read8(0x00C027) & 0x02, 0x02);    // Y next
+    EXPECT_EQ(bus->read8(0x00C024), 0x8A);           // Y +10, the button up
+    EXPECT_EQ(bus->read8(0x00C027) & 0x82, 0x00);    // nothing more
+    m->onMouse(-6, 0, 1, 0);                         // -3, the button down
+    EXPECT_EQ(bus->read8(0x00C024), 0x80 | (uint8_t)(-3 & 0x7F));
+    EXPECT_EQ(bus->read8(0x00C024), 0x00);
+    m->onMouse(0, 0, 0, 0);                          // released
+    EXPECT_EQ(bus->read8(0x00C027) & 0x80, 0x80);
+    bus->read8(0x00C024);
+    EXPECT_EQ(bus->read8(0x00C024), 0x80);
+    m->onMouse(400, 0, 0, 0);                        // +200: 63 a read
+    int total = 0;
+    for (int i = 0; i < 4; ++i) { total += bus->read8(0x00C024) & 0x7F; bus->read8(0x00C024); }
+    EXPECT_EQ(total, 200);
+    EXPECT_EQ(bus->read8(0x00C027) & 0x80, 0x00);
+    delete m;
 }

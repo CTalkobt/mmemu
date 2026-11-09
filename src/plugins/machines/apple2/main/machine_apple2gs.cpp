@@ -81,10 +81,45 @@ public:
         m_intByte = 0;
         m_state = IDLE;
         m_kbdReg3 = 0x602;
+        m_mouseQ.clear();
+        m_mouseValid = m_mouseY = m_mouseButton = false;
     }
     void powerOn() { reset(); m_c025 = 0; m_mode = 0; std::memset(m_ram, 0, sizeof m_ram); m_queue.clear(); }
 
-    bool irq() const { return m_dataIrq; }
+    bool irq() const { return m_dataIrq || (m_mouseValid && (m_c027 & 0x40) && mouseOn()); }
+
+    // The mouse (adb_update_mouse, mouse_read_c024): moves and button
+    // changes queue up (a button change starts a new entry, so a quick
+    // click isn't lost); $C024 reads give the X then the Y delta, 7 bits
+    // signed, at most 63 a read, the button (0 = down) in bit 7 of the Y
+    // read; $C027 bit 7 says data is waiting, bit 1 that Y is next, bit 6
+    // enables the interrupt
+    void mouse(int dx, int dy, bool button) {
+        if (m_mouseQ.empty() || m_mouseQ.back().button != button) m_mouseQ.push_back({0, 0, button});
+        m_mouseQ.back().dx += dx;
+        m_mouseQ.back().dy += dy;
+        if (mouseOn() && (dx || dy || button != m_mouseButton || m_mouseQ.size() > 1)) m_mouseValid = true;
+    }
+    uint8_t readC024() {
+        if (!mouseOn()) { m_mouseValid = false; return 0; }
+        if (m_mouseQ.empty()) m_mouseQ.push_back({0, 0, m_mouseButton});
+        MouseEvent& e = m_mouseQ.front();
+        int& d = m_mouseY ? e.dy : e.dx;
+        const int step = std::clamp(d, -63, 63);
+        d -= step;
+        uint8_t ret = (uint8_t)(step & 0x7F);
+        if (m_mouseY) {
+            if (!e.button) ret |= 0x80;
+            m_mouseButton = e.button;
+            if (!e.dx && !e.dy) m_mouseQ.pop_front();
+            if (m_mouseQ.empty()) m_mouseValid = false;
+        } else {
+            ret |= 0x80;
+        }
+        m_mouseY = !m_mouseY;
+        return ret;
+    }
+    bool mouseButton() const { return m_mouseButton; }
     void vbl() { ++m_vbl; }
 
     // $C000 (adb_read_c000): the key, with the auto-repeat
@@ -176,6 +211,8 @@ public:
     uint8_t readC027() const {
         uint32_t r = m_c027 & NEG_MASK;
         if (m_intByte != 0 || (m_pending > 0 && m_state != IN_CMD)) r |= 0x20;   // data valid
+        if (m_mouseValid) r |= 0x80;                                                // mouse data
+        if (m_mouseY) r |= 0x02;                                                    // Y next
         return (uint8_t)r;
     }
     void writeC027(uint8_t val) {
@@ -353,6 +390,11 @@ private:
     std::string m_downName;
     uint64_t m_vbl = 0, m_repeatVbl = 0;
     std::deque<uint8_t> m_queue;
+    // The mouse: autopolled at its own address unless mode bit 1 turns it off
+    bool mouseOn() const { return !(m_mode & 0x02) && m_mouseDev == m_mouseCtl; }
+    struct MouseEvent { int dx, dy; bool button; };
+    std::deque<MouseEvent> m_mouseQ;
+    bool m_mouseValid = false, m_mouseY = false, m_mouseButton = false;
     uint64_t m_wait = 0;
 };
 
@@ -929,7 +971,7 @@ private:
                     return 0;
                 }
                 return (uint8_t)m_c023;
-            case 0x24: return 0;                                            // mouse: not yet
+            case 0x24: return wr ? 0 : m_adb->readC024();                   // the mouse
             case 0x25: return wr ? 0 : m_adb->c025();
             case 0x26: if (wr) { m_adb->writeC026(val); return 0; } return m_adb->readC026();
             case 0x27: if (wr) { m_adb->writeC027(val); return 0; } return m_adb->readC027();
@@ -1305,6 +1347,18 @@ MachineDescriptor* createIIgs(std::string* err) {
         cpu->reset();
     };
     desc->onKey = [adb](const std::string& n, bool down) { return adb->key(n, down); };
+    // The mouse: the frontends give moves in picture pixels (Super Hi-Res
+    // lines doubled); the IIgs counts in Super Hi-Res pixels, X halved in
+    // 320 mode (as KEGS scales the host pointer)
+    desc->onMouse = [adb, bus, fx = 0.0, fy = 0.0](int dx, int dy, uint8_t buttons, int) mutable {
+        const bool mode640 = bus->slowRam()[0x19D00] & 0x80;
+        fx += mode640 ? dx : dx * 0.5;
+        fy += dy * 0.5;
+        const int ix = (int)fx, iy = (int)fy;
+        fx -= ix;
+        fy -= iy;
+        adb->mouse(ix, iy, buttons & 1);
+    };
     desc->screenButtons = {{"RESET", {"control", "reset"}, "Control-Reset: the CPU restarts (BASIC warm-starts)."},
                            {"REBOOT", {"control", "alt", "reset"}, "Control-Command-Reset: a cold start."}};
 
