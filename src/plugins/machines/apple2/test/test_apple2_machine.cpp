@@ -5,6 +5,8 @@
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/iaudio_output.h"
 #include "libmem/main/ibus.h"
+#include "libdevices/main/ivideo_output.h"
+#include "libcore/main/icore.h"
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -419,5 +421,57 @@ TEST_CASE(apple2gs_memory_map) {
     EXPECT_EQ(bus->read8(0x00D000), 0x00);
     bus->read8(0x00C082);                              // ROM again
     EXPECT_EQ(bus->read8(0x00D000), bus->peek8(0xFFD000));
+    delete m;
+}
+
+// Super Hi-Res (KEGS video.c): 320 mode with a palette, fill mode, 640
+// mode's four palette groups, lines doubled inside the border; the
+// scan-line interrupt sets $C023 bits 7 and 5 for a line whose SCB has
+// bit 6, and $C032 clears it
+TEST_CASE(apple2gs_super_hires) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    ICore* cpu = m->cpus[0].cpu;
+    bus->write8(0x000300, 0x80); bus->write8(0x000301, 0xFE);     // BRA *: the CPU waits, interrupts masked
+    cpu->setPc(0x000300);
+    cpu->regWrite(8 /* P */, 0x34);
+    auto pal = [&](int p, int i, uint16_t rgb) {
+        bus->write8(0xE19E00u + (uint32_t)(p * 32 + i * 2), rgb & 0xFF);
+        bus->write8(0xE19E01u + (uint32_t)(p * 32 + i * 2), rgb >> 8);
+    };
+    pal(0, 0, 0x000); pal(0, 1, 0xF00); pal(0, 2, 0x0F0); pal(0, 3, 0x00F);
+    pal(1, 8, 0xFFF); pal(1, 12, 0x888); pal(1, 1, 0xF0F); pal(1, 7, 0x0FF);
+    bus->write8(0xE12000, 0x12);                // line 0, 320 mode: red, green
+    bus->write8(0xE12001, 0x30);                // blue, then 0
+    bus->write8(0xE19D01, 0x20);                // line 1: fill mode
+    bus->write8(0xE120A0, 0x20);                // green, 0 (fill: green)
+    bus->write8(0xE19D02, 0x81);                // line 2: 640 mode, palette 1
+    bus->write8(0xE12140, 0x07);                // pixels 0,0,1,3: colours 8, 12, 1, 7
+    bus->write8(0xE19D0A, 0x40);                // line 10: scan-line interrupt
+    bus->write8(0x00C029, 0xC1);                // Super Hi-Res on
+    bus->write8(0x00C023, 0x02);                // scan-line interrupts enabled
+    run(m, 17030 * 3 * 2);                     // two frames of 1 MHz cycles at 2.8 MHz
+    auto* v = find<IVideoOutput>(m);
+    ASSERT(v);
+    const auto d = v->getDimensions();
+    std::vector<uint32_t> fb((size_t)d.width * d.height);
+    v->renderFrame(fb.data());
+    const int x0 = (d.width - 640) / 2, y0 = (d.height - 400) / 2;
+    auto px = [&](int x, int line) { return fb[(size_t)(y0 + 2 * line) * d.width + x0 + x] & 0xFFFFFF; };
+    EXPECT_EQ(px(0, 0), 0xFF0000u); EXPECT_EQ(px(1, 0), 0xFF0000u);
+    EXPECT_EQ(px(2, 0), 0x00FF00u);
+    EXPECT_EQ(px(4, 0), 0x0000FFu);
+    EXPECT_EQ(px(6, 0), 0x000000u);              // colour 0, no fill
+    EXPECT_EQ(px(2, 1), 0x00FF00u);              // fill: colour 0 repeats green
+    EXPECT_EQ(px(0, 2), 0xFFFFFFu);
+    EXPECT_EQ(px(1, 2), 0x888888u);
+    EXPECT_EQ(px(2, 2), 0xFF00FFu);
+    EXPECT_EQ(px(3, 2), 0x00FFFFu);
+    EXPECT_EQ(fb[(size_t)(y0 + 1) * d.width + x0] & 0xFFFFFF, 0xFF0000u);   // line doubled
+    EXPECT_EQ(bus->read8(0x00C023) & 0xA2, 0xA2);    // VGC and scan-line interrupt flags
+    bus->write8(0x00C032, 0x00);
+    EXPECT_EQ(bus->read8(0x00C023) & 0xA0, 0x00);
     delete m;
 }

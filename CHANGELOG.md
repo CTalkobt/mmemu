@@ -8,6 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Apple II
+- **Apple IIgs, stage 2: Super Hi-Res** (#12, after KEGS `video.c` and `sim65816.c`).
+  - **Modes:** 320 and 640 pixels, with 16 palettes from bank `$E1` and fill mode, shown as 640 x 400 inside the border.
+  - **Line by line:** each line is drawn as the beam reaches it, so palette and SCB changes between lines show.
+  - **Scan-line interrupt:** set from bit 6 of a line's SCB through `$C023`, cleared by `$C032`.
+  - **Test:** `apple2gs_super_hires`.
 - **Apple IIgs, stage 1** (#12): profile `apple2gs`, ROM 01 on the 65C816, after KEGS (`moremem.c`, `adb.c`, `clock.c`, `doc.c`).
   - **Speed and memory:** 2.8 MHz, with 1 MHz cycles on the Mega II side. 4 MB of fast RAM, and banks `$E0`/`$E1` shadowed from `$00`/`$01` (`$C035`). STATEREG, the language card, the slot ROM register and the IIe switches.
   - **Interrupts:** the VBL, quarter-second and one-second interrupts; interrupt vectors come from the ROM.
