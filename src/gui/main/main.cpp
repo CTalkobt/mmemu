@@ -1249,6 +1249,12 @@ void MmemuFrame::OnLoadImageDirect(wxCommandEvent& event) {
         m_disasmPane->RefreshValues(m_cpu->pc());
         for (auto* p : m_memPanes) p->RefreshValues();
         SetStatusText("Attached cartridge " + path);
+        return;
+    }
+    // A disk for the machine's drives (-i game.dsk)
+    if (m_machine->ioRegistry) {
+        if (IOHandler* drive = m_machine->ioRegistry->mountDisk(1, path))
+            SetStatusText("Mounted " + path + " on " + drive->name() + " unit 1");
     }
 }
 

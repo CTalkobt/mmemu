@@ -111,3 +111,11 @@ uint32_t IORegistry::lowestHandlerBase() const {
     }
     return UINT32_MAX;
 }
+
+IOHandler* IORegistry::mountDisk(int unit, const std::string& path) {
+    std::vector<IOHandler*> handlers;
+    enumerate(handlers);
+    for (IOHandler* h : handlers)
+        if (h->mountDisk(unit, path)) return h;
+    return nullptr;
+}

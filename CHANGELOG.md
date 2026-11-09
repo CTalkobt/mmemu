@@ -7,6 +7,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Front ends
+- **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
+
 ### Apple II
 - **Apple IIgs: WOZ, 1.44 MB disks and hard disks** (#12).
   - **3.5" WOZ2:** the drive now works on bit streams. The IWM's latch rule makes nibbles from them, writes put 8 bits a byte at the head and keep a track's length, and a track goes back as bits to the WOZ or decoded into the sectors of a `.po`. The Disk II's WOZ parser accepts INFO disk type 2 and the 5.25" drive refuses it.

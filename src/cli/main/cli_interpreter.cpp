@@ -706,6 +706,10 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 } else {
                     m_output("Failed to load '" + path + "'\n");
                 }
+            } else if (IOHandler* drive = m_ctx.machine && m_ctx.machine->ioRegistry
+                                              ? m_ctx.machine->ioRegistry->mountDisk(1, path) : nullptr) {
+                // Not a program: a disk for the machine's drives (-i game.dsk)
+                m_output("Mounted '" + path + "' on " + drive->name() + " unit 1\n");
             } else {
                 m_output("No loader found for '" + path + "'\n");
             }
