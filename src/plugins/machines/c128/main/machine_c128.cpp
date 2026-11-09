@@ -21,6 +21,7 @@
 #include "plugins/devices/vdc8563/main/vdc8563.h"
 #include "plugins/devices/iec_drive/main/iec_drive.h"
 #include "plugins/devices/datasette/main/datasette.h"
+#include "plugins/devices/reu/main/reu.h"
 #include "util/path_util.h"
 #include <algorithm>
 #include <cctype>
@@ -101,6 +102,8 @@ public:
         m_cartLabel = m_cart ? std::move(label) : "";
     }
     c128::C128Cart* cartridge() const { return m_cart.get(); }
+    /** An REU on the expansion port (I/O2 and the $FF00 trigger), or null. */
+    void setReu(Reu* reu) { m_reu = reu; }
     const std::string& cartridgeLabel() const { return m_cartLabel; }
     const std::string& internalFunctionRomLabel() const { return m_intLabel; }
     uint8_t funcByte(int sel, uint16_t addr, bool peek = true) const {
@@ -313,6 +316,7 @@ private:
     }
 
     void write(uint16_t addr, uint8_t val) {
+        if (addr == 0xFF00 && m_reu) m_reu->ff00Write();   // the REU's trigger (beside the MMU's CR)
         if (c64Mode()) { writeC64(addr, val); return; }
         if (addr >= 0xFF00 && addr <= 0xFF04) {             // mmu_ffxx_store
             mmuStore(0, addr == 0xFF00 ? val : m_mmu[addr & 0x0F]);
@@ -357,6 +361,12 @@ private:
             case 0xDC00: dev(m_cia1, 0xDC00 | (addr & 0x0F)); break;
             case 0xDD00: dev(m_cia2, 0xDD00 | (addr & 0x0F)); break;
             case 0xDE00: case 0xDF00:                       // I/O1, I/O2: the cartridge
+                if (m_reu && (addr & 0xFF00) == 0xDF00) {   // an REU takes I/O2
+                    if (wr) m_reu->ioWrite(this, addr, *wr);
+                    else if (peek) m_reu->ioPeek(this, addr, &v);
+                    else if (!m_reu->ioRead(this, addr, &v)) v = 0xFF;
+                    break;
+                }
                 if (m_cart && !c64Mode()) {
                     uint8_t cv = 0xFF;
                     const bool drives = (addr & 0xFF00) == 0xDE00 ? m_cart->io1(addr, wr, peek, cv)
@@ -398,6 +408,7 @@ private:
     Rom m_basic, m_kernal, m_chargen, m_c64;
     Rom m_intFunc;
     std::unique_ptr<c128::C128Cart> m_cart;
+    Reu* m_reu = nullptr;
     std::string m_cartLabel, m_intLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
@@ -880,6 +891,55 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         delete irq; delete nmi;
     });
 
+    // The expansion port's REU, fitted at run time (VICE reu.c): I/O2, the
+    // $FF00 trigger, /IRQ to both CPUs, DMA through the 8502's view of memory
+    {
+        auto reuIrq = std::make_shared<FanoutLine>(irq->createLine(), irqZ80->createLine());
+        auto reu = std::make_shared<Reu*>(nullptr);
+        desc->deleters.push_back([reu, bus]() { bus->setReu(nullptr); delete *reu; *reu = nullptr; });
+        MachineDescriptor::ExpansionSlot port;
+        port.name = "port";
+        port.description = "The expansion port: a Commodore RAM Expansion Unit (REU) at $DF00, beside any cartridge";
+        port.devices = {{"reu", "Commodore REU: 128K (1700), 256K (1764), 512K (1750), or 1M-16M (1750 XL style); or a .reu image file",
+                         {"128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"}, "512K"}};
+        port.install = [desc, bus, io, reu, reuIrq](const std::string& device, const std::string& option, std::string& err) {
+            auto remove = [&]() {
+                if (!*reu) return;
+                bus->setReu(nullptr);
+                io->unregisterHandler(*reu);
+                desc->busMasterStep = nullptr;
+                reuIrq->set(false);
+                delete *reu;
+                *reu = nullptr;
+            };
+            if (device.empty()) { remove(); return true; }
+            if (device != "reu") { err = "no device '" + device + "' for the port slot (reu)"; return false; }
+            auto* r = new Reu();
+            const std::string opt = option.empty() ? "512K" : option;
+            std::ifstream probe(opt, std::ios::binary);
+            if (!r->setOption(probe.good() ? "image" : "size", opt, err)) { delete r; return false; }
+            remove();
+            r->setName("REU");
+            r->setDmaBus(bus);
+            r->setIrqLine(reuIrq.get());
+            *reu = r;
+            bus->setReu(r);
+            io->registerHandler(r);                 // reset, the debugger's device list
+            desc->busMasterStep = [r]() { return r->busMasterCycle(); };
+            return true;
+        };
+        port.info = [reu]() -> std::string {
+            if (!*reu) return "";
+            const uint32_t s = (*reu)->size();
+            return "reu (REU, " + (s >= (1u << 20) ? std::to_string(s >> 20) + " MB" : std::to_string(s >> 10) + " KB") + ")";
+        };
+        port.save = [reu](const std::string& path, std::string& err) {
+            if (!*reu) { err = "nothing is fitted"; return false; }
+            return (*reu)->saveImage(path, err);
+        };
+        desc->expansionSlots.push_back(std::move(port));
+    }
+
     // The cartridge's freeze button (Partner 128): NMI while it is held
     ISignalLine* freezeLine = nmi->createLine();
     desc->onKey = [kbd, restore, freezeLine, bus](const std::string& n, bool down) {
@@ -936,6 +996,9 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
                 io->tickAll(1);
                 return 1;
             }
+        }
+        if (d.busMasterStep && !z) {             // an REU's DMA holds the bus
+            if (const int dc = d.busMasterStep()) { io->tickAll((uint64_t)dc); return dc; }
         }
         if (z) {
             *half += z80->step();

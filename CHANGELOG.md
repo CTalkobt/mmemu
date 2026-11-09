@@ -8,6 +8,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
 ## [0.4.0] - Unreleased
 
 ### Front ends
+- **Expansion slots can save and load images:**
+  - CLI: `expansion <slot> save <path>`.
+  - MCP: `expansion` with `save`.
+  - GUI: "save its memory as an image..." in Control > Expansions..., and "(an image file...)" as an option.
+  - Any JSON machine can declare its own slots with `"expansions"`: a device type, its options, an IRQ line and whether it can take the bus (`IOHandler::busMasterCycle`, `MachineDescriptor::busMasterStep`).
 - **Expansion slots: devices fitted after a machine is made.** A machine lists them in `MachineDescriptor::expansionSlots`, each with the devices that fit and their options (a memory size, for example, through `parseMemorySize`).
   - **CLI:** `expansion [slot] [device [option]|remove]`.
   - **MCP:** the `expansion` tool.
@@ -36,6 +41,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Cartridges:** iNES and NES 2.0 `.nes` files. Mappers 0 NROM, 1 MMC1, 2 UxROM, 3 CNROM, 4 MMC3 (with the A12 scanline IRQ) and 7 AxROM.
   - **Machine:** OAM DMA (513/514 cycles), two controllers (gamepad, joystick or keyboard), and NMI/IRQ sampled before an instruction's last cycle. Inserting a cartridge powers the console on; reset is the RESET button.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
+
+### Commodore 64 / 128
+- **REU (RAM Expansion Unit), 128 KB-16 MB** (#264), fitted at run time in the C64's and C128's expansion port (`expansion port reu 512K`), after VICE's `reu.c`.
+  - The 8726 REC's registers at `$DF00`.
+  - All four transfer types, with fixed addresses, autoload, the `$FF00` trigger and the end-of-block and verify IRQs.
+  - The CPU waits while the DMA runs, one byte a cycle.
+  - The 1700/1764/1750 and 1750 XL wraparounds.
+  - `.reu` images can be loaded and saved.
+  - C128 BASIC 7.0's `STASH`, `FETCH` and `SWAP` work.
+  - See `doc/README-C64.md` §2.10.
 
 ### Apple II
 - **RamWorks III in the IIe's aux slot,** fitted once the machine is made. The IIe and enhanced IIe now have an `aux` expansion slot that takes `ext80` (the extended 80-column card, the default) or `ramworks3` with 128 KB to 16 MB.

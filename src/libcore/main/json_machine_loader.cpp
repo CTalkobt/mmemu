@@ -588,6 +588,10 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                         }
                     }
                 }
+                // Extra inputs by name (e.g. "expansion_irq": the expansion
+                // port's /IRQ, for a device fitted at run time)
+                for (const auto& l : sigSpec.value("lines", nlohmann::json::array()))
+                    signalMap[l.get<std::string>()] = mgr->createLine();
                 continue;
             }
         }
@@ -928,7 +932,10 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         uint64_t cycles = frameCycles, rcycles = retraceCycles;
         desc->schedulerStep = [frameAccum, vsync, retrace, cycles, rcycles](MachineDescriptor& d) {
             int total = 0;
-            for (auto& s : d.cpus) {
+            // A device holding the bus (an REU's DMA) runs instead of the CPU
+            if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
+                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+            } else for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
                     total += s.cpu->step();
                     if (d.ioRegistry) d.ioRegistry->tickAll(total);
@@ -948,6 +955,10 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     } else {
         desc->schedulerStep = [](MachineDescriptor& d) {
             int total = 0;
+            if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
+                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                return total;
+            }
             for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
                     total += s.cpu->step();
@@ -966,6 +977,108 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         for (auto& slot : d.cpus)
             if (slot.cpu) slot.cpu->reset();
     };
+
+    // -----------------------------------------------------------------------
+    // Step 9b — expansion slots: devices fitted at run time (the C64's REU)
+    // -----------------------------------------------------------------------
+    //   "expansions": [{ "name": "port", "description": "...", "canEmpty": true,
+    //     "devices": [{ "id": "reu", "type": "reu", "name": "REU", "description": "...",
+    //                   "options": ["128K", ...], "default": "512K", "optionKey": "size",
+    //                   "irq": "expansion_irq", "busMaster": true }] }]
+    // An option naming an existing file is passed as "image" (e.g. a .reu).
+    if (spec.contains("expansions")) {
+        IBus* dmaBus = desc->buses.empty() ? nullptr : desc->buses[0].bus;
+        for (const auto& ss : spec["expansions"]) {
+            struct DevSpec {
+                std::string id, type, name, optionKey, defaultOption;
+                ISignalLine* irq = nullptr;
+                bool busMaster = false;
+            };
+            struct Fitted {
+                IOHandler* dev = nullptr;
+                const DevSpec* spec = nullptr;
+                std::string option;
+                ~Fitted() { delete dev; }
+            };
+            auto specs = std::make_shared<std::vector<DevSpec>>();
+            auto fitted = std::make_shared<Fitted>();
+            MachineDescriptor::ExpansionSlot slot;
+            slot.name = ss.value("name", "port");
+            slot.description = ss.value("description", "");
+            slot.canEmpty = ss.value("canEmpty", true);
+            for (const auto& ds : ss.value("devices", nlohmann::json::array())) {
+                DevSpec d;
+                d.id = ds.value("id", "");
+                d.type = ds.value("type", d.id);
+                d.name = ds.value("name", d.id);
+                d.optionKey = ds.value("optionKey", "");
+                d.defaultOption = ds.value("default", "");
+                const std::string irqName = ds.value("irq", "");
+                if (!irqName.empty() && signalMap.count(irqName)) d.irq = signalMap[irqName];
+                d.busMaster = ds.value("busMaster", false);
+                std::vector<std::string> opts;
+                for (const auto& o : ds.value("options", nlohmann::json::array())) opts.push_back(o.get<std::string>());
+                slot.devices.push_back({d.id, ds.value("description", ""), opts, d.defaultOption});
+                specs->push_back(std::move(d));
+            }
+            const std::string slotName = slot.name;
+            slot.install = [desc, io, dmaBus, specs, fitted, slotName](const std::string& device, const std::string& option,
+                                                                       std::string& err) {
+                auto remove = [&]() {
+                    if (!fitted->dev) return;
+                    io->unregisterHandler(fitted->dev);
+                    if (fitted->spec->irq) fitted->spec->irq->set(false);
+                    if (fitted->spec->busMaster) desc->busMasterStep = nullptr;
+                    delete fitted->dev;
+                    fitted->dev = nullptr;
+                    fitted->spec = nullptr;
+                    fitted->option.clear();
+                };
+                if (device.empty()) { remove(); return true; }
+                const DevSpec* ds = nullptr;
+                for (const auto& d : *specs) if (d.id == device) ds = &d;
+                if (!ds) {
+                    std::string ids;
+                    for (const auto& d : *specs) ids += (ids.empty() ? "" : ", ") + d.id;
+                    err = "no device '" + device + "' for the " + slotName + " slot (" + ids + ")";
+                    return false;
+                }
+                IOHandler* dev = DeviceRegistry::instance().createDevice(ds->type);
+                if (!dev) { err = "device type '" + ds->type + "' isn't loaded"; return false; }
+                dev->setName(ds->name);
+                dev->setDmaBus(dmaBus);
+                const std::string opt = option.empty() ? ds->defaultOption : option;
+                if (!opt.empty()) {
+                    std::ifstream probe(opt, std::ios::binary);
+                    const std::string key = probe.good() ? "image" : ds->optionKey;
+                    if (!dev->setOption(key, opt, err)) { delete dev; return false; }
+                }
+                remove();
+                if (ds->irq) dev->setIrqLine(ds->irq);
+                io->registerHandler(dev);
+                if (ds->busMaster) desc->busMasterStep = [dev]() { return dev->busMasterCycle(); };
+                fitted->dev = dev;
+                fitted->spec = ds;
+                fitted->option = opt;
+                return true;
+            };
+            slot.info = [fitted]() -> std::string {
+                if (!fitted->dev) return "";
+                std::string s = fitted->spec->id;
+                DeviceInfo di;
+                fitted->dev->getDeviceInfo(di);
+                for (const auto& kv : di.state)
+                    if (kv.first == "Size") return s + " (" + fitted->dev->name() + ", " + kv.second + ")";
+                return fitted->option.empty() ? s : s + " (" + fitted->option + ")";
+            };
+            slot.save = [fitted](const std::string& path, std::string& err) {
+                if (!fitted->dev) { err = "nothing is fitted"; return false; }
+                return fitted->dev->saveDeviceImage(path, err);
+            };
+            desc->expansionSlots.push_back(std::move(slot));
+            desc->deleters.push_back([fitted]() { delete fitted->dev; fitted->dev = nullptr; });
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Step 10 — intercepts from the machine and its ROM entries

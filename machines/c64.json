@@ -49,7 +49,7 @@
       ],
       "symbolFiles": [ "roms/c64/kernal.sym", "roms/c64/basic.sym" ],
       "signals": [
-        { "name": "irq", "type": "shared", "sources": ["VIC-II", "CIA1"] },
+        { "name": "irq", "type": "shared", "sources": ["VIC-II", "CIA1"], "lines": ["expansion_irq"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["CIA2"], "lines": ["restore"] }
       ],
       "plaWiring": {
@@ -79,6 +79,14 @@
         "device": "Drive8",
         "busPort": { "device": "CIA2", "port": "A" }
       },
+      "expansions": [
+        { "name": "port",
+          "description": "The expansion port: a Commodore RAM Expansion Unit (REU) at $DF00, beside any cartridge",
+          "devices": [
+            { "id": "reu", "type": "reu", "name": "REU",
+              "description": "Commodore REU: 128K (1700), 256K (1764), 512K (1750), or 1M-16M (1750 XL style); or a .reu image file",
+              "options": ["128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"], "default": "512K",
+              "optionKey": "size", "irq": "expansion_irq", "busMaster": true } ] } ],
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     }
 

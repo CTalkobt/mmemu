@@ -23,6 +23,7 @@
 #include "kbd_vic20.h"
 #include "keyboard_matrix_pet.h"
 #include "plugins/devices/datasette/main/datasette.h"
+#include "plugins/devices/reu/main/reu.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -96,6 +97,8 @@ static void ensureBootTestRegistriesReady() {
     DeviceRegistry::instance().registerDevice("kbd_c64",
         []() -> IOHandler* { return new KbdC64(); });
 
+    DeviceRegistry::instance().registerDevice("reu",
+        []() -> IOHandler* { return new Reu(); });
     DeviceRegistry::instance().registerDevice("datasette",
         []() -> IOHandler* { return new Datasette(); });
 
@@ -572,5 +575,98 @@ TEST_CASE(pet_tape_lines) {
     ASSERT_EQ(state("Motor On"), std::string("no"));
     tape->controlTape("stoprecord");
     ASSERT_EQ(rd(0xE810) & 0x10, 0x10);
+    delete desc;
+}
+
+// An REU in the C64's expansion port, fitted at run time: the CPU waits
+// while it holds the bus; it copies the screen to its bank 3 and back to
+// $C400 on the $FF00 trigger (a write under the KERNAL); a fixed C64
+// address reaches the VIC-II's border register; then it comes out again
+TEST_CASE(c64_reu_expansion) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("port");
+    ASSERT(slot != nullptr);
+    EXPECT_EQ(slot->info(), std::string(""));
+    std::string err;
+    EXPECT_TRUE(!slot->install("reu", "3M", err));
+    EXPECT_TRUE(!slot->install("georam", "", err));
+    ASSERT(slot->install("reu", "1M", err));
+    EXPECT_EQ(slot->info(), std::string("reu (REU, 1 MB)"));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    auto* reu = dynamic_cast<Reu*>(desc->ioRegistry->findHandler("REU"));
+    ASSERT(reu != nullptr);
+    IBus* bus = desc->buses[0].bus;
+    ICore* cpu = desc->cpus[0].cpu;
+    auto regs = [&](uint16_t host, uint32_t reuAddr, uint16_t len) {
+        bus->write8(0xDF02, (uint8_t)host); bus->write8(0xDF03, (uint8_t)(host >> 8));
+        bus->write8(0xDF04, (uint8_t)reuAddr); bus->write8(0xDF05, (uint8_t)(reuAddr >> 8));
+        bus->write8(0xDF06, (uint8_t)(reuAddr >> 16));
+        bus->write8(0xDF07, (uint8_t)len); bus->write8(0xDF08, (uint8_t)(len >> 8));
+    };
+    // The screen to bank 3: 1000 cycles with the CPU stopped
+    regs(0x0400, 0x030000, 1000);
+    bus->write8(0xDF01, 0x90);
+    const uint32_t pc = cpu->pc();
+    bool held = true;
+    for (int i = 0; i < 1000; ++i) held = held && desc->schedulerStep(*desc) == 1 && cpu->pc() == pc;
+    EXPECT_TRUE(held);
+    EXPECT_TRUE(!reu->dmaActive());
+    bool same = true;
+    for (int i = 0; i < 1000; ++i) same = same && reu->ram()[0x30000 + (size_t)i] == bus->peek8(0x0400 + (uint32_t)i);
+    EXPECT_TRUE(same);
+    EXPECT_EQ(bus->peek8(0xDF00) & 0x40, 0x40);     // end of block
+    // Back to $C400, armed for $FF00: nothing until that write
+    regs(0xC400, 0x030000, 1000);
+    bus->write8(0xDF01, 0x81);
+    desc->schedulerStep(*desc);
+    EXPECT_TRUE(!reu->dmaActive());
+    bus->write8(0xFF00, 0x00);                      // RAM under the KERNAL; the REU sees it
+    EXPECT_TRUE(reu->dmaActive());
+    for (int i = 0; i < 2000 && reu->dmaActive(); ++i) desc->schedulerStep(*desc);
+    same = true;
+    for (int i = 0; i < 1000; ++i) same = same && bus->peek8(0xC400 + (uint32_t)i) == reu->ram()[0x30000 + (size_t)i];
+    EXPECT_TRUE(same);
+    // DMA sees I/O: a fixed C64 address on the border colour
+    reu->ram()[0x10] = 0x05;
+    regs(0xD020, 0x000010, 1);
+    bus->write8(0xDF0A, 0x80);
+    bus->write8(0xDF01, 0x91);
+    desc->schedulerStep(*desc);
+    EXPECT_EQ(bus->peek8(0xD020) & 0x0F, 0x05);
+    // Out again: $DF00 is no longer the REU's
+    ASSERT(slot->install("", "", err));
+    EXPECT_EQ(slot->info(), std::string(""));
+    EXPECT_TRUE(desc->ioRegistry->findHandler("REU") == nullptr);
+    EXPECT_TRUE(!desc->busMasterStep);
+    delete desc;
+}
+
+// The CPU drives the REU: a program copies 40 bytes of the screen with the
+// end-of-block IRQ on; the KERNAL's IRQ vector reaches its handler, which
+// reads (and so acknowledges) the status
+TEST_CASE(c64_reu_irq_program) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    std::string err;
+    ASSERT(desc->expansionSlot("port")->install("reu", "256K", err));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->buses[0].bus;
+    static const uint8_t PROGRAM[] = {0x78, 0xA9, 0x7F, 0x8D, 0x0D, 0xDC, 0xAD, 0x0D, 0xDC, 0xA9, 0x00, 0x8D, 0x1A, 0xD0, 0x85, 0x02, 0xA9, 0x60, 0x8D, 0x14, 0x03, 0xA9, 0xC0, 0x8D, 0x15, 0x03, 0xA9, 0x00, 0x8D, 0x02, 0xDF, 0xA9, 0x04, 0x8D, 0x03, 0xDF, 0xA9, 0x00, 0x8D, 0x04, 0xDF, 0x8D, 0x05, 0xDF, 0x8D, 0x06, 0xDF, 0xA9, 0x28, 0x8D, 0x07, 0xDF, 0xA9, 0x00, 0x8D, 0x08, 0xDF, 0xA9, 0xC0, 0x8D, 0x09, 0xDF, 0xA9, 0x90, 0x8D, 0x01, 0xDF, 0x58, 0xA5, 0x02, 0xF0, 0xFC, 0x4C, 0x48, 0xC0, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xAD, 0x00, 0xDF, 0x85, 0x03, 0xE6, 0x02, 0x4C, 0x81, 0xEA};
+    for (size_t i = 0; i < sizeof PROGRAM; ++i) bus->write8(0xC000 + (uint32_t)i, PROGRAM[i]);
+    desc->cpus[0].cpu->setPc(0xC000);
+    for (uint64_t c = 0; c < 20000;) c += desc->schedulerStep(*desc);
+    EXPECT_EQ(bus->peek8(0x02), 1);                 // the handler ran once
+    EXPECT_EQ(bus->peek8(0x03), 0xD0);              // IRQ, end of block, 256K chips
+    EXPECT_EQ(bus->peek8(0xDF00), 0x10);            // and that read cleared them
+    auto* reu = dynamic_cast<Reu*>(desc->ioRegistry->findHandler("REU"));
+    ASSERT(reu != nullptr);
+    bool same = true;
+    for (int i = 0; i < 40; ++i) same = same && reu->ram()[(size_t)i] == bus->peek8(0x0400 + (uint32_t)i);
+    EXPECT_TRUE(same);
     delete desc;
 }

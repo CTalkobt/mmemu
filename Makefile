@@ -211,6 +211,9 @@ PLUGIN_MEGA65IMPORTER_SRCS = src/plugins/mega65Importer/main/plugin_main.cpp \
 PLUGIN_C64PLA_SRCS = src/plugins/devices/c64_pla/main/c64_pla.cpp \
 	src/plugins/devices/c64_pla/main/plugin_init.cpp
 
+PLUGIN_REU_SRCS = src/plugins/devices/reu/main/reu.cpp \
+	src/plugins/devices/reu/main/plugin_init.cpp
+
 PLUGIN_CIA6526_SRCS = src/plugins/devices/cia6526/main/cia6526.cpp \
 	src/plugins/devices/cia6526/main/plugin_init.cpp
 
@@ -247,6 +250,7 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 
 PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
                    src/plugins/machines/c128/main/c128_carts.cpp \
+	src/plugins/devices/reu/main/reu.cpp \
 	src/plugins/devices/vdc8563/main/vdc8563.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
@@ -576,6 +580,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/45gs02/test/test_ca45_assemble_line.cpp \
 	src/plugins/devices/vic2/test/test_vic2_unit.cpp \
 	src/plugins/devices/c64_pla/test/test_c64_pla.cpp \
+	src/plugins/devices/reu/test/test_reu.cpp \
 	src/plugins/devices/vic3/test/test_vic3.cpp \
 	src/plugins/devices/virtual_iec/test/test_virtual_iec_unit.cpp \
 	tests/src/test_cross_validation.cpp \
@@ -665,6 +670,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/mega65Importer/main/rom_discovery.o \
 	src/plugins/mega65Importer/main/rom_importer.o \
 	src/plugins/devices/c64_pla/main/c64_pla.o \
+	src/plugins/devices/reu/main/reu.o \
 	src/plugins/devices/cia6526/main/cia6526.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
@@ -763,6 +769,7 @@ PLUGIN_VIC20_GUI_OBJS  = src/plugins/machines/vic20/main/plugin_init.o
 PLUGIN_VICEIMPORTER_OBJS = $(PLUGIN_VICEIMPORTER_SRCS:.cpp=.o)
 PLUGIN_MEGA65IMPORTER_OBJS = $(PLUGIN_MEGA65IMPORTER_SRCS:.cpp=.o)
 PLUGIN_C64PLA_OBJS   = $(PLUGIN_C64PLA_SRCS:.cpp=.o)
+PLUGIN_REU_OBJS      = $(PLUGIN_REU_SRCS:.cpp=.o)
 PLUGIN_CIA6526_OBJS  = $(PLUGIN_CIA6526_SRCS:.cpp=.o)
 PLUGIN_VIC2_OBJS   = $(PLUGIN_VIC2_SRCS:.cpp=.o)
 PLUGIN_VIC3_OBJS   = $(PLUGIN_VIC3_SRCS:.cpp=.o)
@@ -838,6 +845,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-vice-importer.so \
 	$(LIBDIR)/mmemu-plugin-mega65-importer.so \
 	$(LIBDIR)/mmemu-plugin-c64-pla.so \
+	$(LIBDIR)/mmemu-plugin-reu.so \
 	$(LIBDIR)/mmemu-plugin-cia6526.so \
 	$(LIBDIR)/mmemu-plugin-vic2.so \
 	$(LIBDIR)/mmemu-plugin-vic3.so \
@@ -950,6 +958,9 @@ $(LIBDIR)/mmemu-plugin-mega65-importer.so: $(PLUGIN_MEGA65IMPORTER_OBJS) | $(LIB
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-c64-pla.so: $(PLUGIN_C64PLA_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-reu.so: $(PLUGIN_REU_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cia6526.so: $(PLUGIN_CIA6526_OBJS) | $(LIBDIR)

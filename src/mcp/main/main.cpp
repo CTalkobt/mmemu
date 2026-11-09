@@ -790,10 +790,12 @@ Json handleDescribe() {
     expProps.oVal["device"] = expDevProp;
     Json expOptProp(Json::OBJ); expOptProp.oVal["type"] = Json("string"); expOptProp.oVal["description"] = Json("The device's option, e.g. a memory size ('512K', '8M'); omit for its default");
     expProps.oVal["option"] = expOptProp;
+    Json expSaveProp(Json::OBJ); expSaveProp.oVal["type"] = Json("string"); expSaveProp.oVal["description"] = Json("Save the fitted device's memory to this file (an REU's .reu image) instead of fitting anything");
+    expProps.oVal["save"] = expSaveProp;
     expSchema.oVal["properties"] = expProps;
     Json expReq(Json::ARR); expReq.push_back(Json("machine_id"));
     expSchema.oVal["required"] = expReq;
-    addTool("expansion", "List the machine's expansion slots (the IIe's aux slot), or fit a device in one (a RamWorks III of 128K-16M) or remove it; the machine resets after a change", expSchema);
+    addTool("expansion", "List the machine's expansion slots (the IIe's aux slot, the C64/C128 expansion port), or fit a device in one (a RamWorks III of 128K-16M; an REU of 128K-16M or a .reu image) or remove it, or save its memory; the machine resets after a change", expSchema);
 
     Json rstSchema(Json::OBJ);
     rstSchema.oVal["type"] = Json("object");
@@ -2848,7 +2850,16 @@ Json handleToolsCall(const Json& params) {
             }
             textItem.oVal["text"] = Json(out.empty() ? std::string("This machine has no expansion slots.") : out);
         } else if (auto* slot = ms->machine->expansionSlot(slotName)) {
-            if (device.empty()) {
+            const std::string savePath = args.contains("save") ? args["save"].sVal : "";
+            std::string saveErr;
+            if (!savePath.empty()) {
+                if (slot->save && slot->save(savePath, saveErr)) {
+                    textItem.oVal["text"] = Json("Saved " + slotName + " to " + savePath);
+                } else {
+                    textItem.oVal["text"] = Json("Error: " + (saveErr.empty() ? std::string("this slot has nothing to save") : saveErr));
+                    textItem.oVal["isError"] = Json(true);
+                }
+            } else if (device.empty()) {
                 std::string info = slot->info ? slot->info() : "";
                 textItem.oVal["text"] = Json(slotName + ": " + (info.empty() ? "(empty)" : info));
             } else {
