@@ -129,6 +129,7 @@ PLUGIN_A2600_SRCS = src/plugins/machines/atari2600/main/machine_a2600.cpp \
 
 PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/machines/apple2/main/machine_apple2gs.cpp \
+	src/plugins/machines/apple2/main/gs_drive35.cpp \
 	src/plugins/machines/apple2/main/disk2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
@@ -593,6 +594,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/atari2600/main/machine_a2600.o \
 	src/plugins/machines/apple2/main/machine_apple2.o \
 	src/plugins/machines/apple2/main/machine_apple2gs.o \
+	src/plugins/machines/apple2/main/gs_drive35.o \
 	src/plugins/machines/apple2/main/disk2.o \
 	src/plugins/devices/apple2_video/main/apple2_video.o \
 	src/plugins/machines/bbc/main/machine_bbc.o \

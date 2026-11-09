@@ -13,11 +13,16 @@
 // Stage 2: Super Hi-Res (video.c), 320 and 640 pixels, fill mode, the
 // scan-line interrupt (sim65816.c do_scan_int).
 //
-// Not yet: DOC sound, the IWM and its drives, the mouse, the serial ports (the SCC
+// Drives: the 5.25" drives (slot 6) through Disk2Card, the 3.5" drives
+// (slot 5) through Gs35Drive (gs_drive35.cpp).
+//
+// Not yet: DOC sound, the mouse, the serial ports (the SCC
 // answers as idle).
 
 #include "machine_apple2.h"
 #include "apple2_parts.h"
+#include "disk2.h"
+#include "gs_drive35.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -544,6 +549,7 @@ public:
         m_doc.reset();
         m_scc.reset();
         m_iwmMotor = m_iwmDrive2 = m_iwmQ6 = m_iwmQ7 = false;
+        m_iwmPhases = 0;
         m_iwmMode = 0;
         m_clock.setCtl(m_clock.ctl() & 0x0F);
     }
@@ -563,7 +569,11 @@ public:
     }
     /** 1.02 MHz cycles elapsed (the Mega II's clock: video, speaker, devices). */
     uint64_t slowCycles() const { return m_ticks / SLOW_TICKS; }
-    bool fast() const { return m_c036 & 0x80; }
+    // CYAREG bit 7: fast; bits 0-3 slow it down while a slot 4-7 drive's
+    // motor runs (bit 2: slot 6, the 5.25" drives)
+    bool fast() const { return (m_c036 & 0x80) && !((m_c036 & 0x04) && m_disk && m_disk->motorOn() && !(m_c031 & 0x40)); }
+    void setDisk(Disk2Card* d) { m_disk = d; }
+    void setDrives35(Gs35Drives* d) { m_drives35 = d; }
     double speedMHz() const { return fast() ? 2.8 : 1.0; }
 
     const BusConfig& config() const override { return m_cfg; }
@@ -1008,11 +1018,38 @@ private:
         return 0;                                                           // slots 1-7: no cards yet
     }
 
-    // The IWM (iwm.c read_iwm / write_iwm), no drives yet: the switches,
-    // the mode register (Q7, Q6 set, motor off) and the status register
-    // (the sense line, the motor, the mode)
+    // The IWM (iwm.c read_iwm / write_iwm): the switches, the mode register
+    // (Q7, Q6 set, motor off) and the status register (the sense line, the
+    // motor, the mode). With the 5.25" drives selected ($C031 bit 6 clear)
+    // the switches and the data go to the Disk II emulation, which the
+    // IWM's synchronous mode matches
     uint8_t iwm(int loc, const uint8_t* wr) {
         const bool on = loc & 1;
+        if (loc < 8) {
+            if (on) m_iwmPhases |= 1u << (loc >> 1);
+            else m_iwmPhases &= ~(1u << (loc >> 1));
+        }
+        if (m_drives35 && (m_c031 & 0x40)) return iwm35(loc, wr);
+        if (m_disk && !(m_c031 & 0x40)) {
+            const uint16_t addr = (uint16_t)(0xC0E0 | loc);
+            const int r = m_disk->io(addr, wr, slowCycles());
+            switch (loc >> 1) {
+                case 4: m_iwmMotor = on; break;
+                case 5: m_iwmDrive2 = on; break;
+                case 6: m_iwmQ6 = on; break;
+                case 7: m_iwmQ7 = on; break;
+            }
+            if (wr) {
+                if (on && m_iwmQ6 && m_iwmQ7 && !m_iwmMotor) m_iwmMode = *wr & 0x1F;
+                return 0;
+            }
+            if (on) return 0;
+            const int q = (m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0);
+            if (q == 1) return (uint8_t)((r >= 0 ? (r & 0x80) : 0x80) | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+            if (q == 2) return 0x80;
+            if (q == 0) return r >= 0 ? (uint8_t)r : 0xFF;
+            return 0;
+        }
         switch (loc >> 1) {
             case 0: case 1: case 2: case 3: break;                          // the stepper phases
             case 4: m_iwmMotor = on; break;
@@ -1034,6 +1071,46 @@ private:
         }
     }
 
+    // The 3.5" drives ($C031 bit 6; iwm.c): the phase lines CA0-CA2 and SEL
+    // ($C031 bit 7) pick a drive register; phase 3 (LSTRB) rising runs it as
+    // a command, the status register reads it in bit 7
+    int drive35Reg() const {
+        return (int)(((m_iwmPhases & 3) << 2) | ((m_c031 >> 6) & 2) | ((m_iwmPhases >> 2) & 1));
+    }
+    uint8_t iwm35(int loc, const uint8_t* wr) {
+        const bool on = loc & 1;
+        Gs35Drive& d = m_drives35->drive[m_iwmDrive2 ? 1 : 0];
+        switch (loc >> 1) {
+            case 3: if (on && m_iwmMotor) d.command(drive35Reg(), m_ticks); break;
+            case 4: m_iwmMotor = on; break;
+            case 5: m_iwmDrive2 = on; break;
+            case 6: m_iwmQ6 = on; break;
+            case 7:
+                if (!on && m_iwmQ7 && m_iwmMotor) d.endWrite();     // iwm_write_end
+                m_iwmQ7 = on;
+                break;
+        }
+        Gs35Drive& cur = m_drives35->drive[m_iwmDrive2 ? 1 : 0];
+        if (wr) {
+            if (on && m_iwmQ6 && m_iwmQ7) {
+                if (m_iwmMotor) cur.writeNibble(*wr, m_ticks);
+                else m_iwmMode = *wr & 0x1F;
+            }
+            return 0;
+        }
+        if (on) return 0;
+        const int q = (m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0);
+        switch (q) {
+            case 0: return m_iwmMotor ? cur.readNibble(m_ticks) : 0xFF;
+            case 1: {
+                const int st = m_iwmMotor ? cur.status(drive35Reg(), m_ticks) : 1;
+                return (uint8_t)((st & 1) << 7 | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+            }
+            case 2: return cur.handshake(m_ticks);
+            default: return 0;
+        }
+    }
+
     BusConfig m_cfg;
     std::vector<uint8_t> m_rom, m_fast, m_slow;
     uint32_t m_romBase = 0;
@@ -1041,6 +1118,9 @@ private:
     GsAdb* m_adb;
     Apple2Speaker* m_spk;
     const W65C816* m_cpu = nullptr;
+    Disk2Card* m_disk = nullptr;
+    Gs35Drives* m_drives35 = nullptr;
+    uint32_t m_iwmPhases = 0;
     GsClock m_clock;
     GsDoc m_doc;
     GsScc m_scc;
@@ -1153,12 +1233,18 @@ MachineDescriptor* createIIgs(std::string* err) {
         std::rotate(rom.begin(), rom.begin() + 0x10000, rom.end());
     // The Mega II's character generator: the enhanced IIe's (MouseText)
     if (!loadFile("roms/apple2/Apple2e_Enhanced_Video.rom", 0x1000, chars, err)) return nullptr;
+    // The 5.25" drives: the IIgs ROM's slot 6 firmware drives them through
+    // the IWM; the Disk II emulation (its P5 ROM is not used)
+    std::vector<uint8_t> disk2;
+    if (!loadFile("roms/apple2/DISK2.rom", 0x100, disk2, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
     desc->machineId = "apple2gs";
     desc->displayName = "Apple IIgs";
     desc->licenseClass = "proprietary";
     desc->clockHz = CPU_HZ;
+    desc->uiPanesSet = true;
+    desc->uiPanes = {"drive"};
 
     auto* video = new Apple2Video(Apple2Video::Model::IIeEnhanced);
     video->setCharRom(std::move(chars));
@@ -1177,12 +1263,23 @@ MachineDescriptor* createIIgs(std::string* err) {
     io->registerHandler(display);
     io->registerHandler(adb);
     io->registerHandler(spk);
-    desc->deleters.push_back([video, display, adb, spk]() { delete display; delete video; delete adb; delete spk; });
+    // The 3.5" drives first: they take only 800 KB images, so `disk mount`
+    // (which tries each drive device in turn) gives the 5.25" drives the rest
+    auto* drives35 = new Gs35Drives();
+    bus->setDrives35(drives35);
+    io->registerHandler(drives35);
+    auto* disk = new Disk2Card(std::move(disk2));
+    bus->setDisk(disk);
+    io->registerHandler(disk);
+    desc->deleters.push_back([video, display, adb, spk, disk, drives35]() {
+        delete display; delete video; delete adb; delete spk; delete disk; delete drives35;
+    });
 
     bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
     // Control-Reset; with Command (Open Apple) the ROM cold-starts
-    adb->onReset = [bus, cpu](bool, bool) {
+    adb->onReset = [bus, cpu, disk](bool, bool) {
         bus->ctrlReset();
+        disk->reset(false);
         cpu->reset();
     };
     desc->onKey = [adb](const std::string& n, bool down) { return adb->key(n, down); };
@@ -1205,12 +1302,13 @@ MachineDescriptor* createIIgs(std::string* err) {
         io->resetAll();
         cpu->reset();
     };
-    desc->schedulerStep = [bus, cpu, io](MachineDescriptor&) -> int {
+    desc->schedulerStep = [bus, cpu, io, disk](MachineDescriptor&) -> int {
         const uint64_t before = bus->slowCycles();
         bus->begin();
         const int c = cpu->step();
         bus->end(c);
         const uint64_t slow = bus->slowCycles() - before;
+        disk->update(bus->slowCycles(), slow);
         if (slow) io->tickAll(slow);
         return c;
     };
