@@ -40,8 +40,10 @@
 #include "plugins/65816/main/cpu65816.h"
 #include "plugins/devices/apple2_video/main/apple2_video.h"
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <deque>
 #include <fstream>
 #include <iterator>
@@ -66,6 +68,7 @@ constexpr int FAST_BANKS = 0x40;       // 4 MB of fast RAM: banks $00-$3F
 // ---------------------------------------------------------------------------
 class GsAdb : public IOHandler, public IKeyboardMatrix {
 public:
+    explicit GsAdb(int romVersion) : m_rom(romVersion) {}
     std::function<void(bool cmd, bool ctrl)> onReset;     // Control-Reset (Command: cold start)
 
     const char* name() const override { return "ADB"; }
@@ -190,17 +193,18 @@ public:
             case 0x01: case 0x03: case 0x73: break;      // abort, flush, disable mouse SRQ
             case 0x04: case 0x05: inCmd(1); break;      // set / clear modes
             case 0x06: inCmd(3); break;                 // set config
-            case 0x07: inCmd(4); break;                 // sync (ROM 01: 4 bytes)
+            case 0x07: inCmd(m_rom >= 3 ? 8 : 4); break; // sync: 4 bytes (ROM 01), 8 (ROM 03)
             case 0x08: case 0x09: inCmd(2); break;      // write / read memory
             case 0x0A: send(1, m_mode << 24); break;    // read modes
             case 0x0B:                                  // read config
                 send(4, (0x82u << 24) | (uint32_t)m_mouseCtl << 20 | (uint32_t)m_kbdCtl << 16 | m_repeatInfo);
                 break;
-            case 0x0D: send(1, 5u << 24); break;        // version: ROM 01 = 5
+            case 0x0D: send(1, (m_rom >= 3 ? 6u : 5u) << 24); break;   // version: ROM 01 5, ROM 03 6
             case 0x0E: send(2, 0x08000000); break;      // character sets
             case 0x0F: send(2, 0x0A000000); break;      // keyboard layouts
             case 0x10: break;                           // reset the system: not taken
             case 0x11: inCmd(1); break;                 // send ADB keycodes
+            case 0x12: case 0x13: if (m_rom >= 3) inCmd(2); break;   // ROM 03 only
             default:
                 if ((val & 0xF0) == 0xB0) inCmd(2);     // listen, register 3
                 else if ((val & 0xF0) == 0xC0) {        // talk, register 0
@@ -339,7 +343,9 @@ private:
         if (d == 4) m_repeatDelay = 0;
         else if (d < 4) m_repeatDelay = (d + 1) * 15;
         static const uint32_t RATE[] = {1, 2, 3, 3, 4, 5, 7, 15, 30, 60};
-        if ((v2 & 0xF) < 10) m_repeatRate = RATE[v2 & 0xF];
+        int r = (int)(v2 & 0xF);
+        if (m_rom >= 3) r = 9 - r;                      // ROM 03 counts the other way
+        if (r >= 0 && r < 10) m_repeatRate = RATE[r];
     }
     uint8_t readRam(uint32_t a) const {
         if (a >= 0x100) {
@@ -347,7 +353,8 @@ private:
             if (a == 0x1401) return 0xF7;
             return 0;
         }
-        if (a == 0x0B) {                                // ROM 01: the special keys' state
+        if (a == 0x0C && m_rom >= 3) return (uint8_t)(m_c025 & 0xC7);   // ROM 03: the special keys
+        if (a == 0x0B && m_rom < 3) {                   // ROM 01: the special keys' state
             uint32_t v = (m_c025 >> 1) & 0x43;
             v |= (m_c025 << 2) & 0x4;
             v |= (m_c025 >> 2) & 0x10;
@@ -376,6 +383,7 @@ private:
         }
     }
 
+    const int m_rom;
     uint32_t m_c025 = 0, m_c027 = 0, m_mode = 0, m_intByte = 0;
     State m_state = IDLE;
     uint32_t m_cmd = 0, m_cmdData[16] = {};
@@ -417,9 +425,22 @@ public:
         if (v & 0x80) transfer();
     }
     uint8_t* bram() { return m_bram; }
+    /** Battery RAM kept in `path` (read now, written when a byte changes). */
+    void setBramFile(const std::string& path) {
+        m_bramPath = path;
+        std::ifstream f(path, std::ios::binary);
+        if (f) f.read((char*)m_bram, sizeof m_bram);
+    }
 
 private:
     enum Mode { IDLE, TIME, INTERNAL, BRAM1, BRAM2 };
+    void saveBram() {
+        if (m_bramPath.empty()) return;
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(m_bramPath).parent_path(), ec);
+        std::ofstream f(m_bramPath, std::ios::binary | std::ios::trunc);
+        if (f) f.write((const char*)m_bram, sizeof m_bram);
+    }
     // Seconds since 1 January 1904, local time
     static uint32_t hostTime() {
         const time_t now = time(nullptr);
@@ -453,7 +474,7 @@ private:
                 break;
             case BRAM1:
                 if (read && m_read) m_data = m_bram[m_reg & 0xFF];
-                else if (!read && !m_read) m_bram[m_reg & 0xFF] = m_data;
+                else if (!read && !m_read && m_bram[m_reg & 0xFF] != m_data) { m_bram[m_reg & 0xFF] = m_data; saveBram(); }
                 break;
             case TIME:
                 if (read) m_data = (uint8_t)(now() >> (m_reg * 8));
@@ -473,6 +494,7 @@ private:
     int m_read = 0, m_reg = 0;
     uint32_t m_offset = 0;
     uint8_t m_bram[256] = {};
+    std::string m_bramPath;
 };
 
 // ---------------------------------------------------------------------------
@@ -484,8 +506,8 @@ private:
 // ---------------------------------------------------------------------------
 class GsBus : public IBus {
 public:
-    GsBus(std::vector<uint8_t> rom, Apple2Video* video, GsAdb* adb, Apple2Speaker* spk)
-        : m_rom(std::move(rom)), m_video(video), m_adb(adb), m_spk(spk) {
+    GsBus(std::vector<uint8_t> rom, Apple2Video* video, GsAdb* adb, Apple2Speaker* spk, int romVersion)
+        : m_romVersion(romVersion), m_rom(std::move(rom)), m_video(video), m_adb(adb), m_spk(spk) {
         m_cfg = {24, 8, BusRole::DATA, true, 0xFFFFFF};
         m_fast.assign((size_t)FAST_BANKS << 16, 0);
         m_slow.assign(0x20000, 0);
@@ -499,7 +521,7 @@ public:
         std::fill(m_fast.begin(), m_fast.end(), 0);
         std::fill(m_slow.begin(), m_slow.end(), 0);
         m_ticks = m_videoCycle = 0;
-        m_c036 = 0x80;                          // fast
+        m_c036 = m_romVersion >= 3 ? 0xC0 : 0x80;   // fast; ROM 03: the power-on bit (KEGS)
         m_c029 = 0x01;
         m_c02b = 0x08;
         m_adb->powerOn();
@@ -932,7 +954,10 @@ private:
             case 0x34: if (wr) { syncVideo(); m_clock.setCtl(val); } return m_clock.ctl();
             case 0x35: if (wr) m_shadow = val; return (uint8_t)m_shadow;
             case 0x36:                                                      // CYAREG: speed
-                if (wr) m_c036 = val & ~0x60u;                              // ROM 01: bits 5, 6 read 0
+                if (wr) {                                                   // bit 5 reads 0; bit 6 is ROM 03's power-on bit
+                    m_c036 = val & ~0x20u;
+                    if ((val & 0x60) != 0x40 || m_romVersion < 3) m_c036 &= ~0x60u;
+                }
                 return (uint8_t)m_c036;
             case 0x37: return 0;
             case 0x38: case 0x39: if (wr) { m_scc->writeReg(0x39 - r, val); return 0; } return m_scc->readReg(0x39 - r);
@@ -1016,6 +1041,31 @@ private:
             if (on) m_iwmPhases |= 1u << (loc >> 1);
             else m_iwmPhases &= ~(1u << (loc >> 1));
         }
+        // Phases 1 and 3 on: ENABLE2, the SmartPort bus (UniDisk 3.5 and the
+        // like) that ROM 03 polls; none is fitted: the sense line reads 1,
+        // data $FF, the handshake $C0 three times then $80, writes are
+        // dropped (iwm.c read_iwm, iwm_read_enable2_handshake)
+        // (the phase switches themselves still reach the drives: the 3.5"
+        // drive's commands with CA1 set pulse phase 3 with phase 1 on)
+        if ((m_iwmPhases & 0xA) == 0xA && loc >= 8) {
+            switch (loc >> 1) {
+                case 4: m_iwmMotor = on; break;
+                case 5: m_iwmDrive2 = on; break;
+                case 6: m_iwmQ6 = on; break;
+                case 7: m_iwmQ7 = on; break;
+            }
+            if (wr) {
+                if (on && m_iwmQ6 && m_iwmQ7 && !m_iwmMotor) m_iwmMode = *wr & 0x1F;
+                return 0;
+            }
+            if (on) return 0;
+            switch ((m_iwmQ7 ? 2 : 0) | (m_iwmQ6 ? 1 : 0)) {
+                case 0: return 0xFF;
+                case 1: return (uint8_t)(0x80 | (m_iwmMotor ? 0x20 : 0) | m_iwmMode);
+                case 2: if (++m_enable2Hs > 3) { m_enable2Hs = 0; return 0x80; } return 0xC0;
+                default: return 0;
+            }
+        }
         if (m_drives35 && (m_c031 & 0x40)) return iwm35(loc, wr);
         if (m_disk && !(m_c031 & 0x40)) {
             const uint16_t addr = (uint16_t)(0xC0E0 | loc);
@@ -1098,6 +1148,7 @@ private:
         }
     }
 
+    const int m_romVersion;
     BusConfig m_cfg;
     std::vector<uint8_t> m_rom, m_fast, m_slow;
     uint32_t m_romBase = 0;
@@ -1109,6 +1160,7 @@ private:
     Gs35Drives* m_drives35 = nullptr;
     GsSmartPort* m_smartport = nullptr;
     uint32_t m_iwmPhases = 0;
+    int m_enable2Hs = 0;
     GsClock m_clock;
     GsSound* m_sound = nullptr;
     GsScc* m_scc = nullptr;
@@ -1203,22 +1255,27 @@ private:
 
 }  // namespace
 
-MachineDescriptor* createIIgs(std::string* err) {
-    // The IIgs ROM is Apple's and not distributed here (doc/README-APPLE2.md)
-    const char* romFile = "roms/apple2/apple2gs-rom01.rom";
+MachineDescriptor* createIIgs(std::string* err, int romVersion) {
+    // The IIgs ROMs are Apple's and not distributed here (doc/README-APPLE2.md):
+    // ROM 01, 128 KB in banks $FE-$FF; ROM 03, 256 KB in $FC-$FF
+    const bool rom3 = romVersion >= 3;
+    const char* romFile = rom3 ? "roms/apple2/apple2gs-rom03.rom" : "roms/apple2/apple2gs-rom01.rom";
+    const size_t romSize = rom3 ? 0x40000 : 0x20000;
     std::vector<uint8_t> rom, chars;
     {
         std::ifstream f(romFile, std::ios::binary);
         if (f) rom.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
     }
-    if (rom.size() != 0x20000) {
-        if (err) *err = std::string("missing Apple IIgs ROM 01 ") + romFile + " (128 KB; local only, see doc/README-APPLE2.md)";
+    if (rom.size() != romSize) {
+        if (err) *err = std::string("missing Apple IIgs ROM ") + (rom3 ? "03 " : "01 ") + romFile +
+                        (rom3 ? " (256 KB" : " (128 KB") + "; local only, see doc/README-APPLE2.md)";
         return nullptr;
     }
-    // Bank $FE then $FF; some dumps have the halves the other way round
-    // (bank $FF, with the vectors, first): put them in order
-    if (rom[0x1FFFC] == 0 && rom[0x1FFFD] == 0 && (rom[0xFFFC] | rom[0xFFFD]))
-        std::rotate(rom.begin(), rom.begin() + 0x10000, rom.end());
+    // The last two banks are $FE then $FF; some dumps have them the other way
+    // round (bank $FF, with the vectors, first): put them in order
+    const size_t fe = romSize - 0x20000;
+    if (rom[fe + 0x1FFFC] == 0 && rom[fe + 0x1FFFD] == 0 && (rom[fe + 0xFFFC] | rom[fe + 0xFFFD]))
+        std::rotate(rom.begin() + (long)fe, rom.begin() + (long)fe + 0x10000, rom.end());
     // The Mega II's character generator: the enhanced IIe's (MouseText)
     if (!loadFile("roms/apple2/Apple2e_Enhanced_Video.rom", 0x1000, chars, err)) return nullptr;
     // The 5.25" drives: the IIgs ROM's slot 6 firmware drives them through
@@ -1227,8 +1284,8 @@ MachineDescriptor* createIIgs(std::string* err) {
     if (!loadFile("roms/apple2/DISK2.rom", 0x100, disk2, err)) return nullptr;
 
     auto* desc = new MachineDescriptor();
-    desc->machineId = "apple2gs";
-    desc->displayName = "Apple IIgs";
+    desc->machineId = rom3 ? "apple2gs-rom03" : "apple2gs";
+    desc->displayName = rom3 ? "Apple IIgs (ROM 03)" : "Apple IIgs";
     desc->licenseClass = "proprietary";
     desc->clockHz = CPU_HZ;
     desc->uiPanesSet = true;
@@ -1236,9 +1293,17 @@ MachineDescriptor* createIIgs(std::string* err) {
 
     auto* video = new Apple2Video(Apple2Video::Model::IIeEnhanced);
     video->setCharRom(std::move(chars));
-    auto* adb = new GsAdb();
+    auto* adb = new GsAdb(romVersion);
     auto* spk = new Apple2Speaker();
-    auto* bus = new GsBus(std::move(rom), video, adb, spk);
+    auto* bus = new GsBus(std::move(rom), video, adb, spk, romVersion);
+    // The battery RAM (Control Panel settings) between runs: $MMEMU_DATA_DIR
+    // or ~/.local/share/mmsim, a file per ROM
+    {
+        std::string dir;
+        if (const char* d = std::getenv("MMEMU_DATA_DIR")) dir = d;
+        else if (const char* h = std::getenv("HOME")) dir = std::string(h) + "/.local/share/mmsim";
+        if (!dir.empty()) bus->clock().setBramFile(dir + (rom3 ? "/apple2gs-bram-rom03.bin" : "/apple2gs-bram-rom01.bin"));
+    }
     auto* sound = new GsSound(spk, CPU_HZ);             // the DOC and the speaker, mixed
     bus->setSound(sound);
     auto* scc = new GsScc(CPU_HZ);                      // the serial ports

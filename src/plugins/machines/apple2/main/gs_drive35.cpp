@@ -355,7 +355,7 @@ int Gs35Drive::status(int reg, uint64_t now) {
             const uint64_t bit = (uint64_t)((double)now / TICKS_PER_BIT);
             return (int)((bit >> 7) & 1);
         }
-        case 0xF: return 0;                              // the drive is there
+        case 0xF: return m_installed ? 0 : 1;            // the drive is there
         default: return 1;
     }
 }
