@@ -1,5 +1,5 @@
 // The SNES PPU after Mesen2 (Core/SNES/SnesPpu.cpp), GPL-3.0, Sour and the
-// Mesen contributors, and fullsnes / Anomie; line-based.
+// Mesen contributors, and fullsnes / Anomie; drawn up to the dot.
 
 #include "snes_ppu.h"
 
@@ -28,11 +28,12 @@ const ZTable Z_MODE7 = {{{3, 3}, {1, 5}, {0, 0}, {0, 0}}, {2, 4, 6, 7}};
 
 int16_t sext13(int v) { return (int16_t)((v & 0x1000) ? (v | ~0x1FFF) : (v & 0x1FFF)); }
 
+// Brightness as Mesen: the 5-bit component times b / 15, then to 8 bits
 struct BrightLut {
     uint8_t v[16][32];
     BrightLut() {
         for (int b = 0; b < 16; ++b)
-            for (int c = 0; c < 32; ++c) v[b][c] = (uint8_t)((c * 255 / 31) * (b + 1) / 16);
+            for (int c = 0; c < 32; ++c) v[b][c] = (uint8_t)((c * b / 15) * 255 / 31);
     }
 };
 const BrightLut BRIGHT;
@@ -73,9 +74,14 @@ void Ppu::reset() {
     m_rangeOver = m_timeOver = false;
     m_ppu1Bus = m_ppu2Bus = 0;
     m_mpy = 0; m_mpyResult = 0;
-    for (auto& f : m_frame) f.fill(0xFF000000);
+    for (auto& f : m_frame) f.assign((size_t)MAX_WIDTH * MAX_HEIGHT, 0xFF000000u);
+    m_frameWide[0] = m_frameWide[1] = m_frameTall[0] = m_frameTall[1] = false;
     m_back = 0;
     m_frames = 0;
+    m_interlaceField = false;
+    m_overscanFrame = m_interlaceFrame = m_wideFrame = false;
+    m_drawLine = -1; m_drawX = 0;
+    for (auto& o : m_obj.opaque) o = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,11 +277,46 @@ uint8_t Ppu::read(uint8_t reg) {
     }
 }
 
+void Ppu::startFrame() {
+    m_interlaceField = !m_interlaceField;
+    m_overscanFrame = m_setini & 0x04;
+    m_interlaceFrame = m_setini & 0x01;
+    m_wideFrame = doubleWidth() || m_interlaceFrame;
+    m_rangeOver = m_timeOver = false;
+    // An interlaced frame draws one field: the other stays from the last frame
+    if (m_interlaceFrame) m_frame[m_back] = m_frame[m_back ^ 1];
+}
+
 void Ppu::startVblank() {
     if (!m_forcedBlank) m_oamAddr = m_oamReload;
+    m_frameWide[m_back] = m_wideFrame;
+    m_frameTall[m_back] = m_overscanFrame;
     m_back ^= 1;
     ++m_frames;
-    m_interlaceField = !m_interlaceField;
+}
+
+void Ppu::sync(int line, int dot) {
+    if (line != m_drawLine || m_drawX > 255) return;
+    const int end = std::min(dot - 22, 255);
+    if (end < m_drawX) return;
+    drawPixels(line, m_drawX, end);
+    m_drawX = end + 1;
+}
+
+void Ppu::endLine(int line) {
+    if (line == m_drawLine && m_drawX <= 255) drawPixels(line, m_drawX, 255);
+    m_drawLine = line + 1;
+    m_drawX = 0;
+    if (m_drawLine >= vblankLine()) { m_drawLine = -1; return; }
+    if (m_forcedBlank || !((m_tm | m_ts) & 0x10)) { m_obj.opaque.fill(false); return; }
+    renderObj(m_drawLine, m_obj, m_objPal);
+}
+
+IVideoOutput::VideoDimensions Ppu::getDimensions() const {
+    const int f = m_back ^ 1;
+    const int w = m_frameWide[f] ? MAX_WIDTH : WIDTH;
+    const int h = (m_frameTall[f] ? 239 : HEIGHT) * (m_frameWide[f] ? 2 : 1);
+    return {w, h, w, h};
 }
 
 // ---------------------------------------------------------------------------
@@ -298,14 +339,16 @@ uint16_t Ppu::paletteColor(int bpp, int bg, int pal, int idx) const {
     }
 }
 
-void Ppu::renderBg(int bg, int bpp, int line, Layer& out) {
+void Ppu::renderBg(int bg, int bpp, int line, Layer& out, int x0, int x1, bool even) {
     const bool hires = m_bgMode == 5 || m_bgMode == 6;
     const bool t16 = (m_tile16 >> bg) & 1;
     const int tw = (t16 || hires) ? 16 : 8, th = t16 ? 16 : 8;
     const bool mosaic = (m_mosaicMask >> bg) & 1;
     const int msz = mosaic ? m_mosaicSize : 1;
-    // The BG row is the line counter (the first visible line is 1) plus VOFS
-    const int y = line - ((line - 1) % msz);
+    // The BG row is the line counter (the first visible line is 1) plus VOFS;
+    // interlaced modes 5/6 draw the field's rows of a 448-row picture
+    int y = line - ((line - 1) % msz);
+    if (hires && (m_setini & 1)) y = y * 2 + (mosaic ? 0 : (int)m_interlaceField);
     const bool opt = m_bgMode == 2 || m_bgMode == 4 || m_bgMode == 6;
     const int wordsPerTile = bpp * 4;
     auto mapEntry = [&](int b, int tileX, int tileY) -> uint16_t {
@@ -315,7 +358,7 @@ void Ppu::renderBg(int bg, int bpp, int line, Layer& out) {
         if ((ty & 32) && (m_mapSize[b] & 2)) a = (uint16_t)(a + ((m_mapSize[b] & 1) ? 0x800 : 0x400));
         return m_vram[a & 0x7FFF];
     };
-    for (int x = 0; x < 256; ++x) {
+    for (int x = x0; x <= x1; ++x) {
         out.opaque[x] = false;
         const int xm = x - (x % msz);
         int hofs = m_hofs[bg], vofs = m_vofs[bg];
@@ -339,7 +382,7 @@ void Ppu::renderBg(int bg, int bpp, int line, Layer& out) {
                 }
             }
         }
-        const int px = (hires ? (xm * 2 + 1) + hofs * 2 : xm + hofs);
+        const int px = (hires ? (xm * 2 + (even ? 0 : 1)) + hofs * 2 : xm + hofs);
         const int py = y + vofs;
         const int tileX = px / tw, tileY = py / th;
         const uint16_t e = mapEntry(bg, tileX, tileY);
@@ -364,7 +407,7 @@ void Ppu::renderBg(int bg, int bpp, int line, Layer& out) {
     }
 }
 
-void Ppu::renderMode7(int bg, int line, Layer& out) {
+void Ppu::renderMode7(int bg, int line, Layer& out, int x0, int x1) {
     const bool mosaic = (m_mosaicMask >> bg) & 1;
     const int msz = mosaic ? m_mosaicSize : 1;
     int y = line;
@@ -377,7 +420,7 @@ void Ppu::renderMode7(int bg, int line, Layer& out) {
     const int ox = ((a * hoff) & ~63) + ((b * voff) & ~63) + ((b * y) & ~63) + (cx << 8);
     const int oy = ((c * hoff) & ~63) + ((d * voff) & ~63) + ((d * y) & ~63) + (cy << 8);
     const int over = m_m7sel >> 6;
-    for (int x = 0; x < 256; ++x) {
+    for (int x = x0; x <= x1; ++x) {
         out.opaque[x] = false;
         int sx = x - (x % msz);
         if (m_m7sel & 0x01) sx = 255 - sx;
@@ -405,6 +448,7 @@ void Ppu::renderMode7(int bg, int line, Layer& out) {
 void Ppu::renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal) {
     for (int x = 0; x < 256; ++x) out.opaque[x] = false;
     const int y = line - 1;
+    const bool objInterlace = m_setini & 0x02;   // sprites at half height, the field's rows
     const int first = m_oamPriority ? ((m_oamAddr >> 2) & 0x7F) : 0;
     int list[32];
     int n = 0;
@@ -417,7 +461,7 @@ void Ppu::renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal) {
         if (x >= 256) x -= 512;
         if (x <= -w) continue;
         const uint8_t sy = m_oam[i * 4 + 1];
-        if (((y - sy) & 0xFF) >= h) continue;
+        if (((y - sy) & 0xFF) >= (objInterlace ? h / 2 : h)) continue;
         if (n == 32) { m_rangeOver = true; break; }
         list[n++] = i;
     }
@@ -432,6 +476,7 @@ void Ppu::renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal) {
         const uint8_t attr = m_oam[i * 4 + 3];
         const int tile = m_oam[i * 4 + 2] | ((attr & 1) << 8);
         int dy = (y - m_oam[i * 4 + 1]) & 0xFF;
+        if (objInterlace) dy = dy * 2 + (int)m_interlaceField;
         if (attr & 0x80) dy = h - 1 - dy;
         const int p = (attr >> 1) & 7, prio = (attr >> 4) & 3;
         for (int col = 0; col < w / 8; ++col) {
@@ -478,16 +523,57 @@ bool Ppu::window(int layer, int x) const {
     }
 }
 
-void Ppu::renderLine(int line) {
-    if (line < 1 || line > HEIGHT) return;
-    uint32_t* dst = &m_frame[m_back][(size_t)(line - 1) * WIDTH];
+// One pixel's colour math, after Mesen's ApplyColorMathToPixel: `a` the
+// pixel, `b` the sub screen's (or, for the hi-res even pixel, the main
+// screen's previous one); x picks the flags.
+void Ppu::mathPixel(uint16_t& a, uint16_t b, int x, bool cw) {
+    int halfShift = (m_cgadsub & 0x40) ? 1 : 0;
+    switch (m_cgwsel >> 6) {                        // clip to black
+    case 1: if (!cw) { a = 0; halfShift = 0; } break;
+    case 2: if (cw) { a = 0; halfShift = 0; } break;
+    case 3: a = 0; break;
+    default: break;
+    }
+    if (!(m_mainFlags[x] & 1)) return;
+    switch ((m_cgwsel >> 4) & 3) {                  // prevent colour math
+    case 1: if (!cw) return; break;
+    case 2: if (cw) return; break;
+    case 3: return;
+    default: break;
+    }
+    uint16_t other = m_fixed;
+    if (m_cgwsel & 0x02) {
+        if (m_subHas[x]) other = b;
+        else halfShift = 0;
+    }
+    int r = a & 31, g = (a >> 5) & 31, bl = (a >> 10) & 31;
+    const int r2 = other & 31, g2 = (other >> 5) & 31, b2 = (other >> 10) & 31;
+    if (m_cgadsub & 0x80) {
+        r = std::max(r - r2, 0) >> halfShift; g = std::max(g - g2, 0) >> halfShift; bl = std::max(bl - b2, 0) >> halfShift;
+    } else {
+        r = std::min((r + r2) >> halfShift, 31); g = std::min((g + g2) >> halfShift, 31); bl = std::min((bl + b2) >> halfShift, 31);
+    }
+    a = (uint16_t)(r | g << 5 | bl << 10);
+}
+
+void Ppu::drawPixels(int line, int x0, int x1) {
+    if (line < 1 || line >= vblankLine()) return;
+    const bool wide = doubleWidth();
+    m_wideFrame = m_wideFrame || wide || (m_setini & 1);
+    const bool interlaced = m_setini & 1;
+    const int row = (line - 1) * 2;
+    uint32_t* rowA = &m_frame[m_back][(size_t)(row + (interlaced ? (int)m_interlaceField : 0)) * MAX_WIDTH];
+    uint32_t* rowB = interlaced ? nullptr : rowA + MAX_WIDTH;
     if (m_forcedBlank) {
-        std::fill(dst, dst + WIDTH, 0xFF000000u);
+        for (int x = x0; x <= x1; ++x) {
+            m_main[x] = m_sub[x] = 0; m_mainFlags[x] = 0;
+            rowA[x * 2] = rowA[x * 2 + 1] = 0xFF000000u;
+            if (rowB) rowB[x * 2] = rowB[x * 2 + 1] = 0xFF000000u;
+        }
         return;
     }
-    static Layer layers[5];
-    static std::array<uint8_t, 256> objPal;
-    bool have[5] = {};
+    static Layer layers[4], evenLayers[4];
+    bool have[5] = {}, haveEven[4] = {};
     const ZTable* z;
     switch (m_bgMode) {
     case 0: z = &Z_MODE0; break;
@@ -497,68 +583,95 @@ void Ppu::renderLine(int line) {
     default: z = &Z_MODE2_5; break;
     }
     static const int BPP[8][4] = {{2, 2, 2, 2}, {4, 4, 2, 0}, {4, 4, 0, 0}, {8, 4, 0, 0}, {8, 2, 0, 0}, {4, 2, 0, 0}, {4, 0, 0, 0}, {8, 0, 0, 0}};
+    const bool hiresBg = m_bgMode == 5 || m_bgMode == 6;
     const uint8_t used = m_tm | m_ts;
     for (int bg = 0; bg < 4; ++bg) {
         if (!(used & (1 << bg))) continue;
         if (m_bgMode == 7) {
-            if (bg == 0 || (bg == 1 && (m_setini & 0x40))) { renderMode7(bg, line, layers[bg]); have[bg] = true; }
+            if (bg == 0 || (bg == 1 && (m_setini & 0x40))) { renderMode7(bg, line, layers[bg], x0, x1); have[bg] = true; }
             continue;
         }
         if (!BPP[m_bgMode][bg]) continue;
-        renderBg(bg, BPP[m_bgMode][bg], line, layers[bg]);
+        renderBg(bg, BPP[m_bgMode][bg], line, layers[bg], x0, x1, false);
         have[bg] = true;
+        if (hiresBg && (m_ts & (1 << bg))) { renderBg(bg, BPP[m_bgMode][bg], line, evenLayers[bg], x0, x1, true); haveEven[bg] = true; }
     }
-    if (used & 0x10) { renderObj(line, layers[4], objPal); have[4] = true; }
+    have[4] = (used & 0x10) != 0;
 
+    auto layerAt = [&](int l, bool even) -> const Layer& {
+        if (l == 4) return m_obj;
+        return (even && hiresBg) ? evenLayers[l] : layers[l];
+    };
     const uint16_t backdrop = m_cgram[0];
-    const auto& bl = BRIGHT.v[m_brightness];
-    for (int x = 0; x < 256; ++x) {
-        auto pick = [&](uint8_t enabled, uint8_t winMask) {
+    // The sub screen matters for hi-res and for colour math with it; colour
+    // math matters when a layer takes part or the clip-to-black is on
+    const bool mathUsed = (m_cgadsub & 0x3F) || (m_cgwsel & 0xC0);
+    const bool needSub = wide || (mathUsed && (m_cgwsel & 0x02));
+    for (int x = x0; x <= x1; ++x) {
+        auto pick = [&](uint8_t enabled, uint8_t winMask, bool even) {
             Pixel best;
             for (int l = 0; l < 5; ++l) {
-                if (!have[l] || !(enabled & (1 << l)) || !layers[l].opaque[x]) continue;
+                if (!(enabled & (1 << l))) continue;
+                if (l < 4 ? !(even && hiresBg ? haveEven[l] : have[l]) : !have[4]) continue;
+                const Layer& ly = layerAt(l, even);
+                if (!ly.opaque[x]) continue;
                 if ((winMask & (1 << l)) && window(l, x)) continue;
-                const uint8_t zz = l < 4 ? z->bg[l][layers[l].prio[x]] : z->obj[layers[l].prio[x]];
+                const uint8_t zz = l < 4 ? z->bg[l][ly.prio[x]] : z->obj[ly.prio[x]];
                 if (zz > best.z) {
                     best.z = zz;
-                    best.color = layers[l].color[x];
+                    best.color = ly.color[x];
                     best.layer = (uint8_t)l;
-                    best.objMath = l != 4 || objPal[x] >= 4;
+                    best.objMath = l != 4 || m_objPal[x] >= 4;
                 }
             }
             return best;
         };
-        Pixel main = pick(m_tm, m_tmw);
-        if (!main.z) main.color = backdrop;
-        const bool cw = window(5, x);
-        const int fb = m_cgwsel >> 6;
-        if (fb == 3 || (fb == 1 && !cw) || (fb == 2 && cw)) main.color = 0;
-        const int me = (m_cgwsel >> 4) & 3;
-        const bool mathOn = me == 0 || (me == 1 && cw) || (me == 2 && !cw);
-        uint16_t c = main.color;
-        if (mathOn && (m_cgadsub & (1 << main.layer)) && main.objMath) {
-            uint16_t op = m_fixed;
-            bool half = m_cgadsub & 0x40;
-            if (m_cgwsel & 0x02) {
-                const Pixel sub = pick(m_ts, m_tsw);
-                if (sub.z) op = sub.color;
-                else half = false;
-            }
-            int r = c & 31, g = (c >> 5) & 31, b = (c >> 10) & 31;
-            const int r2 = op & 31, g2 = (op >> 5) & 31, b2 = (op >> 10) & 31;
-            if (m_cgadsub & 0x80) { r -= r2; g -= g2; b -= b2; }
-            else { r += r2; g += g2; b += b2; }
-            if (half) { r >>= 1; g >>= 1; b >>= 1; }
-            r = std::clamp(r, 0, 31); g = std::clamp(g, 0, 31); b = std::clamp(b, 0, 31);
-            c = (uint16_t)(r | g << 5 | b << 10);
+        const Pixel main = pick(m_tm, m_tmw, false);
+        m_main[x] = main.z ? main.color : backdrop;
+        m_mainFlags[x] = (uint8_t)(((m_cgadsub >> main.layer) & 1) && main.objMath);
+        if (needSub) {
+            const Pixel sub = pick(m_ts, m_tsw, true);
+            m_sub[x] = sub.z ? sub.color : backdrop;
+            m_subHas[x] = sub.z != 0;
+        } else {
+            m_sub[x] = backdrop;
+            m_subHas[x] = false;
         }
-        dst[x] = 0xFF000000u | (uint32_t)bl[c & 31] << 16 | (uint32_t)bl[(c >> 5) & 31] << 8 | bl[(c >> 10) & 31];
+    }
+    // Colour math; in hi-res the even pixel is the sub screen's, mixed with the main screen's previous pixel
+    if (mathUsed) {
+        for (int x = x0; x <= x1; ++x) {
+            const bool cw = window(5, x);
+            if (wide) {
+                const uint16_t subPixel = m_sub[x];
+                const int px = x > 0 ? x - 1 : 0;
+                mathPixel(m_sub[x], x > 0 ? m_main[x - 1] : 0, px, cw);
+                mathPixel(m_main[x], subPixel, x, cw);
+            } else {
+                mathPixel(m_main[x], m_sub[x], x, cw);
+            }
+        }
+    }
+    const auto& bl = BRIGHT.v[m_brightness];
+    auto toArgb = [&](uint16_t c) { return 0xFF000000u | (uint32_t)bl[c & 31] << 16 | (uint32_t)bl[(c >> 5) & 31] << 8 | bl[(c >> 10) & 31]; };
+    for (int x = x0; x <= x1; ++x) {
+        const uint32_t m = toArgb(m_main[x]);
+        const uint32_t e = wide ? toArgb(m_sub[x]) : m;
+        rowA[x * 2] = e; rowA[x * 2 + 1] = m;
+        if (rowB) { rowB[x * 2] = e; rowB[x * 2 + 1] = m; }
     }
 }
 
 void Ppu::renderFrame(uint32_t* buffer) {
-    const auto& src = m_frame[m_back ^ 1];
-    std::copy(src.begin(), src.end(), buffer);
+    const int f = m_back ^ 1;
+    const auto& src = m_frame[f];
+    const int lines = m_frameTall[f] ? 239 : HEIGHT;
+    if (m_frameWide[f]) {
+        std::copy(src.begin(), src.begin() + (size_t)MAX_WIDTH * lines * 2, buffer);
+        return;
+    }
+    for (int y = 0; y < lines; ++y)
+        for (int x = 0; x < WIDTH; ++x) buffer[y * WIDTH + x] = src[(size_t)y * 2 * MAX_WIDTH + x * 2 + 1];
 }
 
 }  // namespace snes

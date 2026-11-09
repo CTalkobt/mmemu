@@ -41,12 +41,13 @@ one powers the console on; the machine's reset is the RESET button.
   Banks `$7E-$7F` hold all 128 KB of work RAM. Banks `$40-$7D` and
   `$C0-$FF` are the cartridge's.
 
-- **Timing**: a line is 1364 master clocks (341 dots) and a frame 262 lines.
-  The DRAM refresh steals 40 clocks a line at clock 538. Each visible line
-  (1-224) is drawn at the start of horizontal blank (dot 276), then HDMA
-  runs for the next. Vertical blank starts at line 225: the NMI flag
-  (`$4210`), the auto joypad read (`$4218-$421F`, 3 lines busy), and the
-  OAM address reload. HDMA restarts at line 0.
+- **Timing**: a line is 1364 master clocks (341 dots; dots 323 and 327
+  take 6 clocks) and a frame 262 lines. Interlaced, every other frame has
+  263 lines; otherwise line 240 of every other frame is 4 clocks short. The
+  DRAM refresh steals 40 clocks a line at clock 538. HDMA runs at dot 276
+  for the next line. Vertical blank starts at line 225 (240 with overscan):
+  the NMI flag (`$4210`), the auto joypad read (`$4218-$421F`, 3 lines
+  busy), and the OAM address reload. HDMA restarts at line 0.
 - **Interrupts**: NMI (`$4200` bit 7) and the H/V timer IRQ (`HTIME`,
   `VTIME`, `$4211`).
 - **Multiply/divide**: `$4202`/`$4203` and `$4204-$4206`, with results at
@@ -63,7 +64,11 @@ one powers the console on; the machine's reset is the RESET button.
 
 ### PPU
 
-Drawn a line at a time:
+Drawn as the beam goes: before each write to a PPU register (by the CPU,
+DMA or HDMA) the line is drawn up to the current dot with the old values,
+pixel x leaving at dot x + 22. Mid-line changes split the line as on the
+hardware. A line's sprites are found and fetched in the previous line's
+horizontal blank.
 
 - **Backgrounds**:
   - **Modes 0-6:** 2/4/8 bpp, 8x8 and 16x16 tiles, 32/64-tile maps, direct
@@ -79,12 +84,22 @@ Drawn a line at a time:
 - **Colour math**: add or subtract, half, the fixed colour, subscreen
   backdrop rules, force-black and its windows.
 - **Other effects**: mosaic and brightness. Forced blank shows black.
+- **Hi-res**: modes 5 and 6 and pseudo-hires (`SETINI` bit 3) make
+  512-pixel lines, the sub screen in the even pixels, with colour math as
+  Mesen does it (each even pixel mixed with the main screen's previous one).
+- **Interlace** (`SETINI` bit 0): 448 (or 478) rows, a field a frame. Modes
+  5 and 6 then draw twice the BG rows, and OBJ interlace (bit 1) halves
+  the sprites' height.
+- **Overscan** (`SETINI` bit 2): 239 lines.
+- **Picture size**: 256x224 normally, 512x448 for a frame with hi-res or
+  interlace anywhere in it, and 239/478 lines with overscan.
 - **Registers**: VRAM with the address remaps and prefetch, CGRAM, the OAM
-  write latch, `$2134` multiply, the H/V latches and `$213C-$213F`.
+  write latch, `$2134` multiply, the H/V latches (`$2137` and `WRIO`) and
+  `$213C-$213F`.
 
-**Not yet**: hi-res modes 5/6 and pseudo-hires show only the main screen's
-pixels (256 wide), there is no interlace and no 239-line overscan, and
-register writes take effect for whole lines.
+**Not yet**: the PPU's per-dot fetches (a mid-line change to a BG's
+scroll or tile base takes effect at the next pixel, not the next tile);
+VRAM, OAM and CGRAM writes are allowed during the picture.
 
 ### Sound
 
@@ -134,16 +149,20 @@ register writes take effect for whole lines.
   - **Instruction tests:** the 65816 and SPC700 `CPUTest` ROMs, read back
     from the screen (`MMEMU_SNES_SURVEY=1`; 127 PASS, 0 FAIL).
   - **Sound:** the Twinkle music demo has to make sound.
+  - **Pictures:** `MMEMU_SNES_SHOTS=<dir>` runs every PPU demo for 3
+    seconds and saves a PNG of each, with the speed.
+- `test_snes_machine.cpp` also checks a mid-line write splitting a line,
+  hi-res and interlace frame sizes and fields, and overscan.
 
-Also seen running: krom's PPU demos (mode 7 rotate/zoom and perspective,
-HDMA waves and gradients, windows, mosaic, 8bpp pictures, tile flips, the
-mode 5 hi-res picture) and Tecmo's Monster Farm Jump (menus with colour
-math, mode 7 stages with sprites).
+Also seen running: all of krom's PPU demos (mode 7 rotate/zoom and
+perspective, HDMA waves and gradients, windows, mosaic, 8bpp pictures, tile
+flips, the H-IRQ palette pictures with 64/128 colours a tile row, pseudo-hires,
+the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
+(menus with colour math, mode 7 stages with sprites).
 
 ## Not yet
 
 - Cartridge coprocessors (DSP-1..4, Super FX, SA-1, S-DD1, Cx4, SPC7110...).
-- True hi-res (512-pixel) output, interlace, overscan, mid-line raster effects.
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, battery RAM saving, the mouse, Super Scope and multitap.

@@ -288,3 +288,75 @@ TEST_CASE(snes_joypad) {
     EXPECT_EQ(bus->peek8(0x0001), 0x12);                 // Start, Left
     delete m;
 }
+
+namespace {
+/** Set CGRAM colour 0 (the backdrop). */
+void backdrop(snes::Ppu& p, uint16_t c) { p.write(0x21, 0); p.write(0x22, (uint8_t)c); p.write(0x22, (uint8_t)(c >> 8)); }
+/** Draw the rest of a frame (from line `from`) and finish it. */
+void finishFrame(snes::Ppu& p, int from) { for (int l = from; l < 225; ++l) p.endLine(l); p.startVblank(); }
+}  // namespace
+
+// A register write part way along a line splits it: pixel x leaves at dot x + 22
+TEST_CASE(snes_ppu_midline_write) {
+    snes::Ppu p;
+    p.write(0x00, 0x0F);
+    backdrop(p, 0x001F);
+    p.startFrame();
+    p.endLine(0);
+    p.sync(1, 22 + 100);                    // pixels 0-100 drawn red
+    backdrop(p, 0x7C00);
+    finishFrame(p, 1);
+    const auto d = p.getDimensions();
+    EXPECT_EQ(d.width, 256);
+    EXPECT_EQ(d.height, 224);
+    std::vector<uint32_t> f(256 * 224);
+    p.renderFrame(f.data());
+    EXPECT_EQ(f[100], snes::Ppu::argb(0x001F));
+    EXPECT_EQ(f[101], snes::Ppu::argb(0x7C00));
+    EXPECT_EQ(f[256], snes::Ppu::argb(0x7C00));
+}
+
+// Pseudo-hires gives 512-pixel lines; interlace draws one field's rows a frame
+TEST_CASE(snes_ppu_hires_interlace) {
+    snes::Ppu p;
+    p.write(0x00, 0x0F);
+    p.write(0x33, 0x08);                    // pseudo-hires
+    backdrop(p, 0x001F);
+    p.startFrame();
+    finishFrame(p, 0);
+    auto d = p.getDimensions();
+    EXPECT_EQ(d.width, 512);
+    EXPECT_EQ(d.height, 448);
+    std::vector<uint32_t> f(512 * 448);
+    p.renderFrame(f.data());
+    EXPECT_EQ(f[0], snes::Ppu::argb(0x001F));
+    EXPECT_EQ(f[512 + 511], snes::Ppu::argb(0x001F));
+
+    p.write(0x33, 0x01);                    // interlace: two fields, red then blue
+    p.startFrame();
+    const bool first = p.oddField();
+    finishFrame(p, 0);
+    p.startFrame();
+    backdrop(p, 0x7C00);
+    finishFrame(p, 0);
+    d = p.getDimensions();
+    EXPECT_EQ(d.width, 512);
+    EXPECT_EQ(d.height, 448);
+    p.renderFrame(f.data());
+    const uint32_t red = snes::Ppu::argb(0x001F), blue = snes::Ppu::argb(0x7C00);
+    EXPECT_EQ(f[(first ? 1 : 0) * 512 + 7], red);
+    EXPECT_EQ(f[(first ? 0 : 1) * 512 + 7], blue);
+    EXPECT_EQ(f[(first ? 3 : 2) * 512 + 7], red);
+}
+
+// Overscan: 239 lines, and vertical blank at line 240
+TEST_CASE(snes_ppu_overscan) {
+    snes::Ppu p;
+    p.write(0x00, 0x0F);
+    p.write(0x33, 0x04);
+    p.startFrame();
+    EXPECT_EQ(p.vblankLine(), 240);
+    for (int l = 0; l < 240; ++l) p.endLine(l);
+    p.startVblank();
+    EXPECT_EQ(p.getDimensions().height, 239);
+}

@@ -3,17 +3,22 @@
 // The SNES PPU (S-PPU1 and S-PPU2, #15): $2100-$213F.
 //
 // After Mesen2 (Core/SNES/SnesPpu.cpp), GPL-3.0, Sour and the Mesen
-// contributors, and the fullsnes / Anomie documentation. Rendered a line at
-// a time, at the start of horizontal blank (before HDMA changes registers for
-// the next line): BG modes 0-7 with 8x8 and 16x16 tiles, 2/4/8 bpp, direct
+// contributors, and the fullsnes / Anomie documentation. Drawn as the beam
+// goes: before every register write the pixels up to the current dot are
+// drawn with the old values (pixel x leaves at dot x + 22), so mid-line
+// changes split the line as on the hardware. Sprites for a line are found
+// and fetched in the previous line's horizontal blank. BG modes 0-7 with
+// 8x8 and 16x16 tiles, 2/4/8 bpp, direct
 // colour, offset-per-tile (modes 2, 4, 6), mode 7 (the matrix, flips,
 // screen-over, EXTBG), sprites (the 8 size pairs, priority rotation, the
 // 32-sprite / 34-sliver line limits), the two windows and their logic for
 // every layer and the colour window, main/sub screens, colour math
 // (add/subtract, half, fixed colour), mosaic, brightness and forced blank.
-// Hi-res modes 5 and 6 and pseudo-hires show the main screen's pixels only.
-// Left out: interlace, mid-line register changes, the overscan (239-line)
-// picture.
+// Hi-res (modes 5 and 6, pseudo-hires) makes 512-pixel lines, the sub screen
+// in the even pixels; interlace makes 448 or 478 lines, a field a frame, with
+// modes 5/6 drawing twice the rows and OBJ interlace halving sprites. The
+// overscan setting gives 239 lines. A frame with neither hi-res nor
+// interlace is given at 256 pixels and one row a line.
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ivideo_output.h"
@@ -21,6 +26,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace snes {
 
@@ -28,6 +34,9 @@ class Ppu : public IOHandler, public IVideoOutput {
 public:
     static constexpr int WIDTH = 256;
     static constexpr int HEIGHT = 224;
+    /** The frame buffer: 512 pixels and two rows a line, 239 lines. */
+    static constexpr int MAX_WIDTH = 512;
+    static constexpr int MAX_HEIGHT = 478;
 
     Ppu();
     ~Ppu() override = default;
@@ -38,10 +47,19 @@ public:
     uint8_t read(uint8_t reg);
     uint8_t peek(uint8_t reg) const;
 
-    /** Draw screen line `line` (1-224). */
-    void renderLine(int line);
+    /** Draw line `line` up to dot `dot` (before a register write). */
+    void sync(int line, int dot);
+    /** Horizontal blank of line `line` (0 to the last visible): finish it, fetch the next line's sprites. */
+    void endLine(int line);
+    /** Line 0: the field flips, the frame's overscan/interlace settings are taken. */
+    void startFrame();
     /** Vertical blank starts: the frame is complete; OAM address reload. */
     void startVblank();
+    /** The first line of vertical blank: 225, or 240 with overscan (as at line 0). */
+    int vblankLine() const { return m_overscanFrame ? 240 : 225; }
+    /** $2133 bit 0, and the field ($213F bit 7). */
+    bool interlace() const { return m_setini & 1; }
+    bool oddField() const { return m_interlaceField; }
     /** Latch the H/V counters ($2137 read or WRIO bit 7). */
     void latchCounters(int dot, int line) { m_hLatch = (uint16_t)dot; m_vLatch = (uint16_t)line; m_latched = true; }
     bool forcedBlank() const { return m_forcedBlank; }
@@ -70,7 +88,7 @@ public:
     // ------------------------------------------------------------------
     // IVideoOutput
     // ------------------------------------------------------------------
-    VideoDimensions getDimensions() const override { return {WIDTH, HEIGHT, WIDTH, HEIGHT}; }
+    VideoDimensions getDimensions() const override;
     void renderFrame(uint32_t* buffer) override;
 
 private:
@@ -84,9 +102,14 @@ private:
 
     uint16_t vramAddrRemap() const;
     void vramIncrement(bool high);
-    void renderBg(int bg, int bpp, int line, Layer& out);
-    void renderMode7(int bg, int line, Layer& out);
+    bool doubleWidth() const { return (m_setini & 0x08) || m_bgMode == 5 || m_bgMode == 6; }
+    /** Draw pixels [x0, x1] of line `line` with the registers as they are. */
+    void drawPixels(int line, int x0, int x1);
+    /** BG pixels x0..x1; `even`: hi-res modes' even (sub screen) half-pixels. */
+    void renderBg(int bg, int bpp, int line, Layer& out, int x0, int x1, bool even);
+    void renderMode7(int bg, int line, Layer& out, int x0, int x1);
     void renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal);
+    void mathPixel(uint16_t& a, uint16_t b, int x, bool inWindow);
     bool window(int layerSel, int x) const;           // layerSel 0-3 BG, 4 OBJ, 5 colour
     uint16_t paletteColor(int bpp, int bg, int pal, int idx) const;
 
@@ -145,10 +168,20 @@ private:
     uint32_t m_mpyResult = 0;
     bool m_interlaceField = false;
 
-    // Frames (ARGB), double-buffered
-    std::array<uint32_t, WIDTH * HEIGHT> m_frame[2];
+    // The line being drawn
+    int m_drawLine = -1, m_drawX = 0;
+    Layer m_obj;                                    // this line's sprites
+    std::array<uint8_t, 256> m_objPal{};
+    std::array<uint16_t, 256> m_main{}, m_sub{};    // BGR555, before brightness
+    std::array<uint8_t, 256> m_mainFlags{};         // bit 0: colour math allowed
+    std::array<bool, 256> m_subHas{};               // a sub screen layer (not the backdrop)
+
+    // Frames (ARGB, MAX_WIDTH x MAX_HEIGHT), double-buffered
+    std::vector<uint32_t> m_frame[2];
+    bool m_frameWide[2] = {}, m_frameTall[2] = {};
     int m_back = 0;
     uint64_t m_frames = 0;
+    bool m_overscanFrame = false, m_interlaceFrame = false, m_wideFrame = false;
 };
 
 }  // namespace snes
