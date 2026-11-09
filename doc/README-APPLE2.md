@@ -209,10 +209,19 @@ original once the keys are let go.
   - The screen buttons send Control-Reset (BASIC) and Control-Command-Reset (a cold start).
   - Control-Reset clears STATEREG, the shadow register, the slot ROM selection, the interrupt enables and the video switches, then resets the CPU (KEGS `do_reset`).
 
-**The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
-<https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
+**ROM 03** (profile `apple2gs-rom03`): 256 KB in banks `$FC-$FF`. KEGS lists what differs from ROM 01:
+- **ADB:** version 6, an 8-byte sync, commands `$12`/`$13`, the inverted repeat rate, and the special-keys byte at ADB RAM `$0C`.
+- **`$C036`:** bit 6 is a power-on flag.
+- **SmartPort bus:** ROM 03 polls the disk port for SmartPort devices (phases 1 and 3, "ENABLE2"). With none fitted, the IWM answers as KEGS's does: sense 1, data `$FF`, and the handshake `$C0` three times, then `$80`.
 
-**Not yet:** ROM 03, and saving the battery RAM.
+GS/OS 6.0.1 boots on it to the Finder (`apple2gs_rom03_boots`).
+
+**The battery RAM** (the Control Panel's settings) is kept between runs in `~/.local/share/mmsim/apple2gs-bram-rom01.bin` (or `-rom03.bin`), or under `$MMEMU_DATA_DIR`. The test binary points that variable at a scratch folder.
+
+**The ROMs.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
+<https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. For ROM 03, download "Apple IIGS ROM 3 Banks FC-FD - 341-0728.bin" and "... Banks FF-FE - 341-0748.bin" from the same folder, then join them as banks `$FC-$FF`: `cat 341-0728.bin <(tail -c 65536 341-0748.bin) <(head -c 65536 341-0748.bin) > roms/apple2/apple2gs-rom03.rom` (MAME loads them this way). The tests skip without them.
+
+**Not yet:** SmartPort devices on the disk port (the UniDisk 3.5), and ROM 00.
 
 ## Keyboard
 

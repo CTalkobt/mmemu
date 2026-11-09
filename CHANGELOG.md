@@ -11,6 +11,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
+- **Apple IIgs ROM 03 and saved battery RAM** (#12).
+  - **ROM 03:** profile `apple2gs-rom03`, 256 KB in banks `$FC-$FF`, with KEGS's ROM 03 differences:
+    - **ADB:** version 6, an 8-byte sync, commands `$12`/`$13`, the inverted repeat rate and the special keys at `$0C`.
+    - **`$C036`:** bit 6 is the power-on flag.
+    - **SmartPort bus:** ROM 03 polls the disk port's bus (ENABLE2), and the IWM answers as with nothing fitted.
+    - **GS/OS 6.0.1** boots to the Finder.
+  - **Battery RAM:** saved per ROM in `~/.local/share/mmsim` (or `$MMEMU_DATA_DIR`), so the Control Panel's settings persist. The test binary uses a scratch folder.
+  - **Tests:** `apple2gs_rom03_boots`, `apple2gs_bram_persists`.
 - **Apple IIgs: the serial ports** (#12), a Zilog 8530 SCC after KEGS `scc.c`. Port 1, the printer port, is channel A; port 2, the modem port, is channel B.
   - **Registers and timing:** the register pointer, WR0 commands and WR9 resets, the baud rate generator and character timing.
   - **Interrupts:** Rx, Tx and zero count, through RR3 and the RR2B vector.

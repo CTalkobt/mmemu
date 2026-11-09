@@ -69,6 +69,8 @@ public:
     /** Write mode ended: the track goes back into the image. */
     void endWrite();
 
+    /** Whether the drive is connected (status register $F). */
+    void setInstalled(bool on) { m_installed = on; }
     int track() const { return m_track; }
     int side() const { return m_side; }
     bool motorOn() const { return m_motor; }
@@ -100,7 +102,7 @@ private:
     size_t m_fileOffset = 0;
     bool m_protect = false, m_switched = false;
     int m_track = 0, m_side = 0;
-    bool m_stepOut = false, m_motor = false;
+    bool m_stepOut = false, m_motor = false, m_installed = true;
     // The current track side: its bits, and the nibbles the IWM latches
     int m_loadedTrack = -1, m_loadedSide = -1;
     std::vector<uint8_t> m_stream;

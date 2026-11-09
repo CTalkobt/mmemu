@@ -559,7 +559,8 @@ private:
 }  // namespace
 
 MachineDescriptor* create(Model model, std::string* err) {
-    if (model == Model::IIgs) return createIIgs(err);
+    if (model == Model::IIgs) return createIIgs(err, 1);
+    if (model == Model::IIgsRom03) return createIIgs(err, 3);
     const bool iic = model == Model::IIc;
     const bool iie = model == Model::IIe || model == Model::IIeEnhanced || iic;
     const bool enhanced = model == Model::IIeEnhanced || iic;

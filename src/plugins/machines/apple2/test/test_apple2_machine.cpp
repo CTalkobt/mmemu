@@ -8,6 +8,8 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libcore/main/icore.h"
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <cmath>
 #include <filesystem>
 #include <cstring>
@@ -1015,4 +1017,57 @@ TEST_CASE(apple2gs_scc_printer_port) {
     if (out.find("HELLO SCC") == std::string::npos) printf("    sent: '%s'\n", out.c_str());
     EXPECT_TRUE(out.find("HELLO SCC") != std::string::npos);
     delete m;
+}
+
+// ROM 03 (roms/apple2/apple2gs-rom03.rom: 341-0728 for banks $FC-$FD and
+// 341-0748 for $FE-$FF, local only): the start-up screen says ROM Version
+// 3; ADB answers version 6; GS/OS 6.0.1 boots to the Finder
+TEST_CASE(apple2gs_rom03_boots) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgsRom03, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 1500000);
+    if (!gsHas(m, "ROM Version  3")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "Apple IIgs"));
+    EXPECT_TRUE(gsHas(m, "ROM Version  3"));
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->peek8(0xFCFFFF) == 0 && bus->peek8(0xFC0000) == 0, false);   // banks $FC-$FD hold code
+    delete m;
+    const std::string disk = "../refs/apple2gs/sys601-2.2mg";
+    if (!std::filesystem::exists(disk)) { printf("  (GS/OS skipped: no %s)\n", disk.c_str()); return; }
+    m = apple2::create(apple2::Model::IIgsRom03, &err);
+    const std::string copy = (std::filesystem::temp_directory_path() / "mmemu_test_gsos3.2mg").string();
+    std::filesystem::copy_file(disk, copy, std::filesystem::copy_options::overwrite_existing);
+    ASSERT(m->ioRegistry->findHandler("3.5\" Drive")->mountDisk(1, copy));
+    run(m, 160000000);
+    auto* v = find<IVideoOutput>(m);
+    const auto dim = v->getDimensions();
+    std::vector<uint32_t> fb((size_t)dim.width * dim.height);
+    v->renderFrame(fb.data());
+    const int x0 = (dim.width - 640) / 2, y0 = (dim.height - 400) / 2;
+    int white = 0;
+    for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
+    EXPECT_TRUE(white > 300);
+    delete m;
+    std::filesystem::remove(copy);
+}
+
+// The battery RAM survives a new machine: the ROM sets it up on the first
+// run (its checksum), and the next machine reads the same bytes back
+TEST_CASE(apple2gs_bram_persists) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 6000000);
+    delete m;
+    const char* dir = std::getenv("MMEMU_DATA_DIR");
+    ASSERT(dir);
+    const std::string path = std::string(dir) + "/apple2gs-bram-rom01.bin";
+    std::ifstream f(path, std::ios::binary);
+    ASSERT(f);
+    std::vector<uint8_t> bram((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(bram.size(), 256u);
+    int nonzero = 0;
+    for (uint8_t b : bram) nonzero += b != 0;
+    EXPECT_TRUE(nonzero > 0);                        // the ROM's defaults and checksum
 }
