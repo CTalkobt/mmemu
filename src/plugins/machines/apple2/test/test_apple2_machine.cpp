@@ -8,6 +8,7 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libcore/main/icore.h"
 #include <cstdio>
+#include <cmath>
 #include <filesystem>
 #include <cstring>
 #include <algorithm>
@@ -871,5 +872,68 @@ TEST_CASE(apple2gs_adb_mouse) {
     for (int i = 0; i < 4; ++i) { total += bus->read8(0x00C024) & 0x7F; bus->read8(0x00C024); }
     EXPECT_EQ(total, 200);
     EXPECT_EQ(bus->read8(0x00C027) & 0x80, 0x00);
+    delete m;
+}
+
+#include "plugins/machines/apple2/main/gs_doc.h"
+
+// The DOC (MAME es5503.cpp) through the sound GLU: a 256-byte square wave
+// in sound RAM, oscillator 0 free-running at a set frequency, the GLU at
+// full volume: the output swings at the expected pitch; a one-shot halts at
+// the table's end and raises its interrupt, which register $E0 names and
+// clears. And the ROM's start-up beep comes out of the mix.
+TEST_CASE(apple2gs_doc_sound) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* snd = dynamic_cast<apple2::GsSound*>(m->ioRegistry->findHandler("Sound"));
+    ASSERT(snd);
+    auto* ao = dynamic_cast<IAudioOutput*>(snd);
+    // The start-up beep
+    run(m, 2000000);
+    std::vector<float> buf(44100);
+    int n = ao->pullSamples(buf.data(), (int)buf.size());
+    float peak = 0;
+    for (int i = 0; i < n; ++i) peak = std::max(peak, std::fabs(buf[(size_t)i]));
+    EXPECT_TRUE(peak > 0.01f);
+
+    // A square wave: osc 0, table at $0000 (256 bytes), resolution 0
+    IBus* bus = m->buses[0].bus;
+    snd->reset();
+    for (int i = 0; i < 256; ++i) snd->ram()[i] = i < 128 ? 0x20 : 0xE0;
+    auto doc = [&](uint8_t reg, uint8_t v) {
+        bus->write8(0x00C03C, 0x0F);                 // registers, volume 15
+        bus->write8(0x00C03E, reg);
+        bus->write8(0x00C03D, v);
+    };
+    doc(0xE1, 31 << 1);                              // 32 oscillators: 7.16 MHz / 8 / 34 = 26.3 kHz
+    doc(0x00, 0x00); doc(0x20, 0x02);                // frequency 512: acc >> 9, one table step a sample
+    doc(0x40, 0xFF);                                 // volume
+    doc(0x80, 0x00);                                 // table at $0000
+    doc(0xC0, 0x00);                                 // 256 bytes, resolution 0
+    doc(0xA0, 0x00);                                 // run, free
+    while (ao->pullSamples(buf.data(), 4096) > 0) {}
+    run(m, 3000000);                                 // about 0.4 s at 2.8 MHz
+    n = ao->pullSamples(buf.data(), (int)buf.size());
+    ASSERT(n > 10000);
+    int crossings = 0;
+    for (int i = 1; i < n; ++i) crossings += (buf[(size_t)i - 1] < 0) != (buf[(size_t)i] < 0);
+    // Expected: 894886 / 34 / 256 = 102.8 Hz, two crossings a cycle
+    const double hz = crossings / 2.0 / (n / 44100.0);
+    if (!(hz > 95 && hz < 110)) printf("    %.1f Hz\n", hz);
+    EXPECT_TRUE(hz > 95 && hz < 110);
+
+    // One-shot with its interrupt: halts at the end, $E0 names oscillator 0
+    doc(0xA0, 0x01);                                 // halt
+    doc(0xA0, 0x0A);                                 // one-shot, interrupt enabled, running
+    run(m, 200000);
+    bus->write8(0x00C03C, 0x0F);
+    bus->write8(0x00C03E, 0xA0);
+    bus->read8(0x00C03D);
+    EXPECT_EQ(bus->read8(0x00C03D) & 1, 1);          // halted
+    bus->write8(0x00C03E, 0xE0);
+    bus->read8(0x00C03D);
+    EXPECT_EQ(bus->read8(0x00C03D) & 0xBE, 0x00);    // bit 7 clear: oscillator 0 interrupted
+    EXPECT_TRUE(!snd->irq());
     delete m;
 }

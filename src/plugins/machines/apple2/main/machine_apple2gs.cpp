@@ -8,7 +8,7 @@
 // Stage 1: ROM 01, the 65C816 at 2.8 MHz with 1 MHz slow-side accesses,
 // banks $00/$01 shadowed into $E0/$E1 (the Mega II), the Apple II video
 // modes through Apple2Video, ADB in high-level emulation, the clock, the
-// DOC's registers and RAM (no sound yet).
+// DOC's registers and RAM.
 //
 // Stage 2: Super Hi-Res (video.c), 320 and 640 pixels, fill mode, the
 // scan-line interrupt (sim65816.c do_scan_int).
@@ -17,7 +17,10 @@
 // (slot 5) through Gs35Drive (gs_drive35.cpp), images of any size through
 // the SmartPort card in slot 7 (gs_smartport.cpp).
 //
-// Not yet: DOC sound, the mouse, the serial ports (the SCC
+// Sound: the Ensoniq DOC (gs_doc.cpp, after MAME es5503.cpp) mixed with the
+// speaker.
+//
+// Not yet: the serial ports (the SCC
 // answers as idle).
 
 #include "machine_apple2.h"
@@ -25,6 +28,7 @@
 #include "disk2.h"
 #include "gs_drive35.h"
 #include "gs_smartport.h"
+#include "gs_doc.h"
 #include "libcore/main/intercept.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -471,57 +475,6 @@ private:
     uint8_t m_bram[256] = {};
 };
 
-// ---------------------------------------------------------------------------
-// The Ensoniq DOC (doc.c): the sound GLU's control ($C03C), data ($C03D,
-// reads one access behind) and address ($C03E/F) registers in front of the
-// DOC's registers and its 64 KB of sound RAM. Stage 1: the registers and the
-// RAM, no oscillators running.
-// ---------------------------------------------------------------------------
-class GsDoc {
-public:
-    GsDoc() { m_ram.assign(0x10000, 0); }
-    void reset() { m_ctl = 0; m_e0 = 0xFF; }
-    uint8_t readCtl() const { return m_ctl; }
-    void writeCtl(uint8_t v) { m_ctl = v; }
-    uint8_t readPtr(int hi) const { return (uint8_t)(hi ? m_ptr >> 8 : m_ptr); }
-    void writePtr(int hi, uint8_t v) { m_ptr = hi ? (uint16_t)((m_ptr & 0xFF) | v << 8) : (uint16_t)((m_ptr & 0xFF00) | v); }
-    uint8_t readData() {
-        const uint8_t ret = m_saved;
-        if (m_ctl & 0x40) m_saved = m_ram[m_ptr];
-        else {
-            const int osc = m_ptr & 0x1F, type = (m_ptr >> 5) & 7;
-            switch (type) {
-                case 7:
-                    m_saved = osc == 0 ? m_e0 : osc == 1 ? (uint8_t)((m_numOsc - 1) << 1) : osc == 2 ? 0x80 : 0;
-                    break;
-                default: m_saved = m_reg[type][osc]; break;
-            }
-        }
-        if (m_ctl & 0x20) ++m_ptr;
-        return ret;
-    }
-    void writeData(uint8_t v) {
-        if (m_ctl & 0x40) m_ram[m_ptr] = v;
-        else {
-            const int osc = m_ptr & 0x1F, type = (m_ptr >> 5) & 7;
-            if (type == 7) {
-                if (osc == 1) m_numOsc = std::clamp(((v & 0x3E) >> 1) + 1, 1, 32);
-            } else if (type != 3) {
-                m_reg[type][osc] = v;
-            }
-        }
-        if (m_ctl & 0x20) ++m_ptr;
-        m_saved = v;
-    }
-
-private:
-    std::vector<uint8_t> m_ram;
-    uint8_t m_reg[7][32] = {};          // frequency low/high, volume, data, wave pointer, control, wave size
-    uint8_t m_ctl = 0, m_saved = 0, m_e0 = 0xFF;
-    uint16_t m_ptr = 0;
-    int m_numOsc = 1;
-};
-
 // The SCC (Z8530) at $C038-$C03B, idle: register pointers, the transmitter
 // empty, nothing received
 class GsScc {
@@ -571,7 +524,7 @@ public:
         m_c029 = 0x01;
         m_c02b = 0x08;
         m_adb->powerOn();
-        m_doc.reset();
+        if (m_sound) m_sound->reset();
         ctrlReset();
     }
 
@@ -591,7 +544,7 @@ public:
         m_video->setMode(m_vf);
         m_tbColor = 0xF0;
         m_adb->reset();
-        m_doc.reset();
+        if (m_sound) m_sound->reset();
         m_scc.reset();
         m_iwmMotor = m_iwmDrive2 = m_iwmQ6 = m_iwmQ7 = false;
         m_iwmPhases = 0;
@@ -606,6 +559,7 @@ public:
         if (idle > 0) m_ticks += (uint64_t)idle * (fast() ? FAST_TICKS : SLOW_TICKS);
         syncVideo();
         m_spk->advance(slowCycles());
+        m_sound->advance(slowCycles());
         // VBL (sim65816.c update_60hz / do_vbl_int)
         const bool vbl = !m_video->vblBar();
         if (vbl && !m_lastVbl) onVbl();
@@ -620,6 +574,7 @@ public:
     void setDisk(Disk2Card* d) { m_disk = d; }
     void setDrives35(Gs35Drives* d) { m_drives35 = d; }
     void setSmartPort(GsSmartPort* sp) { m_smartport = sp; }
+    void setSound(GsSound* s) { m_sound = s; }
     /** Slot 7's card (the SmartPort device) answers at $C700: picked in
      *  $C02D, INTCXROM off, a disk mounted. */
     bool slot7Card() const {
@@ -796,7 +751,7 @@ private:
             if (m_c023 & 0x04) { m_c023 |= 0x80; m_irq1s = true; }
         }
     }
-    bool irqLine() const { return m_irqVbl || m_irq25 || m_irq1s || m_irqScan || m_adb->irq(); }
+    bool irqLine() const { return m_irqVbl || m_irq25 || m_irq1s || m_irqScan || m_adb->irq() || m_sound->irq(); }
 
     // $C000-$CFFF is I/O in banks $E0/$E1, and in $00/$01 unless $C035 bit 6
     bool isIo(int k, uint16_t a) const { return a >= 0xC000 && a < 0xD000 && (k >= 2 || !(m_shadow & 0x40)); }
@@ -1002,9 +957,9 @@ private:
             case 0x37: return 0;
             case 0x38: case 0x39: if (wr) { m_scc.writeReg(0x39 - r, val); return 0; } return m_scc.readReg(0x39 - r);
             case 0x3A: case 0x3B: return 0;                                 // SCC data
-            case 0x3C: if (wr) m_doc.writeCtl(val); return m_doc.readCtl();
-            case 0x3D: if (wr) { m_doc.writeData(val); return 0; } return m_doc.readData();
-            case 0x3E: case 0x3F: if (wr) m_doc.writePtr(r & 1, val); return m_doc.readPtr(r & 1);
+            case 0x3C: if (wr) m_sound->writeCtl(val); return m_sound->readCtl();                // the sound GLU
+            case 0x3D: if (wr) { m_sound->writeData(val, slowCycles()); return 0; } return m_sound->readData(slowCycles());
+            case 0x3E: case 0x3F: if (wr) m_sound->writePtr(r & 1, val); return m_sound->readPtr(r & 1);
             case 0x41:                                                      // interrupt enables
                 if (wr) {
                     m_c041 = val & 0x1F;
@@ -1175,7 +1130,7 @@ private:
     GsSmartPort* m_smartport = nullptr;
     uint32_t m_iwmPhases = 0;
     GsClock m_clock;
-    GsDoc m_doc;
+    GsSound* m_sound = nullptr;
     GsScc m_scc;
     uint64_t m_ticks = 0, m_videoCycle = 0, m_instr = 0, m_ptrig = 0;
     int m_accesses = 0;
@@ -1304,6 +1259,8 @@ MachineDescriptor* createIIgs(std::string* err) {
     auto* adb = new GsAdb();
     auto* spk = new Apple2Speaker();
     auto* bus = new GsBus(std::move(rom), video, adb, spk);
+    auto* sound = new GsSound(spk, CPU_HZ);             // the DOC and the speaker, mixed
+    bus->setSound(sound);
     auto* display = new GsDisplay(video, bus);
     desc->buses.push_back({"system", bus});
     auto* cpu = new W65C816();
@@ -1315,6 +1272,7 @@ MachineDescriptor* createIIgs(std::string* err) {
     desc->ioRegistry = io;
     io->registerHandler(display);
     io->registerHandler(adb);
+    io->registerHandler(sound);                         // the frontends play the first audio device
     io->registerHandler(spk);
     // The 3.5" drives first: they take only 800 KB images, so `disk mount`
     // (which tries each drive device in turn) gives the 5.25" drives the rest
@@ -1334,8 +1292,8 @@ MachineDescriptor* createIIgs(std::string* err) {
     auto* hook = new PcInterceptHook(desc);
     hook->add(smartport);
     cpu->setPcInterceptHook(hook);
-    desc->deleters.push_back([video, display, adb, spk, disk, drives35]() {
-        delete display; delete video; delete adb; delete spk; delete disk; delete drives35;
+    desc->deleters.push_back([video, display, adb, spk, disk, drives35, sound]() {
+        delete display; delete video; delete adb; delete spk; delete disk; delete drives35; delete sound;
     });
     desc->deleters.push_back([smartport, hook, cpu]() { cpu->setPcInterceptHook(nullptr); delete hook; delete smartport; });
 
