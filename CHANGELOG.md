@@ -11,6 +11,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
+- **Apple IIgs: the serial ports** (#12), a Zilog 8530 SCC after KEGS `scc.c`. Port 1, the printer port, is channel A; port 2, the modem port, is channel B.
+  - **Registers and timing:** the register pointer, WR0 commands and WR9 resets, the baud rate generator and character timing.
+  - **Interrupts:** Rx, Tx and zero count, through RR3 and the RR2B vector.
+  - **Host link:** `serial loopback` / `serial tcp:PORT` attaches port 1, then port 2.
+  - **Firmware:** the ROM's printer port firmware prints through it (`PR#1`).
+  - **Tests:** `apple2gs_scc_registers`, `apple2gs_scc_printer_port`.
 - **Apple IIgs: Ensoniq DOC sound** (#12), the ES5503 after MAME `es5503.cpp` v2.4.
   - **Oscillators:** 32, with free-run, one-shot, sync/AM and swap modes. A zero sample or the table's end halts them, with interrupts through `$E0`, and the highest enabled oscillator sounds three times over.
   - **Timing:** 7.16 MHz, so 26.3 kHz with all 32 oscillators.
