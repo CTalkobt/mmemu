@@ -151,6 +151,12 @@ original once the keys are let go.
   - `$C026` takes the modes, configuration, sync, memory read/write, version 5, and talk/listen to the keyboard. `$C027` is the status and interrupt enables.
   - The keyboard is autopolled through `$C000`/`$C010`, with auto-repeat. `$C025` holds the modifiers: Shift, Control, Caps Lock, Option (Right Alt) and Command (Alt).
   - Control-Command-Escape raises the Desk Manager interrupt.
+- **The mouse** (ADB, after KEGS `mouse_read_c024`): moves and button changes queue up, and a button change starts a new entry so a quick click isn't lost.
+  - **`$C024`:** gives the X delta, then the Y delta. Each is 7 bits signed, at most 63 a read. Bit 7 of the Y read is the button (0 = down).
+  - **`$C027`:** bit 7 means mouse data is waiting, and bit 1 means Y is next. Bit 6 enables the mouse interrupt.
+  - **When it's off:** ADB mode bit 1, or the mouse moved off its address.
+  - **Scaling:** the front ends' moves arrive in picture pixels. Y is halved (Super Hi-Res lines are doubled), and X is halved in 320 mode, as KEGS scales the host pointer.
+  - In the GUI, move and click over the screen; in the CLI, `mouse <dx> <dy> [buttons]`. GS/OS's Finder opens its menus with it (`apple2gs_boots_gsos`).
 - **The clock:** `$C033`/`$C034` give the time (local, seconds since 1904) and 256 bytes of battery RAM. The battery RAM starts at zero, so the ROM falls back to its defaults; it isn't saved yet. `$C034` bits 0-3 are the border colour.
 - **The DOC:** `$C03C-$C03F` reach the DOC's registers and its 64 KB of sound RAM. The data register reads one access behind. No sound is produced yet.
 - **Other devices:**
@@ -194,7 +200,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** the DOC's oscillators and sound, the mouse, the serial ports, ROM 03, and saving the battery RAM.
+**Not yet (the later stages):** the DOC's oscillators and sound, the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 

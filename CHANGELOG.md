@@ -11,6 +11,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
+- **Apple IIgs: the ADB mouse** (#12, after KEGS `mouse_read_c024`).
+  - **Registers:** `$C024` gives the X then the Y delta (7 bits signed, the button in the Y read's bit 7). `$C027` has data-waiting (bit 7), Y-next (bit 1) and the interrupt enable (bit 6).
+  - **No lost clicks:** moves queue up, and a button change starts a new entry.
+  - **Scaling:** the front ends' picture-pixel moves are scaled to Super Hi-Res.
+  - **GS/OS:** the Finder's menus open with it.
+  - **Tests:** `apple2gs_adb_mouse`; `apple2gs_boots_gsos` now opens the Special menu.
 - **Apple IIgs: WOZ, 1.44 MB disks and hard disks** (#12).
   - **3.5" WOZ2:** the drive now works on bit streams. The IWM's latch rule makes nibbles from them, writes put 8 bits a byte at the head and keep a track's length, and a track goes back as bits to the WOZ or decoded into the sectors of a `.po`. The Disk II's WOZ parser accepts INFO disk type 2 and the 5.25" drive refuses it.
   - **Weak bits:** after three zero bits, a bit reads as noise (the MC3470, as KEGS models it), so tracks with weak bits read differently on each revolution. Qix's copy protection passes and Block Out boots, both woz-a-day originals.
