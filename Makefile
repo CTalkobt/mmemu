@@ -127,6 +127,12 @@ PLUGIN_A2600_SRCS = src/plugins/machines/atari2600/main/machine_a2600.cpp \
 	src/plugins/devices/riot6532/main/riot6532.cpp \
 	src/plugins/machines/atari2600/main/plugin_init.cpp
 
+PLUGIN_NES_SRCS = src/plugins/machines/nes/main/machine_nes.cpp \
+	src/plugins/machines/nes/main/nes_ppu.cpp \
+	src/plugins/machines/nes/main/nes_apu.cpp \
+	src/plugins/machines/nes/main/nes_cart.cpp \
+	src/plugins/machines/nes/main/plugin_init.cpp
+
 PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/machines/apple2/main/machine_apple2gs.cpp \
 	src/plugins/machines/apple2/main/gs_drive35.cpp \
@@ -479,6 +485,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/riot6532/test/test_riot6532.cpp \
 	src/plugins/devices/tia/test/test_tia.cpp \
 	src/plugins/machines/atari2600/test/test_a2600_machine.cpp \
+	src/plugins/machines/nes/test/test_nes_machine.cpp \
+	src/plugins/machines/nes/test/test_nes_roms.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
@@ -595,6 +603,10 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/tia/main/tia_objects.o \
 	src/plugins/devices/tia/main/tia_palette.o \
 	src/plugins/machines/atari2600/main/machine_a2600.o \
+	src/plugins/machines/nes/main/machine_nes.o \
+	src/plugins/machines/nes/main/nes_ppu.o \
+	src/plugins/machines/nes/main/nes_apu.o \
+	src/plugins/machines/nes/main/nes_cart.o \
 	src/plugins/machines/apple2/main/machine_apple2.o \
 	src/plugins/machines/apple2/main/machine_apple2gs.o \
 	src/plugins/machines/apple2/main/gs_drive35.o \
@@ -755,6 +767,7 @@ PLUGIN_6809_OBJS   = $(PLUGIN_6809_SRCS:.cpp=.o)
 PLUGIN_ARM_OBJS    = $(PLUGIN_ARM_SRCS:.cpp=.o)
 PLUGIN_65816_OBJS  = $(PLUGIN_65816_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
+PLUGIN_NES_OBJS    = $(PLUGIN_NES_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
 PLUGIN_SPECTRUM_OBJS = $(PLUGIN_SPECTRUM_SRCS:.cpp=.o)
@@ -822,6 +835,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-arm.so \
 	$(LIBDIR)/mmemu-plugin-65816.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
+	$(LIBDIR)/mmemu-plugin-nes.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
 	$(LIBDIR)/mmemu-plugin-spectrum.so \
@@ -963,6 +977,9 @@ $(LIBDIR)/mmemu-plugin-65816.so: $(PLUGIN_65816_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-nes.so: $(PLUGIN_NES_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)

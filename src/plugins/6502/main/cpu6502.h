@@ -142,8 +142,35 @@ public:
      */
     void setVectorPullHook(std::function<void()> fn) { m_onVectorPull = std::move(fn); }
 
+    /**
+     * The Ricoh 2A03/2A07 (NES): an NMOS 6502 whose decimal mode is cut off.
+     * D can still be set and cleared, but ADC and SBC always add in binary.
+     */
+    void setDecimalDisabled(bool off) { m_noDecimal = off; }
+    bool decimalDisabled() const { return m_noDecimal; }
+
+    /** The "magic" constant of the unstable LXA/XAA ($AB/$8B): $EE by default, $FF on the 2A03. */
+    void setUnstableMagic(uint8_t m) { m_magic = m; }
+
+    /**
+     * The 6502 polls IRQ in an instruction's last cycle, before CLI, SEI and
+     * PLP change I: after CLI one more instruction runs before a pending
+     * IRQ, and an IRQ can still be taken right after SEI. Off by default.
+     */
+    void setIrqPollLatency(bool on) { m_pollLatency = on; }
+
+    /**
+     * The RESET line (not power-on): A, X and Y are kept, S drops by 3 (the
+     * suppressed pushes), I is set and PC comes from $FFFC.
+     */
+    void softReset();
+
 private:
     std::function<void()> m_onVectorPull;
+    bool m_noDecimal = false;           // 2A03: ADC/SBC ignore D
+    uint8_t m_magic = 0xEE;             // LXA/XAA
+    bool m_pollLatency = false;
+    int m_polledI = -1;                 // I as polled before CLI/SEI/PLP (-1: use P)
 
 protected:
     /** Switch to the WDC 65C02: its opcode table, decimal flags, BRK/IRQ clear D, no JMP ($xxFF) bug. */

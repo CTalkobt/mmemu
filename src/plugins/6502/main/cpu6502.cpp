@@ -80,6 +80,24 @@ void MOS6502::reset() {
     }
 }
 
+void MOS6502::softReset() {
+    m_state.sp = (uint8_t)(m_state.sp - 3);
+    m_state.p |= FLAG_I | FLAG_U;
+    m_state.irqLine = 0;
+    m_state.nmiLine = 0;
+    m_state.nmiPrev = 0;
+    m_state.haltLine = 0;
+    m_state.waiting = 0;
+    m_state.stopped = 0;
+    m_polledI = -1;
+    if (m_bus) {
+        uint8_t lo = m_bus->read8(0xFFFC);
+        uint8_t hi = m_bus->read8(0xFFFD);
+        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+    }
+    m_state.cycles += 7;
+}
+
 void MOS6502::triggerIrq() {
     // Treat triggerIrq as a toggle or momentary assertion.
     // For PET we use setIrqLine(true/false) which is cleaner.
@@ -379,7 +397,7 @@ uint16_t MOS6502::addrINDBPY(bool& pageCrossed) {
 int MOS6502::opADC(uint16_t addr) {
     uint8_t m = read(addr);
     if (m_cmos && (m_state.p & FLAG_D)) return adcDecimalCmos(m);
-    if (m_state.p & FLAG_D) {
+    if ((m_state.p & FLAG_D) && !m_noDecimal) {
         // NMOS decimal mode (Bruce Clark, "Decimal Mode in NMOS 6500 series"):
         // Z from the binary sum; N and V from the sum before the high-nibble
         // adjustment; C after it
@@ -721,7 +739,7 @@ int MOS6502::opSBC(uint16_t addr) {
     if (~((uint16_t)a ^ (uint16_t)m) & ((uint16_t)a ^ sum) & 0x0080) m_state.p |= FLAG_V;
     m_state.a = (uint8_t)sum;
     updateNZ(m_state.a);
-    if (m_state.p & FLAG_D) {
+    if ((m_state.p & FLAG_D) && !m_noDecimal) {
         // NMOS decimal mode (Bruce Clark): flags as in binary (above), the
         // result BCD-adjusted per nibble
         int lo = (a & 0x0F) - (raw & 0x0F) + carryIn - 1;
@@ -772,7 +790,7 @@ int MOS6502::opARR(uint16_t addr) {
     uint8_t cin = (m_state.p & FLAG_C) ? 0x80 : 0;
     uint8_t r = (uint8_t)((t >> 1) | cin);
     m_state.p &= ~(FLAG_N | FLAG_Z | FLAG_C | FLAG_V);
-    if (!(m_state.p & FLAG_D)) {
+    if (!(m_state.p & FLAG_D) || m_noDecimal) {
         if (r & 0x80) m_state.p |= FLAG_N;
         if (!r) m_state.p |= FLAG_Z;
         if (r & 0x40) m_state.p |= FLAG_C;
@@ -790,8 +808,8 @@ int MOS6502::opARR(uint16_t addr) {
 }
 // XAA/ANE and LXA depend on the chip ("magic" constant); $EE is the common
 // value (SingleStepTests 6502)
-int MOS6502::opXAA(uint16_t addr) { m_state.a = (uint8_t)((m_state.a | 0xEE) & m_state.x & read(addr)); updateNZ(m_state.a); return 0; }
-int MOS6502::opLXA(uint16_t addr) { m_state.a = m_state.x = (uint8_t)((m_state.a | 0xEE) & read(addr)); updateNZ(m_state.a); return 0; }
+int MOS6502::opXAA(uint16_t addr) { m_state.a = (uint8_t)((m_state.a | m_magic) & m_state.x & read(addr)); updateNZ(m_state.a); return 0; }
+int MOS6502::opLXA(uint16_t addr) { m_state.a = m_state.x = (uint8_t)((m_state.a | m_magic) & read(addr)); updateNZ(m_state.a); return 0; }
 int MOS6502::opAXS(uint16_t addr) { uint8_t m = read(addr); uint8_t res = (m_state.a & m_state.x) - m; m_state.p &= ~FLAG_C; if ((m_state.a & m_state.x) >= m) m_state.p |= FLAG_C; m_state.x = res; updateNZ(m_state.x); return 0; }
 // SHA/AHX, TAS, SHY, SHX store register & (high byte of the base address + 1);
 // when the index crosses a page, that value also becomes the high byte of the
@@ -935,8 +953,11 @@ int MOS6502::step() {
     }
     m_state.nmiPrev = m_state.nmiLine;
 
-    // IRQ handling (level-sensitive)
-    if (m_state.irqLine && !(m_state.p & FLAG_I)) {
+    // IRQ handling (level-sensitive). With poll latency, the I flag the last
+    // instruction's poll saw (CLI/SEI/PLP change it after the poll).
+    const bool masked = m_polledI >= 0 ? m_polledI != 0 : (m_state.p & FLAG_I) != 0;
+    m_polledI = -1;
+    if (m_state.irqLine && !masked) {
         log(SIM_LOG_DEBUG, "6502: Taking IRQ");
         push((uint8_t)(m_state.pc >> 8));
         push((uint8_t)(m_state.pc & 0xFF));
@@ -1012,9 +1033,12 @@ int MOS6502::step() {
         }
     }
 
+    const uint8_t iBefore = m_state.p & FLAG_I;
     if (info.fn) {
         extraCycles += (this->*(info.fn))(addr);
     }
+    if (m_pollLatency && (op == 0x58 || op == 0x78 || op == 0x28) && !m_cmos)
+        m_polledI = iBefore ? 1 : 0;           // CLI / SEI / PLP: the poll saw the old I
 
     int total = info.cycles + extraCycles;
     m_state.cycles += total;

@@ -11,6 +11,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **GUI screen pane:** with key buttons stacked under Capture Keyboard (the IIgs's RESET and REBOOT, for example), the picture now sits beside that column when that's larger, instead of always below the lowest button. The IIgs picture grows from about 688 to 805 pixels wide in a 1280-pixel window.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
+### NES / Famicom
+- **New machines: `nes` and `famicom`** (#14), after Mesen2 (GPL-3.0). See `doc/README-NES.md`.
+  - **CPU:** the 2A03, the 6502 core with three new switches: `setDecimalDisabled` (no decimal mode), `setUnstableMagic` (LXA/XAA use `$FF`) and `setIrqPollLatency` (one more instruction runs after CLI before an IRQ). There is also a new `softReset()` for the RESET line. All are off by default, so the other 6502 machines are unchanged.
+  - **PPU (2C02):** dot by dot. Background fetches and the loopy scroll registers, 8 sprites a line with the overflow bug, sprite 0 hit, the `$2002` vblank race, the `$2007` read buffer, odd-frame dot skip, open-bus decay, emphasis and grayscale.
+  - **APU:** two pulses, triangle, noise, the DMC (with fetch stalls), and the frame counter with its IRQ. Mixed with the nesdev nonlinear formulas to 44.1 kHz.
+  - **Cartridges:** iNES and NES 2.0 `.nes` files. Mappers 0 NROM, 1 MMC1, 2 UxROM, 3 CNROM, 4 MMC3 (with the A12 scanline IRQ) and 7 AxROM.
+  - **Machine:** OAM DMA (513/514 cycles), two controllers (gamepad, joystick or keyboard), and NMI/IRQ sampled before an instruction's last cycle. Inserting a cartridge powers the console on; reset is the RESET button.
+  - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
+
 ### Apple II
 - **Apple IIgs ROM 03 and saved battery RAM** (#12).
   - **ROM 03:** profile `apple2gs-rom03`, 256 KB in banks `$FC-$FF`, with KEGS's ROM 03 differences:
