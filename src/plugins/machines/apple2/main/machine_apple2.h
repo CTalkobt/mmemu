@@ -34,7 +34,10 @@ struct MachineDescriptor;
  */
 namespace apple2 {
 
-enum class Model { II, IIPlus, IIe, IIeEnhanced, IIc };
+enum class Model { II, IIPlus, IIe, IIeEnhanced, IIc, IIgs };
+
+/** The Apple IIgs (machine_apple2gs.cpp): ROM 01, roms/apple2/apple2gs-rom01.rom (local only). */
+MachineDescriptor* createIIgs(std::string* err = nullptr);
 
 /** A new machine, or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(Model model, std::string* err = nullptr);

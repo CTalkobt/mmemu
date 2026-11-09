@@ -338,3 +338,86 @@ TEST_CASE(apple2c_iou_and_serial) {
     EXPECT_TRUE(bus->read8(0xC0A9) & 0x10);          // port 2's
     delete m;
 }
+
+// The Apple IIgs (ROM 01, roms/apple2/apple2gs-rom01.rom, local only:
+// skipped without it). The text page is read from the Mega II's bank $E0.
+namespace {
+std::string gsRow(MachineDescriptor* m, int row) {
+    IBus* bus = m->buses[0].bus;
+    const uint32_t base = 0xE00400u + (uint32_t)((row & 7) * 0x80 + (row >> 3) * 0x28);
+    std::string s;
+    for (int i = 0; i < 40; ++i) {
+        const uint8_t c = bus->peek8(base + (uint32_t)i) & 0x7F;
+        s += (char)(c < 0x20 ? c + 0x40 : c);
+    }
+    return s;
+}
+bool gsHas(MachineDescriptor* m, const std::string& t) {
+    for (int r = 0; r < 24; ++r) if (gsRow(m, r).find(t) != std::string::npos) return true;
+    return false;
+}
+void gsDump(MachineDescriptor* m) {
+    printf("    PC %06X\n", m->cpus[0].cpu->pc());
+    for (int r = 0; r < 24; ++r) printf("    |%s|\n", gsRow(m, r).c_str());
+}
+}  // namespace
+
+// Power-on: the start-up screen ("Apple IIgs", "ROM Version 01"), then no
+// startup device; Control-Reset gives Applesoft, and a typed line runs
+TEST_CASE(apple2gs_boots) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    run(m, 1500000);
+    EXPECT_TRUE(gsHas(m, "Apple IIgs"));
+    EXPECT_TRUE(gsHas(m, "ROM Version 01"));
+    run(m, 6000000);
+    EXPECT_TRUE(gsHas(m, "Check startup device!"));
+    m->onKey("control", true);
+    m->onKey("reset", true);
+    m->onKey("reset", false);
+    m->onKey("control", false);
+    run(m, 3000000);
+    EXPECT_TRUE(gsHas(m, "]"));
+    find<IKeyboardMatrix>(m)->enqueueText("PRINT 6*7\n");
+    run(m, 3000000);
+    if (!gsHas(m, "42")) gsDump(m);
+    EXPECT_TRUE(gsHas(m, "42"));
+    delete m;
+}
+
+// The IIgs bank map (KEGS moremem.c): writes to the text page of banks
+// $00/$01 are shadowed into $E0/$E1 unless $C035 bit 0 inhibits it;
+// RAMWRT sends bank $00's writes to $01 (and so $E1); the ROM's banks $FE/$FF;
+// $C071-$C07F read the ROM; the language card in bank $00
+TEST_CASE(apple2gs_memory_map) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0x000400, 0xC1);
+    EXPECT_EQ(bus->peek8(0xE00400), 0xC1);
+    bus->write8(0x00C035, 0x01);                       // inhibit text page 1 shadowing
+    bus->write8(0x000401, 0xC2);
+    EXPECT_EQ(bus->peek8(0x000401), 0xC2);
+    EXPECT_EQ(bus->peek8(0xE00401), 0x00);
+    bus->write8(0x00C035, 0x00);
+    bus->write8(0x00C005, 0);                          // RAMWRT: writes to bank $01
+    bus->write8(0x000402, 0xC3);
+    EXPECT_EQ(bus->peek8(0x010402), 0xC3);
+    EXPECT_EQ(bus->peek8(0xE10402), 0xC3);
+    EXPECT_EQ(bus->peek8(0x000402), 0x00);
+    bus->write8(0x00C004, 0);
+    bus->write8(0x052000, 0x5A);                       // fast RAM
+    EXPECT_EQ(bus->peek8(0x052000), 0x5A);
+    EXPECT_EQ(bus->read8(0x00FFFC), bus->peek8(0xFFFFFC));   // ROM at power-on (RDROM)
+    EXPECT_EQ(bus->read8(0x00C071), bus->peek8(0xFFC071));
+    bus->read8(0x00C083); bus->read8(0x00C083);        // language card RAM, read and write, bank 2
+    bus->write8(0x00D000, 0x77);
+    EXPECT_EQ(bus->read8(0x00D000), 0x77);
+    bus->read8(0x00C08B); bus->read8(0x00C08B);        // bank 1
+    EXPECT_EQ(bus->read8(0x00D000), 0x00);
+    bus->read8(0x00C082);                              // ROM again
+    EXPECT_EQ(bus->read8(0x00D000), bus->peek8(0xFFD000));
+    delete m;
+}

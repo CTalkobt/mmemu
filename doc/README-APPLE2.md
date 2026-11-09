@@ -1,4 +1,4 @@
-# mmemu-plugin-apple2: Apple II, II+ and IIe
+# mmemu-plugin-apple2: Apple II, II+, IIe, IIc and IIgs
 
 The Apple II family (#12), after AppleWin (GPL-2.0-or-later): the memory
 map and soft switches (`Memory.cpp`), the language card
@@ -129,6 +129,42 @@ original once the keys are let go.
 **Not yet:**
 - **The later 32 KB ROMs** (00, 03, 04): ROM 00 needs the IWM's 3.5" drive (UniDisk / SmartPort), and 03/04 need the memory expansion (`$C0C0-$C0C3`). A 32 KB ROM is refused for now.
 - **The mouse:** its movement and button; the switches are there.
+
+## IIgs
+
+`apple2gs` follows KEGS by Kent Dickey (GPL-3.0, in the GSplus tree): `moremem.c`, `adb.c`, `clock.c`, `doc.c` and `sim65816.c`. It's a ROM 01 machine with the WDC 65C816 (`doc/README-65816.md`). This is stage 1: it boots to the start-up screen and to Applesoft.
+
+- **Speed:** the CPU runs at 2.8 MHz (CYAREG `$C036` bit 7) or 1 MHz. The Mega II side (banks `$E0`/`$E1`, `$C0xx` and shadowed writes) always takes 1 MHz cycles. Time is counted in 14.318 MHz ticks: 5 per fast cycle, 14 per slow one. The video, speaker and devices run on the 1 MHz clock, and the machine is paced by it.
+- **Memory:**
+  - 4 MB of fast RAM in banks `$00-$3F`, the Mega II's 128 KB in `$E0`/`$E1`, and the ROM in `$FE`/`$FF`.
+  - Banks `$00`/`$01` and `$E0`/`$E1` take the Apple II paging. STATEREG (`$C068`) reads and writes ALTZP, PAGE2, RAMRD, RAMWRT, RDROM, LCBANK2, ROMBANK and INTCXROM together, alongside the IIe's switches and the language card.
+  - `$C02D` picks internal ROM or a slot's card per slot (no cards are fitted yet), and `$C3xx` switches the `$C800` ROM in.
+- **Shadowing (`$C035`):** writes to the text pages, the hi-res pages and (in bank `$01`) Super Hi-Res also go to `$E0`/`$E1`. Bit 6 turns the I/O space and language card of banks `$00`/`$01` into RAM. CYAREG bit 4 shadows the odd banks too.
+- **Vectors:** interrupt and reset vectors come from the ROM (the 65C816's /VP), whatever the language card maps. `$C071-$C07F` read the ROM.
+- **Interrupts:**
+  - the VBL interrupt (`$C041` bit 3, `$C046`, cleared by `$C047`);
+  - the quarter-second interrupt (`$C041` bit 4);
+  - the one-second interrupt (`$C023`, `$C032`);
+  - ADB data.
+  - `$C019` bit 7 is set during VBL, the opposite of the IIe. `$C02E`/`$C02F` are the video counters.
+- **ADB:** the microcontroller is emulated at command level, as in KEGS.
+  - `$C026` takes the modes, configuration, sync, memory read/write, version 5, and talk/listen to the keyboard. `$C027` is the status and interrupt enables.
+  - The keyboard is autopolled through `$C000`/`$C010`, with auto-repeat. `$C025` holds the modifiers: Shift, Control, Caps Lock, Option (Right Alt) and Command (Alt).
+  - Control-Command-Escape raises the Desk Manager interrupt.
+- **The clock:** `$C033`/`$C034` give the time (local, seconds since 1904) and 256 bytes of battery RAM. The battery RAM starts at zero, so the ROM falls back to its defaults; it isn't saved yet. `$C034` bits 0-3 are the border colour.
+- **The DOC:** `$C03C-$C03F` reach the DOC's registers and its 64 KB of sound RAM. The data register reads one access behind. No sound is produced yet.
+- **Other devices:**
+  - The SCC (`$C038-$C03B`) answers as idle.
+  - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers, but no drives. With no startup device the ROM shows "Check startup device!".
+- **Video:** the Apple II modes, through the IIe video, with the enhanced IIe's character set (MouseText). Text uses `$C022`'s colours, and the picture has the `$C034` border.
+- **Keys:**
+  - The screen buttons send Control-Reset (BASIC) and Control-Command-Reset (a cold start).
+  - Control-Reset clears STATEREG, the shadow register, the slot ROM selection, the interrupt enables and the video switches, then resets the CPU (KEGS `do_reset`).
+
+**The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
+<https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
+
+**Not yet (the later stages):** Super Hi-Res and the scan-line interrupts, the DOC's oscillators and sound, the IWM's 5.25" and 3.5" drives and SmartPort, the mouse, the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 
@@ -261,5 +297,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
 - The IIc's 32 KB ROMs (the 3.5" drive, the memory expansion) and mouse; the
-  IIgs; RamWorks memory; the IIe without its 80-column card.
+  IIgs's later stages (see above); RamWorks memory; the IIe without its 80-column card.
 - Cassette input and output.
