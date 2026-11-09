@@ -1,0 +1,769 @@
+// Super Nintendo: the 5A22's memory map, timing, internal registers, DMA and
+// HDMA, the cartridge mappings and the joypads, after Mesen2
+// (Core/SNES/SnesMemoryManager.cpp, InternalRegisters.cpp,
+// SnesDmaController.cpp, BaseCartridge.cpp, SnesControlManager.cpp),
+// GPL-3.0, Sour and the Mesen contributors, and fullsnes / Anomie.
+
+#include "machine_snes.h"
+#include "snes_apu.h"
+#include "snes_ppu.h"
+#include "libcore/main/machine_desc.h"
+#include "libdevices/main/io_registry.h"
+#include "libdebug/main/execution_observer.h"
+#include "libmem/main/ibus.h"
+#include "plugins/65816/main/cpu65816.h"
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstring>
+#include <memory>
+#include <vector>
+
+namespace snes {
+namespace {
+
+constexpr uint64_t MASTER_HZ = 21477272;
+constexpr int LINE_CLOCKS = 1364;
+constexpr int LINES = 262;
+constexpr int VBLANK_LINE = 225;
+constexpr int REFRESH_AT = 538;
+constexpr int HDMA_AT = 276 * 4;
+
+// ---------------------------------------------------------------------------
+// The cartridge
+// ---------------------------------------------------------------------------
+
+enum class Map { LoRom, HiRom, ExHiRom };
+
+/** bsnes Bus::mirror: fold an offset into a ROM whose size is not a power of two. */
+uint32_t mirror(uint32_t addr, uint32_t size) {
+    if (!size) return 0;
+    uint32_t base = 0, mask = 1u << 23;
+    while (addr >= size) {
+        while (!(addr & mask)) mask >>= 1;
+        addr -= mask;
+        if (size > mask) { size -= mask; base += mask; }
+        mask >>= 1;
+    }
+    return base + addr;
+}
+
+struct Cart {
+    std::vector<uint8_t> rom, sram;
+    Map map = Map::LoRom;
+    std::string title;
+    uint32_t headerAt = 0;
+
+    /** Score the internal header at `at` (bsnes/Mesen heuristics). */
+    static int score(const std::vector<uint8_t>& r, uint32_t at, Map m) {
+        if (r.size() < at + 0x40) return -100;
+        int s = 0;
+        const uint8_t mode = r[at + 0x15];
+        const uint16_t sum = (uint16_t)(r[at + 0x1E] | r[at + 0x1F] << 8), cmp = (uint16_t)(r[at + 0x1C] | r[at + 0x1D] << 8);
+        if ((uint16_t)(sum ^ cmp) == 0xFFFF) s += 4;
+        const uint16_t reset = (uint16_t)(r[at + 0x3C] | r[at + 0x3D] << 8);
+        if (reset < 0x8000) s -= 4;
+        else {
+            // the first opcode at the reset vector
+            const uint32_t off = m == Map::LoRom ? (at & ~0x7FFFu) + (reset & 0x7FFF) : (at & ~0xFFFFu) + reset;
+            if (off < r.size()) {
+                const uint8_t op = r[off];
+                if (op == 0x78 || op == 0x18 || op == 0x38 || op == 0x9C || op == 0x4C || op == 0x5C || op == 0xC2 || op == 0xE2 || op == 0xA9 || op == 0x20 || op == 0x22) s += 2;
+                if (op == 0x00 || op == 0xFF || op == 0xDB || op == 0x42) s -= 4;
+            }
+        }
+        const uint8_t low = mode & 0x0F;
+        if (m == Map::LoRom && (low == 0 || low == 2 || low == 3)) s += 2;
+        if (m == Map::HiRom && (low == 1 || low == 5 || low == 0xA)) s += 2;
+        if (m == Map::ExHiRom && low == 5) s += 2;
+        if ((mode & 0xE0) == 0x20) s += 1;
+        for (int i = 0; i < 21; ++i) { const uint8_t c = r[at + i]; if (c < 0x20 || c > 0x7E) { s -= 1; break; } }
+        if (r[at + 0x18] <= 0x08) s += 1;
+        return s;
+    }
+
+    bool load(std::vector<uint8_t> img, std::string& err) {
+        if (img.size() % 1024 == 512) img.erase(img.begin(), img.begin() + 512);   // copier header
+        if (img.size() < 0x8000) { err = "SNES ROM too small (" + std::to_string(img.size()) + " bytes)"; return false; }
+        rom = std::move(img);
+        int best = -1000;
+        const std::pair<uint32_t, Map> cands[] = {{0x7FC0, Map::LoRom}, {0xFFC0, Map::HiRom}, {0x40FFC0, Map::ExHiRom}};
+        for (auto& c : cands) {
+            const int s = score(rom, c.first, c.second);
+            if (s > best) { best = s; headerAt = c.first; map = c.second; }
+        }
+        title.clear();
+        for (int i = 0; i < 21; ++i) { const char c = (char)rom[headerAt + i]; title += (c >= 0x20 && c < 0x7F) ? c : ' '; }
+        while (!title.empty() && title.back() == ' ') title.pop_back();
+        const uint8_t ramSize = rom[headerAt + 0x18];
+        sram.assign(ramSize && ramSize <= 0x0C ? (1024u << ramSize) : 0, 0);
+        return true;
+    }
+
+    std::string describe() const {
+        static const char* names[] = {"LoROM", "HiROM", "ExHiROM"};
+        std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
+        if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
+        return s;
+    }
+
+    /** -1: the cartridge does not answer (open bus). */
+    int read(uint8_t bank, uint16_t a) const {
+        const int32_t r = romOffset(bank, a);
+        if (r >= 0) return rom[mirror((uint32_t)r, (uint32_t)rom.size())];
+        const int32_t s = sramOffset(bank, a);
+        if (s >= 0) return sram[(uint32_t)s % sram.size()];
+        return -1;
+    }
+    void write(uint8_t bank, uint16_t a, uint8_t v) {
+        const int32_t s = sramOffset(bank, a);
+        if (s >= 0) sram[(uint32_t)s % sram.size()] = v;
+    }
+
+    int32_t romOffset(uint8_t bank, uint16_t a) const {
+        const uint8_t b = bank & 0x7F;
+        switch (map) {
+        case Map::LoRom:
+            if (b >= 0x7E && !(bank & 0x80)) return -1;
+            if (a >= 0x8000) return (int32_t)(b * 0x8000 + (a - 0x8000));
+            if (b >= 0x40 && b < 0x70) return (int32_t)(b * 0x8000 + a);    // the lower halves of $40-$6F
+            return -1;
+        case Map::HiRom:
+            if (b >= 0x7E && !(bank & 0x80)) return -1;
+            if (b >= 0x40) return (int32_t)(((b & 0x3F) << 16) | a);
+            if (a >= 0x8000) return (int32_t)(((b & 0x3F) << 16) | a);
+            return -1;
+        case Map::ExHiRom: {
+            if (b >= 0x7E && !(bank & 0x80)) return -1;
+            const uint32_t hi = (bank & 0x80) ? 0 : 0x400000;
+            if (b >= 0x40) return (int32_t)(hi | ((b & 0x3F) << 16) | a);
+            if (a >= 0x8000) return (int32_t)(hi | ((b & 0x3F) << 16) | a);
+            return -1;
+        }
+        }
+        return -1;
+    }
+    int32_t sramOffset(uint8_t bank, uint16_t a) const {
+        if (sram.empty()) return -1;
+        const uint8_t b = bank & 0x7F;
+        if (map == Map::LoRom) {
+            if (b >= 0x70 && b < 0x7E && a < 0x8000) return (int32_t)(((b - 0x70) << 15) | a);
+            return -1;
+        }
+        if (b >= 0x20 && b < 0x40 && a >= 0x6000 && a < 0x8000) return (int32_t)(((b - 0x20) << 13) | (a - 0x6000));
+        return -1;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// DMA
+// ---------------------------------------------------------------------------
+
+struct DmaChannel {
+    uint8_t ctrl = 0xFF, bbad = 0xFF;
+    uint16_t a1t = 0xFFFF;
+    uint8_t a1b = 0xFF;
+    uint16_t das = 0xFFFF;
+    uint8_t dasb = 0xFF;
+    uint16_t a2a = 0xFFFF;
+    uint8_t nltr = 0xFF, unused = 0xFF;
+    bool doTransfer = false, done = true;
+};
+
+const uint8_t MODE_LEN[8] = {1, 2, 2, 4, 4, 4, 2, 4};
+const uint8_t MODE_OFS[8][4] = {{0, 0, 0, 0}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1}, {0, 1, 2, 3}, {0, 1, 0, 1}, {0, 0, 0, 0}, {0, 0, 1, 1}};
+
+// ---------------------------------------------------------------------------
+// The bus
+// ---------------------------------------------------------------------------
+
+class SnesBus : public IBus, public W65C816::IdleHook {
+public:
+    SnesBus(Ppu* ppu, Apu* apu) : m_ppu(ppu), m_apu(apu) {
+        m_cfg = {24, 8, BusRole::DATA, true, 0xFFFFFF};
+        m_wram.assign(0x20000, 0);
+    }
+
+    void setCart(std::unique_ptr<Cart> c, std::string label) { m_cart = std::move(c); m_label = std::move(label); }
+    Cart* cart() const { return m_cart.get(); }
+    const std::string& label() const { return m_label; }
+    void setCpu(W65C816* cpu) { m_cpu = cpu; }
+
+    uint16_t pads[2] = {0, 0};
+
+    uint64_t master() const { return m_master; }
+    int line() const { return m_line; }
+    int hclock() const { return m_hClock; }
+
+    void powerOn() {
+        std::fill(m_wram.begin(), m_wram.end(), 0);
+        m_master = 0; m_hClock = 0; m_line = 0;
+        m_refreshDone = m_hdmaDone = false;
+        m_irqFired = false;
+        m_nmitimen = 0; m_wrio = 0xFF;
+        m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
+        m_htime = m_vtime = 0x1FF;
+        m_hdmaen = 0; m_fastRom = false;
+        m_nmiFlag = false; m_irqFlag = false;
+        m_joyBusy = 0;
+        m_joy.fill(0);
+        m_wramAddr = 0;
+        m_openBus = 0;
+        m_strobe = false; m_serial[0] = m_serial[1] = 0;
+        for (auto& c : m_dma) c = DmaChannel{};
+        m_apuSynced = 0;
+    }
+
+    /** After a CPU step: the interrupt lines, the APU brought up to time. */
+    void endStep() {
+        m_cpu->setNmiLine(m_nmiFlag && (m_nmitimen & 0x80));
+        m_cpu->setIrqLine(m_irqFlag);
+        syncApu();
+    }
+    void syncApu() {
+        const uint64_t target = m_master / MASTER_HZ * Apu::CLOCK_HZ + (m_master % MASTER_HZ) * Apu::CLOCK_HZ / MASTER_HZ;
+        if (target > m_apuSynced) { m_apu->runTo(target); m_apuSynced = target; }
+    }
+
+    // ------------------------------------------------------------------
+    // Time
+    // ------------------------------------------------------------------
+    void advance(int clocks) {
+        while (clocks > 0) {
+            int next = LINE_CLOCKS;
+            if (!m_refreshDone) next = REFRESH_AT;
+            else if (!m_hdmaDone) next = HDMA_AT;
+            const int step = std::min(clocks, std::max(0, next - m_hClock));
+            m_hClock += step;
+            m_master += (uint64_t)step;
+            clocks -= step;
+            checkIrq();
+            if (m_hClock >= next) {
+                if (!m_refreshDone) {
+                    m_refreshDone = true;
+                    m_hClock += 40;                       // DRAM refresh: the CPU waits
+                    m_master += 40;
+                } else if (!m_hdmaDone) {
+                    m_hdmaDone = true;
+                    if (m_line >= 1 && m_line < VBLANK_LINE) m_ppu->renderLine(m_line);
+                    if (m_line < VBLANK_LINE) hdmaLine();
+                } else {
+                    endOfLine();
+                }
+            }
+        }
+    }
+    void idle(uint32_t) override { advance(6); }
+
+    // ------------------------------------------------------------------
+    // IBus
+    // ------------------------------------------------------------------
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "system"; }
+
+    uint8_t read8(uint32_t addr) override {
+        addr &= 0xFFFFFF;
+        advance(speed(addr) - 4);
+        const uint8_t v = busRead(addr, false);
+        advance(4);
+        if (m_observer) m_observer->onMemoryRead(this, addr, v);
+        return v;
+    }
+    void write8(uint32_t addr, uint8_t v) override {
+        addr &= 0xFFFFFF;
+        if (m_observer) m_observer->onMemoryWrite(this, addr, peek8(addr), v);
+        advance(speed(addr));
+        busWrite(addr, v);
+    }
+    uint8_t peek8(uint32_t addr) override { return busRead(addr & 0xFFFFFF, true); }
+
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int  writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+
+private:
+    int speed(uint32_t addr) const {
+        const uint8_t bank = (uint8_t)(addr >> 16);
+        const uint16_t a = (uint16_t)addr;
+        if (bank >= 0x40 && bank < 0x80) return 8;
+        if (bank >= 0xC0) return m_fastRom ? 6 : 8;
+        if (a < 0x2000) return 8;
+        if (a < 0x4000) return 6;
+        if (a < 0x4200) return 12;
+        if (a < 0x6000) return 6;
+        if (a < 0x8000) return 8;
+        return (bank >= 0x80 && m_fastRom) ? 6 : 8;
+    }
+
+    uint8_t busRead(uint32_t addr, bool peek) {
+        const uint8_t bank = (uint8_t)(addr >> 16);
+        const uint16_t a = (uint16_t)addr;
+        if (bank == 0x7E || bank == 0x7F) return m_openBus = m_wram[((bank & 1) << 16) | a];
+        if (!(bank & 0x40)) {
+            if (a < 0x2000) return m_openBus = m_wram[a];
+            if (a >= 0x2100 && a < 0x2200) return m_openBus = bRead((uint8_t)a, peek);
+            if (a == 0x4016 || a == 0x4017) {
+                uint8_t v = (uint8_t)(m_openBus & 0xFC);
+                if (a == 0x4017) v |= 0x1C;
+                const int p = a & 1;
+                v |= m_strobe ? (uint8_t)(pads[p] >> 15) : (uint8_t)(m_serial[p] >> 15);
+                if (!peek && !m_strobe) m_serial[p] = (uint16_t)(m_serial[p] << 1 | 1);
+                return m_openBus = v;
+            }
+            if (a >= 0x4200 && a < 0x4220) return internalRead(a, peek);   // internal: open bus kept
+            if (a >= 0x4300 && a < 0x4380) return dmaRead(a);
+        }
+        if (m_cart) {
+            const int v = m_cart->read(bank, a);
+            if (v >= 0) return m_openBus = (uint8_t)v;
+        }
+        return m_openBus;
+    }
+
+    void busWrite(uint32_t addr, uint8_t v) {
+        const uint8_t bank = (uint8_t)(addr >> 16);
+        const uint16_t a = (uint16_t)addr;
+        m_openBus = v;
+        if (bank == 0x7E || bank == 0x7F) { m_wram[((bank & 1) << 16) | a] = v; return; }
+        if (!(bank & 0x40)) {
+            if (a < 0x2000) { m_wram[a] = v; return; }
+            if (a >= 0x2100 && a < 0x2200) { bWrite((uint8_t)a, v); return; }
+            if (a == 0x4016) {
+                const bool s = v & 1;
+                if (m_strobe && !s) { m_serial[0] = pads[0]; m_serial[1] = pads[1]; }
+                m_strobe = s;
+                return;
+            }
+            if (a >= 0x4200 && a < 0x4220) { internalWrite(a, v); return; }
+            if (a >= 0x4300 && a < 0x4380) { dmaWrite(a, v); return; }
+        }
+        if (m_cart) m_cart->write(bank, a, v);
+    }
+
+    // The B bus ($21xx): the PPU, the APU ports, the WRAM port
+    uint8_t bRead(uint8_t r, bool peek) {
+        if (r < 0x40) return peek ? m_ppu->peek(r) : m_ppu->read(r);
+        if (r < 0x80) { syncApu(); return m_apu->cpuRead(r & 3); }
+        if (r == 0x80) {
+            const uint8_t v = m_wram[m_wramAddr & 0x1FFFF];
+            if (!peek) m_wramAddr = (m_wramAddr + 1) & 0x1FFFF;
+            return v;
+        }
+        return m_openBus;
+    }
+    void bWrite(uint8_t r, uint8_t v) {
+        if (r < 0x40) { m_ppu->write(r, v); return; }
+        if (r < 0x80) { syncApu(); m_apu->cpuWrite(r & 3, v); return; }
+        switch (r) {
+        case 0x80: m_wram[m_wramAddr & 0x1FFFF] = v; m_wramAddr = (m_wramAddr + 1) & 0x1FFFF; break;
+        case 0x81: m_wramAddr = (m_wramAddr & 0x1FF00) | v; break;
+        case 0x82: m_wramAddr = (m_wramAddr & 0x100FF) | (uint32_t)v << 8; break;
+        case 0x83: m_wramAddr = (m_wramAddr & 0x0FFFF) | (uint32_t)(v & 1) << 16; break;
+        }
+    }
+
+    // $4200-$421F
+    uint8_t internalRead(uint16_t a, bool peek) {
+        switch (a) {
+        case 0x4210: {
+            const uint8_t v = (uint8_t)((m_nmiFlag << 7) | (m_openBus & 0x70) | 0x02);
+            if (!peek) m_nmiFlag = false;
+            return v;
+        }
+        case 0x4211: {
+            const uint8_t v = (uint8_t)((m_irqFlag << 7) | (m_openBus & 0x7F));
+            if (!peek) m_irqFlag = false;
+            return v;
+        }
+        case 0x4212: {
+            const bool vblank = m_line >= VBLANK_LINE;
+            const bool hblank = m_hClock < 4 || m_hClock >= 274 * 4;
+            return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
+        }
+        case 0x4213: return m_wrio;
+        case 0x4214: return (uint8_t)m_quotient;
+        case 0x4215: return (uint8_t)(m_quotient >> 8);
+        case 0x4216: return (uint8_t)m_product;
+        case 0x4217: return (uint8_t)(m_product >> 8);
+        default:
+            if (a >= 0x4218) return m_joy[a - 0x4218];
+            return m_openBus;
+        }
+    }
+    void internalWrite(uint16_t a, uint8_t v) {
+        switch (a) {
+        case 0x4200:
+            m_nmitimen = v;
+            if (!(v & 0x30)) m_irqFlag = false;
+            m_cpu->setNmiLine(m_nmiFlag && (v & 0x80));
+            break;
+        case 0x4201:
+            if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(m_hClock / 4, m_line);
+            m_wrio = v;
+            break;
+        case 0x4202: m_mpyA = v; break;
+        case 0x4203: m_mpyB = v; m_product = (uint16_t)(m_mpyA * m_mpyB); m_quotient = v; break;
+        case 0x4204: m_dividend = (uint16_t)((m_dividend & 0xFF00) | v); break;
+        case 0x4205: m_dividend = (uint16_t)((m_dividend & 0x00FF) | v << 8); break;
+        case 0x4206:
+            if (v) { m_quotient = (uint16_t)(m_dividend / v); m_product = (uint16_t)(m_dividend % v); }
+            else { m_quotient = 0xFFFF; m_product = m_dividend; }
+            break;
+        case 0x4207: m_htime = (uint16_t)((m_htime & 0x100) | v); break;
+        case 0x4208: m_htime = (uint16_t)((m_htime & 0xFF) | (v & 1) << 8); break;
+        case 0x4209: m_vtime = (uint16_t)((m_vtime & 0x100) | v); break;
+        case 0x420A: m_vtime = (uint16_t)((m_vtime & 0xFF) | (v & 1) << 8); break;
+        case 0x420B: generalDma(v); break;
+        case 0x420C: m_hdmaen = v; break;
+        case 0x420D: m_fastRom = v & 1; break;
+        default: break;
+        }
+    }
+
+    // $43x0-$43xF
+    uint8_t dmaRead(uint16_t a) const {
+        const DmaChannel& c = m_dma[(a >> 4) & 7];
+        switch (a & 0x0F) {
+        case 0x0: return c.ctrl;
+        case 0x1: return c.bbad;
+        case 0x2: return (uint8_t)c.a1t;
+        case 0x3: return (uint8_t)(c.a1t >> 8);
+        case 0x4: return c.a1b;
+        case 0x5: return (uint8_t)c.das;
+        case 0x6: return (uint8_t)(c.das >> 8);
+        case 0x7: return c.dasb;
+        case 0x8: return (uint8_t)c.a2a;
+        case 0x9: return (uint8_t)(c.a2a >> 8);
+        case 0xA: return c.nltr;
+        case 0xB: case 0xF: return c.unused;
+        default: return m_openBus;
+        }
+    }
+    void dmaWrite(uint16_t a, uint8_t v) {
+        DmaChannel& c = m_dma[(a >> 4) & 7];
+        switch (a & 0x0F) {
+        case 0x0: c.ctrl = v; break;
+        case 0x1: c.bbad = v; break;
+        case 0x2: c.a1t = (uint16_t)((c.a1t & 0xFF00) | v); break;
+        case 0x3: c.a1t = (uint16_t)((c.a1t & 0x00FF) | v << 8); break;
+        case 0x4: c.a1b = v; break;
+        case 0x5: c.das = (uint16_t)((c.das & 0xFF00) | v); break;
+        case 0x6: c.das = (uint16_t)((c.das & 0x00FF) | v << 8); break;
+        case 0x7: c.dasb = v; break;
+        case 0x8: c.a2a = (uint16_t)((c.a2a & 0xFF00) | v); break;
+        case 0x9: c.a2a = (uint16_t)((c.a2a & 0x00FF) | v << 8); break;
+        case 0xA: c.nltr = v; break;
+        case 0xB: case 0xF: c.unused = v; break;
+        default: break;
+        }
+    }
+
+    /** One byte between the A bus and the B bus ($21xx), in the channel's direction. */
+    void transfer(const DmaChannel& c, uint32_t aAddr, uint8_t bReg) {
+        const uint16_t a = (uint16_t)aAddr;
+        // The A bus cannot reach the B bus or the DMA registers
+        const bool aInvalid = !(aAddr & 0x400000) && ((a & 0xFF00) == 0x2100 || (a >= 0x4300 && a < 0x4380) || a == 0x420B || a == 0x420C);
+        if (c.ctrl & 0x80) {                                  // B -> A
+            const uint8_t v = bRead(bReg, false);
+            if (!aInvalid) busWrite(aAddr, v);
+        } else {
+            const uint8_t v = aInvalid ? m_openBus : busRead(aAddr, false);
+            bWrite(bReg, v);
+        }
+    }
+
+    void generalDma(uint8_t channels) {
+        advance(8);                                           // the DMA starts after a few clocks
+        for (int ch = 0; ch < 8; ++ch) {
+            if (!(channels & (1 << ch))) continue;
+            DmaChannel& c = m_dma[ch];
+            advance(8);
+            const int mode = c.ctrl & 7;
+            int i = 0;
+            do {
+                transfer(c, (uint32_t)c.a1b << 16 | c.a1t, (uint8_t)(c.bbad + MODE_OFS[mode][i & 3]));
+                advance(8);
+                if (!(c.ctrl & 0x08)) c.a1t = (c.ctrl & 0x10) ? (uint16_t)(c.a1t - 1) : (uint16_t)(c.a1t + 1);
+                --c.das;
+                ++i;
+            } while (c.das != 0);
+        }
+    }
+
+    // HDMA (Anomie's HDMA doc, Mesen SnesDmaController)
+    void hdmaInit() {
+        for (int ch = 0; ch < 8; ++ch) {
+            DmaChannel& c = m_dma[ch];
+            c.done = !(m_hdmaen & (1 << ch));
+            if (c.done) continue;
+            c.a2a = c.a1t;
+            loadHdmaLine(c);
+        }
+    }
+    void loadHdmaLine(DmaChannel& c) {
+        c.nltr = busRead((uint32_t)c.a1b << 16 | c.a2a, false);
+        c.a2a = (uint16_t)(c.a2a + 1);
+        if (c.ctrl & 0x40) {
+            const uint8_t lo = busRead((uint32_t)c.a1b << 16 | c.a2a, false);
+            const uint8_t hi = busRead((uint32_t)c.a1b << 16 | (uint16_t)(c.a2a + 1), false);
+            c.das = (uint16_t)(lo | hi << 8);
+            c.a2a = (uint16_t)(c.a2a + 2);
+        }
+        if (c.nltr == 0) c.done = true;
+        c.doTransfer = true;
+    }
+    void hdmaLine() {
+        if (!m_hdmaen) return;
+        int clocks = 18;
+        for (int ch = 0; ch < 8; ++ch) {
+            DmaChannel& c = m_dma[ch];
+            if (!(m_hdmaen & (1 << ch)) || c.done) continue;
+            clocks += 8;
+            if (c.doTransfer) {
+                const int mode = c.ctrl & 7;
+                for (int i = 0; i < MODE_LEN[mode]; ++i) {
+                    uint32_t src;
+                    if (c.ctrl & 0x40) { src = (uint32_t)c.dasb << 16 | c.das; c.das = (uint16_t)(c.das + 1); }
+                    else { src = (uint32_t)c.a1b << 16 | c.a2a; c.a2a = (uint16_t)(c.a2a + 1); }
+                    transfer(c, src, (uint8_t)(c.bbad + MODE_OFS[mode][i]));
+                    clocks += 8;
+                }
+            }
+            --c.nltr;
+            c.doTransfer = c.nltr & 0x80;
+            if (!(c.nltr & 0x7F)) loadHdmaLine(c);
+        }
+        m_hClock += clocks;
+        m_master += (uint64_t)clocks;
+    }
+
+    void checkIrq() {
+        const bool hEn = m_nmitimen & 0x10, vEn = m_nmitimen & 0x20;
+        if ((!hEn && !vEn) || m_irqFired) return;
+        if (vEn && m_line != m_vtime) return;
+        const int at = hEn ? m_htime * 4 + 14 : 10;
+        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; }
+    }
+
+    void endOfLine() {
+        m_hClock -= LINE_CLOCKS;
+        m_refreshDone = m_hdmaDone = false;
+        m_irqFired = false;
+        if (m_joyBusy > 0) --m_joyBusy;
+        if (++m_line == LINES) {
+            m_line = 0;
+            m_nmiFlag = false;
+            hdmaInit();
+        }
+        if (m_line == VBLANK_LINE) {
+            m_ppu->startVblank();
+            m_nmiFlag = true;
+            if (m_nmitimen & 0x01) {
+                // Auto joypad read: the pads' 16 bits into $4218-$421F (3 lines busy)
+                m_joy.fill(0);
+                for (int p = 0; p < 2; ++p) { m_joy[p * 2] = (uint8_t)pads[p]; m_joy[p * 2 + 1] = (uint8_t)(pads[p] >> 8); }
+                m_serial[0] = 0xFFFF; m_serial[1] = 0xFFFF;
+                m_joyBusy = 3;
+            }
+        }
+        checkIrq();
+    }
+
+    BusConfig m_cfg;
+    Ppu* m_ppu;
+    Apu* m_apu;
+    W65C816* m_cpu = nullptr;
+    std::unique_ptr<Cart> m_cart;
+    std::string m_label;
+    std::vector<uint8_t> m_wram;
+
+    uint64_t m_master = 0, m_apuSynced = 0;
+    int m_hClock = 0, m_line = 0;
+    bool m_refreshDone = false, m_hdmaDone = false, m_irqFired = false;
+
+    uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;
+    uint16_t m_dividend = 0xFFFF, m_quotient = 0, m_product = 0, m_htime = 0x1FF, m_vtime = 0x1FF;
+    bool m_fastRom = false, m_nmiFlag = false, m_irqFlag = false;
+    int m_joyBusy = 0;
+    std::array<uint8_t, 8> m_joy{};
+    uint32_t m_wramAddr = 0;
+    uint8_t m_openBus = 0;
+    bool m_strobe = false;
+    uint16_t m_serial[2] = {};
+    DmaChannel m_dma[8];
+};
+
+SnesBus* busOf(MachineDescriptor* m) {
+    if (!m) return nullptr;
+    for (auto& b : m->buses)
+        if (auto* p = dynamic_cast<SnesBus*>(b.bus)) return p;
+    return nullptr;
+}
+
+void powerOn(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    if (!bus) return;
+    m->ioRegistry->resetAll();
+    bus->powerOn();
+    auto* cpu = static_cast<W65C816*>(m->cpus[0].cpu);
+    cpu->setNmiLine(false);
+    cpu->setIrqLine(false);
+    cpu->reset();
+}
+
+uint16_t padBits(uint32_t b) {
+    using M = MachineDescriptor;
+    uint16_t p = 0;
+    if (b & M::PAD_A) p |= BTN_A;
+    if (b & M::PAD_B) p |= BTN_B;
+    if (b & M::PAD_X) p |= BTN_X;
+    if (b & M::PAD_Y) p |= BTN_Y;
+    if (b & M::PAD_L) p |= BTN_L;
+    if (b & M::PAD_R) p |= BTN_R;
+    if (b & M::PAD_SELECT) p |= BTN_SELECT;
+    if (b & M::PAD_START) p |= BTN_START;
+    if (b & M::PAD_UP) p |= BTN_UP;
+    if (b & M::PAD_DOWN) p |= BTN_DOWN;
+    if (b & M::PAD_LEFT) p |= BTN_LEFT;
+    if (b & M::PAD_RIGHT) p |= BTN_RIGHT;
+    return p;
+}
+
+}  // namespace
+
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err) {
+    auto* bus = busOf(m);
+    if (!bus) { err = "Not a SNES."; return false; }
+    auto cart = std::make_unique<Cart>();
+    if (!cart->load(image, err)) return false;
+    const std::string d = cart->describe();
+    bus->setCart(std::move(cart), label + " (" + d + ")");
+    powerOn(m);
+    return true;
+}
+
+void removeCartridge(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    if (!bus) return;
+    bus->setCart(nullptr, "");
+    powerOn(m);
+}
+
+std::string cartridgeInfo(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    return bus && bus->cart() ? bus->label() : "";
+}
+
+void setButtons(MachineDescriptor* m, int port, uint16_t buttons) {
+    if (auto* bus = busOf(m)) bus->pads[port & 1] = buttons;
+}
+
+uint64_t masterClock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->master() : 0; }
+int scanline(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->line() : 0; }
+int hclock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->hclock() : 0; }
+
+MachineDescriptor* create(bool sfc, std::string* /*err*/) {
+    auto* desc = new MachineDescriptor();
+    desc->machineId = sfc ? "superfamicom" : "snes";
+    desc->displayName = sfc ? "Nintendo Super Famicom" : "Super Nintendo Entertainment System";
+    desc->licenseClass = "proprietary";
+    desc->uiPanesSet = true;
+    desc->uiPanes = {"cartridge"};
+    desc->clockHz = (uint32_t)MASTER_HZ;
+
+    auto* ppu = new Ppu();
+    auto* apu = new Apu();
+    apu->releaseCoreAndBus();
+    auto* bus = new SnesBus(ppu, apu);
+    desc->buses.push_back({"system", bus});
+    desc->buses.push_back({"aram", apu->bus()});
+    auto* cpu = new W65C816();
+    cpu->setDataBus(bus);
+    cpu->setIdleHook(bus);
+    bus->setCpu(cpu);
+    desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
+    desc->cpus.push_back({"spc700", apu->cpu(), apu->bus(), apu->bus(), nullptr, false, 1});
+
+    auto* io = new IORegistry();
+    desc->ioRegistry = io;
+    io->registerHandler(ppu);
+    io->registerHandler(apu);
+    desc->deleters.push_back([ppu, apu]() { delete ppu; delete apu; });
+
+    // Controllers: keyboard and joystick into pad 1, gamepads into either
+    auto* held = new uint16_t[4]{0, 0, 0, 0};   // keys, joystick 0, joystick 1, -
+    auto* pads = new uint16_t[2]{0, 0};
+    desc->deleters.push_back([held, pads]() { delete[] held; delete[] pads; });
+    auto apply = [bus, held, pads]() {
+        bus->pads[0] = (uint16_t)(held[0] | held[1] | pads[0]);
+        bus->pads[1] = (uint16_t)(held[2] | pads[1]);
+    };
+    desc->onGamepad = [pads, apply](int port, uint32_t b) {
+        if (port < 0 || port > 1) return false;
+        pads[port] = padBits(b);
+        apply();
+        return true;
+    };
+    desc->joystickPorts = 2;
+    desc->primaryJoystickPort = 0;
+    desc->onJoystick = [held, apply](int port, uint8_t bits) {
+        if (port < 0 || port > 1) return;
+        uint16_t p = 0;
+        if (!(bits & 0x01)) p |= BTN_UP;
+        if (!(bits & 0x02)) p |= BTN_DOWN;
+        if (!(bits & 0x04)) p |= BTN_LEFT;
+        if (!(bits & 0x08)) p |= BTN_RIGHT;
+        if (!(bits & 0x10)) p |= BTN_B;
+        held[1 + port] = p;
+        apply();
+    };
+    desc->onKey = [held, apply](const std::string& name, bool down) {
+        std::string n = name;
+        std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        uint16_t bit = 0;
+        if (n == "up") bit = BTN_UP;
+        else if (n == "down") bit = BTN_DOWN;
+        else if (n == "left") bit = BTN_LEFT;
+        else if (n == "right") bit = BTN_RIGHT;
+        else if (n == "x") bit = BTN_A;
+        else if (n == "z") bit = BTN_B;
+        else if (n == "s") bit = BTN_X;
+        else if (n == "a") bit = BTN_Y;
+        else if (n == "q") bit = BTN_L;
+        else if (n == "w") bit = BTN_R;
+        else if (n == "return" || n == "start") bit = BTN_START;
+        else if (n == "tab" || n == "left_shift" || n == "right_shift" || n == "select") bit = BTN_SELECT;
+        else return false;
+        held[0] = down ? (uint16_t)(held[0] | bit) : (uint16_t)(held[0] & ~bit);
+        apply();
+        return true;
+    };
+    desc->screenButtons = {
+        {"START", {"start"}, "Controller 1's START button (Return)."},
+        {"SELECT", {"select"}, "Controller 1's SELECT button (Tab)."}};
+
+    // The RESET button: the CPU restarts at its vector, the APU and PPU
+    // reset; work RAM, VRAM and the cartridge's RAM stay
+    desc->onReset = [bus, cpu, apu](MachineDescriptor&) {
+        apu->reset();
+        cpu->setNmiLine(false);
+        cpu->setIrqLine(false);
+        cpu->reset();
+        (void)bus;
+    };
+    desc->schedulerStep = [bus, cpu](MachineDescriptor&) -> int {
+        const uint64_t before = bus->master();
+        cpu->step();
+        if (bus->master() == before) bus->advance(6);     // WAI / STP: time goes on
+        bus->endStep();
+        return (int)(bus->master() - before);
+    };
+    powerOn(desc);
+    return desc;
+}
+
+}  // namespace snes

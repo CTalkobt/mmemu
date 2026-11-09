@@ -11,6 +11,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **GUI screen pane:** with key buttons stacked under Capture Keyboard (the IIgs's RESET and REBOOT, for example), the picture now sits beside that column when that's larger, instead of always below the lowest button. The IIgs picture grows from about 688 to 805 pixels wide in a 1280-pixel window.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
+### SNES / Super Famicom
+- **New machines: `snes` and `superfamicom`** (#15), after Mesen2 (GPL-3.0). See `doc/README-SNES.md`.
+  - **CPU and timing:** the 65816 core on a master-clock bus, where accesses take 6, 8 or 12 clocks by region (FastROM included). Each 1364-clock line has its DRAM refresh, HDMA at hblank and NMI at line 225.
+  - **Internal registers:** H/V timer IRQs, multiply/divide, the WRAM port, and auto and serial joypad reads.
+  - **DMA and HDMA:** all 8 modes, with direct and indirect HDMA tables.
+  - **Cartridges:** LoROM, HiROM and ExHiROM, detected from the header, with battery RAM. `.sfc` and `.smc` files; copier headers are skipped.
+  - **PPU:** drawn a line at a time. Modes 0-7 (offset-per-tile, mode 7 with EXTBG), 128 sprites with the line limits, windows, main and sub screens, colour math, mosaic and brightness.
+  - **Sound:** a new SPC700 core, which passes all 254,000 SingleStepTests and also shows in the debugger. With it come the IPL ROM, ports, timers and the S-DSP (BRR, ADSR/GAIN, Gaussian interpolation, noise, pitch modulation, echo FIR), resampled to 44.1 kHz.
+  - **Tests:** `spc700_single_step_tests`, ten `snes_*` machine tests, and krom's CPUTest ROMs (`MMEMU_SNES_SURVEY=1`: 127 PASS, 0 FAIL across the 65816 and SPC700 sets), plus his Twinkle music demo.
+  - **Also seen running:** krom's PPU demos and Tecmo's Monster Farm Jump.
+
 ### NES / Famicom
 - **New machines: `nes` and `famicom`** (#14), after Mesen2 (GPL-3.0). See `doc/README-NES.md`.
   - **CPU:** the 2A03, the 6502 core with three new switches: `setDecimalDisabled` (no decimal mode), `setUnstableMagic` (LXA/XAA use `$FF`) and `setIrqPollLatency` (one more instruction runs after CLI before an IRQ). There is also a new `softReset()` for the RESET line. All are off by default, so the other 6502 machines are unchanged.
