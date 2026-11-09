@@ -62,6 +62,7 @@ void Ppu::reset() {
     m_renderingNow = false;
     m_renderingPrev = false;
     m_pendingIncrement = false;
+    m_ignoreVramRead = 0;
     m_vDelay = 0;
     m_vPending = 0;
     m_scanline = -1;
@@ -96,6 +97,7 @@ void Ppu::softReset() {
     m_renderingNow = m_renderingPrev = false;
     m_vDelay = 0;
     m_pendingIncrement = false;
+    m_ignoreVramRead = 0;
     m_scanline = -1;
     m_cycle = 0;
     m_frameCount = 0;
@@ -191,6 +193,13 @@ uint8_t Ppu::read(uint8_t reg) {
         openMask = 0x00;
         break;
     case 7:
+        if (m_ignoreVramRead) {
+            // A second read within a couple of CPU cycles (a DMA's halt read,
+            // then the CPU's) is ignored: open bus, nothing advances
+            openMask = 0xFF;
+            break;
+        }
+        m_ignoreVramRead = 6;
         value = m_readBuffer;
         m_readBuffer = readVram(m_v & 0x3FFF);
         if ((m_v & 0x3FFF) >= 0x3F00) {
@@ -356,14 +365,29 @@ void Ppu::evaluateSprites() {
             ++count;
         }
     }
-    if (count == 8) {
-        int m = 0;
-        for (; n < 64; ++n) {
-            if (inRange(m_oam[(n * 4 + m) & 0xFF])) { m_overflow = true; break; }
-            m = (m + 1) & 3;            // the bug: m moves on along with n
-        }
-    }
     m_spriteCount = count;
+}
+
+int Ppu::overflowDot() const {
+    // The evaluation's timing (Mesen ProcessSpriteEvaluation): from dot 65,
+    // an OAM read on odd dots and a step on even ones; a sprite in range
+    // takes 4 steps (Y and 3 bytes copied), one out of range 1. With 8
+    // found, each later check is a step, and the overflow flag is set on the
+    // step that finds a 9th in range.
+    const int h = m_sprite16 ? 16 : 8;
+    auto inRange = [&](uint8_t y) { return m_scanline >= y && m_scanline < y + h; };
+    int step = 0, count = 0, n = 0;
+    for (; n < 64 && count < 8; ++n) {
+        if (inRange(m_oam[n * 4])) { step += 4; ++count; }
+        else ++step;
+    }
+    if (count < 8) return -1;
+    int m = 0;
+    for (; n < 64; ++n, ++step) {
+        if (inRange(m_oam[(n * 4 + m) & 0xFF])) return 66 + 2 * step;
+        m = (m + 1) & 3;                // the bug: m moves on along with n
+    }
+    return -1;
 }
 
 void Ppu::fetchSprite(int i) {
@@ -422,6 +446,8 @@ void Ppu::renderDot() {
             if (m_cycle == 256) incY();
         }
         if (m_scanline >= 0) {
+            if (m_cycle == 65) m_overflowAt = m_renderingNow ? overflowDot() : -1;
+            if (m_cycle == m_overflowAt && m_renderingNow) m_overflow = true;
             uint8_t c;
             if (m_renderingNow || (m_v & 0x3F00) != 0x3F00) {
                 const uint8_t p = pixel();
@@ -444,6 +470,7 @@ void Ppu::renderDot() {
         }
     } else if (m_cycle <= 320) {
         if (m_cycle == 257) {
+            m_overflowAt = -1;
             m_spriteIndex = 0;
             m_hasSprite.fill(false);
             if (m_renderingPrev) m_v = (uint16_t)((m_v & ~0x041F) | (m_t & 0x041F));   // horizontal from t
@@ -521,6 +548,7 @@ void Ppu::exec() {
         m_v = m_vPending;
         if (m_scanline >= 240 || !m_renderingNow) setBusAddress(m_v & 0x3FFF);
     }
+    if (m_ignoreVramRead) --m_ignoreVramRead;
     if (m_pendingIncrement) {
         m_pendingIncrement = false;
         vramIncrement();

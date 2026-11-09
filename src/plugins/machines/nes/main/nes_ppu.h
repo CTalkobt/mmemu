@@ -112,6 +112,8 @@ private:
     void renderDot();
     void loadTile();
     void evaluateSprites();
+    /** The dot of this line where the sprite overflow flag gets set, or -1. */
+    int overflowDot() const;
     void fetchSprite(int i);
     uint8_t pixel();
     void incX();
@@ -152,6 +154,8 @@ private:
     bool m_renderingPrev = false;
     // The v increment after a $2007 access happens on the next dot
     bool m_pendingIncrement = false;
+    int m_ignoreVramRead = 0;
+    int m_overflowAt = -1;               // the dot the overflow flag is set on this line            // dots during which a $2007 read is ignored
     // $2006's second write reaches v 3 dots later
     int m_vDelay = 0;
     uint16_t m_vPending = 0;

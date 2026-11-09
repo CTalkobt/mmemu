@@ -17,9 +17,9 @@ struct MachineDescriptor;
  *   $4000-$4017  the APU, OAM DMA ($4014), controllers ($4016/$4017)
  *   $4020-$FFFF  the cartridge (work RAM at $6000, PRG ROM at $8000)
  *
- * As on the Atari 2600 here, the PPU and APU are clocked lazily: reads catch
- * them up to the cycle of the access, writes take effect on the instruction's
- * last cycle(s); OAM DMA and DMC fetches stall the CPU.
+ * The CPU (nes_cpu.h) is cycle-exact: every cycle is a bus access, the PPU
+ * and APU run in step with it, and OAM DMA and the DMC's fetches take the
+ * CPU's read cycles as on the chip.
  *
  * The standard controllers: onGamepad (PAD_A/PAD_B/SELECT/START and the
  * d-pad; X and Y also press A and B), onJoystick (fire is A), and the keys
