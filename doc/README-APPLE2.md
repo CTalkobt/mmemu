@@ -158,7 +158,14 @@ original once the keys are let go.
   - **Scaling:** the front ends' moves arrive in picture pixels. Y is halved (Super Hi-Res lines are doubled), and X is halved in 320 mode, as KEGS scales the host pointer.
   - In the GUI, move and click over the screen; in the CLI, `mouse <dx> <dy> [buttons]`. GS/OS's Finder opens its menus with it (`apple2gs_boots_gsos`).
 - **The clock:** `$C033`/`$C034` give the time (local, seconds since 1904) and 256 bytes of battery RAM. The battery RAM starts at zero, so the ROM falls back to its defaults; it isn't saved yet. `$C034` bits 0-3 are the border colour.
-- **The DOC:** `$C03C-$C03F` reach the DOC's registers and its 64 KB of sound RAM. The data register reads one access behind. No sound is produced yet.
+- **Sound:** the Ensoniq ES5503 DOC, after MAME `es5503.cpp` (v2.4), behind the sound GLU, mixed with the speaker (the device "Sound").
+  - **Oscillators:** 32 of them, reading 8-bit samples from 64 KB of sound RAM. Each has a frequency, a volume, a wave table pointer and size (256 bytes to 32 KB) and a resolution. The modes are free-run, one-shot, sync/AM and swap.
+  - **Halting and interrupts:** a zero sample halts an oscillator, and a halt can raise its interrupt. Register `$E0` names the interrupting oscillator and clears it.
+  - **The highest oscillator:** the highest enabled one sounds three times over, as the silicon does.
+  - **Timing:** the DOC runs at 7.16 MHz, producing a sample every 8 x (oscillators + 2) clocks: 26.3 kHz with all 32. It is caught up before each register access and after each instruction.
+  - **The GLU:** `$C03C` is control (bit 6 RAM or registers, bit 5 auto-increment, bits 0-3 the volume), `$C03D` is data (reads one access behind), `$C03E/F` the address.
+  - **Output:** mono at 44.1 kHz; each output sample averages the DOC samples within it. It is scaled by the GLU volume and mixed with the speaker.
+  - **Heard:** the ROM's start-up beep and Block Out's title sound.
 - **Other devices:**
   - The SCC (`$C038-$C03B`) answers as idle.
   - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers. `$C031` bit 6 picks the 5.25" or the 3.5" drives. With no startup device the ROM shows "Check startup device!".
@@ -200,7 +207,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** the DOC's oscillators and sound, the serial ports, ROM 03, and saving the battery RAM.
+**Not yet (the later stages):** the serial ports, ROM 03, and saving the battery RAM.
 
 ## Keyboard
 

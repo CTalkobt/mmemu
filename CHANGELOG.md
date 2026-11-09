@@ -11,6 +11,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **`-i` mounts disks** in `mmemu-cli` and `mmemu-gui`, as does the CLI's `load`. An image that no program loader or cartridge takes is offered to unit 1 of the machine's drives (`IORegistry::mountDisk`, as `disk mount 1` does). So `-m apple2gs -i system.2mg` and `-m apple2e -i game.dsk` boot the disk; before, `-i` only loaded programs.
 
 ### Apple II
+- **Apple IIgs: Ensoniq DOC sound** (#12), the ES5503 after MAME `es5503.cpp` v2.4.
+  - **Oscillators:** 32, with free-run, one-shot, sync/AM and swap modes. A zero sample or the table's end halts them, with interrupts through `$E0`, and the highest enabled oscillator sounds three times over.
+  - **Timing:** 7.16 MHz, so 26.3 kHz with all 32 oscillators.
+  - **The sound GLU** (`$C03C-$C03F`) gives the DOC's registers and its 64 KB of RAM, with the master volume.
+  - **Output:** resampled to 44.1 kHz and mixed with the speaker into one audio device.
+  - **Heard:** the ROM's start-up beep, and Block Out's title sound.
+  - **Test:** `apple2gs_doc_sound` checks the beep, a square wave's pitch, and a one-shot's halt and interrupt.
 - **Apple IIgs: the ADB mouse** (#12, after KEGS `mouse_read_c024`).
   - **Registers:** `$C024` gives the X then the Y delta (7 bits signed, the button in the Y read's bit 7). `$C027` has data-waiting (bit 7), Y-next (bit 1) and the interrupt enable (bit 6).
   - **No lost clicks:** moves queue up, and a button change starts a new entry.
