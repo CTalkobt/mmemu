@@ -167,7 +167,12 @@ original once the keys are let go.
   - **Output:** mono at 44.1 kHz; each output sample averages the DOC samples within it. It is scaled by the GLU volume and mixed with the speaker.
   - **Heard:** the ROM's start-up beep and Block Out's title sound.
 - **Other devices:**
-  - The SCC (`$C038-$C03B`) answers as idle.
+- **The serial ports:** a Zilog 8530 SCC (the device "SCC"), after KEGS `scc.c`. Channel A is port 1, the printer port (`$C039` command, `$C03B` data); channel B is port 2, the modem port (`$C038`, `$C03A`).
+  - **Registers:** a pointer selects them. WR0's commands, WR9's resets and master interrupt enable, RR0 (Rx available, Tx empty, zero count, DCD, CTS), RR2B's status-modified vector and RR3's pending interrupts are emulated.
+  - **Timing:** the baud rate generator runs from the 3.6864 MHz crystal or PCLK (WR12/13/14), with the clock mode, multiplier and character format (WR4/5/11). Together they give each character's time.
+  - **Interrupts:** Rx (a 3-deep FIFO), Tx empty and zero count.
+  - **Host link:** `serial loopback` or `serial tcp:PORT` (a listener on 127.0.0.1) attaches port 1, then port 2; `serial none` detaches both.
+  - **Firmware:** the ROM's firmware drives it: from Applesoft, `PR#1` and `PRINT` send to port 1.
   - The IWM (`$C0E0-$C0EF`) has its switches, mode, status and handshake registers. `$C031` bit 6 picks the 5.25" or the 3.5" drives. With no startup device the ROM shows "Check startup device!".
 - **5.25" drives** (slot 6, the device "Disk II"): the IIgs ROM's slot 6 firmware drives them through the IWM, using the Apple II's Disk II emulation (`.dsk`, `.do`, `.po`, `.nib`, `.woz`).
   - The IWM's mode and status registers sit in front.
@@ -207,7 +212,7 @@ original once the keys are let go.
 **The ROM.** Apple's IIgs ROMs aren't in this repository; `.gitignore` keeps them out. Download ROM 01 (128 KB) from the Apple II Documentation Project mirror:
 <https://mirrors.apple2.org.za/Apple%20II%20Documentation%20Project/Computers/Apple%20II/Apple%20IIGS/ROM%20Images/>. Save it as `roms/apple2/apple2gs-rom01.rom`. Bank `$FE` comes first; a dump with bank `$FF` first is put in order when it loads. The tests skip without it.
 
-**Not yet (the later stages):** the serial ports, ROM 03, and saving the battery RAM.
+**Not yet:** ROM 03, and saving the battery RAM.
 
 ## Keyboard
 

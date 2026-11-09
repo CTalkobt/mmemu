@@ -937,3 +937,82 @@ TEST_CASE(apple2gs_doc_sound) {
     EXPECT_TRUE(!snd->irq());
     delete m;
 }
+
+#include "plugins/machines/apple2/main/gs_scc.h"
+
+// The Z8530 SCC (KEGS scc.c) at the register level: channel B (port 2) at
+// 9600 baud, 8 bits, 1 stop (x16 from the 3.6864 MHz crystal, time
+// constant 10); a byte out reaches the far end and the Tx buffer is busy
+// for a character's time; bytes in fill the FIFO, raise the Rx interrupt
+// (RR3, RR2B's vector) and read back; reset highest IUS clears it; local
+// loopback brings a byte straight back
+TEST_CASE(apple2gs_scc_registers) {
+    apple2::GsScc scc(1020484.0);
+    auto wr = [&](int port, int reg, uint8_t v) { scc.writeReg(port, (uint8_t)reg); scc.writeReg(port, v); };
+    auto rd = [&](int port, int reg) { scc.writeReg(port, (uint8_t)reg); return scc.readReg(port); };
+    const int B = 1;
+    wr(B, 9, 0x40);                                  // reset channel B
+    wr(B, 4, 0x44);                                  // x16, 1 stop bit
+    wr(B, 3, 0xC0);                                  // Rx 8 bits
+    wr(B, 5, 0x60);                                  // Tx 8 bits
+    wr(B, 11, 0x50);                                 // Rx and Tx clocks from the baud rate generator
+    wr(B, 12, 10); wr(B, 13, 0);                     // time constant 10: 9600 baud
+    wr(B, 14, 0x01);                                 // generator on, from the crystal
+    wr(B, 3, 0xC1); wr(B, 5, 0x68);                  // Rx, Tx on
+    const double perChar = 1020484.0 / 9600.0 * 10.0;
+    EXPECT_TRUE(std::fabs(scc.charCycles(B) - perChar) < perChar * 0.01);
+    std::string out;
+    scc.onTransmit(B, [&](uint8_t b) { out += (char)b; });
+    EXPECT_EQ(rd(B, 0) & 0x04, 0x04);                // Tx empty
+    scc.writeData(B, 'A');
+    EXPECT_EQ(rd(B, 0) & 0x04, 0x00);                // busy
+    scc.tick((uint64_t)perChar + 1);
+    EXPECT_EQ(rd(B, 0) & 0x04, 0x04);
+    scc.writeData(B, 'B');
+    EXPECT_EQ(out, std::string("AB"));
+    // Receive with interrupts: Rx on all characters, master enable
+    wr(B, 1, 0x10);
+    wr(B, 9, 0x08);
+    scc.receive(B, 'x');
+    scc.receive(B, 'y');
+    EXPECT_EQ(rd(B, 0) & 0x01, 0x01);
+    EXPECT_TRUE(scc.irq());
+    EXPECT_EQ(rd(0, 3), 0x04);                       // RR3 (channel A): channel B Rx
+    EXPECT_EQ(rd(B, 2), 0x04);                       // RR2B: code 2, Ch B Rx
+    EXPECT_EQ(scc.readData(B), 'x');
+    scc.tick((uint64_t)perChar + 1);                 // the next character arrives
+    EXPECT_EQ(scc.readData(B), 'y');
+    EXPECT_TRUE(!scc.irq());
+    scc.receive(B, 'z');
+    scc.tick((uint64_t)perChar + 1);                 // one character time apart
+    EXPECT_TRUE(scc.irq());
+    wr(B, 0, 0x38);                                  // reset the highest IUS
+    EXPECT_TRUE(!scc.irq());
+    EXPECT_EQ(scc.readData(B), 'z');
+    // Local loopback
+    wr(B, 14, 0x11);
+    scc.tick(100000);
+    scc.writeData(B, 'L');
+    scc.tick(10);
+    EXPECT_EQ(scc.readData(B), 'L');
+}
+
+// The ROM's printer port firmware (slot 1) drives the SCC: from Applesoft,
+// PR#1 and PRINT send the text out of port 1
+TEST_CASE(apple2gs_scc_printer_port) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* scc = dynamic_cast<apple2::GsScc*>(m->ioRegistry->findHandler("SCC"));
+    ASSERT(scc);
+    std::string out;
+    scc->onTransmit(0, [&](uint8_t b) { out += (char)(b & 0x7F); });
+    run(m, 6000000);
+    m->onKey("control", true); m->onKey("reset", true); m->onKey("reset", false); m->onKey("control", false);
+    run(m, 3000000);
+    find<IKeyboardMatrix>(m)->enqueueText("PR#1\nPRINT \"HELLO SCC\"\nPR#0\n");
+    run(m, 20000000);
+    if (out.find("HELLO SCC") == std::string::npos) printf("    sent: '%s'\n", out.c_str());
+    EXPECT_TRUE(out.find("HELLO SCC") != std::string::npos);
+    delete m;
+}
