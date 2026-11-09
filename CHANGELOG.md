@@ -17,6 +17,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
     - **Writing:** paced by the handshake register, and decoded back into the image.
     - **Firmware:** the ROM's SmartPort firmware boots, reads and writes these disks.
   - **Tests:** `apple2gs_boots_525`, `apple2gs_drive35_format` (all 160 track sides round-trip), `apple2gs_boots_35` (a boot block that reads block 1599, on track 79 side 1) and `apple2gs_writes_35`.
+  - **GS/OS:** System 6.0.1's System Disk boots to the Finder in Super Hi-Res, and writes to its disk (`apple2gs_boots_gsos`, skipped without the disk).
+- **CLI:** `run`'s progress line shows the PC by the bus width: `$XXXX`, `$BB:XXXX` on the 65816, or the MEGA65's 28 bits. It used to split every PC as 8 + 20 bits.
 - **Apple IIgs, stage 2: Super Hi-Res** (#12, after KEGS `video.c` and `sim65816.c`).
   - **Modes:** 320 and 640 pixels, with 16 palettes from bank `$E1` and fill mode, shown as 640 x 400 inside the border.
   - **Line by line:** each line is drawn as the beam reaches it, so palette and SCB changes between lines show.

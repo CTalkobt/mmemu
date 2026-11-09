@@ -167,6 +167,7 @@ original once the keys are let go.
   - **Drive registers:** CA0-CA2 (phases 0-2) with SEL (`$C031` bit 7) pick a drive register. The status register reads it in bit 7 (disk in place, write protect, track 0, motor, sides, tachometer, disk switched). Phase 3 rising (LSTRB) runs the commands (step direction, step, motor on/off, eject).
   - **Writing:** written nibbles follow the head, and the handshake register paces them (ready after 8 bit times, underrun after 16). When write mode ends, the track is decoded back into the image's sectors and the file is saved.
   - The ROM's SmartPort firmware boots and reads and writes these disks.
+  - GS/OS System 6.0.1 (Apple's freely distributed System Disk, an 800 KB `.2mg`) boots to the Finder. The test `apple2gs_boots_gsos` boots it from `../refs/apple2gs/sys601-2.2mg` when that file is present.
   - `disk mount` tries the 3.5" drives first. They take only 800 KB images, so a 140 KB disk goes to the 5.25" drives.
 - **Video:** the Apple II modes, through the IIe video, with the enhanced IIe's character set (MouseText). Text uses `$C022`'s colours, and the picture has the `$C034` border.
 - **Super Hi-Res** (stage 2, KEGS `video.c`): `$C029` bit 7 turns it on. Bank `$E1` holds it:

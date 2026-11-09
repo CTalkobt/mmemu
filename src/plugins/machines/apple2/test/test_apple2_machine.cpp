@@ -8,6 +8,7 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libcore/main/icore.h"
 #include <cstdio>
+#include <filesystem>
 #include <cstring>
 #include <algorithm>
 #include <string>
@@ -628,4 +629,37 @@ TEST_CASE(apple2gs_writes_35) {
     EXPECT_EQ(diff, 0);
     EXPECT_EQ(b[1000 * 512 + 0x100], img[0x100]);
     delete m;
+}
+
+// GS/OS System 6.0.1 (Apple's freely distributed System Disk, 800 KB .2mg
+// from the Asimov archive; read from ../refs/apple2gs, skipped without it)
+// boots from the 3.5" drive to the Finder: Super Hi-Res 640 mode with the
+// white menu bar across the top
+TEST_CASE(apple2gs_boots_gsos) {
+    const std::string disk = "../refs/apple2gs/sys601-2.2mg";
+    FILE* f = std::fopen(disk.c_str(), "rb");
+    if (!f) { printf("  (skipped: no %s)\n", disk.c_str()); return; }
+    std::fclose(f);
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    // A copy: GS/OS may write to its boot disk
+    const std::string copy = (std::filesystem::temp_directory_path() / "mmemu_test_gsos.2mg").string();
+    std::filesystem::copy_file(disk, copy, std::filesystem::copy_options::overwrite_existing);
+    IOHandler* d = m->ioRegistry->findHandler("3.5\" Drive");
+    ASSERT(d && d->mountDisk(1, copy));
+    run(m, 160000000);                               // about 25 s of IIgs time
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->read8(0x00C029) & 0x80, 0x80);    // Super Hi-Res
+    EXPECT_EQ(bus->peek8(0xE19D05) & 0x80, 0x80);    // 640 mode
+    auto* v = find<IVideoOutput>(m);
+    const auto dim = v->getDimensions();
+    std::vector<uint32_t> fb((size_t)dim.width * dim.height);
+    v->renderFrame(fb.data());
+    const int x0 = (dim.width - 640) / 2, y0 = (dim.height - 400) / 2;
+    int white = 0;                                   // the menu bar, line 5
+    for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
+    EXPECT_TRUE(white > 300);
+    delete m;
+    std::filesystem::remove(copy);
 }

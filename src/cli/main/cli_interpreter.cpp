@@ -654,8 +654,12 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             // Periodic status reporting to show responsiveness
             if (steps >= nextStatusAt) {
                 uint32_t pc = m_ctx.cpu->pc();
-                m_output("  " + std::to_string(steps) + " steps, PC=$" +
-                        toHex(pc >> 20, 2) + ":" + toHex(pc & 0xFFFFF, 5) + "\n");
+                // By the bus width: $XXXX, $BB:XXXX (65816), or the MEGA65's 28 bits
+                const int bits = m_ctx.bus ? m_ctx.bus->config().addrBits : 28;
+                const std::string at = bits <= 16 ? toHex(pc & 0xFFFF, 4)
+                                     : bits <= 24 ? toHex((pc >> 16) & 0xFF, 2) + ":" + toHex(pc & 0xFFFF, 4)
+                                                  : toHex(pc >> 20, 2) + ":" + toHex(pc & 0xFFFFF, 5);
+                m_output("  " + std::to_string(steps) + " steps, PC=$" + at + "\n");
                 nextStatusAt += STATUS_INTERVAL;
             }
         }
