@@ -248,6 +248,112 @@ TEST_CASE(apple2e_self_test) {
     }
 }
 
+// The IIe's aux slot, fitted after the machine is made: a RamWorks III's
+// 64 KB banks at $C073 (and $C071/5/7), for RAMRD/RAMWRT, ALTZP and the
+// aux language card; the video keeps bank 0; banks past the memory float;
+// a power cycle picks bank 0; back to the extended 80-column card
+TEST_CASE(apple2e_ramworks) {
+    EXPECT_EQ(MachineDescriptor::parseMemorySize("512K"), 512u << 10);
+    EXPECT_EQ(MachineDescriptor::parseMemorySize("16mb"), 16u << 20);
+    EXPECT_EQ(MachineDescriptor::parseMemorySize("65536"), 65536u);
+    EXPECT_EQ(MachineDescriptor::parseMemorySize("1G"), 0u);
+    EXPECT_EQ(MachineDescriptor::parseMemorySize("K"), 0u);
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIeEnhanced, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("aux");
+    EXPECT_TRUE(slot != nullptr);
+    if (!slot) { delete m; return; }
+    EXPECT_EQ(slot->info(), std::string("ext80 (extended 80-column card, 64 KB)"));
+    EXPECT_TRUE(!slot->install("ramworks3", "100K", err));
+    EXPECT_TRUE(!slot->install("ramworks3", "32M", err));
+    EXPECT_TRUE(!slot->install("ext80", "1M", err));
+    EXPECT_TRUE(!slot->install("", "", err));
+    EXPECT_TRUE(!slot->install("reu", "", err));
+    EXPECT_TRUE(slot->install("ramworks3", "", err));        // the default, 1 MB
+    EXPECT_EQ(slot->info(), std::string("ramworks3 (RamWorks III, 1 MB)"));
+    EXPECT_TRUE(slot->install("ramworks3", "8M", err));
+    EXPECT_EQ(slot->info(), std::string("ramworks3 (RamWorks III, 8 MB)"));
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+    // A byte in each bank at $2000 (RAMRD/RAMWRT) and $0080 (ALTZP), then
+    // back: each bank holds its own
+    bus->write8(0xC005, 0); bus->write8(0xC003, 0);
+    for (int b = 0; b < 128; ++b) {
+        bus->write8(0xC073, (uint8_t)b);
+        bus->write8(0x2000, (uint8_t)(b ^ 0x5A));
+    }
+    bus->write8(0xC009, 0);
+    for (int b = 0; b < 128; ++b) { bus->write8(b & 1 ? 0xC071 : 0xC077, (uint8_t)b); bus->write8(0x0080, (uint8_t)~b); }
+    bool ok = true;
+    for (int b = 127; b >= 0; --b) {
+        bus->write8(0xC075, (uint8_t)b);
+        ok = ok && bus->read8(0x0080) == (uint8_t)~b;
+    }
+    bus->write8(0xC008, 0);
+    for (int b = 0; b < 128; ++b) {
+        bus->write8(0xC073, (uint8_t)b);
+        ok = ok && bus->read8(0x2000) == (uint8_t)(b ^ 0x5A);
+    }
+    EXPECT_TRUE(ok);
+    // $C070 (the paddles) and $C072 don't select
+    bus->write8(0xC073, 3); bus->write8(0xC070, 9); bus->write8(0xC072, 9);
+    EXPECT_EQ(bus->read8(0x2000), 3 ^ 0x5A);
+    // Past 8 MB: writes are lost, bank 0 untouched
+    bus->write8(0xC073, 200);
+    bus->write8(0x2000, 0xEE);
+    bus->write8(0xC073, 0);
+    EXPECT_EQ(bus->read8(0x2000), 0x5A);
+    // The aux language card follows the bank
+    bus->write8(0xC009, 0);
+    bus->read8(0xC083); bus->read8(0xC083);
+    bus->write8(0xC073, 1); bus->write8(0xD000, 0x11);
+    bus->write8(0xC073, 2); bus->write8(0xD000, 0x22);
+    bus->write8(0xC073, 1);
+    EXPECT_EQ(bus->read8(0xD000), 0x11);
+    bus->write8(0xC008, 0);
+    // A power cycle: bank 0, memory cleared
+    bus->write8(0xC073, 5);
+    m->onReset(*m);
+    bus->write8(0xC005, 0); bus->write8(0xC003, 0);
+    bus->write8(0x2000, 0x77);
+    bus->write8(0xC073, 0);
+    EXPECT_EQ(bus->read8(0x2000), 0x77);
+    // Back to the 80-column card: $C073 does nothing
+    EXPECT_TRUE(slot->install("ext80", "", err));
+    m->onReset(*m);
+    bus->write8(0xC005, 0); bus->write8(0xC003, 0);
+    bus->write8(0x2000, 0x31);
+    bus->write8(0xC073, 1);
+    EXPECT_EQ(bus->read8(0x2000), 0x31);
+    delete m;
+    // The IIc has no aux slot to fill (its 128 KB are on the board)
+    if (MachineDescriptor* c = apple2::create(apple2::Model::IIc, &err)) {
+        EXPECT_TRUE(c->expansionSlot("aux") == nullptr);
+        delete c;
+    }
+}
+
+// The IIe's self-test passes with a RamWorks III in the aux slot (it tests
+// bank 0's 64 KB as the 80-column card's)
+TEST_CASE(apple2e_ramworks_self_test) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIeEnhanced, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    EXPECT_TRUE(m->expansionSlot("aux")->install("ramworks3", "3M", err));
+    m->onReset(*m);
+    run(m, 1000000);
+    press(m, "control", true); press(m, "alt", true); press(m, "right_alt", true);
+    press(m, "reset", true); press(m, "reset", false);
+    press(m, "control", false);
+    run(m, 300000);
+    press(m, "alt", false); press(m, "right_alt", false);
+    uint64_t t = 0;
+    while (t < 100000000 && !screenHas(m, "System OK")) { run(m, 1000000); t += 1000000; }
+    EXPECT_TRUE(screenHas(m, "System OK"));
+    delete m;
+}
+
 // IIe keyboard: lower case with Caps Lock off; $C010 reads any-key-down;
 // the enhanced IIe shows lower case; PR#3 gives 80 columns from aux memory
 TEST_CASE(apple2e_keyboard_and_80_columns) {

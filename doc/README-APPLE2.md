@@ -107,6 +107,39 @@ The built-in self-test (hold Open Apple and Closed Apple, then
 Control-RESET) passes: "System OK" on the enhanced IIe, "KERNEL OK" on the
 original once the keys are let go.
 
+### The aux slot: RamWorks III
+
+The IIe's aux slot can take a different card once the machine is made. It
+is the machine's `aux` expansion slot: CLI `expansion`, MCP `expansion`,
+the GUI's Control > Expansions.... The machine power-cycles after a change.
+
+| Device | |
+|--------|--|
+| `ext80` | Apple's extended 80-column card: 64 KB (the default) |
+| `ramworks3` | Applied Engineering RamWorks III: 128 KB to 16 MB in 64 KB banks (default 1M; the menu offers 256K-16M, the CLI and MCP any multiple of 64K) |
+
+```
+expansion                     # the slots, what's fitted and what fits
+expansion aux ramworks3 8M    # an 8 MB RamWorks III
+expansion aux ext80           # back to the 80-column card
+```
+
+After MAME's `a2eramworks3.cpp` and AppleWin's `Memory.cpp`:
+
+- A write to `$C073` (or `$C071`, `$C075`, `$C077`) picks the 64 KB bank
+  that the aux switches see: RAMRD, RAMWRT, ALTZP, 80STORE and the aux
+  language card.
+- The banks run from 0 up to the fitted size, as in both emulators. The real
+  card numbers its banks with gaps: `$00-$17`, then `$30-$37`, `$50-$57`
+  and `$70-$77`. Software probes for each bank, so contiguous banks work too.
+- 16 MB uses all 8 bits of the bank number, as AppleWin does; MAME stops
+  at 8 MB.
+- A bank past the fitted memory floats: reads see the bus, and writes are
+  lost. AppleWin instead ignores the selection.
+- The video always shows bank 0.
+- A power cycle selects bank 0 (AppleWin GH#1414); Control-RESET keeps the
+  bank.
+
 ## IIc
 
 `apple2c` follows MAME's `apple2e.cpp`: an enhanced IIe (65C02, 128 KB, 80 columns, MouseText) with the IIc's differences.
@@ -371,5 +404,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
-- The UniDisk 3.5's 65C02 firmware (its packets are served high-level); RamWorks memory; the IIe without its 80-column card.
+- The UniDisk 3.5's 65C02 firmware (its packets are served high-level); the IIe without its 80-column card (or with the 1 KB 80-column card).
 - Cassette input and output.

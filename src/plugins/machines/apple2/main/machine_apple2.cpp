@@ -161,6 +161,7 @@ public:
         // AppleWin fills RAM with a pattern; zeroes are as good for the ROMs
         std::fill(m_ram.begin(), m_ram.end(), 0);
         std::fill(m_aux.begin(), m_aux.end(), 0);
+        m_auxBank = 0;                          // a power cycle: bank 0 (AppleWin GH#1414)
         m_cycles = m_videoCycle = 0;
         m_annunciators = 0;
         resetPaging();
@@ -244,7 +245,7 @@ public:
         else if (a < 0xC100) io(a, &v, at);
         else if (a < 0xD000) cx(a, at);
         else if (m_lcWriteRam) {
-            if (m_altZp) m_aux[auxLcIndex(a)] = v;
+            if (m_altZp) auxWrite(auxLcIndex(a), v);
             else m_lc[lcIndex(a)] = v;
         }
     }
@@ -258,6 +259,18 @@ public:
 
     uint8_t* ram() { return m_ram.data(); }
     uint8_t* aux() { return m_aux.empty() ? nullptr : m_aux.data(); }
+
+    // The IIe's aux slot: the extended 80-column card (one 64 KB bank) or a
+    // RamWorks III (MAME a2eramworks3.cpp, AppleWin Memory.cpp): banks of
+    // 64 KB, contiguous from 0, a write to $C071/3/5/7 picks one; the video
+    // always shows bank 0
+    void setAuxBanks(int banks) {
+        m_aux.assign((size_t)banks * 0x10000u, 0);
+        m_auxBank = 0;
+        m_video->setMemory(m_ram.data(), m_aux.data());
+    }
+    int auxBanks() const { return (int)(m_aux.size() / 0x10000u); }
+    int auxBank() const { return m_auxBank; }
     uint32_t videoFlags() const { return m_vf; }
     bool lcReadRam() const { return m_lcReadRam; }
     bool lcWriteRam() const { return m_lcWriteRam; }
@@ -300,13 +313,26 @@ private:
         }
         return write ? m_auxWrite : m_auxRead;
     }
-    uint8_t ramRead(uint16_t a) const { return auxFor(a, false) ? m_aux[a] : m_ram[a]; }
-    void ramWrite(uint16_t a, uint8_t v) { (auxFor(a, true) ? m_aux : m_ram)[a] = v; }
+    uint8_t ramRead(uint16_t a) const { return auxFor(a, false) ? auxRead(a) : m_ram[a]; }
+    void ramWrite(uint16_t a, uint8_t v) {
+        if (auxFor(a, true)) auxWrite(a, v);
+        else m_ram[a] = v;
+    }
+    // The aux card's selected 64 KB bank (a RamWorks III's banks past the
+    // fitted memory float: reads see the bus, writes are lost)
+    uint8_t auxRead(uint32_t a) const {
+        const size_t i = (size_t)m_auxBank * 0x10000u + a;
+        return i < m_aux.size() ? m_aux[i] : m_video->floatingBus();
+    }
+    void auxWrite(uint32_t a, uint8_t v) {
+        const size_t i = (size_t)m_auxBank * 0x10000u + a;
+        if (i < m_aux.size()) m_aux[i] = v;
+    }
 
     // $D000-$FFFF: ROM or the language card's RAM (aux with ALTZP)
     uint8_t highRead(uint16_t a) const {
         if (!m_lcReadRam) return m_rom[romBank() + a - romBase()];
-        return m_altZp ? m_aux[auxLcIndex(a)] : m_lc[lcIndex(a)];
+        return m_altZp ? auxRead(auxLcIndex(a)) : m_lc[lcIndex(a)];
     }
     uint32_t romBase() const { return m_iie ? 0xC000 : 0xD000; }
     // IIc 32 KB ROMs: $C028 swaps in the second 16 KB
@@ -494,6 +520,8 @@ private:
             }
             case 0x7:                                   // paddle timers start
                 m_ptrig = at;
+                if (wr && m_iie && !m_iic && auxBanks() > 1 && (a & 0x9) == 1)
+                    m_auxBank = *wr;                    // RamWorks III: the bank
                 if (m_iic) {
                     m_irqMask &= ~IRQ_VBL;              // any $C07x clears the VBL interrupt
                     if (wr && (a & 0x0F) >= 8) m_iouDis = !(a & 1);   // $C078/A/C/E set IOUDIS, odd clear
@@ -650,6 +678,7 @@ private:
 
     BusConfig m_cfg;
     std::vector<uint8_t> m_rom, m_ram, m_lc, m_aux;
+    int m_auxBank = 0;
     Apple2Video* m_video;
     Apple2Keyboard* m_kbd;
     Apple2Speaker* m_spk;
@@ -808,6 +837,41 @@ MachineDescriptor* create(Model model, std::string* err) {
             fy -= iy;
             bus->mouse(ix, iy, buttons & 1);
         };
+    }
+
+    if (iie && !iic) {
+        // The aux slot: the extended 80-column card, or a RamWorks III of
+        // 128 KB to 16 MB (AppleWin's limit: 256 banks; MAME's 8 MB)
+        MachineDescriptor::ExpansionSlot aux;
+        aux.name = "aux";
+        aux.description = "The IIe's auxiliary slot: the extended 80-column card (64 KB) or an Applied Engineering RamWorks III (banks of 64 KB at $C073)";
+        aux.canEmpty = false;
+        aux.devices = {{"ext80", "Apple extended 80-column card: 64 KB, one bank", {}, ""},
+                       {"ramworks3", "Applied Engineering RamWorks III: 128 KB-16 MB in 64 KB banks",
+                        {"256K", "512K", "1M", "2M", "3M", "4M", "8M", "16M"}, "1M"}};
+        aux.install = [bus](const std::string& device, const std::string& option, std::string& err) {
+            if (device.empty()) { err = "the aux slot can't be left empty (an empty slot isn't emulated)"; return false; }
+            if (device == "ext80") {
+                if (!option.empty()) { err = "the extended 80-column card takes no option"; return false; }
+                bus->setAuxBanks(1);
+                return true;
+            }
+            if (device != "ramworks3") { err = "no device '" + device + "' for the aux slot (ext80, ramworks3)"; return false; }
+            const uint64_t bytes = MachineDescriptor::parseMemorySize(option.empty() ? "1M" : option);
+            if (bytes < 0x20000 || bytes > (16u << 20) || bytes % 0x10000) {
+                err = "a RamWorks III takes 128K to 16M in 64K steps (e.g. 512K, 1M, 8M)";
+                return false;
+            }
+            bus->setAuxBanks((int)(bytes / 0x10000));
+            return true;
+        };
+        aux.info = [bus]() {
+            const int b = bus->auxBanks();
+            if (b <= 1) return std::string("ext80 (extended 80-column card, 64 KB)");
+            const uint32_t kb = (uint32_t)b * 64;
+            return "ramworks3 (RamWorks III, " + (kb % 1024 ? std::to_string(kb) + " KB" : std::to_string(kb / 1024) + " MB") + ")";
+        };
+        desc->expansionSlots.push_back(std::move(aux));
     }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the

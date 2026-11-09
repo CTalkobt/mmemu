@@ -1542,6 +1542,46 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         m_output("Resetting machine...\n");
         if (m_ctx.machine->onReset) m_ctx.machine->onReset(*m_ctx.machine);
         showRegisters();
+    } else if (cmd == "expansion") {
+        // Expansion slots that take a device once the machine is made (the
+        // IIe's aux slot: RamWorks III):
+        //   expansion                          list the slots, what's fitted and what fits
+        //   expansion <slot> <device> [option] fit a device (an option: e.g. a size) and reset
+        //   expansion <slot> remove            empty the slot and reset
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        auto& slots = m_ctx.machine->expansionSlots;
+        std::string name, device, option;
+        if (!(ss >> name)) {
+            if (slots.empty()) { m_output("This machine has no expansion slots.\n"); return; }
+            for (auto& s : slots) {
+                std::string info = s.info ? s.info() : "";
+                m_output("  " + s.name + ": " + (info.empty() ? "(empty)" : info) + "\n    " + s.description + "\n");
+                for (auto& d : s.devices) {
+                    std::string opts;
+                    for (auto& o : d.options) opts += (opts.empty() ? "" : ", ") + o;
+                    m_output("    - " + d.id + ": " + d.description +
+                             (opts.empty() ? "" : "\n        options: " + opts + " (default " + d.defaultOption + ")") + "\n");
+                }
+            }
+            return;
+        }
+        auto* slot = m_ctx.machine->expansionSlot(name);
+        if (!slot) { m_output("No expansion slot '" + name + "'. Type 'expansion' for the list.\n"); return; }
+        if (!(ss >> device)) {
+            std::string info = slot->info ? slot->info() : "";
+            m_output("  " + name + ": " + (info.empty() ? "(empty)" : info) + "\n"
+                     "Syntax: expansion <slot> <device> [option] | expansion <slot> remove\n");
+            return;
+        }
+        ss >> option;
+        if (device == "remove") device.clear();
+        std::string err;
+        if (!slot->install(device, option, err)) { m_output("Error: " + err + "\n"); return; }
+        std::string info = slot->info ? slot->info() : "";
+        m_output("Expansion slot " + name + ": " + (info.empty() ? "(empty)" : info) + "\n");
+        m_output("Resetting machine...\n");
+        if (m_ctx.machine->onReset) m_ctx.machine->onReset(*m_ctx.machine);
+        showRegisters();
     } else if (cmd == "eject") {
         if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
         if (auto* cart = ImageLoaderRegistry::instance().getActiveCartridge(m_ctx.bus)) {
@@ -3425,6 +3465,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  cart <path>         - Attach a cartridge image\n"
                  "  eject               - Eject currently attached cartridge\n"
                  "  rom [socket] [path|remove] - List the board's ROM sockets, or fit/remove a ROM (C128 function ROM)\n"
+                 "  expansion [slot] [device [option]|remove] - List the expansion slots, or fit/remove a device\n"
+                 "                        (e.g. expansion aux ramworks3 8M on a IIe)\n"
                  "  disk mount <unit> <path> [device] - Mount a disk image to drive unit (also .gz / .zip); device: part of the drive's name\n"
                  "  disk eject <unit>   - Eject a disk image\n"
                  "  tape mount <path>   - Mount a .tap file for playback\n"

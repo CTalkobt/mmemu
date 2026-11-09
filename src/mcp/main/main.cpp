@@ -780,6 +780,21 @@ Json handleDescribe() {
     romSockSchema.oVal["required"] = romSockReq;
     addTool("rom_socket", "List the board's optional ROM sockets (the C128's internal function ROM), or fit or remove a ROM in one; the machine resets after a change", romSockSchema);
 
+    Json expSchema(Json::OBJ);
+    expSchema.oVal["type"] = Json("object");
+    Json expProps(Json::OBJ);
+    expProps.oVal["machine_id"] = midProp;
+    Json expSlotProp(Json::OBJ); expSlotProp.oVal["type"] = Json("string"); expSlotProp.oVal["description"] = Json("Slot name (e.g. 'aux' on the IIe); omit to list the slots, what is fitted and what fits");
+    expProps.oVal["slot"] = expSlotProp;
+    Json expDevProp(Json::OBJ); expDevProp.oVal["type"] = Json("string"); expDevProp.oVal["description"] = Json("Device to fit (e.g. 'ramworks3', 'ext80'); 'remove' empties the slot");
+    expProps.oVal["device"] = expDevProp;
+    Json expOptProp(Json::OBJ); expOptProp.oVal["type"] = Json("string"); expOptProp.oVal["description"] = Json("The device's option, e.g. a memory size ('512K', '8M'); omit for its default");
+    expProps.oVal["option"] = expOptProp;
+    expSchema.oVal["properties"] = expProps;
+    Json expReq(Json::ARR); expReq.push_back(Json("machine_id"));
+    expSchema.oVal["required"] = expReq;
+    addTool("expansion", "List the machine's expansion slots (the IIe's aux slot), or fit a device in one (a RamWorks III of 128K-16M) or remove it; the machine resets after a change", expSchema);
+
     Json rstSchema(Json::OBJ);
     rstSchema.oVal["type"] = Json("object");
     Json rstProps(Json::OBJ);
@@ -2810,6 +2825,46 @@ Json handleToolsCall(const Json& params) {
             }
         } else {
             textItem.oVal["text"] = Json("Error: no ROM socket '" + sockName + "'");
+            textItem.oVal["isError"] = Json(true);
+        }
+    } else if (name == "expansion") {
+        MachineState* ms = getMachine(args["machine_id"].sVal);
+        std::string slotName = args.contains("slot") ? args["slot"].sVal : "";
+        std::string device = args.contains("device") ? args["device"].sVal : "";
+        std::string option = args.contains("option") ? args["option"].sVal : "";
+        if (!ms) {
+            textItem.oVal["text"] = Json("Error: Invalid machine ID");
+            textItem.oVal["isError"] = Json(true);
+        } else if (slotName.empty()) {
+            std::string out;
+            for (auto& sl : ms->machine->expansionSlots) {
+                std::string info = sl.info ? sl.info() : "";
+                out += sl.name + ": " + (info.empty() ? "(empty)" : info) + " - " + sl.description + "\n";
+                for (auto& d : sl.devices) {
+                    std::string opts;
+                    for (auto& o : d.options) opts += (opts.empty() ? "" : ", ") + o;
+                    out += "  " + d.id + ": " + d.description + (opts.empty() ? "" : " [options: " + opts + "; default " + d.defaultOption + "]") + "\n";
+                }
+            }
+            textItem.oVal["text"] = Json(out.empty() ? std::string("This machine has no expansion slots.") : out);
+        } else if (auto* slot = ms->machine->expansionSlot(slotName)) {
+            if (device.empty()) {
+                std::string info = slot->info ? slot->info() : "";
+                textItem.oVal["text"] = Json(slotName + ": " + (info.empty() ? "(empty)" : info));
+            } else {
+                if (device == "remove") device.clear();
+                std::string err;
+                if (slot->install(device, option, err)) {
+                    if (ms->machine->onReset) ms->machine->onReset(*ms->machine);
+                    std::string info = slot->info ? slot->info() : "";
+                    textItem.oVal["text"] = Json("Expansion slot " + slotName + ": " + (info.empty() ? "(empty)" : info) + "; machine reset.");
+                } else {
+                    textItem.oVal["text"] = Json("Error: " + err);
+                    textItem.oVal["isError"] = Json(true);
+                }
+            }
+        } else {
+            textItem.oVal["text"] = Json("Error: no expansion slot '" + slotName + "'");
             textItem.oVal["isError"] = Json(true);
         }
     } else if (name == "eject_cartridge") {
