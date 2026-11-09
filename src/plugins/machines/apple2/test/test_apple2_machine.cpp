@@ -1107,3 +1107,42 @@ TEST_CASE(apple2c_mouse_firmware) {
     EXPECT_TRUE(x > y);
     delete m;
 }
+
+// The IIc's 32 KB ROMs (00, 03, 04; local only), as MAME runs them: the IWM
+// in slot 6 (its registers in front of the 5.25" drives, the SmartPort bus
+// answering as empty) and, for 03 and 04, the 1 MB memory expansion at
+// $C0C0-$C0C3. Each comes up with "Check Disk Drive."; DOS 3.3 boots and
+// CATALOGs; the expansion's pointer steps through its RAM
+TEST_CASE(apple2c_32k_roms) {
+    const std::string master = "../refs/apple2/AppleWin/bin/DOS 3.3 System Master - 680-0210-A.dsk";
+    const bool haveMaster = std::filesystem::exists(master);
+    for (auto model : {apple2::Model::IIcRom00, apple2::Model::IIcRom03, apple2::Model::IIcRom04}) {
+        std::string err;
+        MachineDescriptor* m = apple2::create(model, &err);
+        if (!m) { printf("  (skipped: %s)\n", err.c_str()); continue; }
+        run(m, 12000000);
+        EXPECT_TRUE(screenHas(m, "Apple //c"));
+        EXPECT_TRUE(screenHas(m, "Check Disk Drive."));
+        IBus* bus = m->buses[0].bus;
+        if (model != apple2::Model::IIcRom00) {        // the memory expansion
+            bus->write8(0xC0C0, 0x00); bus->write8(0xC0C1, 0x34); bus->write8(0xC0C2, 0x0A);
+            bus->write8(0xC0C3, 0x5A); bus->write8(0xC0C3, 0xA5);
+            EXPECT_EQ(bus->read8(0xC0C0), 0x02);       // the pointer stepped on
+            EXPECT_EQ(bus->read8(0xC0C2), 0xFA);       // bank $0A, $F0 ORed in
+            bus->write8(0xC0C0, 0x00);
+            EXPECT_EQ(bus->read8(0xC0C3), 0x5A);
+            EXPECT_EQ(bus->read8(0xC0C3), 0xA5);
+        }
+        delete m;
+        if (!haveMaster) continue;
+        m = apple2::create(model, &err);
+        IOHandler* disk = m->ioRegistry->findHandler("Disk II");
+        ASSERT(disk && disk->mountDisk(1, master));
+        run(m, 12000000);
+        find<IKeyboardMatrix>(m)->enqueueText("CATALOG\n");
+        run(m, 6000000);
+        if (!screenHas(m, "HELLO")) for (int r = 0; r < 24; ++r) printf("    |%s|\n", textRow(m, r).c_str());
+        EXPECT_TRUE(screenHas(m, "HELLO"));
+        delete m;
+    }
+}
