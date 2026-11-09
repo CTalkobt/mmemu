@@ -2248,10 +2248,20 @@ void MmemuFrame::OnExpansions(wxCommandEvent&) {
     wxArrayString devices;
     for (auto& d : slot.devices) devices.Add(d.id + ": " + d.description);
     if (slot.canEmpty) devices.Add("(remove the device)");
+    const bool canSave = slot.save && !info.empty();
+    if (canSave) devices.Add("(save its memory as an image...)");
     wxSingleChoiceDialog dd(this, slot.description + "\n\nNow: " + (info.empty() ? "(empty)" : info),
                             "Expansion slot: " + slot.name, devices);
     if (dd.ShowModal() != wxID_OK) return;
     const size_t sel = (size_t)dd.GetSelection();
+    if (canSave && sel == (size_t)devices.GetCount() - 1) {
+        wxFileDialog fd(this, "Save " + slot.name, "", "", "Images (*.reu)|*.reu|All files|*", wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (fd.ShowModal() != wxID_OK) return;
+        std::string err;
+        if (!slot.save(fd.GetPath().ToStdString(), err)) { wxMessageBox(err, "Error", wxICON_ERROR); return; }
+        SetStatusText("Saved " + slot.name + " to " + fd.GetPath());
+        return;
+    }
     std::string device, option;
     if (sel < slot.devices.size()) {
         const auto& d = slot.devices[sel];
@@ -2263,10 +2273,17 @@ void MmemuFrame::OnExpansions(wxCommandEvent&) {
                 opts.Add(d.options[i]);
                 if (d.options[i] == d.defaultOption) def = (int)i;
             }
+            if (slot.save) opts.Add("(an image file...)");
             wxSingleChoiceDialog od(this, "Option for " + d.id + ":", slot.name + ": " + d.id, opts);
             od.SetSelection(def);
             if (od.ShowModal() != wxID_OK) return;
-            option = d.options[(size_t)od.GetSelection()];
+            if ((size_t)od.GetSelection() < d.options.size()) {
+                option = d.options[(size_t)od.GetSelection()];
+            } else {
+                wxFileDialog fd(this, "Image for " + d.id, "", "", "Images (*.reu)|*.reu|All files|*", wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+                if (fd.ShowModal() != wxID_OK) return;
+                option = fd.GetPath().ToStdString();
+            }
         }
     }
     std::string err;

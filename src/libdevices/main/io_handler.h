@@ -93,6 +93,23 @@ public:
     /** A serial port's far end (CLI `serial`): e.g. "loopback", "tcp:PORT",
      *  "none". False if this device has no serial port or the spec fails. */
     virtual bool attachSerial(const std::string& /*spec*/)   { return false; }
+    /** A bus master (an REU's DMA): while it holds the bus, run one cycle of
+     *  its work and return the cycles used (the CPU waits); 0 while it
+     *  doesn't. Machines with a device that can take the bus call it before
+     *  each CPU step (MachineDescriptor::busMasterStep). */
+    virtual int busMasterCycle()                             { return 0; }
+    /** A setting for a device fitted at run time (an expansion's option:
+     *  e.g. "size" = "512K", "image" = a path); false with `err` set if the
+     *  device has no such option or the value doesn't fit. */
+    virtual bool setOption(const std::string& /*key*/, const std::string& /*value*/, std::string& err) {
+        err = "no such option";
+        return false;
+    }
+    /** Save the device's memory as an image file (an REU's RAM). */
+    virtual bool saveDeviceImage(const std::string& /*path*/, std::string& err) {
+        err = "this device has no image to save";
+        return false;
+    }
 
     // -----------------------------------------------------------------------
     // Identity (pure virtual — every device must provide these)

@@ -207,7 +207,7 @@ The `mmemu-mcp` binary implements the **Model Context Protocol**, allowing AI ag
 - `list_symbols`, `add_symbol`, `remove_symbol`, `load_symbols`, `clear_symbols`: Manage symbols.
 - `set_breakpoint` / `set_watchpoint` / `delete_breakpoint`: Breakpoint management.
 - `get_stack(machine_id, count)`: Show the call stack trace.
-- `load_image`, `attach_cartridge`, `rom_socket`, `expansion`, `reset_machine`: Lifecycle and media (`expansion`: fit a device in an expansion slot, e.g. a IIe RamWorks III).
+- `load_image`, `attach_cartridge`, `rom_socket`, `expansion`, `reset_machine`: Lifecycle and media (`expansion`: fit a device in an expansion slot, e.g. a IIe RamWorks III or a C64/C128 REU, or save its memory).
 - `mount_tape(machine_id, path)`: Mount a `.tap` file for playback.
 - `control_tape(machine_id, operation)`: Transport control — `play`, `stop`, `rewind`, `record`, `stoprecord`.
 - `record_tape(machine_id)`: Arm the datasette for recording (equivalent to `control_tape` with `record`).

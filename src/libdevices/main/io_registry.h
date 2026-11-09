@@ -28,6 +28,12 @@ public:
     void registerOwnedHandler(IOHandler* handler);
 
     /**
+     * Take a handler out (a device removed at run time); the caller still
+     * owns it. False if it wasn't registered.
+     */
+    bool unregisterHandler(IOHandler* handler);
+
+    /**
      * Offer a disk image to `unit` of each device in turn (registration
      * order) until one mounts it, as CLI `disk mount` does; the device that
      * took it, or nullptr.

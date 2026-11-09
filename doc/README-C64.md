@@ -129,6 +129,52 @@ See [doc/README-DATASETTE.md](README-DATASETTE.md) for the full Datasette API.
 ### 2.9 Scheduler
 One `schedulerStep` call executes one CPU instruction (via `ICore::step()`), then ticks all IORegistry devices by the returned cycle count. The GUI timer calls this in a tight loop for ~33 333 cycles per 33 ms frame (~1 MHz effective).
 
+While a device holds the bus (an REU's DMA: `MachineDescriptor::busMasterStep`), each step runs one cycle of that instead of an instruction, and the devices tick as usual.
+
+### 2.10 REU (RAM Expansion Unit)
+A Commodore REU can be fitted in the expansion port (the machine's `port` expansion slot) once the machine is made:
+
+```
+expansion port reu 512K        # CLI: a 1750
+expansion port reu 16M         # the largest
+expansion port reu ram.reu     # a VICE .reu image (its size picks the unit)
+expansion port save ram.reu    # the RAM as an image
+expansion port remove
+```
+
+MCP `expansion` (`slot`, `device`, `option`, `save`) and the GUI's Control > Expansions... do the same. The machine resets after a change; the REU's RAM survives later resets.
+
+It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c64/cart/reu.c`:
+
+| Reg | |
+|-----|--|
+| `$DF00` | status (a read clears bits 5-7 and the IRQ): IRQ, end of block, verify error, 256K chips, version 0 |
+| `$DF01` | command: bit 7 execute, 5 autoload, 4 no `$FF00` trigger, 0-1 the type (C64 to REU, REU to C64, swap, verify) |
+| `$DF02-$DF03` | the C64 address |
+| `$DF04-$DF06` | the REU address and bank |
+| `$DF07-$DF08` | the length (0 is 64 KB) |
+| `$DF09` | the IRQ mask: bit 7 on, 6 end of block, 5 verify error |
+| `$DF0A` | address control: bit 7 fixes the C64 address, 6 the REU address |
+
+- The registers repeat every 32 bytes up to `$DFFF`; `$DF0B-$DF1F` read `$FF`.
+- **Starting a transfer:** execute with bit 4 set starts at once. With bit 4 clear, the REU waits for any write to `$FF00`; the write still goes on to the RAM under the KERNAL.
+- **Timing:** the CPU waits while the REU transfers one byte a cycle (a swap takes two).
+  - Verify stops at the first difference, plus one cycle when bytes were left. With one byte left, that byte is compared too.
+  - A finished transfer leaves the registers past the block, with length 1. With autoload they are reloaded instead.
+- **What the DMA sees:** the CPU's memory map, so I/O and ROMs are included. The 6510's port at `$00/$01` is not on the bus, so a transfer there writes the RAM underneath.
+- **Sizes:**
+  - 128K (1700, 64K chips: status bit 4 clear, wraps at 128 KB), 256K (1764) and 512K (1750).
+  - 1M-16M behave like the "1750 XL" style units.
+  - The REC's address counter wraps at 512 KB. A 1764's upper 256 KB are unbacked: reads float and writes are lost.
+  - Above 512 KB the bank register's upper bits are a latch straight to the DRAM, so those units wrap at their size and each 512 KB wraps within itself.
+- **IRQ:** the REU's IRQ goes to the expansion port's /IRQ, which is the `expansion_irq` line of the machine's shared IRQ.
+
+Not modelled:
+- Badlines and sprite fetches don't pause the DMA. The C64 machine has no VIC-II cycle stealing yet.
+- The REU's pass-through doesn't arbitrate with a cartridge that also uses I/O2.
+
+The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
+
 ---
 
 ## 3. Dependencies

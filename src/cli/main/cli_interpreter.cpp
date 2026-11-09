@@ -1548,6 +1548,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         //   expansion                          list the slots, what's fitted and what fits
         //   expansion <slot> <device> [option] fit a device (an option: e.g. a size) and reset
         //   expansion <slot> remove            empty the slot and reset
+        //   expansion <slot> save <path>       save the device's memory (an REU's .reu image)
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         auto& slots = m_ctx.machine->expansionSlots;
         std::string name, device, option;
@@ -1570,10 +1571,17 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!(ss >> device)) {
             std::string info = slot->info ? slot->info() : "";
             m_output("  " + name + ": " + (info.empty() ? "(empty)" : info) + "\n"
-                     "Syntax: expansion <slot> <device> [option] | expansion <slot> remove\n");
+                     "Syntax: expansion <slot> <device> [option] | expansion <slot> remove | expansion <slot> save <path>\n");
             return;
         }
         ss >> option;
+        if (device == "save") {                         // the fitted device's memory as an image (an REU's .reu)
+            if (option.empty()) { m_output("Syntax: expansion <slot> save <path>\n"); return; }
+            std::string err;
+            if (!slot->save || !slot->save(option, err)) { m_output("Error: " + (err.empty() ? std::string("this slot has nothing to save") : err) + "\n"); return; }
+            m_output("Saved " + name + " to " + option + "\n");
+            return;
+        }
         if (device == "remove") device.clear();
         std::string err;
         if (!slot->install(device, option, err)) { m_output("Error: " + err + "\n"); return; }
@@ -3466,7 +3474,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  eject               - Eject currently attached cartridge\n"
                  "  rom [socket] [path|remove] - List the board's ROM sockets, or fit/remove a ROM (C128 function ROM)\n"
                  "  expansion [slot] [device [option]|remove] - List the expansion slots, or fit/remove a device\n"
-                 "                        (e.g. expansion aux ramworks3 8M on a IIe)\n"
+                 "                        (e.g. expansion aux ramworks3 8M on a IIe, expansion port reu 16M on a C64;\n"
+                 "                        an REU also takes a .reu image file; expansion port save ram.reu saves one)\n"
                  "  disk mount <unit> <path> [device] - Mount a disk image to drive unit (also .gz / .zip); device: part of the drive's name\n"
                  "  disk eject <unit>   - Eject a disk image\n"
                  "  tape mount <path>   - Mount a .tap file for playback\n"

@@ -1,6 +1,7 @@
 #include "test_harness.h"
 #include "plugins/machines/c128/main/machine_c128.h"
 #include "plugins/devices/vdc8563/main/vdc8563.h"
+#include "plugins/devices/reu/main/reu.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
@@ -497,5 +498,79 @@ TEST_CASE(c128_gmod2) {
     }
     deselect();
     EXPECT_EQ(word, 0x1234u);
+    delete m;
+}
+
+// An REU on the C128's expansion port: I/O2 in C128 mode, the $FF00 trigger
+// beside the MMU's configuration register, DMA through the 8502's map
+TEST_CASE(c128_reu_expansion) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("port");
+    ASSERT(slot != nullptr);
+    ASSERT(slot->install("reu", "", err));          // the default: 512K
+    EXPECT_EQ(slot->info(), std::string("reu (REU, 512 KB)"));
+    m->onReset(*m);
+    run(m, 3000000);
+    ASSERT(screenHas(m, "READY."));
+    auto* reu = dynamic_cast<Reu*>(m->ioRegistry->findHandler("REU"));
+    ASSERT(reu != nullptr);
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->peek8(0xDF00), 0x10);
+    auto regs = [&](uint16_t host, uint32_t reuAddr, uint16_t len) {
+        bus->write8(0xDF02, (uint8_t)host); bus->write8(0xDF03, (uint8_t)(host >> 8));
+        bus->write8(0xDF04, (uint8_t)reuAddr); bus->write8(0xDF05, (uint8_t)(reuAddr >> 8));
+        bus->write8(0xDF06, (uint8_t)(reuAddr >> 16));
+        bus->write8(0xDF07, (uint8_t)len); bus->write8(0xDF08, (uint8_t)(len >> 8));
+    };
+    regs(0x0400, 0x050000, 1000);
+    bus->write8(0xDF01, 0x90);
+    int cycles = 0;
+    while (reu->dmaActive()) cycles += m->schedulerStep(*m);
+    EXPECT_TRUE(cycles >= 1000);
+    bool same = true;
+    for (int i = 0; i < 1000; ++i) same = same && reu->ram()[0x50000 + (size_t)i] == bus->peek8(0x0400 + (uint32_t)i);
+    EXPECT_TRUE(same);
+    // $FF00: the MMU keeps its configuration (the same value written back)
+    // and the REU starts
+    regs(0x2000, 0x050000, 1000);
+    bus->write8(0xDF01, 0x81);
+    const uint8_t cr = bus->peek8(0xFF00);
+    bus->write8(0xFF00, cr);
+    EXPECT_TRUE(reu->dmaActive());
+    while (reu->dmaActive()) m->schedulerStep(*m);
+    same = true;
+    for (int i = 0; i < 1000; ++i) same = same && bus->peek8(0x2000 + (uint32_t)i) == reu->ram()[0x50000 + (size_t)i];
+    EXPECT_TRUE(same);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(m->ioRegistry->findHandler("REU") == nullptr);
+    EXPECT_EQ(slot->info(), std::string(""));
+    delete m;
+}
+
+// BASIC 7.0's own REU commands: STASH, FETCH and SWAP go through the
+// KERNAL's DMA call ($FF50), which arms the REU and triggers it with its
+// write to $FF00
+TEST_CASE(c128_reu_basic_stash_fetch) {
+    std::string err;
+    MachineDescriptor* m = c128::create(false, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    ASSERT(m->expansionSlot("port")->install("reu", "512K", err));
+    m->onReset(*m);
+    run(m, 3000000);
+    auto* kbd = dynamic_cast<IKeyboardMatrix*>(m->ioRegistry->findHandler("Keyboard"));
+    ASSERT(kbd != nullptr);
+    kbd->enqueueText("BANK 0:POKE 4864,77:POKE 4865,88:STASH 2,4864,100,3:POKE 4864,1:POKE 4865,2\n");
+    run(m, 20000000);
+    auto* reu = dynamic_cast<Reu*>(m->ioRegistry->findHandler("REU"));
+    ASSERT(reu != nullptr);
+    EXPECT_EQ(reu->ram()[0x30064], 77);              // bank 3, address 100
+    EXPECT_EQ(reu->ram()[0x30065], 88);
+    kbd->enqueueText("FETCH 2,4880,100,3:SWAP 2,4864,100,3:PRINT PEEK(4880)*1000+PEEK(4881);PEEK(4864)\n");
+    run(m, 20000000);
+    EXPECT_TRUE(screenHas(m, " 77088  77"));
+    EXPECT_EQ(reu->ram()[0x30064], 1);               // SWAP put 1 and 2 there
+    EXPECT_EQ(reu->ram()[0x30065], 2);
     delete m;
 }

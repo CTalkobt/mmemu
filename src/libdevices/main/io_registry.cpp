@@ -24,6 +24,18 @@ void IORegistry::rebuildDeviceClockFlags() {
             m_isDeviceClocked[i] = 1;
 }
 
+bool IORegistry::unregisterHandler(IOHandler* handler) {
+    auto it = std::find(m_handlers.begin(), m_handlers.end(), handler);
+    if (it == m_handlers.end()) return false;
+    m_handlers.erase(it);
+    auto d = std::find(m_deviceClocked.begin(), m_deviceClocked.end(), handler);
+    if (d != m_deviceClocked.end()) m_deviceClocked.erase(d);
+    auto o = std::find(m_ownedHandlers.begin(), m_ownedHandlers.end(), handler);
+    if (o != m_ownedHandlers.end()) m_ownedHandlers.erase(o);
+    rebuildDeviceClockFlags();
+    return true;
+}
+
 void IORegistry::registerOwnedHandler(IOHandler* handler) {
     m_ownedHandlers.push_back(handler);
     registerHandler(handler);

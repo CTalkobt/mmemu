@@ -146,6 +146,9 @@ struct MachineDescriptor {
         bool canEmpty = true;                // whether the slot may be left empty
         std::function<bool(const std::string& device, const std::string& option, std::string& err)> install;
         std::function<std::string()> info;
+        /** Save the fitted device's memory as an image (an REU's RAM);
+         *  empty when the slot's devices have none. */
+        std::function<bool(const std::string& path, std::string& err)> save;
         const ExpansionDevice* device(const std::string& id) const {
             for (auto& d : devices) if (d.id == id) return &d;
             return nullptr;
@@ -241,6 +244,10 @@ struct MachineDescriptor {
 
     // Scheduler
     std::function<int(MachineDescriptor&)> schedulerStep;
+    /** A device holding the bus (an REU's DMA, IOHandler::busMasterCycle):
+     *  when set, schedulers call it before each CPU step and, if it returns
+     *  cycles, tick the devices by those instead of running the CPU. */
+    std::function<int()> busMasterStep;
 
     /**
      * CPU speed modelling (optional; set by machines whose CPU clock can run
