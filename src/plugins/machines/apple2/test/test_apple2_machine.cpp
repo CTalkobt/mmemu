@@ -1,5 +1,6 @@
 #include "test_harness.h"
 #include "plugins/machines/apple2/main/machine_apple2.h"
+#include "plugins/machines/apple2/main/smartport_bus.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
@@ -1145,4 +1146,213 @@ TEST_CASE(apple2c_32k_roms) {
         EXPECT_TRUE(screenHas(m, "HELLO"));
         delete m;
     }
+}
+
+
+// SmartPort on the disk port, driven as the host firmware does: bus reset
+// (phases 0 and 2), enable (1 and 3), REQ on phase 0, ACK read back; INIT,
+// STATUS (the DIB), READBLOCK, WRITEBLOCK (a data packet follows), and a
+// bad checksum ignored
+namespace {
+struct SpHost {
+    apple2::SmartPortBus& bus;
+    uint64_t t = 0;
+    static std::vector<uint8_t> packet(uint8_t dest, uint8_t type, const std::vector<uint8_t>& data) {
+        std::vector<uint8_t> out = {0xFF, 0x3F, 0xCF, 0xF3, 0xFC, 0xFF, 0xC3};
+        const size_t odd = data.size() % 7, grp = data.size() / 7;
+        const uint8_t hdr[7] = {(uint8_t)(0x80 | dest), 0x80, (uint8_t)(0x80 | type), 0x80, 0x80,
+                                (uint8_t)(0x80 | odd), (uint8_t)(0x80 | grp)};
+        uint8_t chk = 0;
+        for (uint8_t b : hdr) { out.push_back(b); chk ^= b; }
+        for (uint8_t b : data) chk ^= b;
+        if (odd) {
+            uint8_t msb = 0x80;
+            for (size_t i = 0; i < odd; ++i) if (data[i] & 0x80) msb |= (uint8_t)(0x40 >> i);
+            out.push_back(msb);
+            for (size_t i = 0; i < odd; ++i) out.push_back(data[i] | 0x80);
+        }
+        for (size_t g = 0; g < grp; ++g) {
+            uint8_t msb = 0x80;
+            for (size_t j = 0; j < 7; ++j) if (data[odd + g * 7 + j] & 0x80) msb |= (uint8_t)(0x40 >> j);
+            out.push_back(msb);
+            for (size_t j = 0; j < 7; ++j) out.push_back(data[odd + g * 7 + j] | 0x80);
+        }
+        out.push_back(chk | 0xAA);
+        out.push_back((uint8_t)((chk >> 1) | 0xAA));
+        out.push_back(0xC8);
+        return out;
+    }
+    void step() { t += 40; }
+    // Send a packet: true if the unit took it (ACK fell)
+    bool send(const std::vector<uint8_t>& pkt) {
+        if (!bus.ack(t)) return false;
+        bus.phases(0xB, t);
+        for (uint8_t b : pkt) { bus.write(b, t); step(); }
+        for (int i = 0; i < 4; ++i) step();
+        const bool took = !bus.ack(t);
+        bus.phases(0xA, t);
+        step();
+        return took;
+    }
+    // Read the reply: its status and contents
+    bool receive(uint8_t& status, std::vector<uint8_t>& data) {
+        for (int i = 0; i < 4 && !bus.ack(t); ++i) step();
+        if (!bus.ack(t)) return false;
+        bus.phases(0xB, t);
+        std::vector<uint8_t> in;
+        bool begun = false;
+        for (int i = 0; i < 2000; ++i) {
+            step();
+            const uint8_t v = bus.read(t);
+            if (!v) continue;
+            if (!begun) { begun = v == 0xC3; continue; }
+            in.push_back(v);
+            if (v == 0xC8 && in.size() >= 10) {
+                const size_t odd = in[5] & 0x7F, grp = in[6] & 0x7F;
+                if (in.size() == 7 + (odd ? odd + 1 : 0) + grp * 8 + 3) break;
+            }
+        }
+        for (int i = 0; i < 4; ++i) step();
+        const bool done = !bus.ack(t);
+        bus.phases(0xA, t);
+        step();
+        if (in.size() < 10) return false;
+        status = in[4] & 0x7F;
+        const size_t odd = in[5] & 0x7F, grp = in[6] & 0x7F;
+        size_t pos = 7;
+        uint8_t chk = 0;
+        for (int i = 0; i < 7; ++i) chk ^= in[(size_t)i];
+        data.clear();
+        if (odd) {
+            const uint8_t msb = in[pos++];
+            for (size_t i = 0; i < odd; ++i) data.push_back((uint8_t)((in[pos++] & 0x7F) | ((msb << (1 + i)) & 0x80)));
+        }
+        for (size_t g = 0; g < grp; ++g) {
+            const uint8_t msb = in[pos++];
+            for (size_t j = 0; j < 7; ++j) data.push_back((uint8_t)((in[pos++] & 0x7F) | ((msb << (1 + j)) & 0x80)));
+        }
+        for (uint8_t b : data) chk ^= b;
+        return done && (uint8_t)((in[pos] & 0x55) | ((in[pos + 1] & 0x55) << 1)) == chk;
+    }
+};
+}  // namespace
+
+TEST_CASE(smartport_bus_packets) {
+    apple2::SmartPortBus bus(1.0);
+    std::vector<uint8_t> disk(819200);
+    for (size_t i = 0; i < disk.size(); ++i) disk[i] = (uint8_t)(i * 7 + i / 512);
+    ASSERT(bus.insertBytes(1, disk));
+    EXPECT_EQ(bus.units(), 1);
+    SpHost h{bus};
+    bus.phases(0x5, h.t);                                // bus reset
+    bus.phases(0x0, h.t);
+    bus.phases(0xA, h.t);                                // enabled
+    EXPECT_TRUE(bus.active());
+    uint8_t st = 0;
+    std::vector<uint8_t> data;
+    // INIT: the unit takes ID 1; the last on the chain replies $FF
+    ASSERT(h.send(SpHost::packet(1, 0, {0x05, 0x00, 0, 0, 0, 0, 0, 0, 0})));
+    ASSERT(h.receive(st, data));
+    EXPECT_EQ(st, 0x7F);
+    EXPECT_EQ(bus.unitId(1), 1);
+    // STATUS 3: the DIB
+    ASSERT(h.send(SpHost::packet(1, 0, {0x00, 0x03, 0, 0, 0x03, 0, 0, 0, 0})));
+    ASSERT(h.receive(st, data));
+    EXPECT_EQ(st, 0);
+    ASSERT(data.size() == 25);
+    EXPECT_EQ(data[0], 0xF8);
+    EXPECT_EQ(data[1] | data[2] << 8, 1600);
+    EXPECT_TRUE(std::memcmp(&data[5], "UNIDISK 3.5", 11) == 0);
+    // READBLOCK 300
+    ASSERT(h.send(SpHost::packet(1, 0, {0x01, 0x03, 0, 0, 0x2C, 0x01, 0, 0, 0})));
+    ASSERT(h.receive(st, data));
+    EXPECT_EQ(st, 0);
+    ASSERT(data.size() == 512);
+    EXPECT_TRUE(std::equal(data.begin(), data.end(), disk.begin() + 300 * 512));
+    // WRITEBLOCK 5: the command, then the data
+    std::vector<uint8_t> blk(512);
+    for (int i = 0; i < 512; ++i) blk[(size_t)i] = (uint8_t)(255 - i);
+    ASSERT(h.send(SpHost::packet(1, 0, {0x02, 0x03, 0, 0, 0x05, 0, 0, 0, 0})));
+    ASSERT(h.send(SpHost::packet(1, 2, blk)));
+    ASSERT(h.receive(st, data));
+    EXPECT_EQ(st, 0);
+    EXPECT_TRUE(std::equal(blk.begin(), blk.end(), bus.image(1).begin() + 5 * 512));
+    // Past the end: a bad block
+    ASSERT(h.send(SpHost::packet(1, 0, {0x01, 0x03, 0, 0, 0x40, 0x06, 0, 0, 0})));
+    ASSERT(h.receive(st, data));
+    EXPECT_EQ(st, 0x2D);
+    // A bad checksum, or another unit's ID: no ACK
+    auto bad = SpHost::packet(1, 0, {0x00, 0x03, 0, 0, 0x00, 0, 0, 0, 0});
+    bad[bad.size() - 2] ^= 0x01;
+    EXPECT_TRUE(!h.send(bad));
+    EXPECT_TRUE(!h.send(SpHost::packet(2, 0, {0x00, 0x03, 0, 0, 0x00, 0, 0, 0, 0})));
+    // A bus reset clears the ID
+    bus.phases(0x5, h.t);
+    EXPECT_EQ(bus.unitId(1), 0);
+}
+
+namespace {
+// ProDOS 2.4.3 (AppleWin's 140 KB volume) on an 800 KB UniDisk image
+std::string uniDiskProdos() {
+    const std::string src = "../refs/apple2/AppleWin/bin/ProDOS_2_4_3.po";
+    if (!std::filesystem::exists(src)) return "";
+    const std::string copy = (std::filesystem::temp_directory_path() / "mmemu_test_unidisk.po").string();
+    std::filesystem::copy_file(src, copy, std::filesystem::copy_options::overwrite_existing);
+    std::filesystem::resize_file(copy, 819200);
+    return copy;
+}
+}  // namespace
+
+// The IIc's 32 KB ROMs boot a UniDisk 3.5 (slot 5) when the internal drive
+// is empty: ProDOS 2.4.3 comes up to its Bitsy Bye menu, the volume in S5,D1
+TEST_CASE(apple2c_unidisk_boots) {
+    const std::string disk = uniDiskProdos();
+    if (disk.empty()) { printf("  (skipped: no ProDOS 2.4.3 image)\n"); return; }
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIcRom04, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    IOHandler* uni = m->ioRegistry->findHandler("UniDisk");
+    ASSERT(uni && uni->mountDisk(1, disk));
+    run(m, 40000000);
+    if (!screenHas(m, "S5,D1:/PRODOS.2.4.3")) for (int r = 0; r < 24; ++r) printf("    |%s|\n", textRow(m, r).c_str());
+    EXPECT_TRUE(screenHas(m, "S5,D1:/PRODOS.2.4.3"));
+    EXPECT_TRUE(screenHas(m, "BASIC.SYSTEM"));
+    EXPECT_EQ(static_cast<apple2::SmartPortBus*>(uni)->unitId(1), 1);
+    delete m;
+    std::filesystem::remove(disk);
+}
+
+// The IIgs with only a UniDisk (no Apple 3.5 drives: none holds a disk):
+// slot 5 boots GS/OS 6.0.1 from it to the Finder, writing to the disk
+TEST_CASE(apple2gs_unidisk_gsos) {
+    const std::string src = "../refs/apple2gs/sys601-2.2mg";
+    if (!std::filesystem::exists(src)) { printf("  (skipped: no %s)\n", src.c_str()); return; }
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIgs, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    const std::string copy = (std::filesystem::temp_directory_path() / "mmemu_test_unidisk.2mg").string();
+    std::filesystem::copy_file(src, copy, std::filesystem::copy_options::overwrite_existing);
+    auto* uni = find<apple2::SmartPortBus>(m);
+    ASSERT(uni && uni->mountDisk(1, copy));
+    run(m, 160000000);
+    EXPECT_EQ(uni->unitId(1), 1);
+    EXPECT_TRUE(uni->commands() > 1000);
+    EXPECT_EQ(m->buses[0].bus->read8(0x00C029) & 0x80, 0x80);    // Super Hi-Res
+    auto* v = find<IVideoOutput>(m);
+    const auto dim = v->getDimensions();
+    std::vector<uint32_t> fb((size_t)dim.width * dim.height);
+    v->renderFrame(fb.data());
+    const int x0 = (dim.width - 640) / 2, y0 = (dim.height - 400) / 2;
+    int white = 0;                                   // the menu bar
+    for (int x = 100; x < 600; ++x) white += (fb[(size_t)(y0 + 10) * dim.width + x0 + x] & 0xFFFFFF) == 0xFFFFFF;
+    EXPECT_TRUE(white > 300);
+    std::vector<uint8_t> a, b;
+    {
+        std::ifstream fa(src, std::ios::binary), fb2(copy, std::ios::binary);
+        a.assign(std::istreambuf_iterator<char>(fa), {});
+        b.assign(std::istreambuf_iterator<char>(fb2), {});
+    }
+    EXPECT_TRUE(a.size() == b.size() && a != b);      // GS/OS wrote to it
+    delete m;
+    std::filesystem::remove(copy);
 }
