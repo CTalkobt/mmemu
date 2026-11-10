@@ -54,7 +54,28 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **VICE's debug cartridge** (`DebugCart`, a write to `$D7FF` is the exit
   code), and the test `c64_vice_testprogs`. It runs VICE's PAL "exitcode"
   programs from a local copy of VICE's `testprogs` (`MMEMU_VICE_TESTPROGS`).
-  The Lorenz 2.15 suite passes 263 of 294.
+  The Lorenz 2.15 suite passes 263 of 294. `MMEMU_VICE_SCREEN=1` prints a
+  failing program's screen.
+- **The 6526 CIA is cycle-exact for the old 6526** (C64 breadbox), after
+  VICE's `ciatimer`/`ciacore`: the timers run a per-cycle pipeline of start,
+  force-load and one-shot bits (a started timer decrements from the third
+  cycle, a force load lands two cycles after the write, the period is latch
+  + 1), the interrupt flags go through the old 6526's delay line (IR and the
+  IRQ output one cycle after a flag; two after enabling the mask of a set
+  flag; an ICR read clears the flags at once and IR two cycles on), timer B
+  counts timer A underflows one by one, PB6/PB7 carry the timer outputs
+  (pulse or toggle), and the timer B bug. Steady counting is skipped in bulk.
+  The 6502 core, with access sync, now also fetches opcodes and operands on
+  their own cycles (code run from the CIA's registers), latches an NMI edge
+  between polls, polls RTI in its fourth cycle with the pulled I, and runs
+  BRK/IRQ/NMI sequences without a poll at the end (an NMI by their fourth
+  cycle takes over the vector; a later one waits for the handler's first
+  instruction). Fetches below the I/O area skip the sync (the new
+  `IBus::isPlainMemory`). Lorenz 2.15 now passes 282 of 294 (only the `trap10`-`17`
+  page-crossing tests and `cpuport` fail). Tests `cia_timer_start_delay`,
+  `cia_timer_force_load_delay`, `cia_timer_one_shot_stops`,
+  `cia_icr_read_clears`, `cia_irq_delay`, `cia_irq_on_mask_enable`,
+  `cia_timer_b_counts_ta_exactly`, `cia_tick_bulk_matches_single`.
 
 ### C64 and C128: the VIC-II takes the bus (#266)
 

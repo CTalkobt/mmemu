@@ -49,6 +49,25 @@ Two independent 16-bit countdown timers with latches:
 
 On underflow, the latch is reloaded automatically (continuous mode) or the timer stops (one-shot). Writing to the high byte (TAHI/TBHI) while the timer is stopped also loads the latch into the counter.
 
+| Bit | Mask | Description |
+|-----|------|-------------|
+| 1 | `CR_PBON` | Timer output on PB6 (timer A) / PB7 (timer B) |
+| 2 | `CR_TOGGLE` | Output toggles on each underflow (set when started); else a one-cycle pulse |
+
+**Cycle timing (old 6526, after VICE's `ciatimer.h`).** Each timer is a small
+state machine stepped once per cycle: the control bits as written move
+through delay stages, so
+
+- a timer started on cycle *n* holds its value on *n*+1 and *n*+2 and decrements from *n*+3;
+- a force load written on cycle *n* lands on *n*+2 (a latch write in that cycle goes straight to the counter);
+- the counter counts down to 0 and reloads on that same cycle, so the period is latch + 1;
+- one-shot mode stops the timer on its underflow; CRA/CRB bit 0 then reads 0;
+- timer B counting timer A underflows takes each count one cycle after the underflow.
+
+An access after `tick(n)` sees the chip as of the last cycle ticked; the C64
+scheduler ticks through the access's own cycle before performing it.
+`tick()` skips stretches of steady counting (or stopped timers) in bulk.
+
 ### 2.3 TOD Clock
 
 BCD real-time clock with alarm:
@@ -77,10 +96,20 @@ BCD real-time clock with alarm:
 | 0 | `ICR_TA` | Timer A underflow |
 | 1 | `ICR_TB` | Timer B underflow |
 | 2 | `ICR_TOD` | TOD alarm match |
+| 3 | `ICR_SP` | Serial port byte shifted |
+| 4 | — | FLAG input (falling edge) |
 | 7 | `ICR_INT` | Any enabled interrupt active |
 
 **Write semantics:** Bit 7 = 1 sets the mask bits; bit 7 = 0 clears them.
 **Read semantics:** Returns pending bits; reading clears all pending bits and de-asserts IRQ.
+
+**Interrupt timing (old 6526, VICE's `ifr_delay` pipeline):** a source sets its
+flag at once; bit 7 (IR) and the IRQ output follow one cycle later. Enabling
+the mask of a flag already set raises IRQ two cycles after the write. A read
+clears the flags and releases IRQ at once, and IR two cycles later. Timer B
+bug: if ICR was read the cycle before a timer B underflow, the next read drops
+the TB flag. FLAG (bit 4), SP (bit 3) and the TOD alarm (bit 2) go through the
+same pipeline.
 
 ### 2.5 Peripheral Injection
 

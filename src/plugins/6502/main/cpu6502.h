@@ -70,7 +70,10 @@ public:
     void triggerNmi()   override;
     void triggerReset() override { reset(); }
     void setIrqLine(bool asserted) override { m_state.irqLine = asserted ? 1 : 0; }
-    void setNmiLine(bool asserted) override { m_state.nmiLine = asserted ? 1 : 0; }
+    void setNmiLine(bool asserted) override {
+        if (asserted && !m_state.nmiLine) m_nmiEdge = true;   // latched every cycle, seen at the poll
+        m_state.nmiLine = asserted ? 1 : 0;
+    }
     void setHaltLine(bool asserted) override { m_state.haltLine = asserted ? 1 : 0; }
 
     // Disassembly
@@ -147,15 +150,18 @@ private:
     uint32_t m_lastWrites = 0;
     bool     m_isRmw[256] = {};         // read-modify-write: the read 3 cycles from the end
     void buildWriteKinds();
+    void interruptSequence(uint8_t p, uint16_t vector);
     // Access sync (setAccessSync): the cycle of this instruction's data
     // reads and writes (-1 outside step), and the interrupt poll
     std::function<void(int)> m_sync;
     int  m_readCycle = -1;
     int  m_writeCycle = -1;
+    int  m_fetchCycle = -1;             // decoding: the cycle of the next fetch (opcode 0, operands on)
     int  m_pollCycle = 0;
     bool m_polled = true;
     bool m_irqPending = false;          // polled: take an IRQ next
     bool m_nmiPending = false;          // polled: an NMI edge
+    bool m_nmiEdge = false;             // an NMI edge since the last poll (a pulse shorter than the poll interval counts)
     bool m_replay = false;              // the next read returns m_replayValue (SLO etc. use the RMW result)
     uint8_t m_replayValue = 0;
     void syncTo(int cycle);

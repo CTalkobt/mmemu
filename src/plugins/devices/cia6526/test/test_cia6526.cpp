@@ -120,14 +120,24 @@ TEST_CASE(cia_timer_a_load_bit) {
     // Start timer
     f.cia.ioWrite(&f.bus, 0xDC0E, 0x01);
 
-    // Tick many times to cause underflow and reload
-    for (int i = 0; i < 0x2000; ++i) {
-        f.cia.tick(1);
-    }
+    // Counting starts on the third cycle after the start: $1000 is reached
+    // on cycle 2, $0000 (the underflow, reloading $1000) on cycle $1002
+    f.cia.tick(0x1002);
 
     // After underflow and reload, counter should restart from latch
+    uint8_t hi;
     f.cia.ioRead(&f.bus, 0xDC04, &val);
+    f.cia.ioRead(&f.bus, 0xDC05, &hi);
     ASSERT_EQ((int)val, 0x00);  // Counter reloaded from latch
+    ASSERT_EQ((int)hi, 0x10);
+    // ...and a period is latch + 1 cycles: the next reload $1001 cycles on
+    f.cia.tick(0x1000);
+    f.cia.ioRead(&f.bus, 0xDC04, &val);
+    ASSERT_EQ((int)val, 0x01);
+    f.cia.tick(1);
+    f.cia.ioRead(&f.bus, 0xDC04, &val);
+    f.cia.ioRead(&f.bus, 0xDC05, &hi);
+    ASSERT_EQ((int)((hi << 8) | val), 0x1000);
 }
 
 TEST_CASE(cia_timer_a_one_shot_mode) {
@@ -462,4 +472,176 @@ TEST_CASE(cia_outputs_read_pins_when_enabled) {
     f.cia.ioWrite(&f.bus, 0xDC00, 0x7F);
     f.cia.ioRead(&f.bus, 0xDC00, &val);
     ASSERT_EQ((int)val, 0x6F);
+}
+
+// ============================================================================
+// Cycle timing of the old 6526 (VICE's ciatimer / ifr_delay model, #304).
+// An access after tick(n) sees the chip as of the last cycle ticked.
+// ============================================================================
+
+namespace {
+struct LineProbe : ISignalLine {
+    bool level = false;
+    bool get() const override { return level; }
+    void set(bool l) override { level = l; }
+    void pulse() override {}
+};
+uint16_t readTimerA(CiaFixture& f) {
+    uint8_t lo, hi;
+    f.cia.ioRead(&f.bus, 0xDC04, &lo);
+    f.cia.ioRead(&f.bus, 0xDC05, &hi);
+    return (uint16_t)((hi << 8) | lo);
+}
+}
+
+// Started on cycle 0: the counter holds through cycle 2, decrements on 3
+TEST_CASE(cia_timer_start_delay) {
+    CiaFixture f;
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x10);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);       // stopped: loads the counter
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x01);
+    f.cia.tick(2);
+    ASSERT_EQ((int)readTimerA(f), 0x10);
+    f.cia.tick(1);
+    ASSERT_EQ((int)readTimerA(f), 0x0F);
+    f.cia.tick(5);
+    ASSERT_EQ((int)readTimerA(f), 0x0A);
+}
+
+// A force load lands two cycles after the write
+TEST_CASE(cia_timer_force_load_delay) {
+    CiaFixture f;
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x64);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);       // counter = latch = 100
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x14);       // latch = 20, counter stays 100
+    ASSERT_EQ((int)readTimerA(f), 100);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x10);       // force load, stopped
+    f.cia.tick(1);
+    ASSERT_EQ((int)readTimerA(f), 100);
+    f.cia.tick(1);
+    ASSERT_EQ((int)readTimerA(f), 20);
+}
+
+// One-shot: the underflow reloads the latch, sets the flag at once and stops
+// the timer (CRA's START reads 0)
+TEST_CASE(cia_timer_one_shot_stops) {
+    CiaFixture f;
+    uint8_t v;
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x03);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x09);       // start, one-shot
+    f.cia.tick(4);                             // 3, 3, 2, 1
+    ASSERT_EQ((int)readTimerA(f), 1);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x00);
+    f.cia.tick(1);                             // 0: underflow
+    ASSERT_EQ((int)readTimerA(f), 3);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)(v & 0x01), 0x01);
+    f.cia.ioRead(&f.bus, 0xDC0E, &v);
+    ASSERT_EQ((int)(v & 0x01), 0x00);
+    f.cia.tick(20);
+    ASSERT_EQ((int)readTimerA(f), 3);          // stays stopped
+}
+
+// Reading ICR returns the flags and clears them
+TEST_CASE(cia_icr_read_clears) {
+    CiaFixture f;
+    uint8_t v;
+    f.cia.ioWrite(&f.bus, 0xDC0D, 0x81);
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x02);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x09);
+    f.cia.tick(10);
+    f.cia.ioRead(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x81);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x80);                   // the flags clear at once, IR two cycles on
+    f.cia.tick(2);
+    f.cia.ioRead(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x00);
+}
+
+// The IRQ output and ICR bit 7 come one cycle after the underflow flag; an
+// ICR read releases IRQ at once
+TEST_CASE(cia_irq_delay) {
+    CiaFixture f;
+    LineProbe irq;
+    f.cia.setIrqLine(&irq);
+    uint8_t v;
+    f.cia.ioWrite(&f.bus, 0xDC0D, 0x81);
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x02);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x09);
+    f.cia.tick(3);                             // 2, 2, 1, 0: underflow on cycle 4
+    ASSERT(!irq.level);
+    f.cia.tick(1);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x01);                   // flag now, IR not yet
+    ASSERT(!irq.level);
+    f.cia.tick(1);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x81);
+    ASSERT(irq.level);
+    f.cia.ioRead(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x81);
+    ASSERT(!irq.level);
+}
+
+// Enabling the mask of a flag already set raises IRQ two cycles later
+TEST_CASE(cia_irq_on_mask_enable) {
+    CiaFixture f;
+    LineProbe irq;
+    f.cia.setIrqLine(&irq);
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x02);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x09);
+    f.cia.tick(10);                            // TA flag set, masked off
+    ASSERT(!irq.level);
+    f.cia.ioWrite(&f.bus, 0xDC0D, 0x81);
+    f.cia.tick(1);
+    ASSERT(!irq.level);
+    f.cia.tick(1);
+    ASSERT(irq.level);
+}
+
+// Timer B counting timer A underflows: one count per underflow
+TEST_CASE(cia_timer_b_counts_ta_exactly) {
+    CiaFixture f;
+    uint8_t lo, hi;
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x04);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);       // TA period 5
+    f.cia.ioWrite(&f.bus, 0xDC06, 0x10);
+    f.cia.ioWrite(&f.bus, 0xDC07, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0F, 0x41);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x01);
+    f.cia.tick(2 + 4 + 5 * 3 + 3);             // TA underflows on 6, 11, 16, 21
+    f.cia.ioRead(&f.bus, 0xDC06, &lo);
+    f.cia.ioRead(&f.bus, 0xDC07, &hi);
+    ASSERT_EQ((int)((hi << 8) | lo), 0x10 - 4);
+}
+
+// The fast path (whole stretches of steady counting) agrees with one cycle
+// at a time
+TEST_CASE(cia_tick_bulk_matches_single) {
+    CiaFixture a, b;
+    for (CiaFixture* f : {&a, &b}) {
+        f->cia.ioWrite(&f->bus, 0xDC04, 0x37);
+        f->cia.ioWrite(&f->bus, 0xDC05, 0x01);
+        f->cia.ioWrite(&f->bus, 0xDC06, 0x05);
+        f->cia.ioWrite(&f->bus, 0xDC07, 0x00);
+        f->cia.ioWrite(&f->bus, 0xDC0D, 0x83);
+        f->cia.ioWrite(&f->bus, 0xDC0F, 0x41);
+        f->cia.ioWrite(&f->bus, 0xDC0E, 0x11);
+    }
+    a.cia.tick(5000);
+    for (int i = 0; i < 5000; ++i) b.cia.tick(1);
+    ASSERT_EQ((int)readTimerA(a), (int)readTimerA(b));
+    uint8_t va, vb;
+    a.cia.ioRead(&a.bus, 0xDC06, &va);
+    b.cia.ioRead(&b.bus, 0xDC06, &vb);
+    ASSERT_EQ((int)va, (int)vb);
+    a.cia.ioRead(&a.bus, 0xDC0D, &va);
+    b.cia.ioRead(&b.bus, 0xDC0D, &vb);
+    ASSERT_EQ((int)va, (int)vb);
 }

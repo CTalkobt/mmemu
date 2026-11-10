@@ -135,6 +135,7 @@ private:
                                const uint8_t* data)         override { m_real->addRomOverlay(base, size, data); }
         void     removeRomOverlay(uint32_t base)            override { m_real->removeRomOverlay(base); }
         bool     isHaltRequested()                          override { return m_real->isHaltRequested(); }
+        bool     isPlainMemory(uint32_t addr)         const override { return addr > 1 && m_real->isPlainMemory(addr); }
 
     private:
         MOS6510* m_owner;

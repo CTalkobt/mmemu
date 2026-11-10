@@ -18,10 +18,21 @@
  *     Reads consult an optional IPortDevice* for physical pin state; DDR masks
  *     are applied so output bits come from the output latch, input bits from pins.
  *   - Timer A and Timer B: 16-bit countdown timers with latches; continuous or
- *     one-shot modes; Timer B may optionally count Timer A underflows.
+ *     one-shot modes; Timer B may optionally count Timer A underflows.  The
+ *     timers are cycle-exact for the old 6526 (C64 breadbox), after VICE's
+ *     ciatimer: a per-cycle pipeline of start, force-load and one-shot bits
+ *     (start counts from the third cycle after the write, a force load lands
+ *     two cycles after it), PB6/PB7 timer outputs (pulse or toggle).
  *   - TOD (Time Of Day): 50/60 Hz BCD clock with alarm interrupt.
  *   - ICR (Interrupt Control Register): set/clear mask on write (bit 7 selects
- *     mode); read-to-clear; fires IRQ via ISignalLine when any enabled bit is set.
+ *     mode); read-to-clear.  The interrupt flags go through the old 6526's
+ *     delay pipeline (VICE's ifr_delay): a timer underflow sets its flag at
+ *     once, bit 7 and the IRQ output one cycle later; enabling the mask of a
+ *     pending flag raises IRQ two cycles later; and the timer B bug (an ICR
+ *     read the cycle before a timer B underflow loses its flag).
+ *
+ * Timing: tick(n) runs n cycles; an access after tick() sees the chip as of
+ * the last cycle ticked (the C64 ticks through the access's own cycle).
  *   - CRA / CRB: control registers for timers and TOD.
  *   - SDR: serial data register stub (not fully implemented).
  *
@@ -44,7 +55,10 @@ public:
 
     void setName(const std::string& name) override { m_name = name; }
     void setBaseAddr(uint32_t addr) override       { m_baseAddr = addr; }
-    void setClockHz(uint32_t hz) override          { m_clockHz = hz; }
+    void setClockHz(uint32_t hz) override {
+        m_clockHz = hz;
+        m_todTenth = hz / 10 ? hz / 10 : 100000;
+    }
 
     void setPortADevice(IPortDevice* d) override { m_portADevice = d; }
     void setPortBDevice(IPortDevice* d) override { m_portBDevice = d; }
@@ -64,8 +78,7 @@ public:
     void receiveSerialByte(uint8_t b) {
         if (m_cra & 0x40) return;                       // output mode: not listening
         m_sdr = b;
-        m_icrPending |= ICR_SP;
-        updateIrq();
+        setIrqFlag(ICR_SP);
     }
     void setPortAWriteCallback(std::function<void(uint8_t pra, uint8_t ddra)> cb) override {
         m_portAWriteCallback = std::move(cb);
@@ -131,13 +144,51 @@ public:
     static constexpr uint8_t ICR_TOD = 0x04;
     static constexpr uint8_t ICR_SP  = 0x08; // serial port shift complete
     static constexpr uint8_t ICR_INT = 0x80; // any interrupt active
+    static constexpr uint8_t CR_PBON   = 0x02; // timer output on PB6/PB7
+    static constexpr uint8_t CR_TOGGLE = 0x04; // output toggles (else pulses)
 
 private:
+    /** One timer, as VICE's ciat_t: the latch, the counter and the state bits
+     *  (T_* below) that pipeline start, force load and one-shot. */
+    struct Timer {
+        uint16_t state = 0;
+        uint16_t latch = 0xFFFF;
+        uint16_t cnt   = 0xFFFF;
+    };
+    // Timer state bits (VICE ciatimer.h CIAT_*): the CR bits as written, and
+    // their delayed copies one and two cycles on
+    static constexpr uint16_t T_START    = 0x001;
+    static constexpr uint16_t T_COUNT2   = 0x002;
+    static constexpr uint16_t T_STEP     = 0x004;   // one count (timer A underflow)
+    static constexpr uint16_t T_ONESHOT  = 0x008;   // CR one-shot bit
+    static constexpr uint16_t T_FLOAD    = 0x010;   // CR force load
+    static constexpr uint16_t T_PHI2IN   = 0x020;   // counts phi2
+    static constexpr uint16_t T_COUNT3   = 0x040;
+    static constexpr uint16_t T_LOAD1    = 0x080;
+    static constexpr uint16_t T_ONESHOT0 = 0x100;
+    static constexpr uint16_t T_LOAD     = 0x200;
+    static constexpr uint16_t T_OUT      = 0x400;   // underflowed this cycle
+    static constexpr uint16_t T_COUNT    = 0x800;
+    static constexpr uint16_t T_ONESHOT1 = 0x1000;
+    static constexpr uint16_t T_CR_MASK  = T_START | T_ONESHOT | T_FLOAD | T_PHI2IN;
+
+    static const uint16_t* stateTable();
+    static const uint8_t* steadyTable();
+    static bool stepTimer(Timer& t, const uint16_t* table);
+    static bool timerSteady(uint16_t t);
+    static bool timerCounting(uint16_t t);
+    static void setCtrl(Timer& t, uint8_t byte) {
+        t.state = (uint16_t)((t.state & ~T_CR_MASK) | ((byte & T_CR_MASK) ^ T_PHI2IN));
+    }
+
     bool readReg(uint32_t addr, uint8_t* val, bool peek);
     void flagTrigger();
-    void updateIrq();
-    void tickTimerA(uint64_t cycles);
-    void tickTimerB(uint64_t cycles, uint32_t taUnderflows);
+    void runCycle();
+    void runTimers(uint64_t cycles);
+    void runIfrCycle();
+    void setIrqFlag(uint32_t bits);
+    void setInt(bool on);
+    uint8_t pb67(uint8_t byte) const;
     void tickTOD(uint64_t cycles);
 
     static uint8_t bcdInc(uint8_t bcd, uint8_t maxBcd);
@@ -146,6 +197,7 @@ private:
     std::string  m_name;
     uint32_t     m_baseAddr;
     uint32_t     m_clockHz = 1022727; // NTSC default
+    uint64_t     m_todTenth = 102272; // cycles per TOD tenth
 
     // Port registers
     uint8_t m_pra  = 0xFF; // output latch A
@@ -153,21 +205,23 @@ private:
     uint8_t m_ddra = 0x00;
     uint8_t m_ddrb = 0x00;
 
-    // Timer A
-    uint16_t m_taLatch   = 0xFFFF;
-    uint16_t m_taCounter = 0xFFFF;
-    bool     m_taRunning = false;
+    Timer m_ta, m_tb;
+    uint8_t m_tat = 0, m_tbt = 0;   // PB6/PB7 toggle outputs
 
-    // Timer B
-    uint16_t m_tbLatch   = 0xFFFF;
-    uint16_t m_tbCounter = 0xFFFF;
-    bool     m_tbRunning = false;
+    // ICR: the mask, the flags (bit 7 = IR; 0x100 = the timer B bug), flags
+    // new this cycle, and VICE's ifr_delay pipeline (IFR_* in the .cpp)
+    uint8_t  m_icrMask  = 0x00;
+    uint32_t m_irqFlags = 0;
+    uint32_t m_newFlags = 0;
+    uint32_t m_ifrDelay = 0;
+    bool     m_irqOut   = false;    // the IRQ output as driven
+    uint64_t m_clk      = 0;        // cycles run
+    uint64_t m_rdi      = ~0ull;    // the cycle of the last ICR read
+    uint64_t m_quiet    = 0;        // cycles of nothing but steady counting ahead
+    bool     m_quietA = false, m_quietB = false;   // ...in which timer A / B count
 
-    // ICR
-    uint8_t m_icrMask   = 0x00; // enabled interrupt sources
-    uint8_t m_icrPending = 0x00; // pending (fired) interrupt bits
-
-    // Control registers
+    // Control registers (as written, without the force-load strobe; START is
+    // read back from the timer, which a one-shot underflow stops)
     uint8_t m_cra = 0x00;
     uint8_t m_sdr = 0x00;
     std::function<void(uint8_t)> m_serialOut;

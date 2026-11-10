@@ -67,7 +67,7 @@ void MOS6502::reset() {
     m_state.irqLine = 0;
     m_state.nmiLine = 0;
     m_state.nmiPrev = 0;
-    m_irqPending = m_nmiPending = m_replay = false;
+    m_irqPending = m_nmiPending = m_replay = m_nmiEdge = false;
     m_state.haltLine = 0;
     m_state.waiting = 0;
     m_state.stopped = 0;
@@ -87,7 +87,7 @@ void MOS6502::softReset() {
     m_state.irqLine = 0;
     m_state.nmiLine = 0;
     m_state.nmiPrev = 0;
-    m_irqPending = m_nmiPending = m_replay = false;
+    m_irqPending = m_nmiPending = m_replay = m_nmiEdge = false;
     m_state.haltLine = 0;
     m_state.waiting = 0;
     m_state.stopped = 0;
@@ -127,6 +127,10 @@ uint8_t MOS6502::read(uint16_t addr) {
         return m_replayValue;
     }
     if (m_readCycle >= 0) syncTo(m_readCycle);
+    else if (m_fetchCycle >= 0) {                         // code run from I/O (#304)
+        if (!m_bus || !m_bus->isPlainMemory(addr)) syncTo(m_fetchCycle);
+        ++m_fetchCycle;
+    }
     return m_bus ? m_bus->read8(addr) : 0;
 }
 
@@ -151,7 +155,8 @@ void MOS6502::pollInterrupts() {
     m_polled = true;
     if (m_sync) m_sync(m_pollCycle);
     m_irqPending = m_state.irqLine && !(m_state.p & FLAG_I);
-    if (m_state.nmiLine && !m_state.nmiPrev) m_nmiPending = true;
+    if ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge) m_nmiPending = true;
+    m_nmiEdge = false;
     m_state.nmiPrev = m_state.nmiLine;
 }
 
@@ -568,17 +573,38 @@ int MOS6502::opBPL(uint16_t addr) {
 int MOS6502::opBRK(uint16_t addr) {
     (void)addr;
     m_state.pc++;
-    push((uint8_t)(m_state.pc >> 8));
-    push((uint8_t)(m_state.pc & 0xFF));
     // BRK pushes P with bit 4 (B) and bit 5 (U) set.
-    push(m_state.p | FLAG_B | FLAG_U);
-    m_state.p |= FLAG_I;
-    if (m_cmos) m_state.p &= ~FLAG_D;   // the 65C02 clears D on BRK
-    if (m_onVectorPull) m_onVectorPull();
-    uint8_t lo = read(0xFFFE);
-    uint8_t hi = read(0xFFFF);
-    m_state.pc = lo | (hi << 8);
+    interruptSequence(m_state.p | FLAG_B | FLAG_U, 0xFFFE);   // the 65C02 clears D on BRK
     return 0;
+}
+
+// The pushes and vector of BRK, IRQ and NMI. With access sync: the pushes on
+// cycles 2-4, the vector on 5-6; an NMI edge by cycle 3 takes the NMI
+// vector instead (it hijacks a BRK or IRQ, whose pushed B stays), and the
+// sequence doesn't poll: the handler's first instruction runs first.
+void MOS6502::interruptSequence(uint8_t p, uint16_t vector) {
+    if (m_sync) m_writeCycle = 2;
+    push((uint8_t)(m_state.pc >> 8));
+    if (m_sync) m_writeCycle = 3;
+    push((uint8_t)(m_state.pc & 0xFF));
+    if (m_sync) {
+        m_polled = true;
+        if (vector == 0xFFFE && ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge)) {
+            vector = 0xFFFA;
+            m_nmiEdge = false;
+            m_state.nmiPrev = m_state.nmiLine;
+        }
+        m_writeCycle = 4;
+    }
+    push(p);
+    m_state.p |= FLAG_I;
+    if (m_cmos) m_state.p &= ~FLAG_D;
+    if (m_sync) m_readCycle = 5;
+    if (m_onVectorPull) m_onVectorPull();
+    uint8_t lo = read(vector);
+    if (m_sync) m_readCycle = 6;
+    uint8_t hi = read((uint16_t)(vector + 1));
+    m_state.pc = (uint16_t)(lo | (hi << 8));
 }
 
 int MOS6502::opBVC(uint16_t addr) {
@@ -757,8 +783,12 @@ int MOS6502::opROR(uint16_t addr) {
 
 int MOS6502::opRTI(uint16_t addr) {
     (void)addr;
+    // Pulls on cycles 3-5; the poll (cycle 4) sees the pulled I
+    if (m_sync) m_readCycle = 3;
     m_state.p = (pop() & ~FLAG_B) | FLAG_U;
+    if (m_sync) m_readCycle = 4;
     uint8_t lo = pop();
+    if (m_sync) m_readCycle = 5;
     uint8_t hi = pop();
     m_state.pc = lo | (hi << 8);
     return 0;
@@ -1008,37 +1038,21 @@ int MOS6502::step() {
     if (takeNmi) {
         log(SIM_LOG_DEBUG, "6502: Taking NMI");
         if (!m_sync) m_state.nmiPrev = 1;
-        push((uint8_t)(m_state.pc >> 8));
-        push((uint8_t)(m_state.pc & 0xFF));
         // IRQ/NMI pushes P with B=0 and U=1
-        push((m_state.p & ~FLAG_B) | FLAG_U);
-        m_state.p |= FLAG_I;
-        if (m_cmos) m_state.p &= ~FLAG_D;
-        if (m_onVectorPull) m_onVectorPull();
-        uint8_t lo = read(0xFFFA);
-        uint8_t hi = read(0xFFFB);
-        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+        interruptSequence((m_state.p & ~FLAG_B) | FLAG_U, 0xFFFA);
         m_state.cycles += 7;
         m_lastWrites = 0x1C;                     // pushes on cycles 2-4
-        if (m_sync) { pollInterrupts(); m_readCycle = m_writeCycle = -1; }
+        if (m_sync) m_readCycle = m_writeCycle = -1;
         return 7;
     }
 
     if (takeIrq) {
         log(SIM_LOG_DEBUG, "6502: Taking IRQ");
-        push((uint8_t)(m_state.pc >> 8));
-        push((uint8_t)(m_state.pc & 0xFF));
         // IRQ/NMI pushes P with B=0 and U=1
-        push((m_state.p & ~FLAG_B) | FLAG_U);
-        m_state.p |= FLAG_I;
-        if (m_cmos) m_state.p &= ~FLAG_D;
-        if (m_onVectorPull) m_onVectorPull();
-        uint8_t lo = read(0xFFFE);
-        uint8_t hi = read(0xFFFF);
-        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+        interruptSequence((m_state.p & ~FLAG_B) | FLAG_U, 0xFFFE);
         m_state.cycles += 7;
         m_lastWrites = 0x1C;                     // pushes on cycles 2-4
-        if (m_sync) { pollInterrupts(); m_readCycle = m_writeCycle = -1; }
+        if (m_sync) m_readCycle = m_writeCycle = -1;
         return 7;
     }
 
@@ -1049,9 +1063,15 @@ int MOS6502::step() {
     }
 
     uint16_t pc = m_state.pc;
+    // With access sync the opcode and operand fetches (and pointer reads)
+    // come on their own cycles, in order: code can run from a timer
+    if (m_sync) m_fetchCycle = 0;
     uint8_t op = read(m_state.pc++);
     const Opcode& info = m_ops[op];
     m_curOp = op;
+    // A 2-cycle instruction polls in its opcode cycle, before its operand
+    // fetch (a fetch past the poll cycle polls first)
+    if (m_sync) { m_pollCycle = info.cycles - 2; m_polled = false; }
 
     int extraCycles = 0;
     bool pageCrossed = false;
@@ -1084,6 +1104,7 @@ int MOS6502::step() {
             break;
         }
     }
+    m_fetchCycle = -1;
 
     if (m_observer) {
         if (m_observer->needsDisasm()) {
@@ -1117,11 +1138,12 @@ int MOS6502::step() {
     if (m_sync) {
         m_readCycle = m_isRmw[op] ? baseTotal - 3 : baseTotal - 1;
         m_writeCycle = baseTotal - 1;
-        m_pollCycle = baseTotal - 2;
-        m_polled = false;
+        if (!m_polled || m_pollCycle != baseTotal - 2) {
+            m_pollCycle = baseTotal - 2;
+            m_polled = false;
+        }
         // CLI, SEI, PLP: the poll comes before I changes
         if (!m_cmos && (op == 0x58 || op == 0x78 || op == 0x28)) pollInterrupts();
-        if (op == 0x40) m_polled = true;        // RTI: polls with the I it pulled
     }
     if (info.fn) {
         extraCycles += (this->*(info.fn))(addr);
@@ -1133,11 +1155,12 @@ int MOS6502::step() {
     m_state.cycles += total;
     if (m_sync) {
         // A taken branch polls in its operand cycle unless it crosses a page
-        if (!m_polled) {
+        // (a page-crossing one polls again, later)
+        const bool relCross = info.mode == Mode::REL && total - baseTotal == 2;
+        if (!m_polled || relCross) {
             if (info.mode != Mode::REL || total - baseTotal != 1) m_pollCycle = total - 2;
             pollInterrupts();
         }
-        if (op == 0x40) pollInterrupts();
         m_readCycle = m_writeCycle = -1;
     }
     return total;

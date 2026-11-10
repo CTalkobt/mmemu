@@ -1074,6 +1074,16 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
     bus->write8(0xC6, 4);
     while (!cart.written() && cycles < limit) cycles += (uint64_t)desc->schedulerStep(*desc);
     const int code = cart.written() ? cart.code() : -1;
+    if (code != 0 && std::getenv("MMEMU_VICE_SCREEN")) {      // what a failing program printed
+        for (int r = 0; r < 25; ++r) {
+            std::string line;
+            for (int c = 0; c < 40; ++c) {
+                const uint8_t v = bus->peek8((uint16_t)(0x0400 + r * 40 + c)) & 0x7F;
+                line += v == 0 ? '@' : v < 27 ? (char)('A' + v - 1) : v >= 32 && v < 64 ? (char)v : '.';
+            }
+            if (line.find_first_not_of(' ') != std::string::npos) printf("    | %s\n", line.c_str());
+        }
+    }
     desc->ioRegistry->unregisterHandler(&cart);
     delete desc;
     return code;
