@@ -149,6 +149,7 @@ expansion slot4 mockingboard     # CLI; MCP expansion and the GUI's Control > Ex
 expansion slot2 ssc 9600         # a Super Serial Card; its DIP switches' rate
 expansion slot4 mouse            # an AppleMouse II card; the host mouse moves it
 expansion clock nsc              # a No-Slot Clock under the ROM
+expansion slot0 saturn 128K      # II/II+: a Saturn RAM card for the language card
 serial modem                     # the SSC's far end: a Hayes modem (ATDT host:port)
 expansion slot4 remove
 ```
@@ -201,6 +202,15 @@ Apple's AppleMouse II card, after AppleWin's `MouseInterface.cpp` (from Kyle Kim
 - **Applesoft:** `PR#4:PRINT CHR$(1):PR#0` turns it on. `IN#4:INPUT "";X,Y,S:IN#0` reads the position and the button state.
 - **Test:** `apple2_mouse_card` calls the firmware's INITMOUSE, SETMOUSE, READMOUSE, CLAMPMOUSE and SERVEMOUSE on an enhanced IIe, and takes a VBL interrupt.
 
+
+### Saturn 128K
+
+On the II and II+, slot 0 holds Apple's 16K language card, or a Saturn Systems RAM card in its place (`expansion slot0 saturn 128K`, or `64K`). It follows AppleWin's `Saturn128K`:
+
+- **Banks:** 16 KB banks (eight on the 128K, four on the 64K), each with its own two 4 KB `$D000` banks and its own `$E000-$FFFF`. `$C084-$C087` select banks 1-4 and `$C08C-$C08F` banks 5-8; on a 64K card these stay in the last bank.
+- **The other switches** (`$C080-$C083`, `$C088-$C08B`) are the language card's: the 4 KB bank, and RAM or ROM read. Write-enable comes on after two accesses in a row to an odd switch, reads or writes alike (Apple's card counts reads only).
+- **Power-on:** write-protected, reading the ROM, bank 1.
+- **Test:** `apple2_saturn_128k` keeps different bytes in every bank. The DOS 3.3 System Master loads Integer BASIC into it on a II+, and `INT` runs it.
 
 ### No-Slot Clock
 

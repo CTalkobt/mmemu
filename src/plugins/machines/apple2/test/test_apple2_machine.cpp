@@ -1757,3 +1757,58 @@ TEST_CASE(apple2_no_slot_clock) {
         delete m;
     }
 }
+
+// A Saturn 128K card in a II+'s slot 0, as AppleWin's Saturn128K: eight 16
+// KB banks chosen at $C084-$C087/$C08C-$C08F, the language card's switches
+// at the rest, write-enable on two odd accesses in a row (reads or writes),
+// write-protected at power-on. Each bank keeps its own $D000 (both 4 KB
+// banks) and $E000-$FFFF.
+TEST_CASE(apple2_saturn_128k) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIPlus, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("slot0");
+    ASSERT(slot != nullptr);
+    EXPECT_EQ(slot->info(), std::string("lc (Language Card, 16K)"));
+    EXPECT_TRUE(!slot->install("saturn", "32K", err));
+    EXPECT_TRUE(!slot->install("", "", err));
+    ASSERT(slot->install("saturn", "", err));
+    EXPECT_EQ(slot->info(), std::string("saturn (Saturn 128K)"));
+    m->onReset(*m);
+    run(m, 100000);
+    IBus* bus = m->buses[0].bus;
+    const uint8_t romD000 = bus->peek8(0xD000), romF800 = bus->peek8(0xF800);
+    // Write-protected at power-on: $C083 once reads RAM but doesn't write
+    bus->read8(0xC083);
+    bus->write8(0xD000, 0x5A);
+    EXPECT_TRUE(bus->peek8(0xD000) != 0x5A);
+    static const uint16_t BANK[8] = {0xC084, 0xC085, 0xC086, 0xC087, 0xC08C, 0xC08D, 0xC08E, 0xC08F};
+    for (int b = 0; b < 8; ++b) {
+        bus->read8(BANK[b]);
+        bus->read8(0xC08B); bus->write8(0xC08B, 0);      // 4 KB bank 1, RAM read and written (a write counts)
+        bus->write8(0xD000, (uint8_t)(0x10 + b));
+        bus->write8(0xE000, (uint8_t)(0x30 + b));
+        bus->write8(0xFFFF, (uint8_t)(0x50 + b));
+        bus->read8(0xC083); bus->read8(0xC083);          // 4 KB bank 2
+        bus->write8(0xD000, (uint8_t)(0x70 + b));
+    }
+    for (int b = 7; b >= 0; --b) {
+        bus->read8(BANK[b]);
+        bus->read8(0xC088);                              // bank 1, RAM read, write-protected
+        EXPECT_EQ(bus->read8(0xD000), 0x10 + b);
+        EXPECT_EQ(bus->read8(0xE000), 0x30 + b);
+        EXPECT_EQ(bus->read8(0xFFFF), 0x50 + b);
+        bus->write8(0xD000, 0xEE);                       // protected
+        EXPECT_EQ(bus->read8(0xD000), 0x10 + b);
+        bus->read8(0xC080);                              // bank 2
+        EXPECT_EQ(bus->read8(0xD000), 0x70 + b);
+    }
+    bus->read8(0xC082);                                  // the ROM again
+    EXPECT_EQ(bus->read8(0xD000), romD000);
+    EXPECT_EQ(bus->read8(0xF800), romF800);
+    // 64K: four banks; $C08C-$C08F stay in the last
+    ASSERT(slot->install("saturn", "64K", err));
+    EXPECT_EQ(slot->info(), std::string("saturn (Saturn 64K)"));
+    ASSERT(slot->install("lc", "", err));
+    delete m;
+}

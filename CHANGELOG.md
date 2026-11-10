@@ -7,6 +7,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Apple II Saturn 128K
+
+- **A Saturn Systems RAM card** in slot 0 of the II and II+, in place of
+  Apple's 16K language card: `expansion slot0 saturn 128K` (or `64K`).
+  - **Banking** (after AppleWin's `Saturn128K`): 16 KB banks at
+    `$C084-$C087`/`$C08C-$C08F`, the language card's other switches, and
+    write-enable on any two odd accesses in a row.
+  - **Power-on:** write-protected.
+- **Checks:** the DOS 3.3 System Master loads Integer BASIC into it. Test:
+  `apple2_saturn_128k`.
+
 ### Apple II No-Slot Clock
 
 - **A No-Slot Clock** (`apple2::NoSlotClock`, Dallas DS1216, after AppleWin's
