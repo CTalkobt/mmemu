@@ -58,7 +58,7 @@ enum Button : uint16_t {
 };
 /** Player `port`'s pad (0-4): the pads in port 1 then port 2, a multitap's four in turn. */
 void setButtons(MachineDescriptor* m, int port, uint16_t buttons);
-/** What's in controller port `port` (0/1): "pad", "mouse", "superscope", "multitap" or "" (nothing). */
+/** What's in controller port `port` (0/1): "pad", "mouse", "superscope", "multitap", "justifier" or "" (nothing). */
 bool setPortDevice(MachineDescriptor* m, int port, const std::string& device);
 std::string portDevice(MachineDescriptor* m, int port);
 
@@ -67,7 +67,10 @@ uint64_t masterClock(MachineDescriptor* m);
 /** Current scanline (0-261) and H clock (0-1363). */
 int scanline(MachineDescriptor* m);
 int hclock(MachineDescriptor* m);
-/** True when the cartridge in it is a PAL one (the console runs as PAL). */
+/** True when the console runs as PAL (by the cartridge's header, or chosen by hand). */
 bool isPal(MachineDescriptor* m);
+/** The region setting: "auto" (the cartridge's header, as Mesen), "ntsc" or "pal"; setting it powers on again. */
+bool setRegion(MachineDescriptor* m, const std::string& region);
+std::string region(MachineDescriptor* m);
 
 }  // namespace snes

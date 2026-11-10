@@ -427,7 +427,14 @@ public:
 
     void setCart(std::unique_ptr<Cart> c, std::string label) {
         m_cart = std::move(c); m_label = std::move(label);
-        m_pal = m_cart && m_cart->pal;
+        updateRegion();
+    }
+    /** The console's region: Auto follows the cartridge's header (no cartridge: NTSC), as Mesen. */
+    enum class Region { Auto, Ntsc, Pal };
+    void setRegion(Region r) { m_region = r; updateRegion(); }
+    Region region() const { return m_region; }
+    void updateRegion() {
+        m_pal = m_region == Region::Auto ? (m_cart && m_cart->pal) : m_region == Region::Pal;
         m_masterHz = m_pal ? MASTER_HZ_PAL : MASTER_HZ;
         m_ppu->setPal(m_pal);
     }
@@ -440,13 +447,14 @@ public:
     // ------------------------------------------------------------------
     // The controller ports
     // ------------------------------------------------------------------
-    enum class PortKind { None, Pad, Mouse, SuperScope, Multitap };
+    enum class PortKind { None, Pad, Mouse, SuperScope, Multitap, Justifier };
     static const char* portKindName(PortKind k) {
         switch (k) {
         case PortKind::Pad: return "pad";
         case PortKind::Mouse: return "mouse";
         case PortKind::SuperScope: return "superscope";
         case PortKind::Multitap: return "multitap";
+        case PortKind::Justifier: return "justifier";
         default: return "";
         }
     }
@@ -458,6 +466,7 @@ public:
         case PortKind::Mouse: m_port[port] = std::make_unique<Mouse>(); break;
         case PortKind::SuperScope: m_port[port] = std::make_unique<SuperScope>(); break;
         case PortKind::Multitap: m_port[port] = std::make_unique<Multitap>(port); break;
+        case PortKind::Justifier: m_port[port] = std::make_unique<Justifier>(); break;
         default: m_port[port].reset(); break;
         }
         if (m_port[port]) m_port[port]->strobe(out0());
@@ -471,7 +480,7 @@ public:
         m_players[p] = buttons;
         applyPlayers();
     }
-    /** The host mouse to the mouse or the Super Scope (the first port with one). */
+    /** The host mouse to the mouse, the Super Scope or the Justifier's first gun (the first port with one). */
     void mouseInput(int dx, int dy, uint8_t buttons, int wheel) {
         for (int i = 0; i < 2; ++i) {
             if (auto* m = dynamic_cast<Mouse*>(m_port[i].get())) { m->move(dx, dy); m->buttons = buttons & 3; return; }
@@ -481,6 +490,14 @@ public:
                 sc->y = std::max(-8, std::min(247, sc->y + dy));
                 sc->buttons = (uint8_t)(((buttons & 1) ? SuperScope::FIRE : 0) | ((buttons & 2) ? SuperScope::CURSOR : 0) |
                                         ((buttons & 4) ? SuperScope::PAUSE : 0) | (wheel ? SuperScope::TURBO : 0));
+                return;
+            }
+            if (auto* j = dynamic_cast<Justifier*>(m_port[i].get())) {
+                // Left is the trigger, right START (bsnes's range)
+                auto& g = j->guns[0];
+                g.x = std::max(-16, std::min(272, g.x + dx));
+                g.y = std::max(-16, std::min(256, g.y + dy));
+                g.trigger = buttons & 1; g.start = buttons & 2;
                 return;
             }
         }
@@ -1284,11 +1301,13 @@ private:
             m_ppu->startVblank();
             if (m_cart && m_cart->battery && ++m_saveFrames >= 60) { m_saveFrames = 0; m_cart->flushSave(); }
             m_nmiEvent = 1;                               // the flag rises at clock 2, the CPU sees it at 6
-            // The Super Scope: last frame's latch if it's not been taken, then this frame's aim (Mesen)
+            // The Super Scope and the Justifier: last frame's latch if it's not been taken, then this frame's aim (Mesen)
             processScopeLatch();
             m_scopeLatch = false;
-            for (auto& d : m_port)
+            for (auto& d : m_port) {
                 if (auto* sc = dynamic_cast<SuperScope*>(d.get())) m_scopeLatch = sc->latchAt(m_scopeDot, m_scopeLine);
+                if (auto* j = dynamic_cast<Justifier*>(d.get())) m_scopeLatch = j->latchAt(m_scopeDot, m_scopeLine);
+            }
             // The auto joypad read: from the first multiple of 256 clocks after clock 130, less 128 (Mesen)
             const uint64_t from = m_master + 130;
             m_autoReadStart = from + ((from & 0xFF) ? 256 - (from & 0xFF) : 0) - 128;
@@ -1308,6 +1327,7 @@ private:
     uint64_t m_master = 0, m_apuSynced = 0;
     int m_hClock = 0, m_line = 0;
     int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
+    Region m_region = Region::Auto;
     bool m_pal = false;
     uint64_t m_masterHz = MASTER_HZ;
     int m_saveFrames = 0;
@@ -1358,7 +1378,7 @@ bool setPortDevice(SnesBus* bus, int port, const std::string& device) {
     static const std::pair<const char*, SnesBus::PortKind> kinds[] = {
         {"", SnesBus::PortKind::None}, {"none", SnesBus::PortKind::None}, {"pad", SnesBus::PortKind::Pad},
         {"mouse", SnesBus::PortKind::Mouse}, {"superscope", SnesBus::PortKind::SuperScope},
-        {"multitap", SnesBus::PortKind::Multitap}};
+        {"multitap", SnesBus::PortKind::Multitap}, {"justifier", SnesBus::PortKind::Justifier}};
     for (auto& k : kinds) if (device == k.first) { bus->setPort(port, k.second); return true; }
     return false;
 }
@@ -1454,6 +1474,30 @@ int scanline(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->line() : 
 int hclock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->hclock() : 0; }
 bool isPal(MachineDescriptor* m) { auto* b = busOf(m); return b && b->pal(); }
 
+bool setRegion(MachineDescriptor* m, const std::string& region) {
+    auto* bus = busOf(m);
+    if (!bus) return false;
+    SnesBus::Region r;
+    if (region == "auto" || region.empty()) r = SnesBus::Region::Auto;
+    else if (region == "ntsc") r = SnesBus::Region::Ntsc;
+    else if (region == "pal") r = SnesBus::Region::Pal;
+    else return false;
+    bus->setRegion(r);
+    m->clockHz = (double)bus->masterHz();
+    powerOn(m);                                           // a different console: from power on
+    return true;
+}
+
+std::string region(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    if (!bus) return "";
+    switch (bus->region()) {
+    case SnesBus::Region::Ntsc: return "ntsc";
+    case SnesBus::Region::Pal: return "pal";
+    default: return "auto";
+    }
+}
+
 MachineDescriptor* create(bool sfc, std::string* /*err*/) {
     auto* desc = new MachineDescriptor();
     desc->machineId = sfc ? "superfamicom" : "snes";
@@ -1541,12 +1585,28 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         sl.devices = {{"pad", "SNES controller", {}, ""},
                       {"mouse", "SNES Mouse (the host mouse: left and right buttons)", {}, ""},
                       {"superscope", "Super Scope (the host mouse aims; left fires, right cursor, middle pause, wheel turbo)", {}, ""},
-                      {"multitap", "Multitap: four pads (players " + std::string(port ? "2-5" : "1-4") + ")", {}, ""}};
+                      {"multitap", "Multitap: four pads (players " + std::string(port ? "2-5" : "1-4") + ")", {}, ""},
+                      {"justifier", "Konami Justifier (the host mouse aims; left is the trigger, right START)", {}, ""}};
         sl.install = [bus, port](const std::string& dev, const std::string&, std::string& err) {
             if (!setPortDevice(bus, port, dev)) { err = "No such controller: " + dev; return false; }
             return true;
         };
         sl.info = [bus, port]() { return std::string(SnesBus::portKindName(bus->portKind(port))); };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
+    // The region, as Mesen's setting: auto (the cartridge's header), or NTSC or PAL by hand
+    {
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "region";
+        sl.description = "Console region (changing it powers the console on again)";
+        sl.devices = {{"auto", "From the cartridge's header", {}, ""},
+                      {"ntsc", "NTSC: 60 frames a second, 262 lines", {}, ""},
+                      {"pal", "PAL: 50 frames a second, 312 lines", {}, ""}};
+        sl.install = [desc](const std::string& dev, const std::string&, std::string& err) {
+            if (!setRegion(desc, dev.empty() ? "auto" : dev)) { err = "No such region: " + dev; return false; }
+            return true;
+        };
+        sl.info = [desc]() { return region(desc) + (isPal(desc) ? " (PAL)" : " (NTSC)"); };
         desc->expansionSlots.push_back(std::move(sl));
     }
     desc->screenButtons = {

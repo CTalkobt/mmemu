@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES region by hand and the Justifier
+
+- **The region can be chosen by hand**, as Mesen's setting: CLI/MCP
+  `expansion region auto|ntsc|pal`, the GUI's Control > Expansions,
+  `snes::setRegion`. Auto follows the cartridge's header; a change powers
+  the console on again. Test `snes_region_override`.
+- **Konami's Justifier** in a controller port (`expansion port2
+  justifier`), after bsnes since Mesen has none: its 32-bit report with
+  the signature, triggers, STARTs and active gun; each latch swaps the
+  active gun, which latches the PPU's counters every frame it points at the
+  picture. Gun 1 follows the host mouse. Test `snes_justifier`.
+
 ### C64 and C128: the VIC-II takes the bus (#266)
 
 - **BA cycle by cycle**, after VICE's viciisc cycle tables: badlines hold it
