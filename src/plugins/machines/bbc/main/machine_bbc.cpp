@@ -23,6 +23,7 @@
 #include "plugins/6502/main/cpu65c02.h"
 #include "plugins/devices/bbc_video/main/bbc_video.h"
 #include <algorithm>
+#include <cstdlib>
 #include <cctype>
 #include <cstring>
 #include <deque>
@@ -267,6 +268,17 @@ public:
     }
 
     void setRom(int slot, std::vector<uint8_t> rom) { m_roms[slot & 15] = std::move(rom); }
+    bool hasRom(int slot) const { return !m_roms[slot & 15].empty() && !m_swram[slot & 15]; }
+    /** Sideways RAM in a bank (b-em's swram[]): 16 KB at &8000-&BFFF that
+     *  takes writes while ROMSEL picks it; off empties the bank. */
+    void setSidewaysRam(int slot, bool on) {
+        slot &= 15;
+        m_swram[slot] = on;
+        if (on) m_roms[slot].assign(0x4000, 0);
+        else m_roms[slot].clear();
+    }
+    bool sidewaysRam(int slot) const { return m_swram[slot & 15]; }
+    std::vector<uint8_t>& bank(int slot) { return m_roms[slot & 15]; }
     /** Model A: 16 KB of RAM seen at &0000 and &4000 (A14 not decoded: b-em
      *  maps both to the top half, where the video finds its screen); no
      *  User VIA, ADC or disc */
@@ -335,6 +347,7 @@ public:
         const uint16_t a = addr & 0xFFFF;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
         if (a < 0x8000) m_ram[ramIndex(a)] = v;
+        else if (a < 0xC000 && m_swram[m_romsel]) m_roms[m_romsel][a - 0x8000] = v;   // sideways RAM
         else if (a >= 0xFC00 && a < 0xFF00) io(a, &v);
         ++m_access;
     }
@@ -518,6 +531,7 @@ private:
     BusConfig m_cfg;
     std::vector<uint8_t> m_os, m_ram;
     std::vector<uint8_t> m_roms[16];
+    bool m_swram[16] = {};
     BbcVideo* m_video;
     BbcKeyboard* m_kbd;
     Sn76489* m_sn;
@@ -717,6 +731,58 @@ MachineDescriptor* create(Model model, std::string* err) {
         bus->setAxis(p + 1, !(bits & 0x01) ? 0xFFF0 : !(bits & 0x02) ? 0x0000 : 0x7FF8);
         bus->setFire(port, !(bits & 0x10));
     };
+
+    // Sideways RAM in the free banks, fitted at run time (a 16 KB board per
+    // bank, as Watford's and Solidisk's; b-em's swram)
+    {
+        MachineDescriptor::ExpansionSlot sw;
+        sw.name = "swram";
+        sw.description = "Sideways RAM: 16 KB banks at &8000-&BFFF paged by ROMSEL (&FE30), in banks without a ROM";
+        sw.devices = {{"ram", "Sideways RAM banks: a size (16K = bank 7, 32K = 6-7, 64K = 4-7, 128K = 0-7) or a list such as 4,5",
+                       {"16K", "32K", "64K", "128K"}, "64K"}};
+        sw.install = [bus](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "ram") { err = "no device '" + device + "' for the swram slot (ram)"; return false; }
+            std::vector<int> banks;
+            if (!device.empty()) {
+                std::string o = option.empty() ? "64K" : option;
+                for (auto& c : o) c = (char)toupper((unsigned char)c);
+                if (o == "16K") banks = {7};
+                else if (o == "32K") banks = {6, 7};
+                else if (o == "64K") banks = {4, 5, 6, 7};
+                else if (o == "128K") banks = {0, 1, 2, 3, 4, 5, 6, 7};
+                else {
+                    std::string cur;
+                    for (char c : o + ",") {
+                        if (c == ',' || c == ' ') {
+                            if (!cur.empty()) {
+                                char* end = nullptr;
+                                const long b = std::strtol(cur.c_str(), &end, 16);   // 0-9, A-F as *ROMS shows them
+                                if (*end || b < 0 || b > 15) { err = "'" + cur + "' isn't a bank (0-F)"; return false; }
+                                banks.push_back((int)b);
+                            }
+                            cur.clear();
+                        } else cur += c;
+                    }
+                    if (banks.empty()) { err = "a size (16K, 32K, 64K, 128K) or banks such as 4,5"; return false; }
+                }
+                for (int b : banks)
+                    if (bus->hasRom(b)) { err = "bank " + std::to_string(b) + " holds a ROM (BASIC is 15, the DFS 14)"; return false; }
+            }
+            for (int b = 0; b < 16; ++b) {
+                const bool want = std::find(banks.begin(), banks.end(), b) != banks.end();
+                if (want != bus->sidewaysRam(b)) bus->setSidewaysRam(b, want);
+            }
+            return true;
+        };
+        sw.info = [bus]() -> std::string {
+            std::string list;
+            int n = 0;
+            for (int b = 0; b < 16; ++b)
+                if (bus->sidewaysRam(b)) { list += (list.empty() ? "" : ","); list += "0123456789ABCDEF"[b]; ++n; }
+            return n ? "ram (" + std::to_string(n * 16) + "K: banks " + list + ")" : "";
+        };
+        desc->expansionSlots.push_back(std::move(sw));
+    }
 
     desc->onReset = [bus, io, cpu, tube, par](MachineDescriptor&) {     // power on
         bus->powerOn();

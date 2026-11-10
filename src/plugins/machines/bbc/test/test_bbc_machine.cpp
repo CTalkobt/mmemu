@@ -277,3 +277,48 @@ TEST_CASE(bbc_tube_arm) {
     EXPECT_TRUE(screenHas(m, "Executive version 1.00"));
     delete m;
 }
+
+// Sideways RAM fitted at run time: a service ROM written into bank 4
+// through ROMSEL (as a sideways-RAM loader does) is found by MOS at power
+// on (its type byte in the ROM table at &02A1 + bank, its service entry
+// called); BASIC still comes up; banks with a ROM are refused
+TEST_CASE(bbc_sideways_ram) {
+    MachineDescriptor* m = make();
+    if (!m) return;
+    auto* slot = m->expansionSlot("swram");
+    ASSERT(slot != nullptr);
+    std::string err;
+    EXPECT_TRUE(!slot->install("ram", "E", err));   // the DFS's bank
+    EXPECT_TRUE(!slot->install("ram", "G", err));
+    ASSERT(slot->install("ram", "64K", err));
+    EXPECT_EQ(slot->info(), std::string("ram (64K: banks 4,5,6,7)"));
+    IBus* bus = m->buses[0].bus;
+    // A service-only ROM: type $82, title "TEST", "(C)"; its service entry
+    // INC &0900 and returns
+    static const uint8_t ROM[] = {
+        0x00, 0x00, 0x00,                  // language entry (none)
+        0x4C, 0x11, 0x80,                  // service entry: JMP &8011
+        0x82,                              // type: service entry, 6502 code
+        0x0D,                              // copyright offset
+        0x01,                              // version
+        'T', 'E', 'S', 'T', 0x00,          // title (&800D: the 0 before "(C)")
+        '(', 'C', ')',
+        0xEE, 0x00, 0x09,                  // &8011: INC &0900
+        0x60};                             // RTS
+    bus->write8(0xFE30, 4);
+    for (size_t i = 0; i < sizeof ROM; ++i) bus->write8(0x8000 + (uint32_t)i, ROM[i]);
+    EXPECT_EQ(bus->peek8(0x8006), 0x82);
+    bus->write8(0xFE30, 5);
+    EXPECT_EQ(bus->peek8(0x8006), 0x00);             // bank 5: still empty
+    m->onReset(*m);                                  // power on: MOS scans the banks
+    run(m, 4000000);
+    EXPECT_TRUE(screenHas(m, ">"));                  // BASIC (bank 15) is the language
+    EXPECT_EQ(bus->peek8(0x02A1 + 4), 0x82);         // MOS's ROM table: our ROM in bank 4
+    EXPECT_EQ(bus->peek8(0x02A1 + 5), 0x00);         // nothing in bank 5
+    EXPECT_TRUE(bus->peek8(0x0900) > 0);             // its service entry was called
+    // Out again: bank 4 is empty
+    ASSERT(slot->install("", "", err));
+    bus->write8(0xFE30, 4);
+    EXPECT_EQ(bus->peek8(0x8006), 0x00);
+    delete m;
+}

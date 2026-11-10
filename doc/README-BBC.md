@@ -57,6 +57,22 @@ Other SHEILA addresses read `&FE`, as in b-em.
 
 Accesses to FRED, JIM and the slow parts of SHEILA wait for the 1 MHz clock, which adds 1 or 2 cycles (b-em's `FEslowdown`). The slow parts are the CRTC and ACIA (`&FE00`), the System VIA (`&FE40`), the User VIA (`&FE60`) and the ADC (`&FEC0`). Each instruction's cycles include these waits.
 
+### Sideways RAM
+
+The `swram` expansion slot turns free sideways banks into RAM while the machine runs, as Watford's and Solidisk's boards did, after b-em's `swram`:
+
+```
+expansion swram ram 64K        # banks 4-7 (16K = 7, 32K = 6-7, 128K = 0-7)
+expansion swram ram 4,5,C      # any free banks, in hex as *ROMS shows them
+expansion swram remove
+```
+
+- **Writes:** while ROMSEL (`&FE30`) picks a RAM bank, writes to `&8000-&BFFF` go into it.
+- **Finding ROMs:** MOS finds a ROM image written there at the next power-on or CTRL-BREAK, as it does a ROM in a socket.
+- **Occupied banks:** a bank holding a ROM (BASIC in 15, the DFS in 14 on the Model B) can't be made RAM.
+- **Removing it:** the banks empty.
+- `bbc_sideways_ram` writes a service ROM into bank 4, powers on, and checks that MOS lists it at `&02A1 + 4` and calls its service entry.
+
 ## System VIA and the slow data bus
 
 The System VIA's port A is the slow data bus, shared by the keyboard and the SN76489. Port B writes IC32, the 74LS259 addressable latch:

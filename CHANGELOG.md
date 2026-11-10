@@ -324,6 +324,10 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `apple2c_boots`, `apple2c_iou_and_serial`.
 
 ### BBC Micro
+- **Sideways RAM,** fitted at run time (`expansion swram ram 64K`, or banks such as `4,5,C`).
+  - While ROMSEL picks a RAM bank, writes to `&8000-&BFFF` go into it, and MOS finds a ROM image written there at power-on.
+  - Banks holding BASIC or the DFS are refused.
+  - See "Sideways RAM" in `doc/README-BBC.md`.
 - **Acorn ARM core and the ARM Evaluation System** (#13).
   - **The core:** `mmemu-plugin-arm.so`, an ARM1/ARM2 with the 26-bit PSR in R15. It covers data processing with the barrel shifter, MUL/MLA (ARM2), LDR/STR, LDM/STM with `^`, B/BL, SWI, the four modes with banked registers, and the exceptions, plus a disassembler. On about 160,000 random instructions it agrees with b-em's `arm.c`, apart from that core's documented departures from the datasheet. That comparison found two bugs in the new core, both fixed. See `doc/README-ARM.md`.
   - **The system:** profile `bbcb-arm`, after b-em's `arm.c`. It has 4 MB of RAM; the 16 KB ROM (`roms/bbc/armeval100.rom`, from b-em) is copied to 0 at reset; the Tube is at `$1000000`.
