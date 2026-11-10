@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES SPC7110
+
+- **The SPC7110** (`snes::Spc7110`, after Mesen; bsnes' decompressor) for
+  Far East of Eden Zero, Momotarou Dentetsu Happy and Super Power League 4:
+  - **Map:** the program megabyte and three 1 MB data ROM windows.
+  - **Decompression, the data port and the multiply/divide unit.**
+  - **The RTC-4513 clock** in Far East of Eden Zero, saved as `<rom>.rtc`.
+- **Tests:** decompression checked against Mesen's own decompressor on the
+  same data, plus the map, data port, ALU and clock.
+
 ### Apple II mouse card
 
 - **An AppleMouse II card** (`apple2::MouseCard`, after AppleWin's
