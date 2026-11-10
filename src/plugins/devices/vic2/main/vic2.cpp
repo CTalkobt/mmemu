@@ -281,17 +281,41 @@ bool VIC2::baAt(int line, int cycle) const {
     return false;
 }
 
-bool VIC2::baLow(int ahead) const {
-    if (fastMode()) return false;                     // the VIC-IIe at 2 MHz takes nothing
-    // m_cycleAccum is the cycle last ticked (the one a CPU access in it
-    // sees); `ahead` counts from the next
-    int line = m_rasterLine;
+// The line and cycle (from 0) `ahead` cycles after the next to run.
+// m_cycleAccum is the cycle last ticked (the one a CPU access in it sees).
+void VIC2::cycleAhead(int ahead, int& line, int& cycle) const {
+    line = m_rasterLine;
     int64_t c = (int64_t)(m_cycleAccum % (uint64_t)m_cyclesPerLine) + 1 + ahead;
     while (c >= m_cyclesPerLine) {
         c -= m_cyclesPerLine;
         if (++line >= m_linesPerFrame) line = 0;
     }
-    return baAt(line, (int)c);
+    while (c < 0) {                                   // `ahead` < 0: cycles already run
+        c += m_cyclesPerLine;
+        line = line == 0 ? m_linesPerFrame - 1 : line - 1;
+    }
+    cycle = (int)c;
+}
+
+bool VIC2::baLow(int ahead) const {
+    if (fastMode()) return false;                     // the VIC-IIe at 2 MHz takes nothing
+    int line, c;
+    cycleAhead(ahead, line, c);
+    return baAt(line, c);
+}
+
+// VICE vicii_cycle_reu (x64sc): where sprite 0's DMA turns on, the VIC-II
+// sets BA late, so the REU still gets that first cycle; the CPU checks
+// later and doesn't (VICE testprogs REU/reutiming2 e-m2, e3-m2)
+bool VIC2::baLowForDma(int ahead) const {
+    if (!baLow(ahead)) return false;
+    int line, c;
+    cycleAhead(ahead, line, c);
+    const int first = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 55 : 54;
+    if (c != first || !(m_regs[SPENA] & 1)) return true;
+    const int y = m_regs[SP0Y];
+    const bool starts = (line & 0xFF) == y && !spriteDma(0, line == 0 ? m_linesPerFrame - 1 : line - 1);
+    return !starts;
 }
 
 // ---------------------------------------------------------------------------

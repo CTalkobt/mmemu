@@ -66,6 +66,8 @@ public:
     void tick(uint64_t) override {}
     int busMasterCycle() override;
     void setBaSource(IBaSource* ba) override { m_ba = ba; }
+    /** The C64's RAM, for a C64C's DMA read of I/O that returns the RAM under it. */
+    void setRamData(const uint8_t* ram) override { m_ram64 = ram; }
     void setBusMasterSync(std::function<void(int)> sync) override { m_sync = std::move(sync); }
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     bool saveDeviceImage(const std::string& path, std::string& err) override { return saveImage(path, err); }
@@ -94,6 +96,15 @@ private:
     IBus* m_bus = nullptr;
     IBaSource* m_ba = nullptr;          // the VIC-II: DMA waits while BA is low
     int m_baWrites = 0;                 // writes let through since BA fell
+    uint8_t baHistory() const;          // BA for the REU, bit n = n cycles ago
+    // A C64C ("glue" = "c64c", Denise isC64C): a read made while BA is low
+    // returns the RAM under I/O
+    bool m_c64cGlue = false;
+    const uint8_t* m_ram64 = nullptr;
+    uint8_t hostRead(bool baLow);
+    // Swap: a read cycle and a write cycle in turn (Denise Reu::swap)
+    bool m_swapRead = false, m_firstByte = true;
+    uint8_t m_swapReu = 0, m_swapC64 = 0;
     std::function<void(int)> m_sync;    // the machine up to an access's cycle
     void syncTo(int cycle) { if (m_sync) m_sync(cycle); }
     ISignalLine* m_irq = nullptr;

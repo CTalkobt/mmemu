@@ -19,6 +19,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
   output sample in four (where a DSP sample makes two); it now repeats the
   sample.
 
+### REU: swap timing, sprite 0's late BA and the C64C glitch (#309)
+
+- **A swap alternates read and write cycles**, after Denise's `Reu::swap`.
+  A read goes ahead until BA has been low for four cycles, and a byte read
+  again replaces the one before; a write waits for BA, but for the last
+  byte. On a badline the last read is at cycle 14 and its write at 55.
+- **The REU gets the first cycle of sprite 0's DMA**, where the VIC-II pulls
+  BA late (VICE `vicii_cycle_reu`): `IBaSource::baLowForDma`.
+- **The C64C glue (`glue` = `c64c`, an REU option):** a DMA read made while
+  BA is low returns the RAM under I/O.
+- **VICE's `REU/reutiming2`:** all 28 exitcode programs pass, against 10
+  before. In VICE's own testbench results x64sc passes 12 of them; Denise
+  passes all 28. The runner sets the C64C glue for the programs whose
+  references come from a C64C, and `MMEMU_VICE_DUMP` saves a failing
+  program's memory.
+
 ### SNES Satellaview (BS-X)
 
 - **The BS-X cartridge and the Satellaview**, after Mesen: the BIOS

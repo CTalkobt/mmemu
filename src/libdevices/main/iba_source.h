@@ -11,6 +11,10 @@
 class IBaSource {
 public:
     virtual ~IBaSource() = default;
-    /** BA is low on the cycle `ahead` cycles from now (0: the next one to run). */
+    /** BA is low on the cycle `ahead` cycles from now (0: the next one to run;
+     *  -1 the one last run). */
     virtual bool baLow(int ahead) const = 0;
+    /** BA as a DMA master (the REU) sees it, which can differ from the CPU's
+     *  view: the VIC-II pulls BA a cycle late at the start of sprite 0's DMA. */
+    virtual bool baLowForDma(int ahead) const { return baLow(ahead); }
 };

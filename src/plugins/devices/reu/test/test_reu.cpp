@@ -279,3 +279,53 @@ TEST_CASE(reu_options_and_images) {
     std::remove(path.c_str());
     EXPECT_TRUE(!other.setOption("image", "/nonexistent/x.reu", err));
 }
+
+// A swap against a badline (#309), after Denise's Reu::swap and VICE's
+// testprogs REU/reutiming2 e5: BA low in cycles 12-54 of a line. Reads at 8
+// and 10, writes at 9 and 11; the third byte is read at 12, read again at
+// 14 (BA low since 12, under four cycles), and written at 55; the fourth is
+// read at 56 and written at 57
+namespace {
+struct BadlineBa : IBaSource {
+    int clock = 0;                                  // the next cycle to run
+    bool baLow(int ahead) const override {
+        const int c = (clock + ahead) % 63;
+        return c >= 12 && c <= 54;
+    }
+};
+}  // namespace
+
+TEST_CASE(reu_swap_badline_timing_and_c64c_glue) {
+    for (int c64c = 0; c64c < 2; ++c64c) {
+        Rig t;
+        BadlineBa ba;
+        std::vector<uint8_t> ram(0x10000, 0x42);    // the RAM under I/O
+        t.reu.setBaSource(&ba);
+        t.reu.setRamData(ram.data());
+        std::string err;
+        EXPECT_TRUE(t.reu.setOption("glue", c64c ? "c64c" : "c64", err));
+        for (int i = 0; i < 4; ++i) t.bus.write8(0x5000 + (uint32_t)i, (uint8_t)(0x11 * (i + 1)));
+        t.setup(0x5000, 0, 4);
+        t.w(1, 0x92);                               // swap, execute now
+        ba.clock = 8;
+        int cycles = 0;
+        for (int c; (c = t.reu.busMasterCycle()) > 0;) { cycles += c; ba.clock += c; }
+        EXPECT_EQ(cycles, 50);                      // cycles 8-57
+        EXPECT_EQ(t.reu.ram()[0], 0x11);
+        EXPECT_EQ(t.reu.ram()[1], 0x22);
+        // Read with BA low: a C64C's glue gives the RAM under I/O
+        EXPECT_EQ(t.reu.ram()[2], c64c ? 0x42 : 0x33);
+        EXPECT_EQ(t.reu.ram()[3], 0x44);
+        EXPECT_EQ(t.r(0) & 0x40, 0x40);             // end of block
+    }
+    // The first byte isn't read in the cycle BA falls
+    Rig t;
+    BadlineBa ba;
+    t.reu.setBaSource(&ba);
+    t.setup(0x5000, 0, 1);
+    t.w(1, 0x92);
+    ba.clock = 12;
+    int cycles = 0;
+    for (int c; (c = t.reu.busMasterCycle()) > 0;) { cycles += c; ba.clock += c; }
+    EXPECT_EQ(cycles, 3);                           // 12 skipped, read 13, last byte written 14
+}

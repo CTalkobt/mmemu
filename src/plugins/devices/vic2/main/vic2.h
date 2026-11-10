@@ -131,8 +131,10 @@ public:
      *  sprite's fetches through them while its DMA is on (sprite 0's on
      *  cycles 55-59 of a PAL line, sprite 7's on 6-10 of the next). */
     bool baLow(int ahead) const override;
+    bool baLowForDma(int ahead) const override;
     /** BA on raster line `line`, cycle `cycle` (from 0: the line's first). */
     bool baAt(int line, int cycle) const;
+    void cycleAhead(int ahead, int& line, int& cycle) const;
     /** A badline: lines $30-$F7 whose low 3 bits are YSCROLL, once DEN was
      *  set on line $30 (VICE vicii-badline.c). */
     bool isBadline(int line) const;

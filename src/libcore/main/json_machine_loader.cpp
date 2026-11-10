@@ -1237,6 +1237,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 io->registerHandler(dev);
                 if (ds->busMaster) {
                     dev->setBaSource(baSource);
+                    if (auto* flat = dynamic_cast<FlatMemoryBus*>(dmaBus)) dev->setRamData(flat->rawData());
                     if (baSource) {
                         // Its accesses see the other devices ticked through their cycle, as the CPU's do
                         dev->setBusMasterSync([desc](int k) {
