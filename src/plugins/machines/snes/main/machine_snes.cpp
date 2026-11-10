@@ -16,6 +16,7 @@
 #include "snes_sa1.h"
 #include "snes_obc1.h"
 #include "snes_sdd1.h"
+#include "snes_sgb.h"
 #include "snes_spc7110.h"
 #include "snes_st018.h"
 #include "libcore/main/machine_desc.h"
@@ -123,6 +124,9 @@ struct Cart {
     std::vector<uint8_t> slotPackSaved;
     // The MSU-1 (as Mesen: <rom>.msu or msu1.rom beside the ROM): $2000-$2007
     std::unique_ptr<Msu1> msu1;
+    // The Super Game Boy (chipset $E3 or game code 042J, as Mesen): the ICD2 at $6000-$7FFF and its Game Boy
+    std::unique_ptr<Sgb> sgb;
+    std::string sgbPath;                        // its Game Boy cartridge's file
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -135,6 +139,11 @@ struct Cart {
     }
 
     std::vector<uint8_t>* batteryRam() {
+        if (sgb) {
+            // The Game Boy cartridge's RAM
+            auto& g = sgb->gameboy();
+            return g.loaded() && g.hasBattery() && !g.cartRam().empty() ? &g.cartRam() : nullptr;
+        }
         if (!battery) return nullptr;
         if (st01x) {
             const auto& r = dsp->dataRam();
@@ -159,6 +168,13 @@ struct Cart {
             std::vector<uint8_t> data;
             if (readFile(rtcPath(), data)) spc7110->setRtcState(data);
             savedRtc = spc7110->rtcState();
+        }
+        if (sgb && sgb->gameboy().rtc() && !path.empty()) {
+            // The MBC3's clock: <rom>.rtc, as Mesen (its registers and when they were saved)
+            std::vector<uint8_t> data;
+            if (readFile(rtcPath(), data)) sgb->gameboy().rtc()->setState(data);
+            savedRtc = sgb->gameboy().rtc()->state();
+            savedRtc.resize(5);
         }
         auto* ram = batteryRam();
         if (!ram || path.empty()) return;
@@ -186,6 +202,13 @@ struct Cart {
             if (st != savedRtc) {
                 std::ofstream f(rtcPath(), std::ios::binary | std::ios::trunc);
                 if (f && f.write((const char*)st.data(), (std::streamsize)st.size())) savedRtc = st;
+            }
+        }
+        if (sgb && sgb->gameboy().rtc() && !savePath.empty()) {
+            const auto st = sgb->gameboy().rtc()->state();
+            if (savedRtc.size() != 5 || !std::equal(savedRtc.begin(), savedRtc.end(), st.begin())) {
+                std::ofstream f(rtcPath(), std::ios::binary | std::ios::trunc);
+                if (f && f.write((const char*)st.data(), (std::streamsize)st.size())) savedRtc.assign(st.begin(), st.begin() + 5);
             }
         }
         auto* ram = batteryRam();
@@ -411,6 +434,11 @@ struct Cart {
             st018 = std::make_unique<St018>(fw);
             battery = true;
         }
+        // The Super Game Boy: chipset $E3, or game code 042J (as Mesen); the SGB2 by its title or its 512 KB
+        if (chips == 0xE3 || (chipLow < 0x03 && gameCode() == "042J")) {
+            const bool sgb2 = raw.find("GAMEBOY2") != std::string::npos || rom.size() >= 0x80000;
+            sgb = std::make_unique<Sgb>(sgb2);
+        }
         // The BS-X BIOS: chipset $E5 (as Mesen), with the pack from a .bs file or none
         if (chips == 0xE5) {
             bsx = std::make_unique<Bsx>(&rom, &sram, std::move(bsPack));
@@ -431,6 +459,14 @@ struct Cart {
             battery = true;
         }
         return true;
+    }
+
+    /** The 4-character game code before the header ($FFB2), or "". */
+    std::string gameCode() const {
+        if (headerAt < 0x10) return "";
+        std::string code;
+        for (int i = 0; i < 4; ++i) code += (char)rom[headerAt - 0x0E + i];
+        return code;
     }
 
     /** The slot's pack over the cartridge's map (Mesen's MapBsxMemoryPack). */
@@ -477,7 +513,21 @@ struct Cart {
         if (bsx) s += bsx->pack()->data().empty() ? ", BS-X, no pack" : ", BS-X, " + std::to_string(bsx->pack()->data().size() / 1024) + "K pack";
         if (slotPack) s += ", BS-X pack slot";
         if (msu1) s += ", MSU-1";
+        if (sgb) s += sgbDescription();
         if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
+        return s;
+    }
+
+    /** ", Super Game Boy: <the Game Boy cartridge>". */
+    std::string sgbDescription() const {
+        std::string s = sgb->sgb2() ? ", Super Game Boy 2" : ", Super Game Boy";
+        auto& g = sgb->gameboy();
+        if (!g.loaded()) return s + ", no Game Boy cartridge";
+        s += ": " + (g.header().title.empty() ? std::string("Game Boy cartridge") : g.header().title) + ", " + g.mapperName() +
+             ", " + std::to_string(g.rom().size() / 1024) + "K ROM";
+        const size_t ram = g.cartRam().size();
+        if (ram) s += ", " + (ram >= 1024 ? std::to_string(ram / 1024) + "K" : std::to_string(ram) + " bytes") + " RAM";
+        if (g.hasBattery()) s += ", battery";
         return s;
     }
 
@@ -599,7 +649,15 @@ public:
 
     void setCart(std::unique_ptr<Cart> c, std::string label) {
         m_cart = std::move(c); m_label = std::move(label);
-        m_apu->setExtraAudio(m_cart && m_cart->msu1 ? m_cart->msu1.get() : nullptr);
+        AudioSource* extra = nullptr;
+        if (m_cart && m_cart->msu1) {
+            extra = m_cart->msu1.get();
+        } else if (m_cart && m_cart->sgb) {
+            extra = m_cart->sgb.get();
+            Apu* apu = m_apu;
+            m_cart->sgb->setMuteCheck([apu]() { return (apu->dsp().read(0x6C) & 0x40) != 0; });   // FLG's mute
+        }
+        m_apu->setExtraAudio(extra);
         updateRegion();
     }
     /** The console's region: Auto follows the cartridge's header (no cartridge: NTSC), as Mesen. */
@@ -614,6 +672,7 @@ public:
     bool pal() const { return m_pal; }
     uint64_t masterHz() const { return m_masterHz; }
     Cart* cart() const { return m_cart.get(); }
+    std::unique_ptr<Cart> releaseCart() { return std::move(m_cart); }
     const std::string& label() const { return m_label; }
     void setCpu(W65C816* cpu) { m_cpu = cpu; }
 
@@ -716,6 +775,7 @@ public:
         if (m_cart && m_cart->bsx) m_cart->bsx->powerOn();
         if (m_cart && m_cart->slotPack) m_cart->slotPack->reset();
         if (m_cart && m_cart->msu1) m_cart->msu1->powerOn();
+        if (m_cart && m_cart->sgb) m_cart->sgb->reset(m_master, m_masterHz);
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -788,6 +848,7 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
         if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
         if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);
+        if (m_cart && m_cart->sgb) m_cart->sgb->runTo(m_master);     // and the Super Game Boy's Game Boy
         if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM
     }
     void idle(uint32_t) override { cpuCycle(6); advance(6); }
@@ -891,6 +952,7 @@ private:
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->cx4->read(a);
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->obc1->read(a);
+            if (m_cart->sgb && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->sgb->read(a, m_master, peek);
             if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
                 if (!peek) m_cart->st018->runTo(m_master);
                 const int v = m_cart->st018->read(a, peek);
@@ -953,6 +1015,7 @@ private:
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->cx4->write(a, v); return; }
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->obc1->write(a, v); return; }
+            if (m_cart->sgb && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->sgb->write(a, v, m_master); return; }
             if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
                 m_cart->st018->runTo(m_master);
                 m_cart->st018->write(a, v);
@@ -1636,6 +1699,24 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, co
         }
         cart->bsPack = image;
         if (!cart->load(std::move(bios), err)) return false;
+    } else if (ext == "gb" || ext == "gbc") {
+        // A Game Boy cartridge: it goes in the Super Game Boy, roms/snes/SGB1.sfc (or SGB2.sfc; Mesen's names)
+        std::vector<uint8_t> bios;
+        std::string path;
+        for (const char* n : {"SGB1.sfc", "SGB2.sfc", "sgb1.sfc", "sgb2.sfc", "sgb.sfc"}) {
+            path = firmwareDir() + "/" + n;
+            if (readFile(path, bios) && bios.size() >= 0x8000) break;
+            bios.clear();
+        }
+        if (bios.empty()) {
+            err = "This is a Game Boy cartridge: the Super Game Boy BIOS is needed in " + firmwareDir() + "/SGB1.sfc (or SGB2.sfc)";
+            return false;
+        }
+        if (!cart->load(std::move(bios), err)) return false;
+        if (!cart->sgb) { err = "Not a Super Game Boy BIOS: " + path; return false; }
+        if (!cart->sgb->loadCartridge(image, err)) return false;
+        cart->sgbPath = romPath;
+        cart->battery = cart->sgb->gameboy().hasBattery();     // (for the regular flush)
     } else if (!cart->load(image, err)) {
         return false;
     }
@@ -1717,6 +1798,43 @@ bool insertSufamiSlotB(MachineDescriptor* m, const std::string& path, std::strin
 std::string sufamiSlotB(MachineDescriptor* m) {
     auto* bus = busOf(m);
     return bus && bus->cart() && bus->cart()->stB ? bus->cart()->stB->path : "";
+}
+
+bool insertSgbCartridge(MachineDescriptor* m, const std::string& path, std::string& err) {
+    auto* bus = busOf(m);
+    if (!bus || !bus->cart() || !bus->cart()->sgb) { err = "The Game Boy slot is on the Super Game Boy: put its BIOS cartridge in first"; return false; }
+    Cart* cart = bus->cart();
+    std::vector<uint8_t> rom;
+    if (!path.empty() && !readFile(path, rom)) { err = "Can't read " + path; return false; }
+    cart->flushSave();
+    if (path.empty()) {
+        // Taken out: a new ICD2 with an empty slot
+        cart->sgb = std::make_unique<Sgb>(cart->sgb->sgb2());
+        cart->savePath.clear();
+        cart->battery = false;
+    } else {
+        auto sgb = std::make_unique<Sgb>(cart->sgb->sgb2());
+        if (!sgb->loadCartridge(rom, err)) return false;
+        cart->sgb = std::move(sgb);
+        cart->battery = cart->sgb->gameboy().hasBattery();
+        cart->loadSave(savePathFor(path));
+    }
+    cart->sgbPath = path;
+    const std::string base = bus->label().substr(0, bus->label().find(" ("));
+    const std::string d = cart->describe();
+    bus->setCart(bus->releaseCart(), base + " (" + d + ")");      // the new ICD2's sound
+    powerOn(m);                                           // as if it had been in from the start
+    return true;
+}
+
+std::string sgbCartridge(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    return bus && bus->cart() && bus->cart()->sgb ? bus->cart()->sgbPath : "";
+}
+
+gb::Gameboy* sgbGameboy(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    return bus && bus->cart() && bus->cart()->sgb ? &bus->cart()->sgb->gameboy() : nullptr;
 }
 
 bool setRegion(MachineDescriptor* m, const std::string& region) {
@@ -1853,6 +1971,20 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         sl.info = [desc]() { const std::string p = sufamiSlotB(desc); return p.empty() ? p : "cart (" + p + ")"; };
         desc->expansionSlots.push_back(std::move(sl));
     }
+    // The Super Game Boy's cartridge slot: a Game Boy cartridge (Mesen loads the .gb with the BIOS as firmware)
+    {
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "gameboy";
+        sl.description = "The Super Game Boy's Game Boy cartridge (with the SGB BIOS cartridge in; it powers on again)";
+        sl.devices = {{"cart", "A Game Boy cartridge (.gb); the option is its file", {}, ""}};
+        sl.install = [desc](const std::string& dev, const std::string& option, std::string& err) {
+            if (!dev.empty() && dev != "cart") { err = "No such device for the Game Boy slot: " + dev + " (cart)"; return false; }
+            if (!dev.empty() && option.empty()) { err = "Give the cartridge's file: expansion gameboy cart <file>"; return false; }
+            return insertSgbCartridge(desc, dev.empty() ? "" : option, err);
+        };
+        sl.info = [desc]() { const std::string p = sgbCartridge(desc); return p.empty() ? p : "cart (" + p + ")"; };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
     // The region, as Mesen's setting: auto (the cartridge's header), or NTSC or PAL by hand
     {
         MachineDescriptor::ExpansionSlot sl;
@@ -1885,6 +2017,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         if (bus->cart() && bus->cart()->spc7110) bus->cart()->spc7110->reset();
         if (bus->cart() && bus->cart()->bsx) bus->cart()->bsx->reset();
         if (bus->cart() && bus->cart()->slotPack) bus->cart()->slotPack->reset();
+        if (bus->cart() && bus->cart()->sgb) bus->cart()->sgb->reset(bus->master(), bus->masterHz());
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();
