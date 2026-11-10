@@ -131,6 +131,25 @@ One `schedulerStep` call executes one CPU instruction (via `ICore::step()`), the
 
 While a device holds the bus (an REU's DMA: `MachineDescriptor::busMasterStep`), each step runs one cycle of that instead of an instruction, and the devices tick as usual.
 
+**The VIC-II takes the bus** (#266). `"scheduler": {"baSource": "VIC-II"}` in `machines/c64.json` hands the scheduler the VIC-II's BA line (`IBaSource`). BA follows VICE's cycle tables (`viciisc/vicii-chip-model.c`):
+- **Badlines:** BA is low on cycles 12-54 of each badline. A badline is a line from `$30` to `$F7` whose low 3 bits equal YSCROLL, in a frame where DEN was set on line `$30`.
+- **Sprites:** while a sprite's DMA is on, BA is low from 3 cycles before its two fetch cycles through them. Neighbouring sprites share the lead-in, so eight sprites on one line take 19 cycles. A sprite's DMA runs for 21 lines from the line matching its Y (42 when Y-expanded).
+
+The 6510 stops on RDY only when it reads. After each instruction the scheduler walks its cycles, and each read cycle waits while BA is low. The core reports its write cycles (`ICore::lastStepWrites`):
+- a store's last cycle;
+- a read-modify-write instruction's last two;
+- the pushes of PHA, PHP, JSR, BRK and interrupts.
+
+So a badline costs 40-43 cycles depending on the instruction under it. The instruction's own memory accesses still happen when it starts; only the time it takes changes.
+
+The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and its writes to the C64 continue for two cycles after BA falls, then wait.
+
+Tests (`src/libcore/test/test_machine_boot.cpp`):
+- `vic2_ba_cycles`: the tables, PAL and NTSC.
+- `c64_badlines_steal_cycles`: 25 x 43 cycles a frame under a loop of reads, between 40 and 43 each under `INC`, none with the screen off.
+- `c64_sprite_dma_steals_cycles`: 21 x 19 for eight sprites, 21 x 5 for one.
+- `c64_reu_waits_for_badlines`: the same copy takes 1000 cycles with the screen off, more with it on.
+
 ### 2.10 REU (RAM Expansion Unit)
 A Commodore REU can be fitted in the expansion port (the machine's `port` expansion slot) once the machine is made:
 
@@ -158,7 +177,7 @@ It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c6
 
 - The registers repeat every 32 bytes up to `$DFFF`; `$DF0B-$DF1F` read `$FF`.
 - **Starting a transfer:** execute with bit 4 set starts at once. With bit 4 clear, the REU waits for any write to `$FF00`; the write still goes on to the RAM under the KERNAL.
-- **Timing:** the CPU waits while the REU transfers one byte a cycle (a swap takes two).
+- **Timing:** the CPU waits while the REU transfers one byte a cycle (a swap takes two). The VIC-II's badlines and sprite fetches pause the transfer (§2.9).
   - Verify stops at the first difference, plus one cycle when bytes were left. With one byte left, that byte is compared too.
   - A finished transfer leaves the registers past the block, with length 1. With autoload they are reloaded instead.
 - **What the DMA sees:** the CPU's memory map, so I/O and ROMs are included. The 6510's port at `$00/$01` is not on the bus, so a transfer there writes the RAM underneath.
@@ -170,7 +189,6 @@ It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c6
 - **IRQ:** the REU's IRQ goes to the expansion port's /IRQ, which is the `expansion_irq` line of the machine's shared IRQ.
 
 Not modelled:
-- Badlines and sprite fetches don't pause the DMA. The C64 machine has no VIC-II cycle stealing yet.
 - The REU's pass-through doesn't arbitrate with a cartridge that also uses I/O2.
 
 ### 2.11 GeoRAM / NeoRAM

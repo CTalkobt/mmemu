@@ -963,7 +963,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
                          {"128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"}, "512K"},
                         {"georam", "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
                          {"512K", "1M", "2M", "4M"}, "512K"}};
-        port.install = [desc, bus, io, dev, portIrq](const std::string& device, const std::string& option, std::string& err) {
+        port.install = [desc, bus, io, dev, portIrq, vic](const std::string& device, const std::string& option, std::string& err) {
             auto remove = [&]() {
                 if (!*dev) return;
                 bus->setPortDevice(0, nullptr);
@@ -988,7 +988,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
             *dev = d;
             bus->setPortDevice(0, d);
             io->registerHandler(d);                 // reset, the debugger's device list
-            if (device == "reu") desc->busMasterStep = [d]() { return d->busMasterCycle(); };
+            if (device == "reu") { d->setBaSource(vic); desc->busMasterStep = [d]() { return d->busMasterCycle(); }; }
             return true;
         };
         port.info = [dev]() -> std::string {
@@ -1086,28 +1086,18 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
 
     // The 8502 at 1 or 2 MHz ($D030 bit 0), the Z80 at an effective 2 MHz
     // (its 4 MHz clock waits for the VIC-II); time is counted at 1 MHz.
-    // Badlines steal the bus from the 8502 at 1 MHz; in FAST mode the VIC-IIe
-    // steals nothing (VICE vicii-badline.c, vicii-fetch.c: no
-    // dma_maincpu_steal_cycles while fastmode) and the screen is drawn as
-    // usual.
+    // The VIC-IIe's badlines and sprite fetches take the bus from the 8502
+    // at 1 MHz (#266): its read cycles wait while BA is low, its writes go
+    // on. In FAST mode the VIC-IIe steals nothing (VICE vicii-badline.c,
+    // vicii-fetch.c: no dma_maincpu_steal_cycles while fastmode) and the
+    // screen is drawn as usual.
     auto* half = new int(0);
-    auto* backlog = new int(0);
-    desc->deleters.push_back([half, backlog]() { delete half; delete backlog; });
-    vic->setStallBacklog(backlog);
-    desc->schedulerStep = [io, cpu, z80, vic, bus, half, backlog, fresh8502](MachineDescriptor& d) -> int {
+    desc->deleters.push_back([half]() { delete half; });
+    desc->schedulerStep = [io, cpu, z80, vic, bus, half, fresh8502](MachineDescriptor& d) -> int {
         int c;
         const bool z = bus->z80Active();
         d.cpus[0].active = !z;
         d.cpus[1].active = z;
-        if (*backlog > 0) {
-            if (z || vic->fastMode()) {
-                *backlog = 0;
-            } else {                             // the 8502 waits (RDY) while the VIC-II fetches
-                (*backlog)--;
-                io->tickAll(1);
-                return 1;
-            }
-        }
         if (d.busMasterStep && !z) {             // an REU's DMA holds the bus
             if (const int dc = d.busMasterStep()) { io->tickAll((uint64_t)dc); return dc; }
         }
@@ -1119,6 +1109,16 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
             if (*fresh8502) { *fresh8502 = false; cpu->reset(); }
             c = cpu->step();
             bus->updateColorRam();
+            if (!vic->fastMode()) {
+                const uint32_t writes = cpu->lastStepWrites();
+                int t = 0;
+                for (int i = 0; i < c; ++i) {
+                    if (!(i < 32 && ((writes >> i) & 1)))
+                        while (vic->baLow(t)) ++t;
+                    ++t;
+                }
+                c = t;
+            }
             if (vic->fastMode()) {
                 *half += c;
                 c = *half / 2;

@@ -7,6 +7,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### C64 and C128: the VIC-II takes the bus (#266)
+
+- **BA cycle by cycle**, after VICE's viciisc cycle tables: badlines hold it
+  on cycles 12-54, and each sprite with its DMA on from 3 cycles before its
+  fetches (eight sprites on a line: 19 cycles). The badline condition now
+  uses raster lines `$30-$F7` and DEN on line `$30`.
+- **The 6510/8502 waits on read cycles only:** the 6502 core reports each
+  instruction's write cycles (`ICore::lastStepWrites`), so a badline costs
+  40-43 cycles depending on the instruction.
+- **The C64** gets this through `"scheduler": {"baSource": "VIC-II"}`; it
+  had no cycle stealing before. **The C128** replaces its flat 40-cycle
+  badline backlog and gains sprite DMA; FAST mode still takes nothing.
+- **The REU** waits for BA as VICE's `reu_ba` does.
+- **Tests:** `vic2_ba_cycles`, `c64_badlines_steal_cycles`,
+  `c64_sprite_dma_steals_cycles`, `c64_reu_waits_for_badlines`, and sprite
+  DMA in `c128_badlines_and_fast_mode`.
+
 ### Acorn Electron Plus 1
 
 - **The Plus 1** on the Electron's new `edge` slot

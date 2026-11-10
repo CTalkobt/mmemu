@@ -61,6 +61,7 @@ public:
 
     // Execution
     int  step()  override;
+    uint32_t lastStepWrites() const override { return m_lastWrites; }
     void reset() override;
 
     // Interrupts
@@ -136,6 +137,13 @@ private:
     const Opcode* m_ops = s_opcodes;    // the variant's table
     bool     m_cmos = false;            // WDC 65C02 behaviour
     uint8_t  m_curOp = 0;               // opcode being executed (BBR/BBS/RMB/SMB bit)
+    // Which cycles of an instruction write (lastStepWrites): per opcode of
+    // the variant's table, built when first needed
+    enum WriteKind : uint8_t { W_NONE, W_LAST, W_LAST2, W_JSR, W_BRK };
+    uint8_t  m_writeKind[256] = {};
+    const Opcode* m_writeKindFor = nullptr;
+    uint32_t m_lastWrites = 0;
+    void buildWriteKinds();
     uint16_t m_branchTarget = 0;        // BPREL: the branch target
 
 public:

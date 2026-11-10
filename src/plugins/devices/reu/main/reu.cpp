@@ -212,6 +212,14 @@ void Reu::ramWrite(uint32_t a, uint8_t v) {
 int Reu::busMasterCycle() {
     if (!m_active) return 0;
     if (!m_bus) { m_active = false; return 0; }
+    // The VIC-II has the bus (VICE reu.c reu_ba): a read waits; writes to
+    // the C64 go on for two cycles after BA falls, then wait too
+    if (m_ba && m_ba->baLow(0)) {
+        if (m_type != FROM_REU || m_baWrites >= 2) return 1;
+        ++m_baWrites;
+    } else {
+        m_baWrites = 0;
+    }
     auto advance = [&]() {
         m_dHost = (uint16_t)(m_dHost + m_hostStep);
         m_dReu = step(m_dReu);

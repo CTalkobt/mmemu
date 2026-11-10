@@ -112,7 +112,7 @@
             { "id": "turbo232", "type": "turbo232", "name": "Turbo232",
               "description": "Turbo232: a SwiftLink with an enhanced control register for 57600, 115200 and 230400 bps",
               "options": ["DE00", "DF00", "D700"], "default": "DE00", "optionKey": "base", "irq": "expansion_nmi" } ] } ],
-      "scheduler": { "type": "step_tick", "frameAccumulator": null }
+      "scheduler": { "type": "step_tick", "frameAccumulator": null, "baSource": "VIC-II" }
     }
 
   ]
