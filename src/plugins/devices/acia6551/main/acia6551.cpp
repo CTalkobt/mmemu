@@ -1,7 +1,9 @@
 #include "acia6551.h"
 #include "libdevices/main/device_info.h"
 #include "libdevices/main/isignal_line.h"
+#include "hayes_modem.h"
 #include <arpa/inet.h>
+#include <cctype>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +35,7 @@ void Acia6551::reset() {
     // with transmit empty (and no carrier without a far end)
     m_cmd = CMD_RX_IRQ_OFF;
     m_ctrl = 0;
+    m_ectrl = 0;
     m_status = SR_TDRE;
     m_inTx = TX_NONE;
     m_txActive = m_rxActive = false;
@@ -41,7 +44,55 @@ void Acia6551::reset() {
     updateCharTime();
 }
 
-double Acia6551::bitRate() const { return BPS[m_ctrl & 0x0F]; }
+// SwiftLink and Turbo232 double the table (a 3.6864 MHz crystal); the
+// Turbo232's enhanced rates stand in for the external clock (VICE get_acia_bps)
+static const double T232_BPS[4] = {230400, 115200, 57600, 28800};
+
+double Acia6551::bitRate() const {
+    if (m_mode == Mode::Normal) return BPS[m_ctrl & 0x0F];
+    if (m_mode == Mode::Turbo232 && (m_ctrl & 0x0F) == 0) return T232_BPS[m_ectrl & 3];
+    return BPS[m_ctrl & 0x0F] * 2;
+}
+
+bool Acia6551::decode(uint32_t addr, int& reg) const {
+    addr &= 0xFFFF;
+    switch (m_mode) {
+        case Mode::Normal:
+            if ((addr & ~0x0Fu) != m_base) return false;
+            reg = (int)(addr & 3);
+            return true;
+        case Mode::SwiftLink:
+            if (addr < m_base || addr > m_base + 3) return false;
+            reg = (int)(addr & 3);
+            return true;
+        default:
+            if (addr < m_base || addr > m_base + 7) return false;
+            reg = (int)(addr & 7);
+            return true;
+    }
+}
+
+bool Acia6551::setOption(const std::string& key, const std::string& value, std::string& err) {
+    std::string v;
+    for (char c : value) if (c != '$') v += (char)toupper((unsigned char)c);
+    if (v.rfind("0X", 0) == 0) v = v.substr(2);
+    if (key == "base") {
+        if (v == "DE00") m_base = 0xDE00;
+        else if (v == "DF00") m_base = 0xDF00;
+        else if (v == "D700") m_base = 0xD700;
+        else { err = "a SwiftLink sits at $DE00, $DF00 or $D700"; return false; }
+        return true;
+    }
+    if (key == "mode") {
+        if (v == "SWIFTLINK") setMode(Mode::SwiftLink);
+        else if (v == "TURBO232") setMode(Mode::Turbo232);
+        else if (v == "NORMAL") setMode(Mode::Normal);
+        else { err = "the mode is swiftlink, turbo232 or normal"; return false; }
+        return true;
+    }
+    err = "the ACIA's options are its base ($DE00, $DF00, $D700)";
+    return false;
+}
 
 void Acia6551::updateCharTime() {
     int bits = 8 - ((m_ctrl >> 5) & 3);                  // 8, 7, 6, 5 data bits
@@ -65,25 +116,36 @@ bool Acia6551::connected() const {
     return m_link == Link::Loopback || (m_link == Link::Tcp && m_clientFd >= 0) || m_txHook;
 }
 
+// A modem asserts DSR while it's there and DCD while it has a carrier; the
+// other links assert both while connected
+uint8_t Acia6551::lineBits() const {
+    if (m_link == Link::Modem && m_modem) return (uint8_t)(m_modem->carrier() ? 0 : SR_DCD);
+    return connected() ? 0 : (uint8_t)(SR_DCD | SR_DSR);
+}
+
 // ---------------------------------------------------------------------------
 // Registers
 // ---------------------------------------------------------------------------
 
 bool Acia6551::ioPeek(IBus*, uint32_t addr, uint8_t* val) {
-    if ((addr & ~0x0Fu) != m_base) return false;
-    switch (addr & 3) {
+    int reg = 0;
+    if (!decode(addr, reg)) return false;
+    switch (reg) {
         case 0: *val = m_rxData; break;
-        case 1: *val = (uint8_t)(m_status | (connected() ? 0 : SR_DCD | SR_DSR) | (m_irq ? 0x80 : 0)); break;
+        case 1: *val = (uint8_t)(m_status | lineBits() | (m_irq ? 0x80 : 0)); break;
         case 2: *val = m_cmd; break;
-        default: *val = m_ctrl; break;
+        case 3: *val = m_ctrl; break;
+        case 7: *val = (uint8_t)(m_ectrl + ((m_ctrl & 0x0F) == 0 ? 0x04 : 0)); break;   // Turbo232
+        default: *val = 0xFF; break;
     }
     return true;
 }
 
 bool Acia6551::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
-    if ((addr & ~0x0Fu) != m_base) return false;
+    int reg = 0;
+    if (!decode(addr, reg)) return false;
     ioPeek(bus, addr, val);
-    switch (addr & 3) {
+    switch (reg) {
         case 0: m_status &= (uint8_t)~(SR_ERRORS | SR_RDRF); break;
         case 1: setIrq(false); break;
         default: break;
@@ -92,8 +154,13 @@ bool Acia6551::ioRead(IBus* bus, uint32_t addr, uint8_t* val) {
 }
 
 bool Acia6551::ioWrite(IBus*, uint32_t addr, uint8_t val) {
-    if ((addr & ~0x0Fu) != m_base) return false;
-    switch (addr & 3) {
+    int reg = 0;
+    if (!decode(addr, reg)) return false;
+    if (reg >= 4) {                                     // Turbo232
+        if (reg == 7 && (m_ctrl & 0x0F) == 0) { m_ectrl = val; updateCharTime(); }
+        return true;
+    }
+    switch (reg) {
     case 0:                                             // transmit
         m_txData = val;
         if (m_cmd & CMD_DTR) {
@@ -136,9 +203,11 @@ bool Acia6551::ioWrite(IBus*, uint32_t addr, uint8_t val) {
 // ---------------------------------------------------------------------------
 
 void Acia6551::tick(uint64_t cycles) {
-    if (m_link == Link::Tcp) {
+    m_time += cycles;
+    if (m_link == Link::Tcp || m_link == Link::Modem) {
         if (m_pollCountdown <= cycles) {
-            pollTcp();
+            if (m_link == Link::Modem) m_modem->poll(seconds());
+            else pollTcp();
             m_pollCountdown = m_clockHz / 1000 + 1;      // every millisecond
         } else {
             m_pollCountdown -= cycles;
@@ -193,6 +262,7 @@ void Acia6551::send(uint8_t b) {
     if (m_txHook) m_txHook(b);
     switch (m_link) {
         case Link::Loopback: pushRx(b); break;
+        case Link::Modem: m_modem->fromComputer(b, seconds()); break;
         case Link::Tcp:
             if (m_clientFd >= 0 && ::send(m_clientFd, &b, 1, MSG_NOSIGNAL) < 0 && errno != EAGAIN)
                 { ::close(m_clientFd); m_clientFd = -1; }
@@ -207,8 +277,15 @@ void Acia6551::send(uint8_t b) {
 
 bool Acia6551::attachSerial(const std::string& spec) {
     closeTcp();
+    m_modem.reset();
     m_link = Link::None;
     if (spec == "none" || spec.empty()) return true;
+    if (spec == "modem") {
+        m_modem = std::make_unique<HayesModem>([this](uint8_t b) { pushRx(b); },
+                                               [this]() { return m_rxQueue.size() < 256; });
+        m_link = Link::Modem;
+        return true;
+    }
     if (spec == "loopback") { m_link = Link::Loopback; return true; }
     if (spec.rfind("tcp:", 0) == 0) {
         int port = std::atoi(spec.c_str() + 4);
@@ -258,7 +335,7 @@ void Acia6551::getDeviceInfo(DeviceInfo& out) const {
     out.baseAddr = m_base;
     out.addrMask = addrMask();
     char buf[64];
-    std::snprintf(buf, sizeof buf, "$%02X", (unsigned)(m_status | (connected() ? 0 : SR_DCD | SR_DSR) | (m_irq ? 0x80 : 0)));
+    std::snprintf(buf, sizeof buf, "$%02X", (unsigned)(m_status | lineBits() | (m_irq ? 0x80 : 0)));
     out.state.push_back({"Status", buf});
     std::snprintf(buf, sizeof buf, "$%02X", m_cmd);
     out.state.push_back({"Command", buf});
@@ -268,7 +345,8 @@ void Acia6551::getDeviceInfo(DeviceInfo& out) const {
                   8 - ((m_ctrl >> 5) & 3), (m_cmd & CMD_PARITY_ON) ? " + parity" : "",
                   (m_ctrl & 0x80) ? "2" : "1");
     out.state.push_back({"Format", buf});
-    std::string link = m_link == Link::Loopback ? "loopback"
+    std::string link = m_link == Link::Modem ? "modem (" + m_modem->state() + ")"
+                     : m_link == Link::Loopback ? "loopback"
                      : m_link == Link::Tcp ? ("tcp:" + std::to_string(m_tcpPort) +
                                               (m_clientFd >= 0 ? " (client connected)" : " (waiting)"))
                      : "none";

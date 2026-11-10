@@ -984,3 +984,54 @@ TEST_CASE(mega65_installs_hdos_intercept_from_config) {
     ASSERT(c && c->selects(0x00, 0x34) && c->selects(0x00, 0x2E) && !c->selects(0x00, 0x00));
     delete desc;
 }
+
+// A SwiftLink on the MEGA65's expansion port with the Hayes modem behind it:
+// "AT" out through $DE00, "OK" (PETSCII) back at the line rate, ticking with
+// the 1 MHz devices whatever the CPU speed
+#include "plugins/devices/acia6551/main/acia6551.h"
+#include "plugins/devices/acia6551/main/hayes_modem.h"
+TEST_CASE(mega65_swiftlink_modem) {
+    ensureMega65Registered();
+    auto* desc = MachineRegistry::instance().createMachine("mega65");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("rs232");
+    ASSERT(slot != nullptr);
+    std::string err;
+    ASSERT(slot->install("turbo232", "D700", err));
+    EXPECT_EQ(slot->info(), std::string("turbo232 (Turbo232, D700)"));
+    ASSERT(slot->install("swiftlink", "", err));
+    EXPECT_EQ(slot->info(), std::string("swiftlink (SwiftLink, DE00)"));
+    EXPECT_TRUE(desc->ioRegistry->findHandler("Turbo232") == nullptr);
+    auto* acia = dynamic_cast<Acia6551*>(desc->ioRegistry->findHandler("SwiftLink"));
+    ASSERT(acia != nullptr);
+    ASSERT(acia->attachSerial("modem"));
+    IORegistry* io = desc->ioRegistry;
+    io->dispatchWrite(nullptr, 0xDE03, 0x1F);       // 38400
+    io->dispatchWrite(nullptr, 0xDE02, 0x0B);       // DTR, transmitter on, no IRQs
+    uint8_t ctrl = 0;
+    io->dispatchPeek(nullptr, 0xDE03, &ctrl);
+    EXPECT_EQ(ctrl, 0x1F);                          // the SwiftLink answers (C64 personality, CRAM2K off)
+    // ...and the CIAs answer at $DC00 (CRAM2K comes from $D030 itself, not
+    // the $FF a locked VIC-IV reads there)
+    io->dispatchWrite(nullptr, 0xDC03, 0x5A);       // CIA1 DDRB
+    uint8_t ddrb = 0;
+    io->findHandler("CIA1")->ioPeek(nullptr, 0xDC03, &ddrb);
+    EXPECT_EQ(ddrb, 0x5A);
+    std::string got;
+    auto run = [&](int steps) {
+        for (int i = 0; i < steps; ++i) {
+            desc->schedulerStep(*desc);
+            uint8_t st = 0;
+            io->dispatchPeek(nullptr, 0xDE01, &st);
+            if (st & 0x08) { uint8_t v = 0; io->dispatchRead(nullptr, 0xDE00, &v); got += (char)HayesModem::petsciiToAscii(v); }
+        }
+    };
+    // At 40 MHz (the hypervisor at boot) a character takes ~10,000 CPU cycles
+    for (uint8_t b : {0x41, 0x54, 0x0D}) { io->dispatchWrite(nullptr, 0xDE00, b); run(20000); }
+    run(200000);
+    if (got.find("OK") == std::string::npos) printf("  got %zu bytes: '%s'\n", got.size(), got.c_str());
+    EXPECT_TRUE(got.find("OK") != std::string::npos);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(desc->ioRegistry->findHandler("SwiftLink") == nullptr);
+    delete desc;
+}

@@ -50,7 +50,7 @@
       "symbolFiles": [ "roms/c64/kernal.sym", "roms/c64/basic.sym" ],
       "signals": [
         { "name": "irq", "type": "shared", "sources": ["VIC-II", "CIA1"], "lines": ["expansion_irq"] },
-        { "name": "nmi", "type": "sharedNmi", "sources": ["CIA2"], "lines": ["restore"] }
+        { "name": "nmi", "type": "sharedNmi", "sources": ["CIA2"], "lines": ["restore", "expansion_nmi"] }
       ],
       "plaWiring": {
         "device": "PLA",
@@ -89,7 +89,16 @@
               "optionKey": "size", "irq": "expansion_irq", "busMaster": true },
             { "id": "georam", "type": "georam", "name": "GeoRAM",
               "description": "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
-              "options": ["512K", "1M", "2M", "4M"], "default": "512K", "optionKey": "size" } ] } ],
+              "options": ["512K", "1M", "2M", "4M"], "default": "512K", "optionKey": "size" } ] },
+        { "name": "rs232",
+          "description": "An RS-232 cartridge on the expansion port (through a port expander, beside a RAM expansion); its far end: CLI serial",
+          "devices": [
+            { "id": "swiftlink", "type": "swiftlink", "name": "SwiftLink",
+              "description": "SwiftLink: a 6551 ACIA with a 3.6864 MHz crystal (up to 38400 bps), interrupting on NMI",
+              "options": ["DE00", "DF00", "D700"], "default": "DE00", "optionKey": "base", "irq": "expansion_nmi" },
+            { "id": "turbo232", "type": "turbo232", "name": "Turbo232",
+              "description": "Turbo232: a SwiftLink with an enhanced control register for 57600, 115200 and 230400 bps",
+              "options": ["DE00", "DF00", "D700"], "default": "DE00", "optionKey": "base", "irq": "expansion_nmi" } ] } ],
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     }
 

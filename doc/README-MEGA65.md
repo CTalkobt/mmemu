@@ -105,6 +105,13 @@ See [README-45GS02.md](README-45GS02.md) for detailed hypervisor register maps.
 
 ---
 
+### 4.7 RS-232 cartridge and modem
+The `rs232` expansion slot takes a SwiftLink or Turbo232 on the expansion port (`expansion rs232 swiftlink [DE00|DF00|D700]`). It is a 6551 on /NMI, ticking with the 1 MHz devices at any CPU speed. `serial modem` puts a Hayes modem behind it that dials the internet (`ATDT host[:port]`, PETSCII); see `doc/README-C64.md` §2.12.
+
+As on the hardware, `$DE00-$DFFF` are the cartridge's only while nothing else is mapped there:
+- With CRAM2K set (`$D030` bit 0), colour RAM covers `$DC00-$DFFF`. BASIC 65 sets it, so use the SwiftLink in C64 mode (GO64) or clear the bit.
+- With the SD card's sector buffer mapped, the buffer is at `$DE00-$DFFF`.
+
 ## 5. Development Status in mmsim
 
 The MEGA65 implementation includes the **45GS02 CPU** with hypervisor support, **VIC-IV** video (VIC-II/III/IV modes, FCM, NCM), **F018B DMA**, **MAP MMU**, **Math Accelerator**, dual SID, dual CIA, and **HYPPO hypervisor ROM** loading. Integration testing and further peripheral work is ongoing.

@@ -322,6 +322,8 @@ The expansion port takes a Commodore REU at run time, as the C64's does (see `do
 
 A GeoRAM fits the same slot (`expansion port georam 1M`; see `doc/README-C64.md` §2.11), paged through `$DE00` in either mode.
 
+An RS-232 cartridge (SwiftLink, Turbo232) fits the `rs232` slot, beside the RAM expansion: `expansion rs232 swiftlink [DE00|DF00|D700]`. Its IRQ output goes to the 8502's /NMI. `serial modem` puts a Hayes modem behind it that dials TCP (`ATDT host:port`); see `doc/README-C64.md` §2.12.
+
 ## Not yet emulated
 
 - VDC changes within a line (a raster line uses the registers as they are

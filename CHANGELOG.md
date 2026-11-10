@@ -120,6 +120,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - See `doc/README-VIC20.md` §2.2.1.
 
 ### Commodore 64 / 128
+- **SwiftLink and Turbo232 RS-232 cartridges,** in a new `rs232` expansion slot on the C64, C128 and MEGA65 (`expansion rs232 swiftlink`), after VICE's `c64acia1.c` and `aciacore.c`.
+  - A 6551 at `$DE00`, `$DF00` or `$D700`, with rates doubled by its 3.6864 MHz crystal, interrupting on /NMI.
+  - The Turbo232's enhanced control register gives 57600, 115200 and 230400 bps.
+  - `Acia6551::setMode()` adds these modes.
+- **A Hayes modem that dials the internet:** `serial modem` on any 6551 (SwiftLink, Turbo232, the Plus/4, the IIc).
+  - Commands and results are in PETSCII: `ATDT host` (telnet, port 23) or `ATDT host:port` opens a TCP connection, without stopping the machine while it connects.
+  - `+++` with guard times, `ATO`, `ATH`, `ATZ`, `ATE`/`V`/`Q`/`I`/`S`, `A/`, and the usual init-string commands are accepted.
+  - mmsim's extensions: `AT*T1` translates PETSCII<->ASCII online, `AT*N0` gives raw TCP, `AT*P0` makes commands ASCII.
+  - Telnet negotiation is answered and stripped.
+  - DSR is on while the modem is there, and DCD follows the carrier.
+  - See `doc/README-C64.md` §2.12.
+- **MEGA65 fix: C64-mode I/O no longer hidden by colour RAM.** The colour-RAM stub asked for CRAM2K by reading `$D030` through the bus, which reads `$FF` in VIC-II personality. So in C64 personality it took `$DC00-$DFFF`, CIAs included, as colour RAM. It now reads the register itself.
+- **MEGA65 fix: the SD card's sector buffer only claims `$DE00-$DFFF` while it is mapped there.** Otherwise that range belongs to the expansion port, as on the hardware.
 - **GeoRAM / NeoRAM, 512 KB-4 MB,** in the C64's and C128's expansion port (`expansion port georam 1M`), after VICE's `georam.c`.
   - A 256-byte page of its RAM at `$DE00`.
   - The page (`$DFFE`) and 16 KB block (`$DFFF`) registers are write-only, mirrored from `$DF80`, and taken modulo the size.

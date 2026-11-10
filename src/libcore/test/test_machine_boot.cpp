@@ -25,6 +25,7 @@
 #include "plugins/devices/datasette/main/datasette.h"
 #include "plugins/devices/reu/main/reu.h"
 #include "plugins/devices/georam/main/georam.h"
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -98,6 +99,10 @@ static void ensureBootTestRegistriesReady() {
     DeviceRegistry::instance().registerDevice("kbd_c64",
         []() -> IOHandler* { return new KbdC64(); });
 
+    DeviceRegistry::instance().registerDevice("swiftlink", []() -> IOHandler* {
+        auto* a = new Acia6551(0xDE00); a->setMode(Acia6551::Mode::SwiftLink); return a; });
+    DeviceRegistry::instance().registerDevice("turbo232", []() -> IOHandler* {
+        auto* a = new Acia6551(0xDE00); a->setMode(Acia6551::Mode::Turbo232); return a; });
     DeviceRegistry::instance().registerDevice("georam",
         []() -> IOHandler* { return new GeoRam(); });
     DeviceRegistry::instance().registerDevice("reu",
@@ -760,4 +765,45 @@ TEST_CASE(vic20_ram_expansion_slot) {
     ASSERT(v32 != nullptr);
     EXPECT_EQ(v32->expansionSlot("ram")->info(), std::string("ram (32K: BLK1, BLK2, BLK3, BLK5)"));
     delete v32;
+}
+
+// A SwiftLink on the C64 with the Hayes modem as its far end: the 6510 sends
+// "AT" (PETSCII) and its NMI handler collects the echo and "OK", one NMI a
+// byte (reading the status releases /NMI for the next edge)
+TEST_CASE(c64_swiftlink_modem_nmi) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("rs232");
+    ASSERT(slot != nullptr);
+    std::string err;
+    EXPECT_TRUE(!slot->install("swiftlink", "DE80", err));
+    ASSERT(slot->install("swiftlink", "", err));
+    EXPECT_EQ(slot->info(), std::string("swiftlink (SwiftLink, DE00)"));
+    ASSERT(desc->expansionSlot("port")->install("reu", "", err));   // beside an REU, as through an expander
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    auto* acia = dynamic_cast<Acia6551*>(desc->ioRegistry->findHandler("SwiftLink"));
+    ASSERT(acia != nullptr);
+    ASSERT(acia->attachSerial("modem"));
+    IBus* bus = desc->buses[0].bus;
+    static const uint8_t LOOP[] = {0x4C, 0x00, 0xC0};
+    static const uint8_t NMI[] = {0x48, 0xAD, 0x01, 0xDE, 0xAD, 0x00, 0xDE, 0xA6, 0x02, 0x9D, 0x00, 0xC1, 0xE6, 0x02, 0x68, 0x40};
+    for (size_t i = 0; i < sizeof LOOP; ++i) bus->write8(0xC000 + (uint32_t)i, LOOP[i]);
+    for (size_t i = 0; i < sizeof NMI; ++i) bus->write8(0xC010 + (uint32_t)i, NMI[i]);
+    bus->write8(0x02, 0);
+    bus->write8(0x0318, 0x10); bus->write8(0x0319, 0xC0);
+    desc->cpus[0].cpu->setPc(0xC000);
+    bus->write8(0xDE03, 0x1F);                      // 38400 bps on a SwiftLink
+    bus->write8(0xDE02, 0x09);                      // DTR, receive IRQs, transmitter on
+    auto run = [&](uint64_t n) { for (uint64_t c = 0; c < n;) c += desc->schedulerStep(*desc); };
+    for (uint8_t b : {0x41, 0x54, 0x0D}) { bus->write8(0xDE00, b); run(600); }
+    run(30000);
+    const int n = bus->peek8(0x02);
+    std::string got;
+    for (int i = 0; i < n; ++i) got += (char)bus->peek8(0xC100 + (uint32_t)i);
+    EXPECT_TRUE(n >= 7);
+    EXPECT_TRUE(got.find("\x41\x54\x0D") == 0);    // the echo
+    EXPECT_TRUE(got.find("\x0D\xCF\xCB\x0D") != std::string::npos);   // "OK" in PETSCII
+    delete desc;
 }

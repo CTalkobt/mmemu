@@ -1369,7 +1369,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "serial") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string spec;
-        if (!(ss >> spec)) { m_output("Usage: serial <loopback|tcp:PORT|none>\n"); return; }
+        if (!(ss >> spec)) { m_output("Usage: serial <modem|loopback|tcp:PORT|none>\n"); return; }
         std::vector<IOHandler*> handlers;
         if (m_ctx.machine->ioRegistry) m_ctx.machine->ioRegistry->enumerate(handlers);
         bool done = false;
@@ -3485,7 +3485,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape record         - Press Record button\n"
                  "  tape stoprecord     - Release Record button\n"
                  "  tape save <path>    - Write captured buffer to .tap file\n"
-                 "  serial <spec>       - RS-232 far end: loopback, tcp:PORT (a TCP server), none\n"
+                 "  serial <spec>       - RS-232 far end: modem (Hayes AT: ATDT host[:port] dials TCP), loopback,\n"
+                 "                        tcp:PORT (a TCP server), none\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
                  "  sid voices [chip]   - Show each SID voice: waveform, frequency/note, PW, ADSR, envelope\n"
                  "  sid scope <file>    - Save the SID oscilloscope as .png, or .gif with 'frames N'\n"

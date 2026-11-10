@@ -220,6 +220,10 @@ PLUGIN_REU_SRCS = src/plugins/devices/reu/main/reu.cpp \
 PLUGIN_GEORAM_SRCS = src/plugins/devices/georam/main/georam.cpp \
 	src/plugins/devices/georam/main/plugin_init.cpp
 
+PLUGIN_ACIA6551_SRCS = src/plugins/devices/acia6551/main/acia6551.cpp \
+	src/plugins/devices/acia6551/main/hayes_modem.cpp \
+	src/plugins/devices/acia6551/main/plugin_init.cpp
+
 PLUGIN_CIA6526_SRCS = src/plugins/devices/cia6526/main/cia6526.cpp \
 	src/plugins/devices/cia6526/main/plugin_init.cpp
 
@@ -246,6 +250,7 @@ PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
 	src/plugins/devices/ted/main/ted_sound.cpp \
 	src/plugins/devices/iec_drive/main/iec_drive.cpp \
 	src/plugins/devices/acia6551/main/acia6551.cpp \
+	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/datasette/main/datasette.cpp \
 	src/plugins/cbm-loader/main/tap_parser.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
@@ -258,6 +263,8 @@ PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
                    src/plugins/machines/c128/main/c128_carts.cpp \
 	src/plugins/devices/reu/main/reu.cpp \
 	src/plugins/devices/georam/main/georam.cpp \
+	src/plugins/devices/acia6551/main/acia6551.cpp \
+	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/vdc8563/main/vdc8563.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
@@ -371,6 +378,8 @@ PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
 	src/plugins/6502/main/cpu6502_cmos.cpp
 
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
+	src/plugins/devices/acia6551/main/acia6551.cpp \
+	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
 	src/plugins/devices/cia6526/main/cia6526.cpp \
 	src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
@@ -459,6 +468,7 @@ MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cp
 # Test Sources
 TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/acia6551/test/test_acia6551.cpp \
+	src/plugins/devices/acia6551/test/test_hayes_modem.cpp \
 	tests/src/test_c64_tape.cpp \
 	tests/src/test_tape_roundtrip.cpp \
 	src/cli/test/test_cli.cpp \
@@ -665,6 +675,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
 	src/plugins/devices/acia6551/main/acia6551.o \
+	src/plugins/devices/acia6551/main/hayes_modem.o \
 	src/plugins/machines/x16/main/machine_x16.o \
 	src/plugins/devices/ym2151/main/ym2151.o \
 	src/third_party/ymfm/ymfm_opm.o \
@@ -785,6 +796,7 @@ PLUGIN_MEGA65IMPORTER_OBJS = $(PLUGIN_MEGA65IMPORTER_SRCS:.cpp=.o)
 PLUGIN_C64PLA_OBJS   = $(PLUGIN_C64PLA_SRCS:.cpp=.o)
 PLUGIN_REU_OBJS      = $(PLUGIN_REU_SRCS:.cpp=.o)
 PLUGIN_GEORAM_OBJS   = $(PLUGIN_GEORAM_SRCS:.cpp=.o)
+PLUGIN_ACIA6551_OBJS = $(PLUGIN_ACIA6551_SRCS:.cpp=.o)
 PLUGIN_CIA6526_OBJS  = $(PLUGIN_CIA6526_SRCS:.cpp=.o)
 PLUGIN_VIC2_OBJS   = $(PLUGIN_VIC2_SRCS:.cpp=.o)
 PLUGIN_VIC3_OBJS   = $(PLUGIN_VIC3_SRCS:.cpp=.o)
@@ -862,6 +874,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-c64-pla.so \
 	$(LIBDIR)/mmemu-plugin-reu.so \
 	$(LIBDIR)/mmemu-plugin-georam.so \
+	$(LIBDIR)/mmemu-plugin-acia6551.so \
 	$(LIBDIR)/mmemu-plugin-cia6526.so \
 	$(LIBDIR)/mmemu-plugin-vic2.so \
 	$(LIBDIR)/mmemu-plugin-vic3.so \
@@ -980,6 +993,9 @@ $(LIBDIR)/mmemu-plugin-reu.so: $(PLUGIN_REU_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-georam.so: $(PLUGIN_GEORAM_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-acia6551.so: $(PLUGIN_ACIA6551_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cia6526.so: $(PLUGIN_CIA6526_OBJS) | $(LIBDIR)

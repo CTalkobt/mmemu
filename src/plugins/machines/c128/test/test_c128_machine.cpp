@@ -598,3 +598,44 @@ TEST_CASE(c128_georam_expansion) {
     EXPECT_TRUE(m->ioRegistry->findHandler("GeoRAM") == nullptr);
     delete m;
 }
+
+// A SwiftLink on the C128 at $D700 (the C128's own spare I/O page) beside an
+// REU, the modem behind it: "AT" out, "OK" back; its IRQ output reaches /NMI
+#include "plugins/devices/acia6551/main/acia6551.h"
+#include "plugins/devices/acia6551/main/hayes_modem.h"
+TEST_CASE(c128_swiftlink_modem) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("rs232");
+    ASSERT(slot != nullptr);
+    ASSERT(slot->install("swiftlink", "D700", err));
+    EXPECT_EQ(slot->info(), std::string("swiftlink (SwiftLink, D700)"));
+    ASSERT(m->expansionSlot("port")->install("reu", "", err));
+    auto* acia = dynamic_cast<Acia6551*>(m->ioRegistry->findHandler("SwiftLink"));
+    ASSERT(acia != nullptr);
+    ASSERT(acia->attachSerial("modem"));
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xD703, 0x1F);
+    bus->write8(0xD702, 0x0B);
+    EXPECT_EQ(bus->peek8(0xD703), 0x1F);
+    EXPECT_EQ(bus->peek8(0xDF00), 0x10);            // the REU still at I/O2
+    std::string got;
+    auto run = [&](int steps) {
+        for (int i = 0; i < steps; ++i) {
+            m->schedulerStep(*m);
+            if (bus->peek8(0xD701) & 0x08) got += (char)HayesModem::petsciiToAscii(bus->read8(0xD700));
+        }
+    };
+    for (uint8_t b : {0x41, 0x54, 0x0D}) { bus->write8(0xD700, b); run(300); }
+    run(6000);
+    EXPECT_TRUE(got.find("OK") != std::string::npos);
+    // Receive IRQs on: the next byte asserts the ACIA's IRQ (the NMI line)
+    bus->write8(0xD702, 0x09);
+    bus->write8(0xD700, 0x41);
+    for (int i = 0; i < 300 && !acia->irqAsserted(); ++i) m->schedulerStep(*m);
+    EXPECT_TRUE(acia->irqAsserted());
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(m->ioRegistry->findHandler("SwiftLink") == nullptr);
+    delete m;
+}
