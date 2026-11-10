@@ -707,3 +707,57 @@ TEST_CASE(c64_georam_expansion) {
     EXPECT_TRUE(desc->ioRegistry->findHandler("REU") != nullptr);
     delete desc;
 }
+
+// The VIC-20's RAM expansions fitted at run time: BASIC's start-up message
+// counts what the KERNAL found (3583 unexpanded, 6655 with 3K, 11775 with
+// 8K, 19967 with 16K, 28159 with 24K or more; BLK5 isn't BASIC's)
+TEST_CASE(vic20_ram_expansion_slot) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("vic20");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("ram");
+    ASSERT(slot != nullptr);
+    EXPECT_EQ(slot->info(), std::string(""));
+    IBus* bus = desc->buses[0].bus;
+    // The screen is at $1E00 unexpanded and $1000 with 8K or more: look in both
+    auto bytesFree = [&](const char* want) {
+        std::string text;
+        for (uint32_t a = 0x1000; a < 0x2000; ++a) {
+            uint8_t c = bus->peek8(a) & 0x7F;
+            text += (char)(c >= 1 && c <= 26 ? 'A' + c - 1 : c);
+        }
+        return text.find(std::string(want) + " BYTES FREE") != std::string::npos;
+    };
+    auto boot = [&]() {
+        desc->onReset(*desc);
+        for (uint64_t c = 0; c < 4000000;) c += desc->schedulerStep(*desc);
+    };
+    boot();
+    EXPECT_TRUE(bytesFree("3583"));
+    std::string err;
+    const std::pair<const char*, const char*> cases[] = {
+        {"3K", "6655"}, {"8K", "11775"}, {"16K", "19967"}, {"24K", "28159"}, {"35K", "28159"}, {"1,2", "19967"}};
+    for (const auto& c : cases) {
+        ASSERT(slot->install("ram", c.first, err));
+        boot();
+        if (!bytesFree(c.second)) printf("  %s: no '%s BYTES FREE'\n", c.first, c.second);
+        EXPECT_TRUE(bytesFree(c.second));
+    }
+    EXPECT_EQ(slot->info(), std::string("ram (16K: BLK1, BLK2)"));
+    ASSERT(slot->install("ram", "blk5", err));
+    EXPECT_EQ(slot->info(), std::string("ram (8K: BLK5)"));
+    bus->write8(0xA000, 0x42);
+    EXPECT_EQ(bus->read8(0xA000), 0x42);            // RAM at $A000
+    EXPECT_TRUE(!slot->install("ram", "64K", err));
+    EXPECT_TRUE(!slot->install("ram", "4", err));   // no BLK4
+    EXPECT_TRUE(!slot->install("reu", "", err));
+    ASSERT(slot->install("", "", err));             // all out again
+    EXPECT_EQ(slot->info(), std::string(""));
+    EXPECT_EQ(bus->read8(0xA000), 0xFF);            // open bus
+    delete desc;
+    // A profile starts with its blocks fitted
+    auto* v32 = MachineRegistry::instance().createMachine("vic20+32k");
+    ASSERT(v32 != nullptr);
+    EXPECT_EQ(v32->expansionSlot("ram")->info(), std::string("ram (32K: BLK1, BLK2, BLK3, BLK5)"));
+    delete v32;
+}

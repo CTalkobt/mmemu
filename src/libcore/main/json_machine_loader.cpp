@@ -415,16 +415,103 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
 
     // Phase 3 Step 12 — ramExpansions → OpenBusHandler for absent blocks
     // -----------------------------------------------------------------------
+    // With "ramExpansionSlot" the blocks can be fitted and taken out at run
+    // time (an expansion slot, e.g. the VIC-20's "ram"): an absent block's
+    // open-bus handler is registered, a fitted one's is not.
+    struct RamBlock { std::string name; uint32_t base, size; OpenBusHandler* openBus; bool fitted; };
+    auto ramBlocks = std::make_shared<std::vector<RamBlock>>();
     if (spec.contains("ramExpansions")) {
         for (const auto& blk : spec["ramExpansions"]) {
-            if (blk.value("installed", true)) continue;
             if (!blk.contains("base") || !blk.contains("size")) continue;
             uint32_t base = hexStrToU32(blk["base"].get<std::string>());
             uint32_t size = blk.value("size", 0);
             if (size == 0) continue;
             std::string name = blk.value("name", "OpenBus");
-            io->registerOwnedHandler(new OpenBusHandler(base, size, name));
+            const bool fitted = blk.value("installed", true);
+            auto* ob = new OpenBusHandler(base, size, name);
+            if (!fitted) io->registerHandler(ob);
+            ramBlocks->push_back({name, base, size, ob, fitted});
         }
+        desc->deleters.push_back([ramBlocks]() { for (auto& b : *ramBlocks) delete b.openBus; });
+    }
+    if (spec.contains("ramExpansionSlot") && !ramBlocks->empty()) {
+        //   "ramExpansionSlot": { "name": "ram", "description": "...",
+        //     "presets": [ { "name": "3K", "blocks": ["BLK0"] }, ... ] }
+        // Options: a preset, or the blocks by name or number ("BLK1,BLK5", "1,5")
+        const auto& rs = spec["ramExpansionSlot"];
+        auto presets = std::make_shared<std::vector<std::pair<std::string, std::vector<std::string>>>>();
+        std::vector<std::string> optionNames;
+        for (const auto& p : rs.value("presets", nlohmann::json::array())) {
+            std::vector<std::string> blocks;
+            for (const auto& b : p.value("blocks", nlohmann::json::array())) blocks.push_back(b.get<std::string>());
+            presets->push_back({p.value("name", ""), blocks});
+            optionNames.push_back(p.value("name", ""));
+        }
+        MachineDescriptor::ExpansionSlot slot;
+        slot.name = rs.value("name", "ram");
+        slot.description = rs.value("description", "RAM expansion blocks");
+        std::string blockList;
+        for (const auto& b : *ramBlocks) blockList += (blockList.empty() ? "" : ", ") + b.name;
+        const std::string defPreset = rs.value("default", optionNames.empty() ? std::string() : optionNames.front());
+        slot.devices.push_back({"ram", "RAM in the expansion blocks (" + blockList + "): a preset, or blocks such as \"1,5\"",
+                                optionNames, defPreset});
+        IBus* ramBus = desc->buses.empty() ? nullptr : desc->buses[0].bus;
+        slot.install = [ramBlocks, presets, io, ramBus, defPreset](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "ram") { err = "no device '" + device + "' for this slot (ram)"; return false; }
+            std::vector<bool> want(ramBlocks->size(), false);
+            std::string opt = device.empty() ? "" : option;
+            if (!device.empty()) {
+                if (opt.empty()) opt = defPreset;
+                auto upper = [](std::string x) { for (auto& c : x) c = (char)toupper((unsigned char)c); return x; };
+                const std::vector<std::string>* names = nullptr;
+                for (const auto& p : *presets) if (upper(p.first) == upper(opt)) names = &p.second;
+                std::vector<std::string> list;
+                if (names) list = *names;
+                else {                                  // "BLK1,BLK5" or "1,5"
+                    std::string cur;
+                    for (char c : opt + ",") {
+                        if (c == ',' || c == ' ') { if (!cur.empty()) list.push_back(cur); cur.clear(); }
+                        else cur += c;
+                    }
+                }
+                for (const auto& n : list) {
+                    bool found = false;
+                    for (size_t i = 0; i < ramBlocks->size(); ++i) {
+                        const std::string& bn = (*ramBlocks)[i].name;
+                        if (upper(bn) == upper(n) || upper(bn) == "BLK" + upper(n)) { want[i] = true; found = true; }
+                    }
+                    if (!found) {
+                        std::string ps;
+                        for (const auto& p : *presets) ps += (ps.empty() ? "" : ", ") + p.first;
+                        err = "'" + opt + "' is neither a preset (" + ps + ") nor a list of blocks";
+                        return false;
+                    }
+                }
+            }
+            for (size_t i = 0; i < ramBlocks->size(); ++i) {
+                auto& b = (*ramBlocks)[i];
+                if (want[i] == b.fitted) continue;
+                if (want[i]) {
+                    io->unregisterHandler(b.openBus);
+                    if (ramBus) for (uint32_t a = 0; a < b.size; ++a) ramBus->write8(b.base + a, 0);
+                } else {
+                    io->registerHandler(b.openBus);
+                }
+                b.fitted = want[i];
+            }
+            return true;
+        };
+        slot.info = [ramBlocks, presets]() -> std::string {
+            std::vector<std::string> fitted;
+            uint32_t bytes = 0;
+            for (const auto& b : *ramBlocks) if (b.fitted) { fitted.push_back(b.name); bytes += b.size; }
+            if (fitted.empty()) return "";
+            std::string names;
+            for (const auto& n : fitted) names += (names.empty() ? "" : ", ") + n;
+            for (const auto& p : *presets) if (p.second == fitted) return "ram (" + p.first + ": " + names + ")";
+            return "ram (" + std::to_string(bytes / 1024) + "K: " + names + ")";
+        };
+        desc->expansionSlots.push_back(std::move(slot));
     }
 
     // -----------------------------------------------------------------------

@@ -44,6 +44,17 @@
         { "name": "BLK3", "base": "0x6000", "size": 8192,  "installed": false },
         { "name": "BLK5", "base": "0xA000", "size": 8192,  "installed": false }
       ],
+      "ramExpansionSlot": {
+        "name": "ram",
+        "description": "RAM expansion cartridges: 3K at $0400 (BLK0), 8K blocks at $2000, $4000, $6000 (BLK1-3) and $A000 (BLK5, the cartridge area)",
+        "default": "8K",
+        "presets": [
+          { "name": "3K",  "blocks": ["BLK0"] },
+          { "name": "8K",  "blocks": ["BLK1"] },
+          { "name": "16K", "blocks": ["BLK1", "BLK2"] },
+          { "name": "24K", "blocks": ["BLK1", "BLK2", "BLK3"] },
+          { "name": "32K", "blocks": ["BLK1", "BLK2", "BLK3", "BLK5"] },
+          { "name": "35K", "blocks": ["BLK0", "BLK1", "BLK2", "BLK3", "BLK5"] } ] },
       "signals": [
         { "name": "irq", "type": "shared",    "sources": ["VIA2"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["VIA1"] }
@@ -108,6 +119,17 @@
         { "name": "BLK3", "base": "0x6000", "size": 8192, "installed": false },
         { "name": "BLK5", "base": "0xA000", "size": 8192, "installed": false }
       ],
+      "ramExpansionSlot": {
+        "name": "ram",
+        "description": "RAM expansion cartridges: 3K at $0400 (BLK0), 8K blocks at $2000, $4000, $6000 (BLK1-3) and $A000 (BLK5, the cartridge area)",
+        "default": "8K",
+        "presets": [
+          { "name": "3K",  "blocks": ["BLK0"] },
+          { "name": "8K",  "blocks": ["BLK1"] },
+          { "name": "16K", "blocks": ["BLK1", "BLK2"] },
+          { "name": "24K", "blocks": ["BLK1", "BLK2", "BLK3"] },
+          { "name": "32K", "blocks": ["BLK1", "BLK2", "BLK3", "BLK5"] },
+          { "name": "35K", "blocks": ["BLK0", "BLK1", "BLK2", "BLK3", "BLK5"] } ] },
       "signals": [
         { "name": "irq", "type": "shared",    "sources": ["VIA2"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["VIA1"] }
@@ -172,6 +194,17 @@
         { "name": "BLK3", "base": "0x6000", "size": 8192, "installed": false },
         { "name": "BLK5", "base": "0xA000", "size": 8192, "installed": false }
       ],
+      "ramExpansionSlot": {
+        "name": "ram",
+        "description": "RAM expansion cartridges: 3K at $0400 (BLK0), 8K blocks at $2000, $4000, $6000 (BLK1-3) and $A000 (BLK5, the cartridge area)",
+        "default": "8K",
+        "presets": [
+          { "name": "3K",  "blocks": ["BLK0"] },
+          { "name": "8K",  "blocks": ["BLK1"] },
+          { "name": "16K", "blocks": ["BLK1", "BLK2"] },
+          { "name": "24K", "blocks": ["BLK1", "BLK2", "BLK3"] },
+          { "name": "32K", "blocks": ["BLK1", "BLK2", "BLK3", "BLK5"] },
+          { "name": "35K", "blocks": ["BLK0", "BLK1", "BLK2", "BLK3", "BLK5"] } ] },
       "signals": [
         { "name": "irq", "type": "shared",    "sources": ["VIA2"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["VIA1"] }
@@ -236,6 +269,17 @@
         { "name": "BLK3", "base": "0x6000", "size": 8192, "installed": false },
         { "name": "BLK5", "base": "0xA000", "size": 8192, "installed": false }
       ],
+      "ramExpansionSlot": {
+        "name": "ram",
+        "description": "RAM expansion cartridges: 3K at $0400 (BLK0), 8K blocks at $2000, $4000, $6000 (BLK1-3) and $A000 (BLK5, the cartridge area)",
+        "default": "8K",
+        "presets": [
+          { "name": "3K",  "blocks": ["BLK0"] },
+          { "name": "8K",  "blocks": ["BLK1"] },
+          { "name": "16K", "blocks": ["BLK1", "BLK2"] },
+          { "name": "24K", "blocks": ["BLK1", "BLK2", "BLK3"] },
+          { "name": "32K", "blocks": ["BLK1", "BLK2", "BLK3", "BLK5"] },
+          { "name": "35K", "blocks": ["BLK0", "BLK1", "BLK2", "BLK3", "BLK5"] } ] },
       "signals": [
         { "name": "irq", "type": "shared",    "sources": ["VIA2"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["VIA1"] }
@@ -300,6 +344,17 @@
         { "name": "BLK3", "base": "0x6000", "size": 8192, "installed": true },
         { "name": "BLK5", "base": "0xA000", "size": 8192, "installed": true }
       ],
+      "ramExpansionSlot": {
+        "name": "ram",
+        "description": "RAM expansion cartridges: 3K at $0400 (BLK0), 8K blocks at $2000, $4000, $6000 (BLK1-3) and $A000 (BLK5, the cartridge area)",
+        "default": "8K",
+        "presets": [
+          { "name": "3K",  "blocks": ["BLK0"] },
+          { "name": "8K",  "blocks": ["BLK1"] },
+          { "name": "16K", "blocks": ["BLK1", "BLK2"] },
+          { "name": "24K", "blocks": ["BLK1", "BLK2", "BLK3"] },
+          { "name": "32K", "blocks": ["BLK1", "BLK2", "BLK3", "BLK5"] },
+          { "name": "35K", "blocks": ["BLK0", "BLK1", "BLK2", "BLK3", "BLK5"] } ] },
       "signals": [
         { "name": "irq", "type": "shared",    "sources": ["VIA2"] },
         { "name": "nmi", "type": "sharedNmi", "sources": ["VIA1"] }
