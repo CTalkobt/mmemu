@@ -32,6 +32,7 @@
 #include "util/path_util.h"
 #include "util/logging.h"
 #include <algorithm>
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include <map>
 #include <cstring>
 #include <filesystem>
@@ -502,10 +503,11 @@ MachineDescriptor* Mega65MachineFactory::create() {
     // Wire $D030 bit 0 (CRAM2K) query to IOStub for color RAM view switching.
     // Bit 0 of $D030 selects whether second KB of color RAM ($DC00-$DFFF)
     // is mapped instead of C64 I/O chip range.
+    // The register itself, not a bus read: in VIC-II personality $D030 reads
+    // $FF (open), which isn't CRAM2K being set (it would cover the CIAs and
+    // the expansion port's I/O1/I/O2 with colour RAM)
     ioStub->setCram2kQuery([vic4]() -> bool {
-        uint8_t val = 0;
-        vic4->ioPeek(nullptr, 0xD030, &val);
-        return (val & 0x01) != 0;  // Bit 0 = CRAM2K enable
+        return (vic4->d030() & VIC3::D030_CRAM2K) != 0;
     });
 
     // Hypervisor query wired after CPU creation (see below)
@@ -739,6 +741,52 @@ MachineDescriptor* Mega65MachineFactory::create() {
     cia2->setIrqLine(nmiMgr->createLine()); // CIA2 IRQ → CPU NMI
     kbd->setRestoreLine(nmiMgr->createLine());
     desc->deleters.push_back([nmiMgr]() { delete nmiMgr; });
+
+    // An RS-232 cartridge on the expansion port, fitted at run time (VICE
+    // c64acia1.c): a SwiftLink or Turbo232 at $DE00, $DF00 or $D700, on NMI,
+    // ticking with the 1 MHz devices; its far end: CLI serial (e.g. modem)
+    {
+        ISignalLine* aciaNmi = nmiMgr->createLine();
+        auto acia = std::make_shared<Acia6551*>(nullptr);
+        desc->deleters.push_back([acia]() { delete *acia; *acia = nullptr; });
+        MachineDescriptor::ExpansionSlot rs;
+        rs.name = "rs232";
+        rs.description = "An RS-232 cartridge on the expansion port; its far end: CLI serial";
+        rs.devices = {{"swiftlink", "SwiftLink: a 6551 ACIA with a 3.6864 MHz crystal (up to 38400 bps), interrupting on NMI",
+                       {"DE00", "DF00", "D700"}, "DE00"},
+                      {"turbo232", "Turbo232: a SwiftLink with an enhanced control register for 57600, 115200 and 230400 bps",
+                       {"DE00", "DF00", "D700"}, "DE00"}};
+        rs.install = [io, acia, aciaNmi](const std::string& device, const std::string& option, std::string& err) {
+            auto remove = [&]() {
+                if (!*acia) return;
+                io->setDeviceClocked(*acia, false);
+                io->unregisterHandler(*acia);
+                aciaNmi->set(false);
+                delete *acia;
+                *acia = nullptr;
+            };
+            if (device.empty()) { remove(); return true; }
+            if (device != "swiftlink" && device != "turbo232") { err = "no device '" + device + "' for the rs232 slot (swiftlink, turbo232)"; return false; }
+            auto* a = new Acia6551(0xDE00);
+            a->setMode(device == "swiftlink" ? Acia6551::Mode::SwiftLink : Acia6551::Mode::Turbo232);
+            if (!a->setOption("base", option.empty() ? "DE00" : option, err)) { delete a; return false; }
+            remove();
+            a->setName(device == "swiftlink" ? "SwiftLink" : "Turbo232");
+            a->setClockHz(985248);
+            a->setIrqLine(aciaNmi);
+            *acia = a;
+            io->registerHandler(a);
+            io->setDeviceClocked(a);
+            return true;
+        };
+        rs.info = [acia]() -> std::string {
+            if (!*acia) return "";
+            char b[8];
+            std::snprintf(b, sizeof b, "%04X", (*acia)->baseAddr());
+            return std::string((*acia)->mode() == Acia6551::Mode::SwiftLink ? "swiftlink" : "turbo232") + " (" + (*acia)->name() + ", " + b + ")";
+        };
+        desc->expansionSlots.push_back(std::move(rs));
+    }
 
     // KEY register: block personality changes while in hypervisor mode
     keyReg->setHypervisorCheck([cpu45]() { return cpu45->isHypervisor(); });

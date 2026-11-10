@@ -23,6 +23,7 @@
 #include "plugins/devices/datasette/main/datasette.h"
 #include "plugins/devices/reu/main/reu.h"
 #include "plugins/devices/georam/main/georam.h"
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include "util/path_util.h"
 #include <algorithm>
 #include <cctype>
@@ -103,10 +104,11 @@ public:
         m_cartLabel = m_cart ? std::move(label) : "";
     }
     c128::C128Cart* cartridge() const { return m_cart.get(); }
-    /** A device in the expansion port beside the cartridge (an REU, a
-     *  GeoRAM): it sees I/O1, I/O2 and writes to $FF00 (the REU's trigger),
-     *  or null. */
-    void setPortDevice(IOHandler* dev) { m_port = dev; }
+    /** Devices on the expansion port beside the cartridge (through an
+     *  expander): 0 a RAM expansion (an REU, a GeoRAM), 1 an RS-232
+     *  cartridge (a SwiftLink). They see I/O1, I/O2, $D700 and writes to
+     *  $FF00 (the REU's trigger); null for none. */
+    void setPortDevice(int n, IOHandler* dev) { m_port[n & 1] = dev; }
     const std::string& cartridgeLabel() const { return m_cartLabel; }
     const std::string& internalFunctionRomLabel() const { return m_intLabel; }
     uint8_t funcByte(int sel, uint16_t addr, bool peek = true) const {
@@ -319,7 +321,8 @@ private:
     }
 
     void write(uint16_t addr, uint8_t val) {
-        if (addr == 0xFF00 && m_port) m_port->ioWrite(this, 0xFF00, val);   // the REU's trigger (beside the MMU's CR)
+        if (addr == 0xFF00)                                 // the REU's trigger (beside the MMU's CR)
+            for (IOHandler* d : m_port) if (d) d->ioWrite(this, 0xFF00, val);
         if (c64Mode()) { writeC64(addr, val); return; }
         if (addr >= 0xFF00 && addr <= 0xFF04) {             // mmu_ffxx_store
             mmuStore(0, addr == 0xFF00 ? val : m_mmu[addr & 0x0F]);
@@ -364,11 +367,7 @@ private:
             case 0xDC00: dev(m_cia1, 0xDC00 | (addr & 0x0F)); break;
             case 0xDD00: dev(m_cia2, 0xDD00 | (addr & 0x0F)); break;
             case 0xDE00: case 0xDF00:                       // I/O1, I/O2: the cartridge
-                if (m_port) {                               // an REU or GeoRAM first; what it doesn't take goes on
-                    const bool took = wr ? m_port->ioWrite(this, addr, *wr)
-                                    : peek ? m_port->ioPeek(this, addr, &v) : m_port->ioRead(this, addr, &v);
-                    if (took) break;
-                }
+                if (portIo(addr, wr, peek, v)) break;      // the port's devices first; what they don't take goes on
                 if (m_cart && !c64Mode()) {
                     uint8_t cv = 0xFF;
                     const bool drives = (addr & 0xFF00) == 0xDE00 ? m_cart->io1(addr, wr, peek, cv)
@@ -376,7 +375,9 @@ private:
                     if (drives && !wr) v = cv;
                 }
                 break;
-            default: break;                                 // $D700: open
+            default:                                        // $D700: open, or a SwiftLink there
+                portIo(addr, wr, peek, v);
+                break;
         }
         return v;
     }
@@ -410,7 +411,16 @@ private:
     Rom m_basic, m_kernal, m_chargen, m_c64;
     Rom m_intFunc;
     std::unique_ptr<c128::C128Cart> m_cart;
-    IOHandler* m_port = nullptr;
+    IOHandler* m_port[2] = {nullptr, nullptr};
+    /** The port devices' turn at an I/O access: true if one answered. */
+    bool portIo(uint16_t addr, const uint8_t* wr, bool peek, uint8_t& v) {
+        for (IOHandler* d : m_port) {
+            if (!d) continue;
+            if (wr ? d->ioWrite(this, addr, *wr) : peek ? d->ioPeek(this, addr, &v) : d->ioRead(this, addr, &v))
+                return true;
+        }
+        return false;
+    }
     std::string m_cartLabel, m_intLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
@@ -899,7 +909,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     {
         auto portIrq = std::make_shared<FanoutLine>(irq->createLine(), irqZ80->createLine());
         auto dev = std::make_shared<IOHandler*>(nullptr);
-        desc->deleters.push_back([dev, bus]() { bus->setPortDevice(nullptr); delete *dev; *dev = nullptr; });
+        desc->deleters.push_back([dev, bus]() { bus->setPortDevice(0, nullptr); delete *dev; *dev = nullptr; });
         MachineDescriptor::ExpansionSlot port;
         port.name = "port";
         port.description = "The expansion port: a RAM expansion beside any cartridge (an REU at $DF00, or a GeoRAM paged through $DE00)";
@@ -910,7 +920,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         port.install = [desc, bus, io, dev, portIrq](const std::string& device, const std::string& option, std::string& err) {
             auto remove = [&]() {
                 if (!*dev) return;
-                bus->setPortDevice(nullptr);
+                bus->setPortDevice(0, nullptr);
                 io->unregisterHandler(*dev);
                 desc->busMasterStep = nullptr;
                 portIrq->set(false);
@@ -930,7 +940,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
             d->setDmaBus(bus);
             d->setIrqLine(portIrq.get());
             *dev = d;
-            bus->setPortDevice(d);
+            bus->setPortDevice(0, d);
             io->registerHandler(d);                 // reset, the debugger's device list
             if (device == "reu") desc->busMasterStep = [d]() { return d->busMasterCycle(); };
             return true;
@@ -949,6 +959,50 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
             return (*dev)->saveDeviceImage(path, err);
         };
         desc->expansionSlots.push_back(std::move(port));
+    }
+    // An RS-232 cartridge on the port (VICE c64acia1.c): a 6551 at $DE00,
+    // $DF00 or $D700 with doubled rates, on NMI
+    {
+        ISignalLine* aciaNmi = nmi->createLine();
+        auto acia = std::make_shared<Acia6551*>(nullptr);
+        desc->deleters.push_back([acia, bus]() { bus->setPortDevice(1, nullptr); delete *acia; *acia = nullptr; });
+        MachineDescriptor::ExpansionSlot rs;
+        rs.name = "rs232";
+        rs.description = "An RS-232 cartridge on the expansion port (through a port expander, beside a RAM expansion); its far end: CLI serial";
+        rs.devices = {{"swiftlink", "SwiftLink: a 6551 ACIA with a 3.6864 MHz crystal (up to 38400 bps), interrupting on NMI",
+                       {"DE00", "DF00", "D700"}, "DE00"},
+                      {"turbo232", "Turbo232: a SwiftLink with an enhanced control register for 57600, 115200 and 230400 bps",
+                       {"DE00", "DF00", "D700"}, "DE00"}};
+        rs.install = [bus, io, acia, aciaNmi, clock](const std::string& device, const std::string& option, std::string& err) {
+            auto remove = [&]() {
+                if (!*acia) return;
+                bus->setPortDevice(1, nullptr);
+                io->unregisterHandler(*acia);
+                aciaNmi->set(false);
+                delete *acia;
+                *acia = nullptr;
+            };
+            if (device.empty()) { remove(); return true; }
+            if (device != "swiftlink" && device != "turbo232") { err = "no device '" + device + "' for the rs232 slot (swiftlink, turbo232)"; return false; }
+            auto* a = new Acia6551(0xDE00);
+            a->setMode(device == "swiftlink" ? Acia6551::Mode::SwiftLink : Acia6551::Mode::Turbo232);
+            if (!a->setOption("base", option.empty() ? "DE00" : option, err)) { delete a; return false; }
+            remove();
+            a->setName(device == "swiftlink" ? "SwiftLink" : "Turbo232");
+            a->setClockHz(clock);
+            a->setIrqLine(aciaNmi);
+            *acia = a;
+            bus->setPortDevice(1, a);
+            io->registerHandler(a);                 // ticks, reset, CLI serial
+            return true;
+        };
+        rs.info = [acia]() -> std::string {
+            if (!*acia) return "";
+            char b[8];
+            std::snprintf(b, sizeof b, "%04X", (*acia)->baseAddr());
+            return std::string((*acia)->mode() == Acia6551::Mode::SwiftLink ? "swiftlink" : "turbo232") + " (" + (*acia)->name() + ", " + b + ")";
+        };
+        desc->expansionSlots.push_back(std::move(rs));
     }
 
     // The cartridge's freeze button (Partner 128): NMI while it is held

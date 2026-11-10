@@ -30,8 +30,10 @@ void SdCardDevice::reset() {
 bool SdCardDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     uint32_t offset = addr - m_base;
 
-    // Sector buffer at $DE00-$DFFF
+    // Sector buffer at $DE00-$DFFF, while mapped there; otherwise that's the
+    // expansion port's I/O1/I/O2 (a cartridge, a SwiftLink)
     if (addr >= 0xDE00 && addr <= 0xDFFF) {
+        if (!m_bufferMapped) return false;
         return bufferRead(addr, val);
     }
 
@@ -57,8 +59,9 @@ bool SdCardDevice::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 bool SdCardDevice::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     uint32_t offset = addr - m_base;
 
-    // Sector buffer at $DE00-$DFFF
+    // Sector buffer at $DE00-$DFFF, while mapped there
     if (addr >= 0xDE00 && addr <= 0xDFFF) {
+        if (!m_bufferMapped) return false;
         return bufferWrite(addr, val);
     }
 

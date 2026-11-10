@@ -1134,10 +1134,11 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 if (!dev) { err = "device type '" + ds->type + "' isn't loaded"; return false; }
                 dev->setName(ds->name);
                 dev->setDmaBus(dmaBus);
+                if (desc->clockHz) dev->setClockHz((uint32_t)desc->clockHz);
                 const std::string opt = option.empty() ? ds->defaultOption : option;
                 if (!opt.empty()) {
                     std::ifstream probe(opt, std::ios::binary);
-                    const std::string key = probe.good() ? "image" : ds->optionKey;
+                    const std::string key = probe.good() && ds->optionKey == "size" ? "image" : ds->optionKey;
                     if (!dev->setOption(key, opt, err)) { delete dev; return false; }
                 }
                 remove();
@@ -1156,7 +1157,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 fitted->dev->getDeviceInfo(di);
                 for (const auto& kv : di.state)
                     if (kv.first == "Size") return s + " (" + fitted->dev->name() + ", " + kv.second + ")";
-                return fitted->option.empty() ? s : s + " (" + fitted->option + ")";
+                return s + " (" + fitted->dev->name() + (fitted->option.empty() ? "" : ", " + fitted->option) + ")";
             };
             slot.save = [fitted](const std::string& path, std::string& err) {
                 if (!fitted->dev) { err = "nothing is fitted"; return false; }

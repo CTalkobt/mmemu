@@ -190,6 +190,49 @@ expansion port save ram.bin
 
 The two registers repeat in pairs from `$DF80`; reads there aren't driven. A reset clears them; the RAM stays. It has no DMA and no IRQ. One RAM expansion at a time: fitting a GeoRAM takes out an REU and the other way round.
 
+### 2.12 SwiftLink / Turbo232 and the Hayes modem
+The `rs232` expansion slot takes an RS-232 cartridge, as if fitted through a port expander, so it can sit beside an REU or GeoRAM. The cartridges follow VICE's `c64acia1.c` and `aciacore.c`:
+
+```
+expansion rs232 swiftlink           # a 6551 at $DE00 (or DF00, D700)
+expansion rs232 turbo232 DF00
+serial modem                        # its far end: a Hayes modem that dials the internet
+```
+
+- **SwiftLink:** a 6551 ACIA with a 3.6864 MHz crystal, so every rate in the control register doubles (19200 becomes 38400). Its IRQ output goes to /NMI, the C64's `expansion_nmi` line. Registers `$DE00-$DE03`: data, status (reading it releases the NMI), command, control.
+- **Turbo232:** registers 4-6 read `$FF`. Register 7, the enhanced control register, picks 230400, 115200 or 57600 bps (bits 0-1) while the control register's rate is 0. It only takes a write then, and its bit 2 reads 1 while that rate is in use.
+
+**The modem** (`serial modem`; `hayes_modem.{h,cpp}`) speaks to the terminal program (CCGMS, Novaterm, StrikeTerm...) in PETSCII:
+
+```
+ATDT particles.example.org          dial port 23 (telnet)
+ATDT bbs.example.org:6400           any port
+ATDT 192.168.1.10:23
+```
+
+| Command | |
+|---------|--|
+| `ATD`, `ATDT`, `ATDP` host[:port] | dial: CONNECT, or NO CARRIER |
+| `+++` (a second of silence either side) | back to command mode, still connected: OK |
+| `ATO` / `ATH` | back online / hang up |
+| `ATZ`, `AT&F` | defaults |
+| `ATE0/1`, `ATV0/1`, `ATQ0/1` | echo, verbose results, quiet |
+| `ATI`, `ATSn=v`, `ATSn?`, `A/` | identify, S-registers, repeat |
+| `X`, `M`, `L`, `&C`, `&D`, `&K`, `&W` | accepted, no effect (for terminals' init strings) |
+| `AT*P0/1` | commands and results in ASCII / PETSCII (default) |
+| `AT*T0/1` | online data passed as is (default) / translated PETSCII<->ASCII, for plain-ASCII hosts |
+| `AT*N0/1` | raw TCP / telnet (default) |
+
+- **Commands:** they are read as a terminal in lower-case mode sends them. Unshifted PETSCII letters, shifted ones and ASCII all work; backspace is PETSCII `$14`.
+- **Results:** `\rOK\r`, `\rCONNECT\r`, `\rNO CARRIER\r`, `\rERROR\r`, in shifted PETSCII so they show in upper case.
+- **Online:** bytes pass as they are, since C64 BBSes speak PETSCII over telnet.
+  - With telnet on, the far end's option requests are answered: it may echo and suppress go-ahead, and nothing else is accepted. Subnegotiations are skipped, and a data `$FF` is doubled out and undoubled in.
+- **Status lines:** while the modem is there, DSR is asserted; DCD follows the carrier.
+- **Connecting:** DNS lookup and the connection run without stopping the machine. A call gives up after 15 s.
+- The far end hanging up gives NO CARRIER.
+
+The C128 and MEGA65 have the same `rs232` slot. `serial modem` also works on the Plus/4's built-in ACIA and the IIc's serial ports, since they are 6551s too.
+
 The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
 
 ---
