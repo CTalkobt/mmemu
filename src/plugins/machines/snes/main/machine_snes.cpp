@@ -6,6 +6,7 @@
 
 #include "machine_snes.h"
 #include "snes_apu.h"
+#include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -16,7 +17,10 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -47,11 +51,77 @@ uint32_t mirror(uint32_t addr, uint32_t size) {
     return base + addr;
 }
 
+/** Where coprocessor firmware is looked for: MMEMU_SNES_FIRMWARE, else roms/snes. */
+std::string firmwareDir() {
+    const char* v = std::getenv("MMEMU_SNES_FIRMWARE");
+    return v ? v : "roms/snes";
+}
+
+bool readFile(const std::string& path, std::vector<uint8_t>& out) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    return true;
+}
+
 struct Cart {
     std::vector<uint8_t> rom, sram;
     Map map = Map::LoRom;
     std::string title;
     uint32_t headerAt = 0;
+    // A uPD7725 (DSP-1..4): its registers, DR and SR, told apart by srMask
+    std::unique_ptr<NecDsp> dsp;
+    std::string dspName;
+    uint16_t dspSrMask = 0;
+
+    /** DSP-1/2/3/4 by the header's chipset byte and the title (as Mesen). */
+    bool loadDsp(const std::string& rawTitle, std::string& err) {
+        if (rawTitle == "DUNGEON MASTER") dspName = "dsp2";
+        else if (rawTitle == "PILOTWINGS") dspName = "dsp1";
+        else if (rawTitle == "SD\xB6\xDE\xDD\xC0\xDE\xD1GX") dspName = "dsp3";
+        else if (rawTitle == "PLANETS CHAMP TG3000" || rawTitle == "TOP GEAR 3000") dspName = "dsp4";
+        else dspName = "dsp1b";
+        std::vector<uint8_t> fw;
+        const uint32_t size = NecDsp::PROGRAM_SIZE + NecDsp::DATA_SIZE;
+        if ((rom.size() & 0x7FFF) == size) {
+            // The firmware appended to the ROM image
+            fw.assign(rom.end() - size, rom.end());
+            rom.resize(rom.size() - size);
+        } else {
+            const std::string dir = firmwareDir();
+            std::vector<uint8_t> prog, data;
+            if (!readFile(dir + "/" + dspName + ".rom", fw) || fw.size() != size) {
+                fw.clear();
+                if (readFile(dir + "/" + dspName + ".program.rom", prog) && readFile(dir + "/" + dspName + ".data.rom", data) &&
+                    prog.size() == NecDsp::PROGRAM_SIZE && data.size() == NecDsp::DATA_SIZE) {
+                    fw = prog;
+                    fw.insert(fw.end(), data.begin(), data.end());
+                }
+            }
+            if (fw.empty()) {
+                std::string upper = dspName;
+                for (auto& c : upper) c = (char)std::toupper((unsigned char)c);
+                err = "This cartridge has a " + upper + " chip: its firmware is needed in " + dir + "/" + dspName +
+                      ".rom (" + std::to_string(size) + " bytes; or " + dspName + ".program.rom and " + dspName + ".data.rom)";
+                return false;
+            }
+        }
+        dsp = std::make_unique<NecDsp>();
+        if (!dsp->load(fw, err)) return false;
+        dspSrMask = map == Map::LoRom ? 0x4000 : 0x1000;
+        return true;
+    }
+
+    /** The DSP's registers: LoROM $30-$3F:$8000-$FFFF and $60-$6F:$0000-$7FFF (SR at A14), HiROM $00-$1F:$6000-$7FFF (SR at A12). */
+    bool dspAt(uint8_t bank, uint16_t a, bool& sr) const {
+        if (!dsp) return false;
+        const uint8_t b = bank & 0x7F;
+        bool hit;
+        if (map == Map::LoRom) hit = (b >= 0x30 && b < 0x40 && a >= 0x8000) || (b >= 0x60 && b < 0x70 && a < 0x8000);
+        else hit = b < 0x20 && a >= 0x6000 && a < 0x8000;
+        sr = (a & dspSrMask) != 0;
+        return hit;
+    }
 
     /** Score the internal header at `at` (bsnes/Mesen heuristics). */
     static int score(const std::vector<uint8_t>& r, uint32_t at, Map m) {
@@ -92,10 +162,15 @@ struct Cart {
             if (s > best) { best = s; headerAt = c.first; map = c.second; }
         }
         title.clear();
-        for (int i = 0; i < 21; ++i) { const char c = (char)rom[headerAt + i]; title += (c >= 0x20 && c < 0x7F) ? c : ' '; }
+        std::string raw;
+        for (int i = 0; i < 21; ++i) { const char c = (char)rom[headerAt + i]; title += (c >= 0x20 && c < 0x7F) ? c : ' '; raw += c; }
         while (!title.empty() && title.back() == ' ') title.pop_back();
+        while (!raw.empty() && raw.back() == ' ') raw.pop_back();
         const uint8_t ramSize = rom[headerAt + 0x18];
         sram.assign(ramSize && ramSize <= 0x0C ? (1024u << ramSize) : 0, 0);
+        // The chipset byte: a coprocessor when the low nibble is 3 or more; 0x in the high nibble is a NEC DSP
+        const uint8_t chips = rom[headerAt + 0x16];
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x0 && !loadDsp(raw, err)) return false;
         return true;
     }
 
@@ -103,6 +178,7 @@ struct Cart {
         static const char* names[] = {"LoROM", "HiROM", "ExHiROM"};
         std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
         if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
+        if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
         return s;
     }
 
@@ -212,6 +288,7 @@ public:
         m_strobe = false; m_serial[0] = m_serial[1] = 0;
         for (auto& c : m_dma) c = DmaChannel{};
         m_apuSynced = 0;
+        if (m_cart && m_cart->dsp) m_cart->dsp->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -323,6 +400,12 @@ private:
             if (a >= 0x4300 && a < 0x4380) return dmaRead(a);
         }
         if (m_cart) {
+            bool sr;
+            if (m_cart->dspAt(bank, a, sr)) {
+                if (peek) { const auto& st = m_cart->dsp->state(); return sr ? (uint8_t)(st.sr >> 8) : (uint8_t)st.dr; }
+                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                return m_openBus = m_cart->dsp->read(sr);
+            }
             const int v = m_cart->read(bank, a);
             if (v >= 0) return m_openBus = (uint8_t)v;
         }
@@ -346,7 +429,15 @@ private:
             if (a >= 0x4200 && a < 0x4220) { internalWrite(a, v); return; }
             if (a >= 0x4300 && a < 0x4380) { dmaWrite(a, v); return; }
         }
-        if (m_cart) m_cart->write(bank, a, v);
+        if (m_cart) {
+            bool sr;
+            if (m_cart->dspAt(bank, a, sr)) {
+                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                m_cart->dsp->write(sr, v);
+                return;
+            }
+            m_cart->write(bank, a, v);
+        }
     }
 
     // The B bus ($21xx): the PPU, the APU ports, the WRAM port
@@ -771,10 +862,10 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
     // reset; work RAM, VRAM and the cartridge's RAM stay
     desc->onReset = [bus, cpu, apu](MachineDescriptor&) {
         apu->reset();
+        if (bus->cart() && bus->cart()->dsp) bus->cart()->dsp->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();
-        (void)bus;
     };
     desc->schedulerStep = [bus, cpu](MachineDescriptor&) -> int {
         const uint64_t before = bus->master();
