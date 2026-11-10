@@ -2,6 +2,7 @@
 // GPL-3.0, Sour and the Mesen contributors.
 
 #include "snes_apu.h"
+#include "snes_msu1.h"
 #include "libdebug/main/execution_observer.h"
 
 #include <algorithm>
@@ -83,6 +84,7 @@ void Apu::reset() {
     m_phase = 0;
     m_acc = 0;
     m_accCount = 0;
+    m_lastOut = 0;
     m_audioRead = m_audioWrite = m_audioCount = 0;
 }
 
@@ -175,12 +177,20 @@ void Apu::drainDsp() {
     const int16_t* s = m_dsp.samples();
     constexpr uint32_t DSP_HZ = CLOCK_HZ / 32;          // 32000
     for (int i = 0; i + 1 < n; i += 2) {
-        m_acc += (s[i] + s[i + 1]) / 65536.0;
+        int32_t l = s[i], r = s[i + 1];
+        if (m_extra) {
+            m_extra->mix(l, r);
+            l = std::clamp(l, -32768, 32767);
+            r = std::clamp(r, -32768, 32767);
+        }
+        m_acc += (l + r) / 65536.0;
         ++m_accCount;
         m_phase += (uint64_t)m_sampleRate;
         while (m_phase >= DSP_HZ) {
             m_phase -= DSP_HZ;
-            const float v = m_accCount ? (float)(m_acc / m_accCount) : 0.0f;
+            // Two outputs from one DSP sample (32 kHz up to 44.1 kHz): the second repeats it, not silence
+            const float v = m_accCount ? (float)(m_acc / m_accCount) : m_lastOut;
+            m_lastOut = v;
             if (m_audioCount == AUDIO_BUF) { m_audioRead = (m_audioRead + 1) % AUDIO_BUF; --m_audioCount; }
             m_audioBuf[m_audioWrite] = std::max(-1.0f, std::min(1.0f, v));
             m_audioWrite = (m_audioWrite + 1) % AUDIO_BUF;
