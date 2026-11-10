@@ -415,6 +415,14 @@ pixel x leaving at dot x + 22. Mid-line changes split the line as on the
 hardware. A line's sprites are found and fetched in the previous line's
 horizontal blank.
 
+The backgrounds' tilemap and character data are fetched ahead of the beam,
+as Mesen: the 8-pixel column c in dots 8c to 8c+7 (33 columns by dot 263),
+in each mode's slot order, offset-per-tile reading BG3's entries for the
+next column. A mid-line change to the scroll, the map or character bases,
+the BG mode or the mosaic reaches the tiles at the next column fetched;
+the fine scroll is taken as each pixel is drawn. Nothing is fetched in
+forced blank or mode 7 (mode 7 reads VRAM as it draws, as Mesen).
+
 - **Backgrounds**:
   - **Modes 0-6:** 2/4/8 bpp, 8x8 and 16x16 tiles, 32/64-tile maps, direct
     colour, and offset-per-tile in modes 2, 4 and 6.
@@ -453,9 +461,7 @@ horizontal blank.
   `$2100` in forced blank on vertical blank's first line reloads the OAM
   address.
 
-**Not yet**: the PPU's per-dot fetches (a mid-line change to a BG's
-scroll or tile base takes effect at the next pixel, not the next tile).
-The OAM and CGRAM addresses during the picture are approximate (Mesen's
+**Not yet**: The OAM and CGRAM addresses during the picture are approximate (Mesen's
 are too).
 
 ### Sound

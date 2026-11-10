@@ -321,6 +321,46 @@ TEST_CASE(snes_ppu_midline_write) {
     EXPECT_EQ(f[256], snes::Ppu::argb(0x7C00));
 }
 
+// The BG tiles are fetched ahead (column c in dots 8c-8c+7, as Mesen): a mid-line scroll write reaches the
+// tiles at the next column fetched, not at the next pixel drawn
+TEST_CASE(snes_ppu_bg_fetch_midline) {
+    snes::Ppu p;
+    auto vramWrite = [&](uint16_t a, uint16_t v) { p.write(0x16, (uint8_t)a); p.write(0x17, (uint8_t)(a >> 8)); p.write(0x18, (uint8_t)v); p.write(0x19, (uint8_t)(v >> 8)); };
+    p.write(0x15, 0x80);
+    p.write(0x05, 0x00);                    // mode 0
+    p.write(0x07, 0x04);                    // BG1 map at $0400
+    p.write(0x0B, 0x01);                    // BG1 characters at $1000
+    p.write(0x2C, 0x01);                    // BG1 on the main screen
+    for (int row = 0; row < 8; ++row) {
+        vramWrite((uint16_t)(0x1008 + row), 0x00FF);    // tile 1: colour 1
+        vramWrite((uint16_t)(0x1010 + row), 0xFF00);    // tile 2: colour 2
+    }
+    for (int i = 0; i < 32 * 32; ++i) vramWrite((uint16_t)(0x400 + i), (i & 1) ? 2 : 1);   // even columns 1, odd 2
+    const uint16_t red = 0x001F, blue = 0x7C00;
+    p.write(0x21, 1); p.write(0x22, (uint8_t)red); p.write(0x22, (uint8_t)(red >> 8));
+    p.write(0x22, (uint8_t)blue); p.write(0x22, (uint8_t)(blue >> 8));
+    p.write(0x00, 0x0F);
+    p.startFrame();
+    p.endLine(0);
+    // Dot 122: pixels 0-100 drawn, columns 0-14 fetched (column 15's BG1 entry comes at dot 123)
+    p.sync(1, 22 + 100);
+    p.write(0x0D, 0x08); p.write(0x0D, 0x00);           // HOFS = 8: a tile along
+    finishFrame(p, 1);
+    std::vector<uint32_t> f(256 * 224);
+    p.renderFrame(f.data());
+    const uint32_t r = snes::Ppu::argb(red), b = snes::Ppu::argb(blue);
+    EXPECT_EQ(f[100], r);                   // column 12 (tile 12)
+    EXPECT_EQ(f[101], r);                   // still column 12, fetched before the write
+    EXPECT_EQ(f[104], b);                   // column 13
+    EXPECT_EQ(f[119], r);                   // column 14, fetched before the write
+    EXPECT_EQ(f[120], r);                   // column 15 fetched after: tile 16
+    EXPECT_EQ(f[127], r);
+    EXPECT_EQ(f[128], b);                   // tile 17
+    EXPECT_TRUE(!(f[101] == b));            // not at the next pixel (that would be tile 13)
+    EXPECT_EQ(f[256], b);                   // the next line: all new, pixel 0 is tile 1
+    EXPECT_EQ(f[256 + 8], r);
+}
+
 // Pseudo-hires gives 512-pixel lines; interlace draws one field's rows a frame
 TEST_CASE(snes_ppu_hires_interlace) {
     snes::Ppu p;
