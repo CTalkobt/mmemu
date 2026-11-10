@@ -7,6 +7,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Apple II No-Slot Clock
+
+- **A No-Slot Clock** (`apple2::NoSlotClock`, Dallas DS1216, after AppleWin's
+  `NoSlotClock.cpp`) in the new `clock` socket of the II, II+, IIe and IIc:
+  `expansion clock nsc`.
+  - **Where:** under the internal `$C3`/`$C8` ROM, or the II/II+'s `$F8` ROM.
+  - **Protocol:** the 64-bit pattern on A0 opens it; it then reads out the
+    host's local time in BCD on D0.
+- **Checks:** NS.CLOCK.SYSTEM's own clock routine sets ProDOS's date and
+  time with it. Test: `apple2_no_slot_clock`.
+
 ### SNES OBC1
 
 - **The OBC1** (`snes::Obc1`, after Mesen) for Metal Combat: Falcon's
