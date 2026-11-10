@@ -1,4 +1,7 @@
 #include "sid6581.h"
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -441,7 +444,39 @@ int SID6581::pullSamples(float* buffer, int maxSamples) {
         m_audioBufRead = (m_audioBufRead + 1) & (AUDIO_BUF - 1);
     }
     m_audioBufCount -= n;
+    if (m_mix && n > 0) {
+        // The second SID's samples, as many as this one gave (same rate and
+        // clock, so they keep step); the two at half each
+        float other[1024];
+        for (int done = 0; done < n;) {
+            const int want = std::min(n - done, 1024);
+            const int got = m_mix->pullSamples(other, want);
+            for (int i = 0; i < got; ++i) buffer[done + i] = (buffer[done + i] + other[i]) * 0.5f;
+            for (int i = got; i < want; ++i) buffer[done + i] *= 0.5f;
+            done += want;
+        }
+    }
     return n;
+}
+
+void SID6581::setLinkedDevice(const char* role, IOHandler* dev) {
+    if (std::string(role) == "mix") m_mix = dynamic_cast<IAudioOutput*>(dev);
+}
+
+bool SID6581::setOption(const std::string& key, const std::string& value, std::string& err) {
+    if (key != "base") { err = "the SID's option is its address ($D420, $D500, $DE00, $DF00)"; return false; }
+    std::string v;
+    for (char c : value) if (c != '$') v += (char)toupper((unsigned char)c);
+    if (v.rfind("0X", 0) == 0) v = v.substr(2);
+    char* end = nullptr;
+    const unsigned long a = std::strtoul(v.c_str(), &end, 16);
+    // Where stereo-SID cartridges and mods put it: the I/O pages but the VIC,
+    // colour RAM and CIAs, on a 32-byte boundary
+    const bool ok = !v.empty() && end && !*end && (a & 0x1F) == 0 &&
+                    ((a >= 0xD420 && a < 0xD800) || (a >= 0xDE00 && a < 0xE000));
+    if (!ok) { err = "a second SID goes at $D420-$D7E0 or $DE00-$DFE0, on a 32-byte boundary"; return false; }
+    m_baseAddr = (uint32_t)a;
+    return true;
 }
 
 void SID6581::getDeviceInfo(DeviceInfo& out) const {

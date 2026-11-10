@@ -78,6 +78,11 @@ public:
 
     int nativeSampleRate() const override { return m_sampleRate; }
     int pullSamples(float* buffer, int maxSamples) override;
+    /** A second SID fitted at run time (a stereo-SID cartridge): "mix" links
+     *  its output into this one's (the frontends play one sound device). */
+    void setLinkedDevice(const char* role, IOHandler* dev) override;
+    /** An expansion's option: "base" ($D420, $D500, $DE00, $DF00...). */
+    bool setOption(const std::string& key, const std::string& value, std::string& err) override;
 
     // -----------------------------------------------------------------------
     // IAudioInspect interface (#30): one chip, 3 voices + output channel
@@ -217,6 +222,7 @@ private:
     int     m_scopeCount = 0;   // valid entries (<= SCOPE_LEN)
     uint64_t m_scopeTotal = 0;  // entries since reset
 
+    IAudioOutput* m_mix = nullptr;          // a second SID mixed in
     // Ring buffer for pullSamples()
     static constexpr int AUDIO_BUF = 8192;
     float   m_audioBuf[AUDIO_BUF] = {};

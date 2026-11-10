@@ -163,6 +163,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - See `doc/README-VIC20.md` §2.2.1.
 
 ### Commodore 64 / 128
+- **A second SID,** fitted at run time on the C64 and C128 (`expansion sid2 sid D420`).
+  - Addresses: `$D420`, `$D500` (C64), `$D700` (C128), `$DE00` or `$DF00`.
+  - It is mixed into the first SID's output (`SID6581::setLinkedDevice("mix")`).
+  - JSON expansions can now link a fitted device to one of the machine's (`"linkTo"`).
+  - See `doc/README-C64.md` §2.13.
 - **SwiftLink and Turbo232 RS-232 cartridges,** in a new `rs232` expansion slot on the C64, C128 and MEGA65 (`expansion rs232 swiftlink`), after VICE's `c64acia1.c` and `aciacore.c`.
   - A 6551 at `$DE00`, `$DF00` or `$D700`, with rates doubled by its 3.6864 MHz crystal, interrupting on /NMI.
   - The Turbo232's enhanced control register gives 57600, 115200 and 230400 bps.

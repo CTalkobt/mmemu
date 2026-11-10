@@ -27,6 +27,7 @@
 #include "plugins/devices/georam/main/georam.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
 #include <vector>
+#include <algorithm>
 #include <string>
 #include <cstring>
 
@@ -805,5 +806,50 @@ TEST_CASE(c64_swiftlink_modem_nmi) {
     EXPECT_TRUE(n >= 7);
     EXPECT_TRUE(got.find("\x41\x54\x0D") == 0);    // the echo
     EXPECT_TRUE(got.find("\x0D\xCF\xCB\x0D") != std::string::npos);   // "OK" in PETSCII
+    delete desc;
+}
+
+// A second SID fitted at run time at $D420: a sawtooth on its voice 1 is
+// heard through the first SID's output (the frontends play one device);
+// the first SID stays silent; taken out, the tone goes
+TEST_CASE(c64_second_sid) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("sid2");
+    ASSERT(slot != nullptr);
+    std::string err;
+    EXPECT_TRUE(!slot->install("sid", "D000", err));   // the VIC's
+    EXPECT_TRUE(!slot->install("sid", "D430", err));   // not on a 32-byte boundary
+    ASSERT(slot->install("sid", "", err));
+    EXPECT_EQ(slot->info(), std::string("sid (SID2, D420)"));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->buses[0].bus;
+    auto* sid = dynamic_cast<SID6581*>(desc->ioRegistry->findHandler("SID"));
+    ASSERT(sid != nullptr);
+    auto level = [&](double seconds) {
+        std::vector<float> drain(65536);
+        while (sid->pullSamples(drain.data(), (int)drain.size()) > 0) {}
+        for (uint64_t c = 0; c < (uint64_t)(985248 * seconds);) c += desc->schedulerStep(*desc);
+        std::vector<float> buf(16384);
+        const int n = sid->pullSamples(buf.data(), (int)buf.size());
+        float lo = 1, hi = -1;
+        for (int i = 0; i < n; ++i) { lo = std::min(lo, buf[i]); hi = std::max(hi, buf[i]); }
+        return n > 0 ? hi - lo : 0.0f;
+    };
+    const float quiet = level(0.05);
+    // SID2 voice 1: 440 Hz-ish sawtooth, full sustain, volume 15
+    bus->write8(0xD420, 0x00); bus->write8(0xD421, 0x1D);
+    bus->write8(0xD425, 0x00); bus->write8(0xD426, 0xF0);
+    bus->write8(0xD438, 0x0F);
+    bus->write8(0xD424, 0x21);
+    const float loud = level(0.1);
+    if (!(loud > quiet + 0.05f)) printf("  quiet %.3f loud %.3f\n", quiet, loud);
+    EXPECT_TRUE(loud > quiet + 0.05f);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(desc->ioRegistry->findHandler("SID2") == nullptr);
+    const float after = level(0.1);
+    EXPECT_TRUE(after < loud * 0.5f);
     delete desc;
 }

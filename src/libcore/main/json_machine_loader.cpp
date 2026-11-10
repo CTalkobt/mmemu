@@ -1080,6 +1080,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 std::string id, type, name, optionKey, defaultOption;
                 ISignalLine* irq = nullptr;
                 bool busMaster = false;
+                IOHandler* linkTo = nullptr;        // "linkTo": {"device", "as"}: e.g. a second SID mixed into the first
+                std::string linkAs;
             };
             struct Fitted {
                 IOHandler* dev = nullptr;
@@ -1103,6 +1105,11 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 const std::string irqName = ds.value("irq", "");
                 if (!irqName.empty() && signalMap.count(irqName)) d.irq = signalMap[irqName];
                 d.busMaster = ds.value("busMaster", false);
+                if (ds.contains("linkTo")) {
+                    const std::string ld = ds["linkTo"].value("device", "");
+                    if (devPtrs.count(ld)) d.linkTo = devPtrs[ld];
+                    d.linkAs = ds["linkTo"].value("as", "");
+                }
                 std::vector<std::string> opts;
                 for (const auto& o : ds.value("options", nlohmann::json::array())) opts.push_back(o.get<std::string>());
                 slot.devices.push_back({d.id, ds.value("description", ""), opts, d.defaultOption});
@@ -1116,6 +1123,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     io->unregisterHandler(fitted->dev);
                     if (fitted->spec->irq) fitted->spec->irq->set(false);
                     if (fitted->spec->busMaster) desc->busMasterStep = nullptr;
+                    if (fitted->spec->linkTo) fitted->spec->linkTo->setLinkedDevice(fitted->spec->linkAs.c_str(), nullptr);
                     delete fitted->dev;
                     fitted->dev = nullptr;
                     fitted->spec = nullptr;
@@ -1145,6 +1153,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 if (ds->irq) dev->setIrqLine(ds->irq);
                 io->registerHandler(dev);
                 if (ds->busMaster) desc->busMasterStep = [dev]() { return dev->busMasterCycle(); };
+                if (ds->linkTo) ds->linkTo->setLinkedDevice(ds->linkAs.c_str(), dev);
                 fitted->dev = dev;
                 fitted->spec = ds;
                 fitted->option = opt;

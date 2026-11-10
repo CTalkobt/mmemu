@@ -74,6 +74,8 @@ public:
     }
 
     void setCpu(MOS6510* cpu) { m_cpu = cpu; }
+    /** A second SID fitted at run time (null: none); it answers its 32 bytes first. */
+    void setSid2(IOHandler* sid2) { m_sid2 = sid2; }
     void setDevices(VIC2* vic, IOHandler* sid, IOHandler* cia1, IOHandler* cia2, Vdc8563* vdc) {
         m_vic = vic; m_sid = sid; m_cia1 = cia1; m_cia2 = cia2; m_vdc = vdc;
     }
@@ -345,6 +347,7 @@ private:
             else if (peek) h->ioPeek(this, a, &v);
             else           h->ioRead(this, a, &v);
         };
+        if (m_sid2 && (addr & 0xFFE0) == m_sid2->baseAddr()) { dev(m_sid2, addr); return v; }
         switch (addr & 0xFF00) {
             case 0xD000: case 0xD100: case 0xD200: case 0xD300:
                 dev(m_vic, 0xD000 | (addr & 0x3F)); break;
@@ -428,6 +431,7 @@ private:
     MOS6510* m_cpu = nullptr;
     VIC2* m_vic = nullptr;
     IOHandler* m_sid = nullptr;
+    IOHandler* m_sid2 = nullptr;
     IOHandler* m_cia1 = nullptr;
     IOHandler* m_cia2 = nullptr;
     Vdc8563* m_vdc = nullptr;
@@ -902,6 +906,48 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         delete drive; delete tape; delete iecPort; delete vicBus; delete capsLine;
         delete irq; delete nmi;
     });
+
+    // A second SID (a stereo-SID cartridge or mod), mixed into the first
+    {
+        auto sid2 = std::make_shared<SID6581*>(nullptr);
+        // (the first SID is gone by now: its deleter came first)
+        desc->deleters.push_back([sid2, bus]() { bus->setSid2(nullptr); delete *sid2; *sid2 = nullptr; });
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "sid2";
+        sl.description = "A second SID (a stereo-SID cartridge or mod), mixed with the first; its address is the option";
+        sl.devices = {{"sid", "A second 6581 SID: $D420 (the common mod), $D700, $DE00 or $DF00 (cartridges)",
+                       {"D420", "D700", "DE00", "DF00"}, "D420"}};
+        sl.install = [bus, io, sid, sid2, clock](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "sid") { err = "no device '" + device + "' for the sid2 slot (sid)"; return false; }
+            SID6581* fresh = nullptr;
+            if (!device.empty()) {
+                fresh = new SID6581("SID2", 0xD420);
+                if (!fresh->setOption("base", option.empty() ? "D420" : option, err)) { delete fresh; return false; }
+                if (fresh->baseAddr() >= 0xD500 && fresh->baseAddr() < 0xD700) { delete fresh; err = "$D500-$D6FF are the C128's MMU and VDC"; return false; }
+                fresh->setClockHz(clock);
+            }
+            if (*sid2) {
+                bus->setSid2(nullptr);
+                sid->setLinkedDevice("mix", nullptr);
+                io->unregisterHandler(*sid2);
+                delete *sid2;
+                *sid2 = nullptr;
+            }
+            if (!fresh) return true;
+            *sid2 = fresh;
+            io->registerHandler(fresh);             // it ticks with the machine
+            bus->setSid2(fresh);
+            sid->setLinkedDevice("mix", fresh);
+            return true;
+        };
+        sl.info = [sid2]() -> std::string {
+            if (!*sid2) return "";
+            char b[8];
+            std::snprintf(b, sizeof b, "%04X", (*sid2)->baseAddr());
+            return std::string("sid (SID2, ") + b + ")";
+        };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
 
     // The expansion port's RAM expansions, fitted at run time: an REU (VICE
     // reu.c: I/O2, the $FF00 trigger, /IRQ to both CPUs, DMA through the
