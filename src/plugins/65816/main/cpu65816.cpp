@@ -119,14 +119,18 @@ int W65C816::step() {
     const uint64_t start = m_cycles;
     if (m_pcHook && m_pcHook->armed(pc()) && m_pcHook->fire(this, pc())) { m_cycles += 2; return 2; }
     if (m_stop) { m_cycles += 1; return 1; }
-    const bool irq = m_irqLine && !(m_p & FI);
+    const bool holdIrq = m_holdIrq, holdNmi = m_holdNmi;
+    m_holdIrq = m_holdNmi = false;
+    const bool nmi = m_nmiPending && !holdNmi;
+    const bool irqLine = m_irqLine && !holdIrq;
+    const bool irq = irqLine && !(m_p & FI);
     if (m_wait) {
-        if (!m_nmiPending && !m_irqLine) { m_cycles += 1; return 1; }
+        if (!nmi && !irqLine) { m_cycles += 1; return 1; }
         m_wait = false;                                   // an IRQ wakes WAI even when masked
     }
-    if (m_nmiPending || irq) {
+    if (nmi || irq) {
         idleAt(pc()); idleAt(pc());
-        if (m_nmiPending) { m_nmiPending = false; interrupt(0xFFEA, 0xFFFA, true); }
+        if (nmi) { m_nmiPending = false; interrupt(0xFFEA, 0xFFFA, true); }
         else interrupt(0xFFEE, 0xFFFE, true);
         return (int)(m_cycles - start);
     }

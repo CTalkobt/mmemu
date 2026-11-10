@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <initializer_list>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -400,4 +401,116 @@ TEST_CASE(snes_battery_save) {
     EXPECT_EQ(m->buses[0].bus->peek8(0x207FFF), 0xA5);
     delete m;
     std::filesystem::remove(path);
+}
+
+// The multiplier and divider take 8 and 16 CPU cycles, a bit a cycle (Mesen's AluMulDiv): a read
+// straight after starting one sees the partial result.
+TEST_CASE(snes_muldiv_timing) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM MULDIV         ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    const uint8_t code[] = {
+        0x78, 0x18, 0xFB, 0xE2, 0x30,                   // SEI CLC XCE SEP #$30
+        0xA9, 0xFF, 0x8D, 0x02, 0x42,                   // $FF x
+        0xA9, 0xFF, 0x8D, 0x03, 0x42,                   //   $FF
+        0xAD, 0x16, 0x42, 0x85, 0x00,                   // product low, 3 cycles in: partial
+        0xAD, 0x17, 0x42, 0x85, 0x01,                   // product high, done
+        0xA9, 0x00, 0x8D, 0x04, 0x42,                   // $8000 /
+        0xA9, 0x80, 0x8D, 0x05, 0x42,
+        0xA9, 0x03, 0x8D, 0x06, 0x42,                   //   3
+        0xAD, 0x14, 0x42, 0x85, 0x02,                   // quotient low, 3 cycles in: partial
+        0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, // wait
+        0xAD, 0x14, 0x42, 0x85, 0x03,                   // quotient low, done
+        0xAD, 0x16, 0x42, 0x85, 0x04,                   // remainder
+        0x80, 0xFE,
+    };
+    std::copy(code, code + sizeof code, img.begin());
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "md.sfc", err));
+    uint64_t t = 0;
+    while (t < 100000) t += (uint64_t)m->schedulerStep(*m);
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->peek8(0x7E0000), 0xF9);   // $FF + $1FE + $3FC = $6F9 after 3 bits
+    EXPECT_EQ(bus->peek8(0x7E0001), 0xFE);   // $FF x $FF = $FE01
+    EXPECT_EQ(bus->peek8(0x7E0002), 0xF9);   // three steps: the old $00FF shifted up, one quotient bit
+    EXPECT_EQ(bus->peek8(0x7E0003), 0xAA);   // $8000 / 3 = $2AAA
+    EXPECT_EQ(bus->peek8(0x7E0004), 0x02);   // remainder 2
+    delete m;
+}
+
+// A general DMA's length, as Mesen times it: it starts at the CPU's next cycle but one, on a whole
+// multiple of 8 master clocks, takes 8 clocks of overhead, 8 for the channel and 8 a byte, and ends on
+// a whole CPU cycle.
+TEST_CASE(snes_dma_timing) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM DMATIME        ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    const uint8_t code[] = {
+        0x78, 0x18, 0xFB, 0xE2, 0x30,                   // SEI CLC XCE SEP #$30
+        0x9C, 0x81, 0x21, 0x9C, 0x82, 0x21, 0x9C, 0x83, 0x21,   // WRAM port at $7E:0000
+        0xA9, 0x00, 0x8D, 0x00, 0x43,                   // DMA 0: A -> B, one register
+        0xA9, 0x80, 0x8D, 0x01, 0x43,                   //   to $2180
+        0x9C, 0x02, 0x43, 0xA9, 0x80, 0x8D, 0x03, 0x43, 0x9C, 0x04, 0x43,   // from $00:8000 (ROM)
+        0xA9, 0x10, 0x8D, 0x05, 0x43, 0x9C, 0x06, 0x43, // 16 bytes
+        0xA9, 0x01, 0x8D, 0x0B, 0x42,                   // go
+        0xEA,                                           // the DMA happens during this NOP
+        0xEA,
+        0x80, 0xFE,
+    };
+    std::copy(code, code + sizeof code, img.begin());
+    const uint32_t nopAt = 0x8000 + (uint32_t)sizeof code - 4;
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "dt.sfc", err));
+    ICore* cpu = m->cpus[0].cpu;
+    int guard = 0;
+    while (cpu->pc() != nopAt && guard++ < 1000) m->schedulerStep(*m);
+    ASSERT(cpu->pc() == nopAt);
+    const uint64_t before = snes::masterClock(m);
+    m->schedulerStep(*m);                               // NOP: opcode fetch (8), then the DMA, then its idle cycle (6)
+    const uint64_t took = snes::masterClock(m) - before;
+    const uint64_t start = before + 8;
+    const uint64_t sync = 8 - (start & 7);
+    const uint64_t dmaClock = sync + 8 + 8 + 16 * 8;
+    const uint64_t want = 8 + dmaClock + (6 - dmaClock % 6) + 6;
+    EXPECT_TRUE(took == want || took == want + 40);     // + 40 if DRAM refresh fell inside
+    IBus* bus = m->buses[0].bus;
+    int same = 0;
+    for (int i = 0; i < 16; ++i) same += bus->peek8(0x7E0000 + (uint32_t)i) == img[i];
+    EXPECT_EQ(same, 16);
+    delete m;
+}
+
+// Open bus (as Mesen): the write-only PPU registers $21x4-6/$21x8-A give PPU1's last value read, the rest the
+// CPU's open bus; $4212's horizontal blank starts after dot 274
+TEST_CASE(snes_open_bus) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM OPENBUS        ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    img[0] = 0x80; img[1] = 0xFE;
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "ob.sfc", err));
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0x00211B, 0x03); bus->write8(0x00211B, 0x00);   // M7A = 3
+    bus->write8(0x00211C, 0x07);                                // x 7 = 21 at $2134
+    bus->write8(0x7E0010, 0x5A);
+    EXPECT_EQ(bus->read8(0x002134), 21);                        // PPU1 now holds 21
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);                      // the CPU's bus holds $5A
+    EXPECT_EQ(bus->read8(0x002105), 21);                        // $2105: PPU1's latch
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);
+    EXPECT_EQ(bus->read8(0x002101), 0x5A);                      // $2101: open bus
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);
+    EXPECT_EQ(bus->read8(0x002137), 0x5A);                      // $2137: open bus too
+    delete m;
 }

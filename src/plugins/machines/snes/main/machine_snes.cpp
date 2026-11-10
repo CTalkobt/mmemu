@@ -435,8 +435,13 @@ public:
         m_lines = 262; m_vblankLine = 225; m_lineClocks = LINE_CLOCKS;
         m_refreshDone = m_hdmaDone = false;
         m_irqFired = false;
+        m_dmaPending = m_hdmaPending = m_hdmaInitPending = m_dmaStartDelay = false;
+        m_hdmaInitDue = false; m_hdmaInitAt = 12; m_refreshAt = REFRESH_AT; m_dmaClock = 0; m_cpuSpeed = 8;
+        m_dmaLockCycle = ~0ull; m_nmiFlagAt = ~1ull; m_irqSetAt = 0;
+        m_nmiEvent = 0; m_nmiArmed = false;
         m_nmitimen = 0; m_wrio = 0xFF;
         m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
+        m_aluShift = 0; m_multCounter = m_divCounter = 0; m_aluPrev = m_cpu ? m_cpu->cycles() : 0;
         m_htime = m_vtime = 0x1FF;
         m_hdmaen = 0; m_fastRom = false;
         m_nmiFlag = false; m_irqFlag = false;
@@ -458,7 +463,10 @@ public:
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
     void endStep() {
-        m_cpu->setNmiLine(m_nmiFlag && (m_nmitimen & 0x80));
+        // DMA in the instruction's last cycle holds interrupts off for one more (Mesen's IrqLock); an NMI
+        // only if its flag rose in that cycle
+        if (m_dmaLockCycle == m_cpu->cycles()) m_cpu->holdInterrupts(m_nmiFlagAt == m_dmaLockCycle);
+        m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (m_nmitimen & 0x80));
         m_cpu->setIrqLine(m_irqFlag || (m_cart && ((m_cart->gsu && m_cart->gsu->irq()) || (m_cart->sa1 && m_cart->sa1->cpuIrq()) || (m_cart->cx4 && m_cart->cx4->irq()))));
         syncApu();
     }
@@ -473,7 +481,10 @@ public:
     void advance(int clocks) {
         while (clocks > 0) {
             int next = m_lineClocks;
-            if (!m_refreshDone) next = REFRESH_AT;
+            if (m_nmiEvent == 1) next = 2;
+            else if (m_nmiEvent == 2) next = 6;
+            else if (m_hdmaInitDue) next = m_hdmaInitAt;
+            else if (!m_refreshDone) next = m_refreshAt;
             else if (!m_hdmaDone) next = HDMA_AT;
             const int step = std::min(clocks, std::max(0, next - m_hClock));
             m_hClock += step;
@@ -481,13 +492,31 @@ public:
             clocks -= step;
             checkIrq();
             if (m_hClock >= next) {
-                if (!m_refreshDone) {
+                if (m_nmiEvent == 1) {
+                    // Clock 2: the NMI flag ($4210) rises on the NMI line, and falls on line 0 (Mesen)
+                    if (m_line == 0) { m_nmiFlag = false; m_nmiArmed = false; m_nmiEvent = 0; }
+                    else { m_nmiFlag = true; m_nmiEvent = 2; }
+                } else if (m_nmiEvent == 2) {
+                    // Clock 6: the CPU sees it
+                    m_nmiArmed = true;
+                    m_nmiFlagAt = m_cpu->cycles();
+                    m_nmiEvent = 0;
+                } else if (m_hdmaInitDue) {
+                    // Line 0: the HDMA channels are set up for the frame (run at the CPU's next cycle but one)
+                    m_hdmaInitDue = false;
+                    m_hdmaInitPending = true;
+                    m_dmaStartDelay = true;
+                } else if (!m_refreshDone) {
                     m_refreshDone = true;
                     m_hClock += 40;                       // DRAM refresh: the CPU waits
                     m_master += 40;
                 } else if (!m_hdmaDone) {
                     m_hdmaDone = true;
-                    if (m_line < m_vblankLine) { m_ppu->endLine(m_line); hdmaLine(); }
+                    if (m_line < m_vblankLine) {
+                        m_ppu->endLine(m_line);
+                        // HDMA for the next line, at the CPU's next cycle but one (as Mesen)
+                        if (m_hdmaen) { m_hdmaPending = true; m_dmaStartDelay = true; }
+                    }
                 } else {
                     endOfLine();
                 }
@@ -496,9 +525,14 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
         if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
         if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);
-        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM    // and the Cx4
+        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM
     }
-    void idle(uint32_t) override { advance(6); }
+    void idle(uint32_t) override { cpuCycle(6); advance(6); }
+    /** The start of a CPU cycle of `speed` clocks: pending DMA/HDMA runs here (Mesen's ProcessCpuCycle). */
+    void cpuCycle(int speed) {
+        m_cpuSpeed = speed;
+        if ((m_dmaPending || m_hdmaPending || m_hdmaInitPending) && processPendingDma()) m_dmaLockCycle = m_cpu->cycles();
+    }
 
     // ------------------------------------------------------------------
     // IBus
@@ -508,7 +542,9 @@ public:
 
     uint8_t read8(uint32_t addr) override {
         addr &= 0xFFFFFF;
-        advance(speed(addr) - 4);
+        const int sp = speed(addr);
+        cpuCycle(sp);
+        advance(sp - 4);
         const uint8_t v = busRead(addr, false);
         advance(4);
         if (m_observer) m_observer->onMemoryRead(this, addr, v);
@@ -517,7 +553,9 @@ public:
     void write8(uint32_t addr, uint8_t v) override {
         addr &= 0xFFFFFF;
         if (m_observer) m_observer->onMemoryWrite(this, addr, peek8(addr), v);
-        advance(speed(addr));
+        const int sp = speed(addr);
+        cpuCycle(sp);
+        advance(sp);
         busWrite(addr, v);
     }
     uint8_t peek8(uint32_t addr) override { return busRead(addr & 0xFFFFFF, true); }
@@ -663,6 +701,11 @@ private:
             if (!peek && (m_wrio & 0x80)) m_ppu->latchCounters(dot(), m_line);
             return m_openBus;
         }
+        if (r < 0x34) {
+            // Write-only: $21x4-6 and $21x8-A give PPU1's last value read, the rest the CPU's open bus (Mesen)
+            const uint8_t lo = r & 0x0F;
+            return ((lo >= 4 && lo <= 6) || (lo >= 8 && lo <= 0xA)) ? m_ppu->peek(r) : m_openBus;
+        }
         if (r < 0x40) return peek ? m_ppu->peek(r) : m_ppu->read(r);
         if (r < 0x80) { syncApu(); return m_apu->cpuRead(r & 3); }
         if (r == 0x80) {
@@ -692,48 +735,99 @@ private:
         switch (a) {
         case 0x4210: {
             const uint8_t v = (uint8_t)((m_nmiFlag << 7) | (m_openBus & 0x70) | 0x02);
-            if (!peek) m_nmiFlag = false;
+            // The flag stays set if read in the first clocks of the NMI line (Mesen; Terranigma needs it)
+            if (!peek && (m_hClock >= 6 || m_line != m_vblankLine)) m_nmiFlag = false;
             return v;
         }
         case 0x4211: {
             const uint8_t v = (uint8_t)((m_irqFlag << 7) | (m_openBus & 0x7F));
-            if (!peek) m_irqFlag = false;
+            // Nor can the IRQ flag be cleared in the 4 clocks after it's set (Mesen)
+            if (!peek && m_master - m_irqSetAt >= 4) m_irqFlag = false;
             return v;
         }
         case 0x4212: {
             const bool vblank = m_line >= m_vblankLine;
-            const bool hblank = m_hClock < 4 || m_hClock >= 274 * 4;
+            const bool hblank = m_hClock < 4 || m_hClock > 274 * 4;
             return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
         }
         case 0x4213: return m_wrio;
-        case 0x4214: return (uint8_t)m_quotient;
-        case 0x4215: return (uint8_t)(m_quotient >> 8);
-        case 0x4216: return (uint8_t)m_product;
-        case 0x4217: return (uint8_t)(m_product >> 8);
+        case 0x4214: if (!peek) runAlu(true); return (uint8_t)m_quotient;
+        case 0x4215: if (!peek) runAlu(true); return (uint8_t)(m_quotient >> 8);
+        case 0x4216: if (!peek) runAlu(true); return (uint8_t)m_product;
+        case 0x4217: if (!peek) runAlu(true); return (uint8_t)(m_product >> 8);
         default:
             if (a >= 0x4218) return m_joy[a - 0x4218];
             return m_openBus;
         }
     }
+    // The multiplier and divider (Mesen's AluMulDiv): a bit a CPU cycle, 8 cycles to multiply and 16 to
+    // divide, shift-and-add on the result registers themselves, so a read part way through sees the
+    // partial result. They count the CPU's own cycles, so they stand still during DMA.
+    void runAlu(bool forRead) {
+        uint64_t now = m_cpu->cycles();
+        if (forRead) --now;                       // a read happens earlier in its cycle than a write
+        if (m_multCounter || m_divCounter) {
+            uint64_t n = now - m_aluPrev;
+            while (n-- && (m_multCounter || m_divCounter)) {
+                if (m_multCounter) {
+                    --m_multCounter;
+                    if (m_quotient & 1) m_product = (uint16_t)(m_product + m_aluShift);
+                    m_aluShift <<= 1;
+                    m_quotient >>= 1;
+                }
+                if (m_divCounter) {
+                    --m_divCounter;
+                    m_aluShift >>= 1;
+                    m_quotient = (uint16_t)(m_quotient << 1);
+                    if (m_product >= m_aluShift) { m_product = (uint16_t)(m_product - m_aluShift); m_quotient |= 1; }
+                }
+            }
+        }
+        m_aluPrev = now;
+    }
+    void aluWrite(uint16_t a, uint8_t v) {
+        runAlu(true);
+        // One finishing on this cycle still counts as running: it blocks starting another
+        const bool busy = m_multCounter || m_divCounter;
+        runAlu(false);
+        switch (a) {
+        case 0x4202: m_mpyA = v; break;
+        case 0x4203:
+            m_product = 0;
+            if (!busy) {
+                m_multCounter = 8;
+                m_mpyB = v;
+                m_quotient = (uint16_t)(v << 8 | m_mpyA);
+                m_aluShift = v;
+            } else if (!m_multCounter && !m_divCounter) {
+                m_quotient = (uint16_t)(v << 8 | m_mpyA);   // on the last clock: the value lands, nothing starts
+            }
+            break;
+        case 0x4204: m_dividend = (uint16_t)((m_dividend & 0xFF00) | v); break;
+        case 0x4205: m_dividend = (uint16_t)((m_dividend & 0x00FF) | v << 8); break;
+        case 0x4206:
+            m_product = m_dividend;
+            if (!busy) {
+                m_divCounter = 16;
+                m_aluShift = (uint32_t)v << 16;
+            }
+            break;
+        default: break;
+        }
+    }
+
     void internalWrite(uint16_t a, uint8_t v) {
         switch (a) {
         case 0x4200:
             m_nmitimen = v;
             if (!(v & 0x30)) m_irqFlag = false;
-            m_cpu->setNmiLine(m_nmiFlag && (v & 0x80));
+            m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (v & 0x80));
             break;
         case 0x4201:
             if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(dot(), m_line);
             m_wrio = v;
             break;
-        case 0x4202: m_mpyA = v; break;
-        case 0x4203: m_mpyB = v; m_product = (uint16_t)(m_mpyA * m_mpyB); m_quotient = v; break;
-        case 0x4204: m_dividend = (uint16_t)((m_dividend & 0xFF00) | v); break;
-        case 0x4205: m_dividend = (uint16_t)((m_dividend & 0x00FF) | v << 8); break;
-        case 0x4206:
-            if (v) { m_quotient = (uint16_t)(m_dividend / v); m_product = (uint16_t)(m_dividend % v); }
-            else { m_quotient = 0xFFFF; m_product = m_dividend; }
-            break;
+        case 0x4202: case 0x4203: case 0x4204: case 0x4205: case 0x4206: aluWrite(a, v); break;
         case 0x4207: m_htime = (uint16_t)((m_htime & 0x100) | v); break;
         case 0x4208: m_htime = (uint16_t)((m_htime & 0xFF) | (v & 1) << 8); break;
         case 0x4209: m_vtime = (uint16_t)((m_vtime & 0x100) | v); break;
@@ -783,91 +877,198 @@ private:
         }
     }
 
-    /** One byte between the A bus and the B bus ($21xx), in the channel's direction. */
+    // DMA timing (Mesen's SnesDmaController): it starts on a whole multiple of 8 master clocks, takes 8
+    // clocks of overhead, 8 a channel and 8 a byte (read at 4, written at 8), and ends on a whole CPU
+    // cycle. HDMA cuts in between a DMA's bytes.
+    void syncStartDma() {
+        m_dmaClock = 8 - (int)(m_master & 7);
+        advance(m_dmaClock);
+    }
+    void syncEndDma() { advance(m_cpuSpeed - (m_dmaClock % m_cpuSpeed)); }
+    bool anyDmaActive() const {
+        for (const auto& c : m_dma) if (c.dmaActive) return true;
+        return false;
+    }
+    static bool isWorkRam(uint32_t addr) {
+        const uint8_t bank = (uint8_t)(addr >> 16);
+        return bank == 0x7E || bank == 0x7F || (!(bank & 0x40) && (uint16_t)addr < 0x2000);
+    }
+    /** A byte the DMA reads from the A bus: it can't reach the B bus or the DMA registers (open bus). */
+    uint8_t dmaReadA(uint32_t aAddr) {
+        advance(4);
+        const uint16_t a = (uint16_t)aAddr;
+        if (!(aAddr & 0x400000) && ((a & 0xFF00) == 0x2100 || (a >= 0x4300 && a < 0x4380) || a == 0x420B || a == 0x420C))
+            return m_openBus;
+        return busRead(aAddr, false);
+    }
+
+    /** One byte between the A bus and the B bus ($21xx), in the channel's direction: 8 clocks. */
     void transfer(const DmaChannel& c, uint32_t aAddr, uint8_t bReg) {
         const uint16_t a = (uint16_t)aAddr;
-        // The A bus cannot reach the B bus or the DMA registers
         const bool aInvalid = !(aAddr & 0x400000) && ((a & 0xFF00) == 0x2100 || (a >= 0x4300 && a < 0x4380) || a == 0x420B || a == 0x420C);
+        const bool wramPort = bReg == 0x80 && isWorkRam(aAddr);
         if (c.ctrl & 0x80) {                                  // B -> A
+            if (wramPort) {
+                // $2180 -> work RAM: no read; the write happens, with a meaningless value
+                advance(4);
+                advance(4);
+                busWrite(aAddr, 0xFF);
+                return;
+            }
+            advance(4);
             const uint8_t v = bRead(bReg, false);
+            advance(4);
             if (!aInvalid) busWrite(aAddr, v);
         } else {
-            const uint8_t v = aInvalid ? m_openBus : busRead(aAddr, false);
+            if (wramPort) { advance(8); return; }             // work RAM -> $2180: nothing is written
+            const uint8_t v = dmaReadA(aAddr);
+            advance(4);
             bWrite(bReg, v);
         }
     }
 
-    void generalDma(uint8_t channels) {
-        // Every channel is active from the start: HDMA on a channel cancels its DMA, even before its turn
-        for (int ch = 0; ch < 8; ++ch) m_dma[ch].dmaActive = (channels >> ch) & 1;
-        advance(8);                                           // the DMA starts after a few clocks
+    /** Pending transfers, at the start of a CPU cycle (Mesen's ProcessPendingTransfers). */
+    bool processPendingDma() {
+        if (!(m_dmaPending || m_hdmaPending || m_hdmaInitPending)) return false;
+        if (m_dmaStartDelay) { m_dmaStartDelay = false; return false; }
+        if (m_hdmaPending) return hdmaRun();
+        if (m_hdmaInitPending) return hdmaInitRun();
+        m_dmaPending = false;
+        syncStartDma();
+        advance(8);                                           // the DMA's overhead
+        m_dmaClock += 8;
+        processPendingDma();
         for (int ch = 0; ch < 8; ++ch) {
-            if (!(channels & (1 << ch))) continue;
             DmaChannel& c = m_dma[ch];
             if (!c.dmaActive) continue;
-            advance(8);
-            if (!c.dmaActive) continue;
+            advance(8);                                       // the channel's overhead
+            m_dmaClock += 8;
+            processPendingDma();
             const int mode = c.ctrl & 7;
             int i = 0;
             do {
                 transfer(c, (uint32_t)c.a1b << 16 | c.a1t, (uint8_t)(c.bbad + MODE_OFS[mode][i & 3]));
-                advance(8);
                 if (!(c.ctrl & 0x08)) c.a1t = (c.ctrl & 0x10) ? (uint16_t)(c.a1t - 1) : (uint16_t)(c.a1t + 1);
                 --c.das;
                 ++i;
-            } while (c.das != 0 && c.dmaActive);     // HDMA on this channel ends it (as Mesen)
+                processPendingDma();                          // HDMA can cut in
+            } while (c.das != 0 && c.dmaActive);              // HDMA on this channel ends it (as Mesen)
+            m_dmaClock += 8 * i;
             c.dmaActive = false;
         }
+        syncEndDma();
+        return true;
+    }
+
+    void generalDma(uint8_t channels) {
+        // Every channel is active from the start: HDMA on a channel cancels its DMA, even before its turn.
+        // It starts at the CPU's next cycle but one.
+        for (int ch = 0; ch < 8; ++ch) if ((channels >> ch) & 1) m_dma[ch].dmaActive = true;
+        if (channels) { m_dmaPending = true; m_dmaStartDelay = true; }
     }
 
     // HDMA (Anomie's HDMA doc, Mesen SnesDmaController)
-    void hdmaInit() {
+    bool hdmaInitRun() {
+        m_hdmaInitPending = false;
+        for (auto& c : m_dma) { c.done = false; c.doTransfer = false; }
+        if (!m_hdmaen) return false;
+        const bool sync = !anyDmaActive();
+        if (sync) syncStartDma();
+        m_dmaClock += 8;
+        advance(8);
         for (int ch = 0; ch < 8; ++ch) {
             DmaChannel& c = m_dma[ch];
-            c.done = !(m_hdmaen & (1 << ch));
-            if (c.done) continue;
-            c.dmaActive = false;
+            c.doTransfer = true;
+            if (!(m_hdmaen & (1 << ch))) continue;
             c.a2a = c.a1t;
-            loadHdmaLine(c);
+            c.dmaActive = false;
+            c.nltr = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+            advance(4);
+            m_dmaClock += 8;
+            c.a2a = (uint16_t)(c.a2a + 1);
+            if (c.nltr == 0) c.done = true;
+            if (c.ctrl & 0x40) {
+                const uint8_t lo = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+                c.a2a = (uint16_t)(c.a2a + 1);
+                advance(4);
+                m_dmaClock += 8;
+                if (!c.done) {
+                    const uint8_t hi = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+                    c.a2a = (uint16_t)(c.a2a + 1);
+                    advance(4);
+                    m_dmaClock += 8;
+                    c.das = (uint16_t)(lo | hi << 8);
+                } else {
+                    c.das = (uint16_t)(lo << 8);
+                }
+            }
         }
+        if (sync) syncEndDma();
+        return true;
     }
-    void loadHdmaLine(DmaChannel& c) {
-        c.nltr = busRead((uint32_t)c.a1b << 16 | c.a2a, false);
-        c.a2a = (uint16_t)(c.a2a + 1);
-        if (c.ctrl & 0x40) {
-            const uint8_t lo = busRead((uint32_t)c.a1b << 16 | c.a2a, false);
-            const uint8_t hi = busRead((uint32_t)c.a1b << 16 | (uint16_t)(c.a2a + 1), false);
-            c.das = (uint16_t)(lo | hi << 8);
-            c.a2a = (uint16_t)(c.a2a + 2);
-        }
-        if (c.nltr == 0) c.done = true;
-        c.doTransfer = true;
+    bool lastActiveHdma(int ch) const {
+        for (int i = ch + 1; i < 8; ++i) if ((m_hdmaen & (1 << i)) && !m_dma[i].done) return false;
+        return true;
     }
-    void hdmaLine() {
-        if (!m_hdmaen) return;
-        int clocks = 18;
+    bool hdmaRun() {
+        m_hdmaPending = false;
+        if (!m_hdmaen) return false;
+        const bool sync = !anyDmaActive();
+        if (sync) syncStartDma();
+        m_dmaClock += 8;
+        advance(8);
+        // Every channel's transfer first, then the tables for the next line
         for (int ch = 0; ch < 8; ++ch) {
             DmaChannel& c = m_dma[ch];
             if (!(m_hdmaen & (1 << ch))) continue;
             c.dmaActive = false;
-            if (c.done) continue;
-            clocks += 8;
-            if (c.doTransfer) {
-                const int mode = c.ctrl & 7;
-                for (int i = 0; i < MODE_LEN[mode]; ++i) {
-                    uint32_t src;
-                    if (c.ctrl & 0x40) { src = (uint32_t)c.dasb << 16 | c.das; c.das = (uint16_t)(c.das + 1); }
-                    else { src = (uint32_t)c.a1b << 16 | c.a2a; c.a2a = (uint16_t)(c.a2a + 1); }
-                    transfer(c, src, (uint8_t)(c.bbad + MODE_OFS[mode][i]));
-                    clocks += 8;
-                }
+            if (c.done || !c.doTransfer) continue;
+            const int mode = c.ctrl & 7;
+            for (int i = 0; i < MODE_LEN[mode]; ++i) {
+                uint32_t src;
+                if (c.ctrl & 0x40) { src = (uint32_t)c.dasb << 16 | c.das; c.das = (uint16_t)(c.das + 1); }
+                else { src = (uint32_t)c.a1b << 16 | c.a2a; c.a2a = (uint16_t)(c.a2a + 1); }
+                transfer(c, src, (uint8_t)(c.bbad + MODE_OFS[mode][i]));
             }
+            m_dmaClock += 8 * MODE_LEN[mode];
+        }
+        for (int ch = 0; ch < 8; ++ch) {
+            DmaChannel& c = m_dma[ch];
+            if (!(m_hdmaen & (1 << ch)) || c.done) continue;
             --c.nltr;
             c.doTransfer = c.nltr & 0x80;
-            if (!(c.nltr & 0x7F)) loadHdmaLine(c);
+            // The next byte of the table is read whether it's needed or not
+            const uint8_t next = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+            advance(4);
+            m_dmaClock += 8;
+            if (!(c.nltr & 0x7F)) {
+                c.nltr = next;
+                c.a2a = (uint16_t)(c.a2a + 1);
+                if (c.ctrl & 0x40) {
+                    if (c.nltr == 0 && lastActiveHdma(ch)) {
+                        // The last active channel ending: only the high byte is read, the low is $00
+                        const uint8_t hi = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+                        c.a2a = (uint16_t)(c.a2a + 1);
+                        advance(4);
+                        m_dmaClock += 8;
+                        c.das = (uint16_t)(hi << 8);
+                    } else {
+                        const uint8_t lo = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+                        c.a2a = (uint16_t)(c.a2a + 1);
+                        advance(4);
+                        const uint8_t hi = dmaReadA((uint32_t)c.a1b << 16 | c.a2a);
+                        c.a2a = (uint16_t)(c.a2a + 1);
+                        advance(4);
+                        m_dmaClock += 16;
+                        c.das = (uint16_t)(lo | hi << 8);
+                    }
+                }
+                if (c.nltr == 0) c.done = true;
+                c.doTransfer = true;
+            }
         }
-        m_hClock += clocks;
-        m_master += (uint64_t)clocks;
+        if (sync) syncEndDma();
+        return true;
     }
 
     void checkIrq() {
@@ -875,7 +1076,7 @@ private:
         if ((!hEn && !vEn) || m_irqFired) return;
         if (vEn && m_line != m_vtime) return;
         const int at = hEn ? m_htime * 4 + 14 : 10;
-        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; }
+        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; m_irqSetAt = m_master - (uint64_t)(m_hClock - at); }
     }
 
     void endOfLine() {
@@ -885,19 +1086,21 @@ private:
         if (m_joyBusy > 0) --m_joyBusy;
         if (++m_line == m_lines) {
             m_line = 0;
-            m_nmiFlag = false;
+            m_nmiEvent = 1;                               // the flag falls at clock 2
             // A frame is 262 lines; interlaced, the even field's is 263
             m_ppu->startFrame();
             m_vblankLine = m_ppu->vblankLine();
             m_lines = (m_ppu->interlace() && !m_ppu->oddField()) ? 263 : 262;
-            hdmaInit();
+            m_hdmaInitDue = true;
+            m_hdmaInitAt = 12 + (int)(m_master & 7);
         }
+        m_refreshAt = REFRESH_AT - (int)(m_master & 7);
         // Not interlaced, line 240 of the odd field is 4 clocks short
         m_lineClocks = (m_line == 240 && m_ppu->oddField() && !m_ppu->interlace()) ? LINE_CLOCKS - 4 : LINE_CLOCKS;
         if (m_line == m_vblankLine) {
             m_ppu->startVblank();
             if (m_cart && m_cart->battery && ++m_saveFrames >= 60) { m_saveFrames = 0; m_cart->flushSave(); }
-            m_nmiFlag = true;
+            m_nmiEvent = 1;                               // the flag rises at clock 2, the CPU sees it at 6
             if (m_nmitimen & 0x01) {
                 // Auto joypad read: the pads' 16 bits into $4218-$421F (3 lines busy)
                 m_joy.fill(0);
@@ -922,9 +1125,20 @@ private:
     int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
     int m_saveFrames = 0;
     bool m_refreshDone = false, m_hdmaDone = false, m_irqFired = false;
+    // DMA/HDMA requests waiting for the CPU's next cycle
+    bool m_dmaPending = false, m_hdmaPending = false, m_hdmaInitPending = false, m_dmaStartDelay = false;
+    bool m_hdmaInitDue = false;
+    int m_hdmaInitAt = 12, m_refreshAt = REFRESH_AT, m_dmaClock = 0, m_cpuSpeed = 8;
+    uint64_t m_irqSetAt = 0;
+    int m_nmiEvent = 0;            // 1: the NMI flag changes at clock 2 of this line; 2: the CPU sees it at 6
+    bool m_nmiArmed = false;
+    uint64_t m_dmaLockCycle = ~0ull, m_nmiFlagAt = ~1ull;   // the CPU cycles DMA last ran in and the NMI flag last rose in
 
     uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;
     uint16_t m_dividend = 0xFFFF, m_quotient = 0, m_product = 0, m_htime = 0x1FF, m_vtime = 0x1FF;
+    uint32_t m_aluShift = 0;
+    uint8_t m_multCounter = 0, m_divCounter = 0;
+    uint64_t m_aluPrev = 0;
     bool m_fastRom = false, m_nmiFlag = false, m_irqFlag = false;
     int m_joyBusy = 0;
     std::array<uint8_t, 8> m_joy{};
@@ -1118,7 +1332,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
     desc->schedulerStep = [bus, cpu](MachineDescriptor&) -> int {
         const uint64_t before = bus->master();
         cpu->step();
-        if (bus->master() == before) bus->advance(6);     // WAI / STP: time goes on
+        if (bus->master() == before) bus->idle(0);        // WAI / STP: idle cycles, and DMA/HDMA still run
         bus->endStep();
         return (int)(bus->master() - before);
     };

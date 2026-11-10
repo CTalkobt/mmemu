@@ -23,6 +23,51 @@ The canonical version is defined in the `VERSION` file at the repository root.
   work. Tests: `spectrum_spi_sd_card`, `spectrum_divmmc_paging`,
   `spectrum48_divmmc_esxdos`.
 
+### SNES interrupts, open bus and the SPC700's TEST register
+
+- **Interrupts held off after DMA** (Mesen's IrqLock): when DMA or HDMA ran
+  in an instruction's last cycle, the IRQ, and an NMI that rose then, wait
+  one more instruction. `W65C816::holdInterrupts` does it for the SNES only.
+- **NMI timing:** the `$4210` flag rises at clock 2 of the NMI line, the
+  CPU sees it at 6, and a read before 6 doesn't clear it; `$4211` can't
+  clear the IRQ flag in its first 4 clocks (as Mesen).
+- **Open bus:** the write-only PPU registers give PPU1's latch only at
+  `$21x4-6`/`$21x8-A`, else the CPU's open bus (`$2137` too); `$4212`'s
+  horizontal blank starts after dot 274.
+- **The SPC700's TEST register** (`$F0`): wait states, the timer rate with
+  them, the timers' global enable/disable, and RAM writes on or off. SPC700
+  accesses now take their time as they happen.
+- **Tests:** `w65c816_hold_interrupts`, `snes_open_bus`,
+  `snes_apu_test_register_writes`, `snes_apu_test_register_wait_states`.
+  krom's CPU tests: 585 PASS. Of the 74 demo pictures, two animations
+  (StarWars, 8x8BGMap8BPP32x32) are caught a frame or so further on: their
+  vblank waits poll `$4210`, and a read in clocks 2-5 of the NMI line now
+  leaves the flag set, as on the hardware.
+- `MMEMU_SNES_SHOTS_ONLY=<text>` runs only the demo pictures whose name
+  contains it.
+
+### SNES DMA and HDMA timing
+
+- **DMA and HDMA take Mesen's time:** they start at the CPU's next cycle
+  but one after they're asked for (even in WAI), line up on 8 master
+  clocks, cost 8 clocks of overhead, 8 a channel and 8 a byte, then line
+  up on a CPU cycle. HDMA pays for its table reads and indirect addresses.
+  The DRAM refresh and HDMA setup move with the master clock's position in
+  8, as Mesen.
+- **Work RAM and `$2180`:** a DMA between them writes nothing (A to B) or a
+  meaningless byte (B to A), as Mesen.
+- **Tests:** `snes_dma_timing` measures a 16-byte DMA. krom's CPU tests (585
+  PASS) and all 74 PPU and Super FX demo pictures are unchanged.
+
+### SNES multiply/divide timing
+
+- **The 5A22's multiplier and divider take their time**, as Mesen's
+  `AluMulDiv`: 8 and 16 CPU cycles, a bit a cycle, so a read too soon sees
+  the partial result, and a write while one runs doesn't start another.
+  They no longer answer at once.
+- **Tests:** `snes_muldiv_timing` reads partial and finished results from a
+  65816 program. krom's CPU tests still give 585 PASS, 0 FAIL.
+
 ### Atari second POKEY
 
 - **A second POKEY** (the stereo upgrade, after atari800's `STEREO_SOUND`)
