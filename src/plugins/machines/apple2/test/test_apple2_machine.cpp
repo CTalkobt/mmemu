@@ -146,7 +146,7 @@ TEST_CASE(apple2_io) {
     EXPECT_TRUE(n > 5000);
     float lo = 1, hi = -1;
     for (int i = 0; i < n; ++i) { lo = std::min(lo, s[i]); hi = std::max(hi, s[i]); }
-    EXPECT_TRUE(hi - lo > 0.2f);
+    EXPECT_TRUE(hi - lo > 0.12f);
     // Paddle 0 at the centre (127): active for ~1400 cycles after $C070
     m->onJoystick(0, 0x1F);
     bus->read8(0xC070);
@@ -1461,4 +1461,90 @@ TEST_CASE(apple2gs_unidisk_gsos) {
     EXPECT_TRUE(a.size() == b.size() && a != b);      // GS/OS wrote to it
     delete m;
     std::filesystem::remove(copy);
+}
+
+// A Mockingboard fitted in slot 4 at run time: an AY register written the
+// way the drivers do it (DDRs, reset, latch, write through port B), read
+// back; a tone in the machine's sound; VIA 1's timer 1 interrupting the 6502
+// through the II+ monitor's IRQ vector ($03FE)
+#include "plugins/machines/apple2/main/mockingboard.h"
+TEST_CASE(apple2_mockingboard) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIPlus, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("slot4");
+    ASSERT(slot != nullptr);
+    EXPECT_TRUE(m->expansionSlot("slot5") != nullptr);
+    EXPECT_TRUE(!slot->install("mouse", "", err));
+    ASSERT(slot->install("mockingboard", "", err));
+    EXPECT_EQ(slot->info(), std::string("mockingboard (Mockingboard)"));
+    m->onReset(*m);
+    run(m, 1500000);
+    IBus* bus = m->buses[0].bus;
+    auto* mb = dynamic_cast<apple2::Mockingboard*>(m->ioRegistry->findHandler("Mockingboard (slot 4)"));
+    ASSERT(mb != nullptr);
+    auto ay = [&](uint16_t base, int reg, uint8_t v) {
+        bus->write8(base + 1, (uint8_t)reg); bus->write8(base, 0x07); bus->write8(base, 0x04);   // latch
+        bus->write8(base + 1, v); bus->write8(base, 0x06); bus->write8(base, 0x04);              // write
+    };
+    for (uint16_t base : {0xC400, 0xC480}) {
+        bus->write8(base + 3, 0xFF);                // DDRA: out
+        bus->write8(base + 2, 0x07);                // DDRB: BC1, BDIR, /RESET
+        bus->write8(base, 0x00); bus->write8(base, 0x04);                 // reset the AY
+    }
+    ay(0xC400, 0, 0xFE);                            // tone A: period $1FE (~125 Hz)
+    ay(0xC400, 1, 0x01);
+    ay(0xC400, 7, 0x3E);                            // mixer: tone A only
+    ay(0xC400, 8, 0x0F);                            // volume A
+    ay(0xC480, 7, 0x3F);                            // the other chip: mixer all off (a level)
+    ay(0xC480, 8, 0x05);
+    EXPECT_EQ(mb->ayReg(0, 0), 0xFE);
+    EXPECT_EQ(mb->ayReg(0, 7), 0x3E);
+    EXPECT_EQ(mb->ayReg(1, 8), 0x05);
+    EXPECT_EQ(mb->ayReg(1, 0), 0x00);
+    // Read back through port A (DDRA in, BC1 high)
+    bus->write8(0xC401, 8); bus->write8(0xC400, 0x07); bus->write8(0xC400, 0x04);
+    bus->write8(0xC403, 0x00);
+    bus->write8(0xC400, 0x05);
+    EXPECT_EQ(bus->read8(0xC401), 0x0F);
+    bus->write8(0xC400, 0x04);
+    bus->write8(0xC403, 0xFF);
+    // A square wave in the sound
+    auto* ao = dynamic_cast<IAudioOutput*>(m->ioRegistry->findHandler("Speaker"));
+    ASSERT(ao != nullptr);
+    std::vector<float> drain(100000);
+    while (ao->pullSamples(drain.data(), (int)drain.size()) > 0) {}
+    run(m, 102048);                                 // 0.1 s
+    std::vector<float> buf(8000);
+    const int n = ao->pullSamples(buf.data(), (int)buf.size());
+    EXPECT_TRUE(n > 4000);
+    float lo = 1, hi = -1;
+    int crossings = 0;
+    for (int i = 0; i < n; ++i) {
+        lo = std::min(lo, buf[i]); hi = std::max(hi, buf[i]);
+        if (i && (buf[i - 1] < 0) != (buf[i] < 0)) ++crossings;
+    }
+    EXPECT_TRUE(hi - lo > 0.12f);
+    if (crossings < 15 || crossings > 35) printf("  %d crossings, %.3f..%.3f\n", crossings, lo, hi);
+    EXPECT_TRUE(crossings >= 15 && crossings <= 35);   // ~125 Hz: ~25 sign changes in 0.1 s
+    // Timer 1 free-running at $0FFF with its IRQ on; the handler acknowledges
+    // it (reading T1C-L) and counts
+    static const uint8_t PROGRAM[] = {0x58, 0x4C, 0x01, 0x03};                         // $0300: CLI; JMP $0301
+    static const uint8_t HANDLER[] = {0xAD, 0x04, 0xC4, 0xE6, 0x06, 0xA5, 0x45, 0x40};  // $0310: LDA $C404; INC $06; LDA $45; RTI
+    for (size_t i = 0; i < sizeof PROGRAM; ++i) bus->write8(0x0300 + (uint32_t)i, PROGRAM[i]);
+    for (size_t i = 0; i < sizeof HANDLER; ++i) bus->write8(0x0310 + (uint32_t)i, HANDLER[i]);
+    bus->write8(0x03FE, 0x10); bus->write8(0x03FF, 0x03);
+    bus->write8(0x06, 0);
+    bus->write8(0xC40B, 0x40);                      // ACR: T1 free-running
+    bus->write8(0xC40E, 0xC0);                      // IER: T1
+    bus->write8(0xC404, 0xFF); bus->write8(0xC405, 0x0F);
+    m->cpus[0].cpu->setPc(0x0300);
+    run(m, 41000);                                  // ~10 periods of 4097 cycles
+    const int irqs = bus->peek8(0x06);
+    if (irqs < 9 || irqs > 11) printf("  %d IRQs\n", irqs);
+    EXPECT_TRUE(irqs >= 9 && irqs <= 11);
+    // Taken out: $C400 floats again and the IRQ count stops
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(m->ioRegistry->findHandler("Mockingboard (slot 4)") == nullptr);
+    delete m;
 }

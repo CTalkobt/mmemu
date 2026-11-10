@@ -140,6 +140,25 @@ After MAME's `a2eramworks3.cpp` and AppleWin's `Memory.cpp`:
 - A power cycle selects bank 0 (AppleWin GH#1414); Control-RESET keeps the
   bank.
 
+## Mockingboard
+
+On the II, II+, IIe and enhanced IIe, slots 4 and 5 can each take a Sweet Micro Systems Mockingboard while the machine runs (`slot4` and `slot5` expansion slots):
+
+```
+expansion slot4 mockingboard     # CLI; MCP expansion and the GUI's Control > Expansions... too
+expansion slot4 remove
+```
+
+It follows AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`:
+
+- **Two 6522 VIAs**, each driving an AY-3-8910 clocked at the CPU's 1.0205 MHz. VIA 1 answers at `$Cn00-$Cn7F` and VIA 2 at `$Cn80-$CnFF`, with the register number in the low 4 bits.
+- **Driving an AY:** a VIA's port A is its AY's data bus. Port B bits 0-2 are BC1, BDIR and /RESET: /RESET low resets the AY, then (BDIR, BC1) 00 is inactive, 01 read (port A reads the register), 10 write and 11 latch the register number.
+- **The AY core** is the Spectrum 128's (after Fuse): tones, noise, the envelope and the measured levels.
+- **IRQ:** both VIAs' IRQs go to the 6502's /IRQ, which also reaches the CPU on the II, II+ and IIe now. Their timers pace most music players.
+- **Sound:** the six voices (left chip and right chip) are mixed with the speaker into the machine's one mono output. One voice at full volume is about a quarter of the speaker's swing.
+- **Not emulated:** the speech chip (the SSI-263 on the "C" and Sound II), the Phasor's modes, and the IIc and IIgs (the IIc has no slots; the IIgs is a separate machine).
+- **IIe:** the slot's page answers only with INTCXROM off, as any card's does.
+
 ## IIc
 
 `apple2c` follows MAME's `apple2e.cpp`: an enhanced IIe (65C02, 128 KB, 80 columns, MouseText) with the IIc's differences.
@@ -404,5 +423,5 @@ MCP `mount_disk`. A read-only file is a write-protected disk.
 
 - WOZ 2.1 FLUX tracks; 13-sector `.dsk` images (`.d13`); a way to pick the
   13-sector ROM for a WOZ1; `.zip`/`.gz` images (#233).
-- The UniDisk 3.5's 65C02 firmware (its packets are served high-level); the IIe without its 80-column card (or with the 1 KB 80-column card).
+- The Mockingboard's speech chip (SSI-263); the UniDisk 3.5's 65C02 firmware (its packets are served high-level); the IIe without its 80-column card (or with the 1 KB 80-column card).
 - Cassette input and output.

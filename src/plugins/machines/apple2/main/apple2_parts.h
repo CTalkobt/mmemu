@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -47,6 +48,9 @@ public:
     void tick(uint64_t) override {}
 
     void toggle(uint64_t at) { advance(at); m_level = -m_level; ++m_toggles; }
+    /** Another source mixed in (a Mockingboard): its level over each sample
+     *  period, asked with the cycle the period ends at. */
+    void setMix(std::function<float(uint64_t)> mix) { m_mix = std::move(mix); }
     void advance(uint64_t to) {
         while (m_time < to) {
             const double room = PER_SAMPLE - m_phase;
@@ -55,7 +59,8 @@ public:
             m_phase += step;
             m_time += (uint64_t)std::max(1.0, step);
             if (m_phase >= PER_SAMPLE - 1e-9) {
-                const float x = (float)(m_acc / PER_SAMPLE) * 0.3f;
+                float x = (float)(m_acc / PER_SAMPLE) * 0.3f;
+                if (m_mix) x += m_mix(m_time) * 0.7f;   // a Mockingboard: one voice ~0.17, all six ~1
                 const float y = x - m_prevX + 0.995f * m_prevY;     // DC blocker
                 m_prevX = x;
                 m_prevY = y;
@@ -81,6 +86,7 @@ private:
     double m_phase = 0, m_acc = 0;
     float m_level = 1.0f, m_prevX = 0, m_prevY = 0;
     std::deque<float> m_out;
+    std::function<float(uint64_t)> m_mix;
 };
 
 // The video, as the frontends find it (an I/O device with a picture)

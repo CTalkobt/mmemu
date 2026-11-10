@@ -4,6 +4,7 @@
 
 #include "machine_apple2.h"
 #include "smartport_bus.h"
+#include "mockingboard.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"
@@ -178,6 +179,18 @@ public:
 
     // IIc: the serial ports' ACIAs (slots 1 and 2) and the CPU's /IRQ
     void setAcias(Acia6551* a1, Acia6551* a2) { m_acia[0] = a1; m_acia[1] = a2; }
+    /** A Mockingboard in `slot` (null takes it out); its sound joins the speaker's. */
+    void setCard(int slot, Mockingboard* mb) {
+        m_card[slot & 7] = mb;
+        std::vector<Mockingboard*> boards;
+        for (Mockingboard* c : m_card) if (c) boards.push_back(c);
+        if (boards.empty()) { m_spk->setMix(nullptr); return; }
+        m_spk->setMix([boards](uint64_t until) {
+            float v = 0;
+            for (Mockingboard* c : boards) v += c->sample(until);
+            return v;
+        });
+    }
     std::function<void(bool)> onIrq;
 
     // Instruction framing: accesses are counted so I/O happens on its cycle
@@ -198,6 +211,10 @@ public:
             bool line = m_irqMask != 0;
             for (Acia6551* a : m_acia) if (a && a->irqAsserted()) line = true;
             if (onIrq) onIrq(line);
+        } else if (onIrq) {
+            bool line = false;                          // the cards' /IRQ (a Mockingboard's VIAs)
+            for (Mockingboard* c : m_card) if (c && c->irq()) line = true;
+            if (line != m_cardIrq) { m_cardIrq = line; onIrq(line); }
         }
     }
     uint64_t cycles() const { return m_cycles; }
@@ -232,6 +249,7 @@ public:
         if (a < 0xC100) return m_video->floatingBus();
         if (a < 0xD000) {
             const int src = cxSource(a);
+            if (src == CX_CARD) return m_card[(a >> 8) & 7]->peek(a);
             return src == CX_INTERNAL ? m_rom[romBank() + a - 0xC000] : src == CX_DISK ? m_disk->rom((uint8_t)a)
                                                                            : m_video->floatingBus();
         }
@@ -243,7 +261,7 @@ public:
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
         if (a < 0xC000) ramWrite(a, v);
         else if (a < 0xC100) io(a, &v, at);
-        else if (a < 0xD000) cx(a, at);
+        else if (a < 0xD000) cx(a, at, &v);
         else if (m_lcWriteRam) {
             if (m_altZp) auxWrite(auxLcIndex(a), v);
             else m_lc[lcIndex(a)] = v;
@@ -277,7 +295,7 @@ public:
     bool lcBank2() const { return m_lcBank2; }
 
 private:
-    enum { CX_FLOATING, CX_INTERNAL, CX_DISK };
+    enum { CX_FLOATING, CX_INTERNAL, CX_DISK, CX_CARD };
 
     void resetPaging() {
         // LanguageCardUnit::kMemModeInitialState: ROM read, bank 2, write
@@ -357,12 +375,13 @@ private:
             const int slot = (a >> 8) & 7;
             if (m_iic) return CX_INTERNAL;                  // the IIc: always the internal ROM
             if (m_iie && (m_intCxRom || (slot == 3 && !m_slotC3Rom))) return CX_INTERNAL;
+            if (m_card[slot]) return CX_CARD;
             return slot == 6 ? CX_DISK : CX_FLOATING;
         }
         if (m_iic || (m_iie && (m_intCxRom || m_intC8Rom))) return CX_INTERNAL;
         return CX_FLOATING;     // no card has a $C800 ROM
     }
-    uint8_t cx(uint16_t a, uint64_t at) {
+    uint8_t cx(uint16_t a, uint64_t at, const uint8_t* wr = nullptr) {
         if (m_iie) {
             if (a == 0xCFFF) m_intC8Rom = false;
             else if (a >= 0xC300 && a < 0xC400 && !m_slotC3Rom) m_intC8Rom = true;
@@ -370,6 +389,11 @@ private:
         const int src = cxSource(a);
         if (src == CX_INTERNAL) return m_rom[romBank() + a - 0xC000];
         if (src == CX_DISK) return m_disk->rom((uint8_t)a);
+        if (src == CX_CARD) {                           // a card's $Cn00 page (a Mockingboard's VIAs)
+            Mockingboard* c = m_card[(a >> 8) & 7];
+            if (wr) { c->write(a, *wr, at); return 0; }
+            return c->read(a, at);
+        }
         return floating(at);
     }
 
@@ -687,6 +711,8 @@ private:
     // IIc: the IOU and the ACIAs
     static constexpr uint8_t IRQ_VBL = 1, IRQ_MOUSE = 2;
     Acia6551* m_acia[2] = {nullptr, nullptr};
+    Mockingboard* m_card[8] = {};
+    bool m_cardIrq = false;
     bool m_iouDis = true, m_vblMask = false, m_xyMask = false, m_x0Edge = false, m_y0Edge = false;
     bool m_lastVbl = false, m_romSwitch = false;
     // IIc mouse (MAME apple2e.cpp update_iic_mouse): each step toggles X0/Y0,
@@ -826,7 +852,6 @@ MachineDescriptor* create(Model model, std::string* err) {
         io->registerHandler(a1);
         io->registerHandler(a2);
         desc->deleters.push_back([a1, a2]() { delete a1; delete a2; });
-        bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
         // The mouse: moves in picture pixels (560 wide), halved to the
         // 280-dot screen
         desc->onMouse = [bus, fx = 0.0, fy = 0.0](int dx, int dy, uint8_t buttons, int) mutable {
@@ -872,6 +897,39 @@ MachineDescriptor* create(Model model, std::string* err) {
             return "ramworks3 (RamWorks III, " + (kb % 1024 ? std::to_string(kb) + " KB" : std::to_string(kb / 1024) + " MB") + ")";
         };
         desc->expansionSlots.push_back(std::move(aux));
+    }
+
+    // /IRQ: the IIc's IOU and ACIAs; the cards' on the others
+    bus->onIrq = [cpu](bool on) { cpu->setIrqLine(on); };
+
+    if (!iic) {
+        // Slots 4 and 5 take a Mockingboard at run time (AppleWin's usual
+        // places; two boards give twelve voices)
+        for (int slotNo : {4, 5}) {
+            auto board = std::make_shared<Mockingboard*>(nullptr);
+            desc->deleters.push_back([board, bus, slotNo]() { bus->setCard(slotNo, nullptr); delete *board; *board = nullptr; });
+            MachineDescriptor::ExpansionSlot sl;
+            sl.name = "slot" + std::to_string(slotNo);
+            sl.description = "Peripheral slot " + std::to_string(slotNo) + ": a sound card ($C" + std::to_string(slotNo) + "00-$C" + std::to_string(slotNo) + "FF)";
+            sl.devices = {{"mockingboard", "Sweet Micro Systems Mockingboard: two 6522 VIAs and two AY-3-8910s (six voices, stereo mixed to mono), /IRQ from the VIAs", {}, ""}};
+            sl.install = [bus, io, board, slotNo](const std::string& device, const std::string& option, std::string& err) {
+                if (!device.empty() && device != "mockingboard") { err = "no device '" + device + "' for this slot (mockingboard)"; return false; }
+                if (!option.empty()) { err = "the Mockingboard takes no option"; return false; }
+                if (*board) {
+                    bus->setCard(slotNo, nullptr);
+                    io->unregisterHandler(*board);
+                    delete *board;
+                    *board = nullptr;
+                }
+                if (device.empty()) return true;
+                *board = new Mockingboard(slotNo);
+                io->registerHandler(*board);        // its VIAs' timers tick with the machine
+                bus->setCard(slotNo, *board);
+                return true;
+            };
+            sl.info = [board]() -> std::string { return *board ? "mockingboard (Mockingboard)" : ""; };
+            desc->expansionSlots.push_back(std::move(sl));
+        }
     }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the

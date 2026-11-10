@@ -150,6 +150,9 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/machines/apple2/main/gs_doc.cpp \
 	src/plugins/machines/apple2/main/gs_scc.cpp \
 	src/plugins/machines/apple2/main/smartport_bus.cpp \
+	src/plugins/machines/apple2/main/mockingboard.cpp \
+	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
+	src/plugins/devices/via6522/main/via6522.cpp \
 	src/plugins/machines/apple2/main/disk2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
@@ -658,6 +661,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/apple2/main/gs_doc.o \
 	src/plugins/machines/apple2/main/gs_scc.o \
 	src/plugins/machines/apple2/main/smartport_bus.o \
+	src/plugins/machines/apple2/main/mockingboard.o \
 	src/plugins/machines/apple2/main/disk2.o \
 	src/plugins/devices/apple2_video/main/apple2_video.o \
 	src/plugins/machines/bbc/main/machine_bbc.o \
