@@ -149,6 +149,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - See `doc/README-C64.md` §2.10.
 
 ### Apple II
+- **Mockingboard in slot 4 or 5,** fitted at run time on the II, II+ and IIe (`expansion slot4 mockingboard`), after AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`.
+  - Two 6522 VIAs (the `via6522` device) drive two AY-3-8910s (the Spectrum 128's AY core) at 1.0205 MHz, through BC1/BDIR//RESET on port B.
+  - The VIAs' IRQs reach the 6502. The II, II+ and IIe now take /IRQ from cards: before, only the IIc's IOU and ACIAs could interrupt.
+  - The six voices are mixed into the speaker's sound (`Apple2Speaker::setMix`).
+  - `apple2_mockingboard` checks the driver's register sequence and read-back, a 125 Hz tone in the output, and timer-1 IRQs through the monitor's `$03FE` vector.
+  - See "Mockingboard" in `doc/README-APPLE2.md`.
 - **RamWorks III in the IIe's aux slot,** fitted once the machine is made. The IIe and enhanced IIe now have an `aux` expansion slot that takes `ext80` (the extended 80-column card, the default) or `ramworks3` with 128 KB to 16 MB.
   - Writes to `$C071/3/5/7` select a 64 KB bank for the aux switches; the video stays on bank 0.
   - Banks past the fitted memory float.
