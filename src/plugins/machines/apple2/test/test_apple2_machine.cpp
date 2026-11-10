@@ -1672,3 +1672,88 @@ TEST_CASE(apple2_mouse_card) {
     EXPECT_TRUE(find<apple2::MouseCard>(m) == nullptr);
     delete m;
 }
+
+// A No-Slot Clock under the IIe's internal ROM ($C3xx with INTCXROM on) and
+// the II+'s $F8 ROM: a read with A2 set starts the pattern over; 64
+// accesses with A2 clear give $5CA33AC55CA33AC5 a bit at a time on A0; 64
+// reads with A2 set then give the time in BCD, low bit first. Without the
+// pattern, or without the clock, the ROM reads as usual.
+#include "plugins/machines/apple2/main/no_slot_clock.h"
+TEST_CASE(apple2_no_slot_clock) {
+    for (apple2::Model model : {apple2::Model::IIeEnhanced, apple2::Model::IIPlus}) {
+        std::string err;
+        MachineDescriptor* m = apple2::create(model, &err);
+        if (!m) { printf("  (skipped: %s)\n", err.c_str()); continue; }
+        const bool iie = model == apple2::Model::IIeEnhanced;
+        auto* slot = m->expansionSlot("clock");
+        ASSERT(slot != nullptr);
+        EXPECT_TRUE(!slot->install("nsc", "x", err));
+        ASSERT(slot->install("nsc", "", err));
+        EXPECT_EQ(slot->info(), std::string("nsc (No-Slot Clock)"));
+        m->onReset(*m);
+        run(m, 100000);
+        IBus* bus = m->buses[0].bus;
+        if (iie) bus->write8(0xC007, 0);                 // INTCXROM: the internal ROM at $C100-$CFFF
+        else bus->read8(0xC082);                         // the II+: the ROM read, the language card write-protected
+                                                         // (AppleWin's IO_F8xx: not while it's writable)
+        const uint16_t base = iie ? 0xC300 : 0xF800;
+        const uint8_t romByte = bus->peek8(base + 4);
+        auto readTime = [&]() {
+            bus->read8(base + 4);                        // start the pattern over
+            for (int i = 0; i < 64; ++i) bus->read8((uint16_t)(base + ((apple2::NoSlotClock::INIT_SEQUENCE >> i) & 1)));
+            uint64_t bits = 0;
+            for (int i = 0; i < 64; ++i) bits |= (uint64_t)(bus->read8(base + 4) & 1) << i;
+            return bits;
+        };
+        // Tuesday 9 November 2026, 21:45:07
+        std::tm t{};
+        t.tm_year = 126; t.tm_mon = 10; t.tm_mday = 9; t.tm_wday = 2;
+        t.tm_hour = 21; t.tm_min = 45; t.tm_sec = 7;
+        apple2::NoSlotClock* nsc = apple2::noSlotClockOf(m);
+        ASSERT(nsc);
+        nsc->now = [t]() { return t; };
+        nsc->hundredths = []() { return 0; };
+        // Hundredths, seconds, minutes, hours, weekday (1 = Sunday), date,
+        // month, year: BCD bytes from the low end
+        EXPECT_EQ(readTime(), 0x2611090321450700ull);
+        if (iie) {
+            // NS.CLOCK.SYSTEM's own clock routine (its $13F5-$1470, from the
+            // disassembly in AppleWin's docs/NoSlotClock) on the 65C02, through
+            // the internal $C3 ROM (SLOTC3ROM off, INTCXROM off): ProDOS's
+            // date and time at $BF90-$BF93
+            static const uint8_t DRIVER[] = {
+                0x08, 0x78, 0xAD, 0xFF, 0xCF, 0x48, 0x8D, 0x00, 0xC3, 0xAD, 0x04, 0xC3, 0xA2, 0x08, 0xBD, 0x68, 0x14, 0x38, 0x6A, 0x48,
+                0xA9, 0x00, 0x2A, 0xA8, 0xB9, 0x00, 0xC3, 0x68, 0x4A, 0xD0, 0xF4, 0xCA, 0xD0, 0xEC, 0xA2, 0x08, 0xA0, 0x08, 0xAD, 0x04,
+                0xC3, 0x6A, 0x7E, 0xFF, 0x01, 0x88, 0xD0, 0xF6, 0xBD, 0xFF, 0x01, 0x4A, 0x4A, 0x4A, 0x4A, 0xA8, 0xF0, 0x0E, 0xBD, 0xFF,
+                0x01, 0x29, 0x0F, 0x18, 0x69, 0x0A, 0x88, 0xD0, 0xFB, 0x9D, 0xFF, 0x01, 0xCA, 0xD0, 0xD9, 0xAD, 0x04, 0x02, 0x8D, 0x93,
+                0xBF, 0xAD, 0x05, 0x02, 0x8D, 0x92, 0xBF, 0xAD, 0x01, 0x02, 0x0A, 0x0A, 0x0A, 0x0A, 0x0A, 0x0D, 0x02, 0x02, 0x8D, 0x90,
+                0xBF, 0xAD, 0x00, 0x02, 0x2A, 0x8D, 0x91, 0xBF, 0x68, 0x30, 0x03, 0x8D, 0xFF, 0xCF, 0x28, 0x60, 0x5C, 0xA3, 0x3A, 0xC5,
+                0x5C, 0xA3, 0x3A, 0xC5};
+            for (size_t i = 0; i < sizeof DRIVER; ++i) bus->write8(0x13F5 + (uint32_t)i, DRIVER[i]);
+            static const uint8_t CALL[] = {0x20, 0xF5, 0x13, 0x4C, 0x03, 0x03};    // JSR $13F5; JMP *
+            for (size_t i = 0; i < sizeof CALL; ++i) bus->write8(0x0300 + (uint32_t)i, CALL[i]);
+            for (uint32_t a = 0xBF90; a < 0xBF94; ++a) bus->write8(a, 0);
+            bus->write8(0xC006, 0);                      // INTCXROM off: $C3 is internal by SLOTC3ROM alone
+            m->cpus[0].cpu->setPc(0x0300);
+            run(m, 20000);
+            EXPECT_EQ(m->cpus[0].cpu->pc(), 0x0303);
+            EXPECT_EQ(bus->peek8(0xBF91), 0x35);         // year 26, month's bit 3
+            EXPECT_EQ(bus->peek8(0xBF90), 0x69);         // month 11's low bits, date 9
+            EXPECT_EQ(bus->peek8(0xBF93), 21);           // hour
+            EXPECT_EQ(bus->peek8(0xBF92), 45);           // minute
+            bus->write8(0xC007, 0);
+        }
+        // With the pattern broken (one wrong bit) the ROM answers
+        bus->read8(base + 4);
+        bus->read8((uint16_t)(base + 0));                // the pattern's first bit is 1
+        EXPECT_EQ(bus->read8(base + 4), romByte);
+        EXPECT_TRUE(!nsc->open());
+        // Taken out: the ROM again after the pattern
+        ASSERT(slot->install("", "", err));
+        EXPECT_EQ(slot->info(), std::string());
+        bus->read8(base + 4);
+        for (int i = 0; i < 64; ++i) bus->read8((uint16_t)(base + ((apple2::NoSlotClock::INIT_SEQUENCE >> i) & 1)));
+        EXPECT_EQ(bus->read8(base + 4), romByte);
+        delete m;
+    }
+}

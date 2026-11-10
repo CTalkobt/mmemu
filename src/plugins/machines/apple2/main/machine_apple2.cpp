@@ -6,6 +6,7 @@
 #include "smartport_bus.h"
 #include "mockingboard.h"
 #include "mouse_card.h"
+#include "no_slot_clock.h"
 #include "super_serial.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -161,6 +162,7 @@ public:
     }
 
     void powerOn() {
+        if (m_nsc) m_nsc->reset();
         // AppleWin fills RAM with a pattern; zeroes are as good for the ROMs
         std::fill(m_ram.begin(), m_ram.end(), 0);
         std::fill(m_aux.begin(), m_aux.end(), 0);
@@ -245,6 +247,19 @@ public:
             }
         return false;
     }
+    /** A No-Slot Clock under the ROM (null takes it out). */
+    void setNoSlotClock(NoSlotClock* nsc) { m_nsc = nsc; }
+    NoSlotClock* noSlotClock() const { return m_nsc; }
+    // Where the clock sees the bus (AppleWin IsPotentialNoSlotClockAccess,
+    // IO_F8xx): the IIe's internal ROM at $C3xx or $C8xx; the II/II+'s $F8
+    // ROM while it's read and the language card isn't written
+    bool nscUnder(uint16_t a) const {
+        if (m_iie) {
+            const uint8_t hi = (uint8_t)(a >> 8);
+            return (hi == 0xC3 && (m_intCxRom || !m_slotC3Rom)) || (hi == 0xC8 && m_intCxRom);
+        }
+        return a >= 0xF800 && !m_lcReadRam && !m_lcWriteRam;
+    }
     // IIc: the mouse, moves to step through and the button
     void mouse(int dx, int dy, bool button) { m_mouseDx += dx; m_mouseDy += dy; m_mouseButton = button; }
 
@@ -259,6 +274,7 @@ public:
         else if (a < 0xC100) v = io(a, nullptr, at);
         else if (a < 0xD000) v = cx(a, at);
         else v = highRead(a);
+        if (m_nsc && nscUnder(a)) m_nsc->access(a, false, v);   // a No-Slot Clock under the ROM
         if (m_observer) m_observer->onMemoryRead(this, a, v);
         return v;
     }
@@ -280,6 +296,7 @@ public:
         const uint16_t a = addr & 0xFFFF;
         const uint64_t at = m_cycles + m_access++;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
+        if (m_nsc && nscUnder(a)) { uint8_t d = v; m_nsc->access(a, true, d); }
         if (a < 0xC000) ramWrite(a, v);
         else if (a < 0xC100) io(a, &v, at);
         else if (a < 0xD000) cx(a, at, &v);
@@ -746,6 +763,7 @@ private:
     static constexpr uint8_t IRQ_VBL = 1, IRQ_MOUSE = 2;
     Acia6551* m_acia[2] = {nullptr, nullptr};
     SlotCard* m_card[8] = {};
+    NoSlotClock* m_nsc = nullptr;
     int m_c8Slot = 0;                           // the card owning $C800-$CFFF (0: none)
     bool m_cardIrq = false;
     bool m_iouDis = true, m_vblMask = false, m_xyMask = false, m_x0Edge = false, m_y0Edge = false;
@@ -787,6 +805,12 @@ private:
 };
 
 }  // namespace
+
+NoSlotClock* noSlotClockOf(MachineDescriptor* m) {
+    if (!m || m->buses.empty()) return nullptr;
+    auto* bus = dynamic_cast<Apple2Bus*>(m->buses[0].bus);
+    return bus ? bus->noSlotClock() : nullptr;
+}
 
 MachineDescriptor* create(Model model, std::string* err) {
     // The IIc's later ROMs: the IIc, with its ROM file and profile
@@ -1001,6 +1025,31 @@ MachineDescriptor* create(Model model, std::string* err) {
             fy -= iy;
             bus->cardMouse(ix, iy, buttons);
         };
+    }
+
+    {
+        // The No-Slot Clock: a DS1216 under the IIe's (or IIc's) $C3/$C8 ROM,
+        // the II/II+'s $F8 ROM. ProDOS's clock driver finds it.
+        auto nsc = std::make_shared<std::unique_ptr<NoSlotClock>>();
+        desc->deleters.push_back([nsc, bus]() { bus->setNoSlotClock(nullptr); nsc->reset(); });
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "clock";
+        sl.description = iie ? "The socket under the internal ROM ($C3xx/$C8xx): a No-Slot Clock"
+                             : "The socket under the $F8 ROM: a No-Slot Clock";
+        sl.devices = {{"nsc", "Dallas DS1216 SmartWatch (No-Slot Clock): the host's date and time, read through the ROM's addresses", {}, ""}};
+        sl.install = [bus, nsc](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "nsc") { err = "no device '" + device + "' for the clock socket (nsc)"; return false; }
+            if (!option.empty()) { err = "the No-Slot Clock takes no option"; return false; }
+            bus->setNoSlotClock(nullptr);
+            nsc->reset();
+            if (device.empty()) return true;
+            *nsc = std::make_unique<NoSlotClock>();
+            (*nsc)->reset();
+            bus->setNoSlotClock(nsc->get());
+            return true;
+        };
+        sl.info = [nsc]() { return *nsc ? std::string("nsc (No-Slot Clock)") : std::string(); };
+        desc->expansionSlots.push_back(std::move(sl));
     }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the

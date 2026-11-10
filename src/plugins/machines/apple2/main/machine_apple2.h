@@ -43,4 +43,8 @@ MachineDescriptor* createIIgs(std::string* err = nullptr, int romVersion = 1);
 /** A new machine, or nullptr with `err` set (e.g. a ROM missing). */
 MachineDescriptor* create(Model model, std::string* err = nullptr);
 
+class NoSlotClock;
+/** The No-Slot Clock fitted in `m`'s clock socket, or null. */
+NoSlotClock* noSlotClockOf(MachineDescriptor* m);
+
 }  // namespace apple2

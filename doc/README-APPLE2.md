@@ -148,6 +148,7 @@ On the II, II+, IIe and enhanced IIe, slots 1, 2, 4, 5 and 7 can each take a car
 expansion slot4 mockingboard     # CLI; MCP expansion and the GUI's Control > Expansions... too
 expansion slot2 ssc 9600         # a Super Serial Card; its DIP switches' rate
 expansion slot4 mouse            # an AppleMouse II card; the host mouse moves it
+expansion clock nsc              # a No-Slot Clock under the ROM
 serial modem                     # the SSC's far end: a Hayes modem (ATDT host:port)
 expansion slot4 remove
 ```
@@ -200,6 +201,19 @@ Apple's AppleMouse II card, after AppleWin's `MouseInterface.cpp` (from Kyle Kim
 - **Applesoft:** `PR#4:PRINT CHR$(1):PR#0` turns it on. `IN#4:INPUT "";X,Y,S:IN#0` reads the position and the button state.
 - **Test:** `apple2_mouse_card` calls the firmware's INITMOUSE, SETMOUSE, READMOUSE, CLAMPMOUSE and SERVEMOUSE on an enhanced IIe, and takes a VBL interrupt.
 
+
+### No-Slot Clock
+
+A Dallas DS1216 SmartWatch, after AppleWin's `NoSlotClock.cpp`. It fits in the `clock` socket on any of the II, II+, IIe and IIc: `expansion clock nsc`.
+
+- **Where it sits:** under the IIe's (and IIc's) internal ROM, where it sees `$C3xx` while that page is internal and `$C8xx` while INTCXROM is on. On the II and II+ it sits under the `$F8` ROM, seen while that ROM is read and the language card is write-protected (AppleWin's condition).
+- **The protocol:**
+  - An access with A2 clear writes A0 to the clock.
+  - 64 such writes matching `$5CA33AC55CA33AC5` (low bit first) open the clock register. A wrong bit closes it until a read with A2 set.
+  - 64 reads with A2 set then give D0: BCD hundredths, seconds, minutes, hours, weekday (1 = Sunday), date, month and year.
+  - Otherwise the ROM answers as usual.
+- **The time:** the host's local time.
+- **Test:** `apple2_no_slot_clock` reads the clock through the bus on a IIe and a II+. It also runs NS.CLOCK.SYSTEM's own clock routine (from the disassembly in AppleWin's `docs/NoSlotClock`), which sets ProDOS's date and time at `$BF90-$BF93`. ProDOS 2.4.3's disk has no clock driver of its own.
 
 ## IIc
 
