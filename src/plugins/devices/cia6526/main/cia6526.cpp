@@ -1,7 +1,26 @@
 #include "cia6526.h"
 #include "include/util/logging.h"
+#include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <vector>
+
+// The old 6526's interrupt flag pipeline (VICE ciacore.c ifr_delay): each
+// cycle the bits move one place left; ..0 is "this cycle"
+static constexpr uint32_t IFR_ACK1   = 0x0001;  // countdown to clearing IR after a read
+static constexpr uint32_t IFR_ACK0   = 0x0002;
+static constexpr uint32_t IFR_ACK_1  = 0x0004;
+static constexpr uint32_t IFR_ACK_2  = 0x0008;
+static constexpr uint32_t IFR_D7SET1 = 0x0010;  // countdown to setting IR (bit 7)
+static constexpr uint32_t IFR_D7SET0 = 0x0020;
+static constexpr uint32_t IFR_D7SET_1 = 0x0040;
+static constexpr uint32_t IFR_RAISE1 = 0x0100;  // countdown to raising the IRQ output
+static constexpr uint32_t IFR_RAISE0 = 0x0200;
+static constexpr uint32_t IFR_RAISE_1 = 0x0400;
+static constexpr uint32_t IFR_READ0  = 0x1000;  // cycles since an ICR read
+static constexpr uint32_t IFR_READ2  = 0x4000;
+static constexpr uint32_t IFR_CLEAR  = IFR_ACK_2 | IFR_D7SET_1 | IFR_RAISE_1 | IFR_READ2;
+static constexpr uint32_t IRQ_TBB    = 0x100;   // the timer B bug: drop TB on the next read
 #include <iomanip>
 
 /** "cia" logger: timer starts at debug; ICR access and underflows at trace. */
@@ -35,16 +54,18 @@ void CIA6526::reset() {
     m_ddra = 0x00;
     m_ddrb = 0x00;
 
-    m_taLatch   = 0xFFFF;
-    m_taCounter = 0xFFFF;
-    m_taRunning = false;
+    m_ta = Timer{};
+    m_tb = Timer{};
+    m_tat = m_tbt = 0;
 
-    m_tbLatch   = 0xFFFF;
-    m_tbCounter = 0xFFFF;
-    m_tbRunning = false;
-
-    m_icrMask    = 0x00;
-    m_icrPending = 0x00;
+    m_icrMask  = 0x00;
+    m_irqFlags = 0;
+    m_newFlags = 0;
+    m_ifrDelay = 0;
+    m_irqOut   = false;
+    m_clk      = 0;
+    m_rdi      = ~0ull;
+    m_quiet    = 0;
 
     m_cra = 0x00;
     m_crb = 0x00;
@@ -109,16 +130,17 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
             } else {
                 *val |= (~m_ddrb & 0xFF);
             }
+            *val = pb67(*val);
             break;
         }
         case DDRA: *val = m_ddra; break;
         case DDRB: *val = m_ddrb; break;
 
-        case TALO: *val = m_taCounter & 0xFF; break;
-        case TAHI: *val = (m_taCounter >> 8) & 0xFF; break;
+        case TALO: *val = m_ta.cnt & 0xFF; break;
+        case TAHI: *val = (m_ta.cnt >> 8) & 0xFF; break;
 
-        case TBLO: *val = m_tbCounter & 0xFF; break;
-        case TBHI: *val = (m_tbCounter >> 8) & 0xFF; break;
+        case TBLO: *val = m_tb.cnt & 0xFF; break;
+        case TBHI: *val = (m_tb.cnt >> 8) & 0xFF; break;
 
         // TOD reads: reading TODHR latches all TOD registers; reading TODTEN
         // releases the latch.
@@ -142,21 +164,26 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
         case SDR: *val = m_sdr; break;
 
         case ICR: {
-            // Read returns pending bits + bit 7 if any; clears all pending bits.
-            uint8_t pending = m_icrPending;
-            if (pending & m_icrMask) pending |= ICR_INT;
-            if (peek) { *val = pending; break; }
-            if (m_icrPending) {
-                ciaLog()->trace("{} ICR read: pending=${:02X} mask=${:02X} -> ${:02X}",
-                                m_name, m_icrPending, m_icrMask, pending);
-            }
-            m_icrPending = 0x00;
-            updateIrq(); // de-assert IRQ if all cleared
-            *val = pending;
+            // The flags; bit 7 as the pipeline has set it so far
+            if (peek) { *val = (uint8_t)m_irqFlags; break; }
+            // The old 6526 (VICE's cia_read_ for CIA_MODEL_6526): the flags
+            // clear at once, bit 7 two cycles on; a raise one cycle away is
+            // cancelled; the timer B bug drops a flag set just after a read
+            m_rdi = m_clk;
+            m_quiet = 0;
+            if (m_irqFlags & IRQ_TBB) m_irqFlags &= ~(IRQ_TBB | ICR_TB);
+            m_ifrDelay |= IFR_ACK1;
+            m_ifrDelay &= ~IFR_RAISE0;
+            *val = (uint8_t)m_irqFlags;
+            m_irqFlags &= ICR_INT;
+            m_newFlags = 0;
+            m_ifrDelay |= IFR_READ0;
+            setInt(false);
+            ciaLog()->trace("{} ICR read -> ${:02X}", m_name, *val);
             break;
         }
-        case CRA: *val = m_cra & ~CR_LOAD; break; // LOAD bit always reads 0
-        case CRB: *val = m_crb & ~CR_LOAD; break;
+        case CRA: *val = (m_cra & ~CR_START) | (m_ta.state & T_START); break;
+        case CRB: *val = (m_crb & ~CR_START) | (m_tb.state & T_START); break;
 
         default: *val = 0xFF; break;
     }
@@ -165,6 +192,7 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
 
 bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
+    m_quiet = 0;                                // the timers may change
 
     uint8_t reg = addr & 0x0F;
     switch (reg) {
@@ -189,21 +217,23 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             if (m_portBDevice) m_portBDevice->setDdr(val);
             break;
 
-        case TALO: m_taLatch = (m_taLatch & 0xFF00) | val; break;
-        case TAHI:
-            m_taLatch = (m_taLatch & 0x00FF) | ((uint16_t)val << 8);
-            // If Timer A is stopped, force-load latch into counter.
-            if (!m_taRunning) m_taCounter = m_taLatch;
-            m_icrPending &= ~ICR_TA; // clear pending TA interrupt on latch load
-            updateIrq();
+        // Latch writes (VICE ciat_set_latchlo/hi): a load in progress takes
+        // the new byte; the high byte loads a stopped counter
+        case TALO:
+            m_ta.latch = (m_ta.latch & 0xFF00) | val;
+            if (m_ta.state & T_LOAD) m_ta.cnt = (m_ta.cnt & 0xFF00) | val;
             break;
-
-        case TBLO: m_tbLatch = (m_tbLatch & 0xFF00) | val; break;
+        case TAHI:
+            m_ta.latch = (m_ta.latch & 0x00FF) | ((uint16_t)val << 8);
+            if ((m_ta.state & T_LOAD) || !(m_ta.state & T_START)) m_ta.cnt = m_ta.latch;
+            break;
+        case TBLO:
+            m_tb.latch = (m_tb.latch & 0xFF00) | val;
+            if (m_tb.state & T_LOAD) m_tb.cnt = (m_tb.cnt & 0xFF00) | val;
+            break;
         case TBHI:
-            m_tbLatch = (m_tbLatch & 0x00FF) | ((uint16_t)val << 8);
-            if (!m_tbRunning) m_tbCounter = m_tbLatch;
-            m_icrPending &= ~ICR_TB;
-            updateIrq();
+            m_tb.latch = (m_tb.latch & 0x00FF) | ((uint16_t)val << 8);
+            if ((m_tb.state & T_LOAD) || !(m_tb.state & T_START)) m_tb.cnt = m_tb.latch;
             break;
 
         // TOD / Alarm writes: CRB bit 7 (ALARM) determines target.
@@ -235,11 +265,11 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // This matches xemu's CIA_OUT_SDR_SETS_ICR_BIT3 behavior and
             // prevents the ROM's IEC serial polling loop from hanging
             // (see mega65-rom-public#169).
-            // Only set the flag (don't call updateIrq) — the ROM polls
-            // $DC0D to check for completion rather than using interrupts.
+            // The ROM polls $DC0D for completion; an enabled SP interrupt
+            // is raised as for any other source.
             m_sdr = val;
             if (m_cra & 0x40) {
-                m_icrPending |= ICR_SP;
+                setIrqFlag(ICR_SP);
                 if (m_serialOut) m_serialOut(val);      // the byte goes out (C128 fast serial)
             }
             break;
@@ -248,38 +278,34 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // Bit 7 = 1: set bits in mask; bit 7 = 0: clear bits from mask.
             if (val & 0x80) m_icrMask |=  (val & 0x7F);
             else            m_icrMask &= ~(val & 0x7F);
-            ciaLog()->trace("{} ICR write: val=${:02X} mask=${:02X} pending=${:02X}",
-                            m_name, val, m_icrMask, m_icrPending);
-            updateIrq();
+            // Old 6526: a pending flag now enabled raises IRQ two cycles on;
+            // one being raised is never cancelled, except right after a read
+            if (m_irqFlags & m_icrMask & 0x7F) {
+                if (!m_irqOut) m_ifrDelay |= IFR_RAISE1 | IFR_D7SET1;
+            } else if (m_ifrDelay & IFR_ACK_1) {
+                m_ifrDelay &= ~(IFR_RAISE0 | IFR_D7SET0);
+            }
+            ciaLog()->trace("{} ICR write: val=${:02X} mask=${:02X} flags=${:02X}",
+                            m_name, val, m_icrMask, m_irqFlags);
             break;
 
         case CRA: {
-            uint8_t prev = m_cra;
-            m_cra = val;
-            m_taRunning = (val & CR_START) != 0;
-            // Force-load latch if LOAD bit set; then clear the bit.
-            if (val & CR_LOAD) {
-                m_taCounter = m_taLatch;
-                m_cra &= ~CR_LOAD;
-            }
-            if (!(prev & CR_START) && m_taRunning) {
+            if ((val & CR_START) && !(m_cra & CR_START)) m_tat = 1;
+            if ((val & CR_START) && !(m_ta.state & T_START))
                 ciaLog()->debug("{} Timer A started: latch=${:04X} {} (mask=${:02X})",
-                                m_name, m_taLatch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_icrMask);
-            }
+                                m_name, m_ta.latch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_icrMask);
+            setCtrl(m_ta, val);
+            m_cra = val & ~CR_LOAD;
             break;
         }
         case CRB: {
-            uint8_t prev = m_crb;
-            m_crb = val;
-            m_tbRunning = (val & CR_START) != 0;
-            if (val & CR_LOAD) {
-                m_tbCounter = m_tbLatch;
-                m_crb &= ~CR_LOAD;
-            }
-            if (!(prev & CR_START) && m_tbRunning) {
+            if ((val & CR_START) && !(m_crb & CR_START)) m_tbt = 1;
+            if ((val & CR_START) && !(m_tb.state & T_START))
                 ciaLog()->debug("{} Timer B started: latch=${:04X} {} (mask=${:02X})",
-                                m_name, m_tbLatch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_icrMask);
-            }
+                                m_name, m_tb.latch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_icrMask);
+            // Counting timer A underflows (or CNT): no phi2 counting
+            setCtrl(m_tb, (val & CRB_INMODE_TA) ? (uint8_t)(val | 0x20) : val);
+            m_crb = val & ~CR_LOAD;
             break;
         }
 
@@ -292,75 +318,183 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
 // Tick
 // ---------------------------------------------------------------------------
 
+// The timer state machine (VICE ciat_init_table): each cycle the CR bits as
+// written move one stage on: START+PHI2IN -> COUNT2 -> COUNT3 (decrements)
+// -> COUNT; FLOAD -> LOAD1 -> LOAD; ONESHOT -> ONESHOT0 -> ONESHOT1.
+const uint16_t* CIA6526::stateTable() {
+    static const std::vector<uint16_t> table = [] {
+        std::vector<uint16_t> t(0x2000);
+        for (int i = 0; i < 0x2000; ++i) {
+            uint16_t s = (uint16_t)(i & (T_START | T_ONESHOT | T_PHI2IN));
+            if ((i & T_START) && (i & T_PHI2IN)) s |= T_COUNT2;
+            if ((i & T_COUNT2) || ((i & T_STEP) && (i & T_START))) s |= T_COUNT3;
+            if (i & T_COUNT3) s |= T_COUNT;
+            if (i & T_FLOAD) s |= T_LOAD1;
+            if (i & T_LOAD1) s |= T_LOAD;
+            if (i & T_ONESHOT) s |= T_ONESHOT0;
+            if (i & T_ONESHOT0) s |= T_ONESHOT1;
+            t[i] = s;
+        }
+        return t;
+    }();
+    return table.data();
+}
+
+// One cycle of a timer (the body of VICE's ciat_update); true on underflow
+bool CIA6526::stepTimer(Timer& t, const uint16_t* table) {
+    uint16_t s = t.state;
+    if (t.cnt && (s & T_COUNT3)) t.cnt--;
+    s = table[s & 0x1FFF];
+    bool under = false;
+    if (t.cnt == 0 && (s & T_COUNT3)) { s |= T_LOAD | T_OUT; under = true; }
+    if (s & T_LOAD) { t.cnt = t.latch; s &= ~T_COUNT3; }
+    if ((s & T_OUT) && (s & (T_ONESHOT1 | T_ONESHOT0))) s &= ~(T_START | T_COUNT2);
+    t.state = s;
+    return under;
+}
+
+// The one-shot pipeline is settled (all set or all clear)
+static inline bool oneshotSettled(uint16_t t, uint16_t a, uint16_t b, uint16_t c) {
+    const uint16_t m = t & (a | b | c);
+    return m == 0 || m == (a | b | c);
+}
+
+// Counting steadily: one decrement a cycle, nothing else changing
+bool CIA6526::timerCounting(uint16_t t) {
+    return (t & (T_START | T_FLOAD | T_LOAD1 | T_PHI2IN | T_COUNT2 | T_COUNT3 | T_COUNT | T_LOAD))
+               == (T_START | T_PHI2IN | T_COUNT2 | T_COUNT3 | T_COUNT)
+        && oneshotSettled(t, T_ONESHOT, T_ONESHOT0, T_ONESHOT1);
+}
+
+// Counting steadily or stopped for good (VICE's "warp" cases)
+bool CIA6526::timerSteady(uint16_t t) {
+    if (timerCounting(t)) return true;
+    return !(t & (T_COUNT2 | T_COUNT3 | T_COUNT))
+        && (!(t & T_START) || !(t & (T_PHI2IN | T_STEP)))
+        && !(t & (T_FLOAD | T_LOAD1 | T_LOAD))
+        && oneshotSettled(t, T_ONESHOT, T_ONESHOT0, T_ONESHOT1);
+}
+
+// Each state's class for the fast path: 0 changing, 1 stopped, 2 counting
+const uint8_t* CIA6526::steadyTable() {
+    static const std::vector<uint8_t> table = [] {
+        std::vector<uint8_t> t(0x2000);
+        for (int i = 0; i < 0x2000; ++i)
+            t[i] = timerCounting((uint16_t)i) ? 2 : timerSteady((uint16_t)i) ? 1 : 0;
+        return t;
+    }();
+    return table.data();
+}
+
+// One cycle: both timers, then the interrupt flag pipeline
+void CIA6526::runCycle() {
+    const uint16_t* table = stateTable();
+    ++m_clk;
+    const bool ua = stepTimer(m_ta, table);
+    const bool ub = stepTimer(m_tb, table);
+    if (ua) {
+        setIrqFlag(ICR_TA);
+        m_tat ^= 1;
+        // Timer B counting timer A: one count, taken next cycle
+        if ((m_crb & (CRB_INMODE_TA | CR_START)) == (CRB_INMODE_TA | CR_START)
+            && (m_tb.state & T_START))
+            m_tb.state |= T_STEP;
+    }
+    if (ub) {
+        setIrqFlag(ICR_TB);
+        // The old 6526's timer B bug: an ICR read the cycle before
+        if (m_rdi == m_clk - 1) m_irqFlags |= IRQ_TBB;
+        else                    m_irqFlags &= ~IRQ_TBB;
+        m_tbt ^= 1;
+    }
+    if (m_ifrDelay || m_newFlags) runIfrCycle();
+}
+
+// Run cycles, skipping ahead while nothing but steady counting goes on
+void CIA6526::runTimers(uint64_t cycles) {
+    const uint8_t* steady = steadyTable();
+    while (cycles > 0) {
+        const uint8_t ka = steady[m_ta.state & 0x1FFF], kb = steady[m_tb.state & 0x1FFF];
+        if (ka && kb && !m_ifrDelay && !m_newFlags) {
+            uint64_t k = cycles;
+            if (ka == 2) k = std::min<uint64_t>(k, m_ta.cnt ? m_ta.cnt - 1u : 0u);
+            if (kb == 2) k = std::min<uint64_t>(k, m_tb.cnt ? m_tb.cnt - 1u : 0u);
+            if (k > 0) {
+                if (ka == 2) m_ta.cnt = (uint16_t)(m_ta.cnt - k);
+                if (kb == 2) m_tb.cnt = (uint16_t)(m_tb.cnt - k);
+                m_clk += k;
+                cycles -= k;
+                continue;
+            }
+        }
+        runCycle();
+        --cycles;
+    }
+    // How long nothing but steady counting goes on (for tick()'s shortcut)
+    const uint8_t ka = steady[m_ta.state & 0x1FFF], kb = steady[m_tb.state & 0x1FFF];
+    m_quiet = 0;
+    if (ka && kb && !m_ifrDelay && !m_newFlags) {
+        uint64_t k = ~0ull;
+        if (ka == 2) k = std::min<uint64_t>(k, m_ta.cnt ? m_ta.cnt - 1u : 0u);
+        if (kb == 2) k = std::min<uint64_t>(k, m_tb.cnt ? m_tb.cnt - 1u : 0u);
+        m_quiet = k;
+        m_quietA = ka == 2;
+        m_quietB = kb == 2;
+    }
+}
+
+// One cycle of the old 6526's interrupt flag pipeline (VICE cia_run_ifr_cycle)
+void CIA6526::runIfrCycle() {
+    uint32_t delay = m_ifrDelay;
+    if (delay & IFR_ACK0) m_irqFlags &= ~ICR_INT;        // bit 7 clears after a read
+    if (m_newFlags & m_icrMask & 0x1F) delay |= IFR_RAISE1 | IFR_D7SET1;
+    if (delay & IFR_D7SET0) m_irqFlags |= ICR_INT;
+    if (delay & IFR_RAISE0) setInt(true);
+    m_newFlags = 0;
+    m_ifrDelay = (delay << 1) & ~IFR_CLEAR;
+}
+
+// A source sets its flag now; the pipeline raises IRQ from it next cycle
+void CIA6526::setIrqFlag(uint32_t bits) {
+    m_irqFlags |= bits;
+    m_newFlags |= bits;
+    m_quiet = 0;
+}
+
+// The IRQ output; a shared line is only driven on a change
+void CIA6526::setInt(bool on) {
+    if (on == m_irqOut) return;
+    m_irqOut = on;
+    if (m_irqLine) m_irqLine->set(on);
+}
+
+// PB6/PB7 as timer outputs: a one-cycle pulse on underflow, or a toggle
+// (set when the timer is started)
+uint8_t CIA6526::pb67(uint8_t byte) const {
+    if (!((m_cra | m_crb) & CR_PBON)) return byte;
+    if (m_cra & CR_PBON) {
+        byte &= 0xBF;
+        if ((m_cra & CR_TOGGLE) ? m_tat : (m_ta.state & T_OUT)) byte |= 0x40;
+    }
+    if (m_crb & CR_PBON) {
+        byte &= 0x7F;
+        if ((m_crb & CR_TOGGLE) ? m_tbt : (m_tb.state & T_OUT)) byte |= 0x80;
+    }
+    return byte;
+}
+
 void CIA6526::tick(uint64_t cycles) {
-    uint32_t taUnderflows = 0;
-    tickTimerA(cycles);
-    taUnderflows = 0; // count is tracked inside tickTimerA via m_icrPending; we
-                      // infer underflows for Timer B by checking the delta.
-    // Use a simpler approach: tick Timer B similarly, and for TB_INMODE_TA mode
-    // drive it from the TA underflow count accumulated during this tick.
-    tickTimerB(cycles, taUnderflows);
-    tickTOD(cycles);
-}
-
-void CIA6526::tickTimerA(uint64_t cycles) {
-    if (!m_taRunning) return;
-
-    uint32_t elapsed = (uint32_t)cycles;
-    while (elapsed > 0) {
-        uint32_t step = (elapsed < (uint32_t)m_taCounter) ? elapsed
-                                                           : (uint32_t)m_taCounter;
-        m_taCounter -= (uint16_t)step;
-        elapsed -= step;
-
-        if (m_taCounter == 0) {
-            // Underflow.
-            m_icrPending |= ICR_TA;
-            updateIrq();
-            ciaLog()->trace("{} Timer A underflow: mask=${:02X} pending=${:02X} irq={}",
-                            m_name, m_icrMask, m_icrPending, (m_icrPending & m_icrMask) != 0);
-
-            if (m_cra & CR_ONESHOT) {
-                m_taRunning = false;
-                m_cra &= ~CR_START;
-                break;
-            }
-            m_taCounter = m_taLatch ? m_taLatch : 0xFFFF;
-        }
+    if (cycles <= m_quiet) {                    // nothing but steady counting
+        m_quiet -= cycles;
+        if (m_quietA) m_ta.cnt = (uint16_t)(m_ta.cnt - cycles);
+        if (m_quietB) m_tb.cnt = (uint16_t)(m_tb.cnt - cycles);
+        m_clk += cycles;
+    } else {
+        runTimers(cycles);
     }
-}
-
-void CIA6526::tickTimerB(uint64_t cycles, uint32_t /*taUnderflows*/) {
-    if (!m_tbRunning) return;
-
-    uint8_t inmode = m_crb & CRB_INMODE_MASK;
-    if (inmode == CRB_INMODE_TA) {
-        // TB counts TA underflows — we can't easily count them here without
-        // reworking tickTimerA, so approximate: if ICR_TA fired this tick,
-        // step TB by the number of times TA wrapped (at least 1).
-        // For now just step once if TA fired.
-        if (!(m_icrPending & ICR_TA)) return;
-        cycles = 1;
-    }
-
-    uint32_t elapsed = (uint32_t)cycles;
-    while (elapsed > 0) {
-        uint32_t step = (elapsed < (uint32_t)m_tbCounter) ? elapsed
-                                                           : (uint32_t)m_tbCounter;
-        m_tbCounter -= (uint16_t)step;
-        elapsed -= step;
-
-        if (m_tbCounter == 0) {
-            m_icrPending |= ICR_TB;
-            updateIrq();
-
-            if (m_crb & CR_ONESHOT) {
-                m_tbRunning = false;
-                m_crb &= ~CR_START;
-                break;
-            }
-            m_tbCounter = m_tbLatch ? m_tbLatch : 0xFFFF;
-        }
+    if (m_todRunning) {
+        if (m_todAccum + cycles >= m_todTenth) tickTOD(cycles);
+        else m_todAccum += cycles;
     }
 }
 
@@ -372,8 +506,8 @@ void CIA6526::tickTOD(uint64_t cycles) {
     // Determine tenths-of-second period in CPU cycles.
     // TOD increments tenths at 10 Hz; external reference is 50 or 60 Hz.
     // We approximate: 1 tenth = clockHz / 10 cycles.
-    uint64_t tenthPeriod = m_clockHz / 10;
-    if (tenthPeriod == 0) tenthPeriod = 100000;
+    if (m_todAccum < m_todTenth) return;
+    uint64_t tenthPeriod = m_todTenth;
 
     while (m_todAccum >= tenthPeriod) {
         m_todAccum -= tenthPeriod;
@@ -404,8 +538,7 @@ void CIA6526::tickTOD(uint64_t cycles) {
             m_todSec == m_alarmSec &&
             m_todMin == m_alarmMin &&
             m_todHr  == m_alarmHr) {
-            m_icrPending |= ICR_TOD;
-            updateIrq();
+            setIrqFlag(ICR_TOD);
         }
     }
 }
@@ -415,13 +548,7 @@ void CIA6526::tickTOD(uint64_t cycles) {
 // ---------------------------------------------------------------------------
 
 void CIA6526::flagTrigger() {
-    m_icrPending |= 0x10;
-    updateIrq();
-}
-
-void CIA6526::updateIrq() {
-    bool assert = (m_icrPending & m_icrMask) != 0;
-    if (m_irqLine) m_irqLine->set(assert);
+    setIrqFlag(0x10);
 }
 
 uint8_t CIA6526::bcdInc(uint8_t bcd, uint8_t maxBcd) {
@@ -447,26 +574,26 @@ void CIA6526::getDeviceInfo(DeviceInfo& out) const {
     addReg("PRB", PRB, m_prb);
     addReg("DDRA", DDRA, m_ddra);
     addReg("DDRB", DDRB, m_ddrb);
-    addReg("TALO", TALO, m_taLatch & 0xFF);
-    addReg("TAHI", TAHI, m_taLatch >> 8);
-    addReg("TBLO", TBLO, m_tbLatch & 0xFF);
-    addReg("TBHI", TBHI, m_tbLatch >> 8);
+    addReg("TALO", TALO, m_ta.latch & 0xFF);
+    addReg("TAHI", TAHI, m_ta.latch >> 8);
+    addReg("TBLO", TBLO, m_tb.latch & 0xFF);
+    addReg("TBHI", TBHI, m_tb.latch >> 8);
     addReg("TODTEN", TODTEN, m_todTen);
     addReg("TODSEC", TODSEC, m_todSec);
     addReg("TODMIN", TODMIN, m_todMin);
     addReg("TODHR", TODHR, m_todHr);
     addReg("SDR", SDR, 0); // SDR not fully implemented
-    addReg("ICR", ICR, m_icrPending);
+    addReg("ICR", ICR, (uint8_t)m_irqFlags);
     addReg("CRA", CRA, m_cra);
     addReg("CRB", CRB, m_crb);
 
     char buf[32];
-    std::sprintf(buf, "%d", (int)m_taCounter);
+    std::sprintf(buf, "%d", (int)m_ta.cnt);
     out.state.push_back({"Timer A Counter", buf});
-    std::sprintf(buf, "%d", (int)m_tbCounter);
+    std::sprintf(buf, "%d", (int)m_tb.cnt);
     out.state.push_back({"Timer B Counter", buf});
-    out.state.push_back({"Timer A Running", m_taRunning ? "true" : "false"});
-    out.state.push_back({"Timer B Running", m_tbRunning ? "true" : "false"});
+    out.state.push_back({"Timer A Running", (m_ta.state & T_START) ? "true" : "false"});
+    out.state.push_back({"Timer B Running", (m_tb.state & T_START) ? "true" : "false"});
     
     out.dependencies.push_back({"Port A Device", m_portADevice ? "connected" : "none"});
     out.dependencies.push_back({"Port B Device", m_portBDevice ? "connected" : "none"});
@@ -474,34 +601,30 @@ void CIA6526::getDeviceInfo(DeviceInfo& out) const {
 }
 
 std::string CIA6526::advanceCycles(uint32_t cycles) {
-    uint8_t prevIcrPending = m_icrPending;
+    const bool interruptWasSet = (m_irqFlags & ICR_INT) != 0;
 
-    // Advance timers without triggering full tick() which has side effects
-    uint32_t taUnderflows = 0;
-    tickTimerA(cycles);
-    tickTimerB(cycles, taUnderflows);
+    // Advance the timers and interrupt pipeline (not the TOD clock)
+    runTimers(cycles);
 
-    // Check if interrupt bit changed
-    bool interruptWasSet = (prevIcrPending & ICR_INT) != 0;
-    bool interruptNowSet = (m_icrPending & ICR_INT) != 0;
+    const bool interruptNowSet = (m_irqFlags & ICR_INT) != 0;
 
     std::string result = m_name + " advanced by " + std::to_string(cycles) + " cycles\n\n";
 
     // Timer A status
-    result += "Timer A: count=$" + toHex(m_taCounter, 4);
-    result += " (latch=$" + toHex(m_taLatch, 4) + ")";
-    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]";
+    result += "Timer A: count=$" + toHex(m_ta.cnt, 4);
+    result += " (latch=$" + toHex(m_ta.latch, 4) + ")";
+    result += " [" + std::string((m_ta.state & T_START) ? "RUNNING" : "STOPPED") + "]";
     result += "\n";
 
     // Timer B status
-    result += "Timer B: count=$" + toHex(m_tbCounter, 4);
-    result += " (latch=$" + toHex(m_tbLatch, 4) + ")";
-    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]";
+    result += "Timer B: count=$" + toHex(m_tb.cnt, 4);
+    result += " (latch=$" + toHex(m_tb.latch, 4) + ")";
+    result += " [" + std::string((m_tb.state & T_START) ? "RUNNING" : "STOPPED") + "]";
     result += "\n";
 
     // ICR status
     result += "ICR: enabled_mask=$" + toHex(m_icrMask, 2);
-    result += " pending=$" + toHex(m_icrPending, 2) + "\n";
+    result += " pending=$" + toHex((uint8_t)m_irqFlags, 2) + "\n";
 
     // Interrupt bit status
     result += "Interrupt bit: " + std::string(interruptNowSet ? "SET" : "NOT SET");
@@ -517,27 +640,27 @@ std::string CIA6526::getStatusString() const {
     std::string result = m_name + " Status:\n";
 
     // Timer A
-    result += "  Timer A: count=$" + toHex(m_taCounter, 4);
-    result += " latch=$" + toHex(m_taLatch, 4);
-    result += " [" + std::string(m_taRunning ? "RUNNING" : "STOPPED") + "]";
+    result += "  Timer A: count=$" + toHex(m_ta.cnt, 4);
+    result += " latch=$" + toHex(m_ta.latch, 4);
+    result += " [" + std::string((m_ta.state & T_START) ? "RUNNING" : "STOPPED") + "]";
     result += " mode=" + std::string((m_cra & CR_ONESHOT) ? "oneshot" : "continuous") + "\n";
 
     // Timer B
-    result += "  Timer B: count=$" + toHex(m_tbCounter, 4);
-    result += " latch=$" + toHex(m_tbLatch, 4);
-    result += " [" + std::string(m_tbRunning ? "RUNNING" : "STOPPED") + "]";
+    result += "  Timer B: count=$" + toHex(m_tb.cnt, 4);
+    result += " latch=$" + toHex(m_tb.latch, 4);
+    result += " [" + std::string((m_tb.state & T_START) ? "RUNNING" : "STOPPED") + "]";
     result += " mode=" + std::string((m_crb & CR_ONESHOT) ? "oneshot" : "continuous") + "\n";
 
     // ICR
     result += "  ICR: enabled=$" + toHex(m_icrMask, 2);
-    result += " pending=$" + toHex(m_icrPending, 2) + "\n";
+    result += " pending=$" + toHex((uint8_t)m_irqFlags, 2) + "\n";
 
     // Port status
     result += "  Port A: $" + toHex(m_pra, 2) + " (IEC bus)\n";
     result += "  Port B: $" + toHex(m_prb, 2) + "\n";
 
     // Interrupt bit
-    result += "  Interrupt bit: " + std::string((m_icrPending & ICR_INT) ? "SET" : "NOT SET") + "\n";
+    result += "  Interrupt bit: " + std::string((m_irqFlags & ICR_INT) ? "SET" : "NOT SET") + "\n";
 
     return result;
 }

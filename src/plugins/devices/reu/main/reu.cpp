@@ -227,6 +227,7 @@ int Reu::busMasterCycle() {
     };
     switch (m_type) {
         case TO_REU: {
+            syncTo(0);
             const uint8_t v = m_bus->read8(m_dHost);
             ramWrite(m_dReu, v);
             advance();
@@ -235,6 +236,7 @@ int Reu::busMasterCycle() {
         }
         case FROM_REU: {
             const uint8_t v = m_floating = ramRead(m_dReu);
+            syncTo(0);
             m_bus->write8(m_dHost, v);
             advance();
             if (!m_left) { finish(m_dHost, m_dReu, 1, ST_EOB); m_floating = ramRead(m_dReu); }
@@ -242,8 +244,10 @@ int Reu::busMasterCycle() {
         }
         case SWAP: {
             const uint8_t r = ramRead(m_dReu);
+            syncTo(0);
             const uint8_t c = m_bus->read8(m_dHost);
             ramWrite(m_dReu, c);
+            syncTo(1);
             m_bus->write8(m_dHost, r);
             advance();
             if (!m_left) finish(m_dHost, m_dReu, 1, ST_EOB);
@@ -251,6 +255,7 @@ int Reu::busMasterCycle() {
         }
         default: {                                  // VERIFY (VICE reu_dma_compare)
             const uint8_t r = ramRead(m_dReu);
+            syncTo(0);
             const uint8_t c = m_bus->read8(m_dHost);
             advance();
             if (r == c) {

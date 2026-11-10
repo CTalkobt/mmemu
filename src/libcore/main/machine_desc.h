@@ -248,6 +248,9 @@ struct MachineDescriptor {
      *  when set, schedulers call it before each CPU step and, if it returns
      *  cycles, tick the devices by those instead of running the CPU. */
     std::function<int()> busMasterStep;
+    /** Cycles of the last busMasterStep the devices were already ticked by
+     *  (a bus master with access sync, #304); schedulers tick the rest. */
+    int busMasterTicked = 0;
 
     /**
      * CPU speed modelling (optional; set by machines whose CPU clock can run

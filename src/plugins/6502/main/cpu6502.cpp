@@ -67,6 +67,7 @@ void MOS6502::reset() {
     m_state.irqLine = 0;
     m_state.nmiLine = 0;
     m_state.nmiPrev = 0;
+    m_irqPending = m_nmiPending = m_replay = m_nmiEdge = false;
     m_state.haltLine = 0;
     m_state.waiting = 0;
     m_state.stopped = 0;
@@ -86,6 +87,7 @@ void MOS6502::softReset() {
     m_state.irqLine = 0;
     m_state.nmiLine = 0;
     m_state.nmiPrev = 0;
+    m_irqPending = m_nmiPending = m_replay = m_nmiEdge = false;
     m_state.haltLine = 0;
     m_state.waiting = 0;
     m_state.stopped = 0;
@@ -108,6 +110,7 @@ void MOS6502::triggerNmi() {
     // NMIs are edge-triggered (falling edge).
     m_state.nmiLine = 1; 
     m_state.nmiPrev = 0; 
+    m_irqPending = m_nmiPending = m_replay = false;
 }
 
 void MOS6502::saveState(uint8_t* buf) const {
@@ -119,13 +122,54 @@ void MOS6502::loadState(const uint8_t* buf) {
 }
 
 uint8_t MOS6502::read(uint16_t addr) {
+    if (m_replay) {                     // the RMW result, not a second bus read
+        m_replay = false;
+        return m_replayValue;
+    }
+    if (m_readCycle >= 0) syncTo(m_readCycle);
+    else if (m_fetchCycle >= 0) {                         // code run from I/O (#304)
+        if (!m_bus || !m_bus->isPlainMemory(addr)) syncTo(m_fetchCycle);
+        ++m_fetchCycle;
+    }
     return m_bus ? m_bus->read8(addr) : 0;
 }
 
 void MOS6502::write(uint16_t addr, uint8_t val) {
+    if (m_writeCycle >= 0) syncTo(m_writeCycle);
     if (m_bus) {
         m_bus->write8(addr, val);
     }
+}
+
+// Access sync: bring the machine to `cycle` of this instruction, polling the
+// interrupt lines on the way if that cycle is past the poll
+void MOS6502::syncTo(int cycle) {
+    if (!m_sync) return;
+    if (!m_polled && cycle > m_pollCycle) pollInterrupts();
+    m_sync(cycle);
+}
+
+// The 6502 samples IRQ (level, against I) and NMI (edge) in an instruction's
+// second-to-last cycle; what it saw is taken before the next instruction
+void MOS6502::pollInterrupts() {
+    m_polled = true;
+    if (m_sync) m_sync(m_pollCycle);
+    m_irqPending = m_state.irqLine && !(m_state.p & FLAG_I);
+    if ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge) m_nmiPending = true;
+    m_nmiEdge = false;
+    m_state.nmiPrev = m_state.nmiLine;
+}
+
+// A read-modify-write instruction's writes: the NMOS 6502 writes the value it
+// read back unchanged, then the result (so `ASL $D019` acknowledges a VIC-II
+// interrupt with the first write); the 65C02 writes only the result
+void MOS6502::rmwWrite(uint16_t addr, uint8_t old, uint8_t val) {
+    if (!m_cmos) {
+        if (m_writeCycle >= 0) syncTo(m_writeCycle - 1);
+        if (m_bus) m_bus->write8(addr, old);
+    }
+    write(addr, val);
+    m_replayValue = val;                // for SLO, RLA, SRE, RRA
 }
 
 void MOS6502::push(uint8_t val) {
@@ -441,10 +485,11 @@ int MOS6502::opASL(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x80) m_state.p |= FLAG_C;
         m <<= 1;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -528,17 +573,38 @@ int MOS6502::opBPL(uint16_t addr) {
 int MOS6502::opBRK(uint16_t addr) {
     (void)addr;
     m_state.pc++;
-    push((uint8_t)(m_state.pc >> 8));
-    push((uint8_t)(m_state.pc & 0xFF));
     // BRK pushes P with bit 4 (B) and bit 5 (U) set.
-    push(m_state.p | FLAG_B | FLAG_U);
-    m_state.p |= FLAG_I;
-    if (m_cmos) m_state.p &= ~FLAG_D;   // the 65C02 clears D on BRK
-    if (m_onVectorPull) m_onVectorPull();
-    uint8_t lo = read(0xFFFE);
-    uint8_t hi = read(0xFFFF);
-    m_state.pc = lo | (hi << 8);
+    interruptSequence(m_state.p | FLAG_B | FLAG_U, 0xFFFE);   // the 65C02 clears D on BRK
     return 0;
+}
+
+// The pushes and vector of BRK, IRQ and NMI. With access sync: the pushes on
+// cycles 2-4, the vector on 5-6; an NMI edge by cycle 3 takes the NMI
+// vector instead (it hijacks a BRK or IRQ, whose pushed B stays), and the
+// sequence doesn't poll: the handler's first instruction runs first.
+void MOS6502::interruptSequence(uint8_t p, uint16_t vector) {
+    if (m_sync) m_writeCycle = 2;
+    push((uint8_t)(m_state.pc >> 8));
+    if (m_sync) m_writeCycle = 3;
+    push((uint8_t)(m_state.pc & 0xFF));
+    if (m_sync) {
+        m_polled = true;
+        if (vector == 0xFFFE && ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge)) {
+            vector = 0xFFFA;
+            m_nmiEdge = false;
+            m_state.nmiPrev = m_state.nmiLine;
+        }
+        m_writeCycle = 4;
+    }
+    push(p);
+    m_state.p |= FLAG_I;
+    if (m_cmos) m_state.p &= ~FLAG_D;
+    if (m_sync) m_readCycle = 5;
+    if (m_onVectorPull) m_onVectorPull();
+    uint8_t lo = read(vector);
+    if (m_sync) m_readCycle = 6;
+    uint8_t hi = read((uint16_t)(vector + 1));
+    m_state.pc = (uint16_t)(lo | (hi << 8));
 }
 
 int MOS6502::opBVC(uint16_t addr) {
@@ -596,8 +662,9 @@ int MOS6502::opCPY(uint16_t addr) {
 }
 
 int MOS6502::opDEC(uint16_t addr) {
-    uint8_t m = read(addr) - 1;
-    write(addr, m);
+    const uint8_t old = read(addr);
+    uint8_t m = old - 1;
+    rmwWrite(addr, old, m);
     updateNZ(m);
     return 0;
 }
@@ -612,8 +679,9 @@ int MOS6502::opEOR(uint16_t addr) {
 }
 
 int MOS6502::opINC(uint16_t addr) {
-    uint8_t m = read(addr) + 1;
-    write(addr, m);
+    const uint8_t old = read(addr);
+    uint8_t m = old + 1;
+    rmwWrite(addr, old, m);
     updateNZ(m);
     return 0;
 }
@@ -648,10 +716,11 @@ int MOS6502::opLSR(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x01) m_state.p |= FLAG_C;
         m >>= 1;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -681,10 +750,11 @@ int MOS6502::opROL(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x80) m_state.p |= FLAG_C;
         m = (m << 1) | c;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -701,10 +771,11 @@ int MOS6502::opROR(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x01) m_state.p |= FLAG_C;
         m = (m >> 1) | c;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -712,8 +783,12 @@ int MOS6502::opROR(uint16_t addr) {
 
 int MOS6502::opRTI(uint16_t addr) {
     (void)addr;
+    // Pulls on cycles 3-5; the poll (cycle 4) sees the pulled I
+    if (m_sync) m_readCycle = 3;
     m_state.p = (pop() & ~FLAG_B) | FLAG_U;
+    if (m_sync) m_readCycle = 4;
     uint8_t lo = pop();
+    if (m_sync) m_readCycle = 5;
     uint8_t hi = pop();
     m_state.pc = lo | (hi << 8);
     return 0;
@@ -771,14 +846,14 @@ int MOS6502::opTYA(uint16_t addr) { (void)addr; m_state.a = m_state.y; updateNZ(
 
 // Illegal Opcodes
 int MOS6502::opKIL(uint16_t addr) { (void)addr; return 0; }
-int MOS6502::opSLO(uint16_t addr) { opASL(addr); return opORA(addr); }
-int MOS6502::opRLA(uint16_t addr) { opROL(addr); return opAND(addr); }
-int MOS6502::opSRE(uint16_t addr) { opLSR(addr); return opEOR(addr); }
-int MOS6502::opRRA(uint16_t addr) { opROR(addr); return opADC(addr); }
+int MOS6502::opSLO(uint16_t addr) { opASL(addr); m_replay = true; return opORA(addr); }
+int MOS6502::opRLA(uint16_t addr) { opROL(addr); m_replay = true; return opAND(addr); }
+int MOS6502::opSRE(uint16_t addr) { opLSR(addr); m_replay = true; return opEOR(addr); }
+int MOS6502::opRRA(uint16_t addr) { opROR(addr); m_replay = true; return opADC(addr); }
 int MOS6502::opSAX(uint16_t addr) { write(addr, m_state.a & m_state.x); return 0; }
 int MOS6502::opLAX(uint16_t addr) { m_state.a = m_state.x = read(addr); updateNZ(m_state.a); return 0; }
-int MOS6502::opDCP(uint16_t addr) { write(addr, read(addr) - 1); return opCMP(addr); }
-int MOS6502::opISC(uint16_t addr) { write(addr, read(addr) + 1); return opSBC(addr); }
+int MOS6502::opDCP(uint16_t addr) { const uint8_t m = read(addr); rmwWrite(addr, m, (uint8_t)(m - 1)); m_replay = true; return opCMP(addr); }
+int MOS6502::opISC(uint16_t addr) { const uint8_t m = read(addr); rmwWrite(addr, m, (uint8_t)(m + 1)); m_replay = true; return opSBC(addr); }
 // The immediate operand is at `addr` (the IMM mode has already stepped the PC)
 int MOS6502::opANC(uint16_t addr) { m_state.a &= read(addr); updateNZ(m_state.a); if (m_state.p & FLAG_N) m_state.p |= FLAG_C; else m_state.p &= ~FLAG_C; return 0; }
 int MOS6502::opALR(uint16_t addr) { m_state.a &= read(addr); return opLSR(0xFFFF); }
@@ -935,44 +1010,49 @@ int MOS6502::step() {
         }
     }
 
+    // With access sync the interrupt lines were polled in the last
+    // instruction's second-to-last cycle; without, they're looked at now
+    bool takeNmi, takeIrq;
+    if (m_sync) {
+        takeNmi = m_nmiPending;
+        takeIrq = !takeNmi && m_irqPending;
+        m_nmiPending = m_irqPending = false;
+        m_polledI = -1;
+        if (takeNmi || takeIrq) {
+            m_readCycle = m_writeCycle = 6;     // pushes and vector: RAM, timing aside
+            m_pollCycle = 5;
+            m_polled = true;                    // polled at the end, I set
+            m_lastWrites = 0x1C;
+        }
+    } else {
+        takeNmi = m_state.nmiLine && !m_state.nmiPrev;
+        if (!takeNmi) m_state.nmiPrev = m_state.nmiLine;
+        // IRQ (level-sensitive). With poll latency, the I flag the last
+        // instruction's poll saw (CLI/SEI/PLP change it after the poll).
+        const bool masked = m_polledI >= 0 ? m_polledI != 0 : (m_state.p & FLAG_I) != 0;
+        m_polledI = -1;
+        takeIrq = !takeNmi && m_state.irqLine && !masked;
+    }
+
     // NMI handling (falling edge)
-    if (m_state.nmiLine && !m_state.nmiPrev) {
+    if (takeNmi) {
         log(SIM_LOG_DEBUG, "6502: Taking NMI");
-        m_state.nmiPrev = 1;
-        push((uint8_t)(m_state.pc >> 8));
-        push((uint8_t)(m_state.pc & 0xFF));
+        if (!m_sync) m_state.nmiPrev = 1;
         // IRQ/NMI pushes P with B=0 and U=1
-        push((m_state.p & ~FLAG_B) | FLAG_U);
-        m_state.p |= FLAG_I;
-        if (m_cmos) m_state.p &= ~FLAG_D;
-        if (m_onVectorPull) m_onVectorPull();
-        uint8_t lo = read(0xFFFA);
-        uint8_t hi = read(0xFFFB);
-        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+        interruptSequence((m_state.p & ~FLAG_B) | FLAG_U, 0xFFFA);
         m_state.cycles += 7;
         m_lastWrites = 0x1C;                     // pushes on cycles 2-4
+        if (m_sync) m_readCycle = m_writeCycle = -1;
         return 7;
     }
-    m_state.nmiPrev = m_state.nmiLine;
 
-    // IRQ handling (level-sensitive). With poll latency, the I flag the last
-    // instruction's poll saw (CLI/SEI/PLP change it after the poll).
-    const bool masked = m_polledI >= 0 ? m_polledI != 0 : (m_state.p & FLAG_I) != 0;
-    m_polledI = -1;
-    if (m_state.irqLine && !masked) {
+    if (takeIrq) {
         log(SIM_LOG_DEBUG, "6502: Taking IRQ");
-        push((uint8_t)(m_state.pc >> 8));
-        push((uint8_t)(m_state.pc & 0xFF));
         // IRQ/NMI pushes P with B=0 and U=1
-        push((m_state.p & ~FLAG_B) | FLAG_U);
-        m_state.p |= FLAG_I;
-        if (m_cmos) m_state.p &= ~FLAG_D;
-        if (m_onVectorPull) m_onVectorPull();
-        uint8_t lo = read(0xFFFE);
-        uint8_t hi = read(0xFFFF);
-        m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
+        interruptSequence((m_state.p & ~FLAG_B) | FLAG_U, 0xFFFE);
         m_state.cycles += 7;
         m_lastWrites = 0x1C;                     // pushes on cycles 2-4
+        if (m_sync) m_readCycle = m_writeCycle = -1;
         return 7;
     }
 
@@ -983,9 +1063,15 @@ int MOS6502::step() {
     }
 
     uint16_t pc = m_state.pc;
+    // With access sync the opcode and operand fetches (and pointer reads)
+    // come on their own cycles, in order: code can run from a timer
+    if (m_sync) m_fetchCycle = 0;
     uint8_t op = read(m_state.pc++);
     const Opcode& info = m_ops[op];
     m_curOp = op;
+    // A 2-cycle instruction polls in its opcode cycle, before its operand
+    // fetch (a fetch past the poll cycle polls first)
+    if (m_sync) { m_pollCycle = info.cycles - 2; m_polled = false; }
 
     int extraCycles = 0;
     bool pageCrossed = false;
@@ -1018,6 +1104,7 @@ int MOS6502::step() {
             break;
         }
     }
+    m_fetchCycle = -1;
 
     if (m_observer) {
         if (m_observer->needsDisasm()) {
@@ -1037,21 +1124,44 @@ int MOS6502::step() {
     }
 
     const uint8_t iBefore = m_state.p & FLAG_I;
+    // The write cycles, and with access sync the cycles of the data accesses
+    // (a branch's extra cycles come later and have none)
+    const int baseTotal = info.cycles + extraCycles;
+    if (m_writeKindFor != m_ops) buildWriteKinds();
+    switch (m_writeKind[op]) {
+        case W_LAST:  m_lastWrites = 1u << (baseTotal - 1); break;
+        case W_LAST2: m_lastWrites = 3u << (baseTotal - 2); break;
+        case W_JSR:   m_lastWrites = 0x18; break;    // PCH, PCL pushed on cycles 3-4
+        case W_BRK:   m_lastWrites = 0x1C; break;    // PCH, PCL, P on cycles 2-4
+        default: break;
+    }
+    if (m_sync) {
+        m_readCycle = m_isRmw[op] ? baseTotal - 3 : baseTotal - 1;
+        m_writeCycle = baseTotal - 1;
+        if (!m_polled || m_pollCycle != baseTotal - 2) {
+            m_pollCycle = baseTotal - 2;
+            m_polled = false;
+        }
+        // CLI, SEI, PLP: the poll comes before I changes
+        if (!m_cmos && (op == 0x58 || op == 0x78 || op == 0x28)) pollInterrupts();
+    }
     if (info.fn) {
         extraCycles += (this->*(info.fn))(addr);
     }
-    if (m_pollLatency && (op == 0x58 || op == 0x78 || op == 0x28) && !m_cmos)
+    if (m_pollLatency && !m_sync && (op == 0x58 || op == 0x78 || op == 0x28) && !m_cmos)
         m_polledI = iBefore ? 1 : 0;           // CLI / SEI / PLP: the poll saw the old I
 
     int total = info.cycles + extraCycles;
     m_state.cycles += total;
-    if (m_writeKindFor != m_ops) buildWriteKinds();
-    switch (m_writeKind[op]) {
-        case W_LAST:  m_lastWrites = 1u << (total - 1); break;
-        case W_LAST2: m_lastWrites = 3u << (total - 2); break;
-        case W_JSR:   m_lastWrites = 0x18; break;    // PCH, PCL pushed on cycles 3-4
-        case W_BRK:   m_lastWrites = 0x1C; break;    // PCH, PCL, P on cycles 2-4
-        default: break;
+    if (m_sync) {
+        // A taken branch polls in its operand cycle unless it crosses a page
+        // (a page-crossing one polls again, later)
+        const bool relCross = info.mode == Mode::REL && total - baseTotal == 2;
+        if (!m_polled || relCross) {
+            if (info.mode != Mode::REL || total - baseTotal != 1) m_pollCycle = total - 2;
+            pollInterrupts();
+        }
+        m_readCycle = m_writeCycle = -1;
     }
     return total;
 }
@@ -1075,6 +1185,12 @@ void MOS6502::buildWriteKinds() {
         if (is("JSR")) k = W_JSR;
         if (is("BRK")) k = W_BRK;
         m_writeKind[i] = k;
+        bool r = false;
+        if (o.mode != Mode::ACC && o.mode != Mode::IMP) {
+            for (const char* n : rmw) if (is(n)) r = true;
+            if (is("TSB") || is("TRB") || is("RMB") || is("SMB")) r = true;
+        }
+        m_isRmw[i] = r;
     }
     m_writeKindFor = m_ops;
 }

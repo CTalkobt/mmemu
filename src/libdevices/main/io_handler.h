@@ -102,6 +102,10 @@ public:
     /** The device pulling BA (the C64's VIC-II, #266): a bus master waits
      *  while it has the bus. */
     virtual void setBaSource(IBaSource* /*ba*/)              {}
+    /** Cycle-exact access for a bus master (#304): called with the cycle
+     *  (from 0) of busMasterCycle()'s access before it, so the machine can
+     *  bring the other devices up to that cycle first. */
+    virtual void setBusMasterSync(std::function<void(int)> /*sync*/) {}
     /** A setting for a device fitted at run time (an expansion's option:
      *  e.g. "size" = "512K", "image" = a path); false with `err` set if the
      *  device has no such option or the value doesn't fit. */

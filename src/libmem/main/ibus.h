@@ -91,6 +91,13 @@ public:
 
     virtual bool isHaltRequested() { return false; }
 
+    /**
+     * True when a read of `addr` can't reach a device (plain RAM or ROM), so
+     * a CPU need not bring the devices up to that cycle first. Defaults to
+     * false (assume a device may be there).
+     */
+    virtual bool isPlainMemory(uint32_t addr) const { (void)addr; return false; }
+
     void setObserver(ExecutionObserver* obs) { m_observer = obs; }
     ExecutionObserver* getObserver() const { return m_observer; }
 

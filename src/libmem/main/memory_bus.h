@@ -93,6 +93,7 @@ public:
                     std::function<bool(IBus*, uint32_t, uint8_t*)> peekFn = {});
 
     void setIoLowBase(uint32_t base) { m_ioLowBase = base; }
+    bool isPlainMemory(uint32_t addr) const override { return (addr & m_config.addrMask) < m_ioLowBase; }
 
     void setHaltCheck(std::function<bool()> checkFn) { m_haltCheck = std::move(checkFn); }
 

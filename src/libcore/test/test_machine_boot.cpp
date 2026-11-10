@@ -27,6 +27,10 @@
 #include "plugins/devices/georam/main/georam.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
 #include "plugins/devices/mouse1351/main/mouse1351.h"
+#include "libdevices/main/debug_cart.h"
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
 #include <vector>
 #include <algorithm>
 #include <string>
@@ -1036,4 +1040,87 @@ TEST_CASE(c64_reu_waits_for_badlines) {
     const int on = copy(0x1B);
     EXPECT_TRUE(on >= 1000 + 2 * 40 && on <= 1000 + 3 * 43);
     delete desc;
+}
+
+namespace {
+// One of VICE's "exitcode" test programs on a PAL C64, as VICE's testbench
+// runs it: power on, autostart the PRG (injected, then RUN), and wait for the
+// debug cart at $D7FF. The exit code, or -1 if none came within `limit`
+// cycles of power on.
+int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
+    std::ifstream f(prgPath, std::ios::binary);
+    if (!f) return -2;
+    std::vector<uint8_t> prg((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (prg.size() < 3) return -2;
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    if (!desc) return -3;
+    std::string err;
+    if (reu && !desc->expansionSlot("port")->install("reu", "512K", err)) { delete desc; return -3; }
+    DebugCart cart;
+    desc->ioRegistry->registerHandler(&cart);
+    desc->onReset(*desc);
+    IBus* bus = desc->buses[0].bus;
+    uint64_t cycles = 0;
+    while (cycles < 2500000) cycles += (uint64_t)desc->schedulerStep(*desc);   // to READY.
+    const uint16_t load = (uint16_t)(prg[0] | (prg[1] << 8));
+    const uint16_t end = (uint16_t)(load + prg.size() - 2);
+    for (size_t i = 2; i < prg.size(); ++i) bus->write8((uint16_t)(load + i - 2), prg[i]);
+    for (uint16_t p : {0x2D, 0x2F, 0x31, 0xAE}) {        // VARTAB, ARYTAB, STREND, the load end
+        bus->write8(p, (uint8_t)end);
+        bus->write8(p + 1, (uint8_t)(end >> 8));
+    }
+    const char* run = "RUN\r";
+    for (int i = 0; i < 4; ++i) bus->write8(0x0277 + i, (uint8_t)run[i]);
+    bus->write8(0xC6, 4);
+    while (!cart.written() && cycles < limit) cycles += (uint64_t)desc->schedulerStep(*desc);
+    const int code = cart.written() ? cart.code() : -1;
+    if (code != 0 && std::getenv("MMEMU_VICE_SCREEN")) {      // what a failing program printed
+        for (int r = 0; r < 25; ++r) {
+            std::string line;
+            for (int c = 0; c < 40; ++c) {
+                const uint8_t v = bus->peek8((uint16_t)(0x0400 + r * 40 + c)) & 0x7F;
+                line += v == 0 ? '@' : v < 27 ? (char)('A' + v - 1) : v >= 32 && v < 64 ? (char)v : '.';
+            }
+            if (line.find_first_not_of(' ') != std::string::npos) printf("    | %s\n", line.c_str());
+        }
+    }
+    desc->ioRegistry->unregisterHandler(&cart);
+    delete desc;
+    return code;
+}
+}  // namespace
+
+// VICE's exit-code test programs (#304), from VICE's testprogs tree: set
+// MMEMU_VICE_TESTPROGS to its root (with testbench/c64-testlist.in) and,
+// optionally, MMEMU_VICE_FILTER to a part of the program paths to run. Only
+// PAL programs without other hardware than an REU. Skipped without the tree.
+TEST_CASE(c64_vice_testprogs) {
+    const char* root = std::getenv("MMEMU_VICE_TESTPROGS");
+    if (!root) return;
+    const char* filter = std::getenv("MMEMU_VICE_FILTER");
+    ensureRegistriesAndLoad();
+    std::ifstream list(std::string(root) + "/testbench/c64-testlist.in");
+    ASSERT(list.good());
+    std::string line;
+    int passed = 0, failed = 0;
+    while (std::getline(list, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> f;
+        std::stringstream ss(line);
+        for (std::string s; std::getline(ss, s, ',');) f.push_back(s);
+        if (f.size() < 4 || f[2] != "exitcode") continue;
+        bool ok = true, reu = false;
+        for (size_t i = 4; i < f.size(); ++i) {
+            if (f[i] == "reu512k") reu = true;
+            else if (f[i] == "vicii-pal" || f[i] == "cia-old" || f[i].rfind("warn:", 0) == 0 || f[i].rfind("comment:", 0) == 0) {}
+            else ok = false;               // NTSC, other carts, drives, CIA models...
+        }
+        const std::string path = std::string(root) + "/testbench/" + f[0] + f[1];
+        if (!ok || (filter && path.find(filter) == std::string::npos)) continue;
+        const int code = runViceExitcodeTest(path, std::stoull(f[3]), reu);
+        if (code == 0) ++passed; else ++failed;
+        printf("  vice %-60s %s (%d)\n", (f[0] + f[1]).c_str(), code == 0 ? "pass" : "FAIL", code);
+    }
+    printf("  vice testprogs: %d passed, %d failed\n", passed, failed);
+    EXPECT_EQ(failed, 0);
 }

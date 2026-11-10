@@ -279,7 +279,10 @@ protected:
     void         (*m_logNamed)(void*, int, const char*) = nullptr;
 
     uint8_t  m_regs[64];            // 47 used, rest pad to 64
-    uint64_t m_cycleAccum = 0;      // cycles since last frame start
+    // The cycle of the line last ticked, from 0 (cycle 1): the line moves on
+    // as its first cycle is ticked, so a CPU access in that cycle (the
+    // machine ticks through it first) sees the new line, as on the chip
+    uint64_t m_cycleAccum = 0;
     uint16_t m_rasterLine = 0;      // current raster line
     int      m_cyclesPerLine = PAL_CYCLES_PER_LINE;
     int      m_linesPerFrame = PAL_LINES_PER_FRAME;

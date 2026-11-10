@@ -1,3 +1,4 @@
+#include <memory>
 #include <algorithm>
 #include "json_machine_loader.h"
 #include "util/path_util.h"
@@ -1024,14 +1025,54 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     if (baSource) {
         // The CPU's read cycles wait while BA is low (RDY); its writes go on.
         // A DMA master (an REU) is given the source and waits itself.
-        desc->schedulerStep = [baSource](MachineDescriptor& d) {
+        // The devices are brought up to each CPU access before it happens
+        // (#304): the core calls back with the access's cycle.
+        struct StepClock {
+            MachineDescriptor* d = nullptr;
+            ICore* cpu = nullptr;
+            IBaSource* ba = nullptr;
+            int i = 0;          // next CPU cycle of this instruction
+            int t = 0;          // bus cycles so far, BA waits included
+            int ticked = 0;     // bus cycles the devices have run
+            // Through CPU cycle k: a read cycle waits while BA is low
+            void advance(int k) {
+                const uint32_t writes = cpu->lastStepWrites();
+                while (i <= k) {
+                    if (!(i < 32 && ((writes >> i) & 1)))
+                        while (ba->baLow(t - ticked)) ++t;
+                    ++t;
+                    ++i;
+                }
+                if (t > ticked) {
+                    if (d->ioRegistry) d->ioRegistry->tickAll(t - ticked);
+                    ticked = t;
+                }
+            }
+        };
+        auto clock = std::make_shared<StepClock>();
+        clock->d = desc;
+        clock->ba = baSource;
+        for (auto& s : desc->cpus)
+            if (s.cpu) {
+                clock->cpu = s.cpu;
+                s.cpu->setAccessSync([clock](int k) { clock->advance(k); });
+                break;
+            }
+        desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {
             int total = 0;
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
                 return total;
             }
             for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
+                    if (s.cpu == clock->cpu) {
+                        clock->i = clock->t = clock->ticked = 0;
+                        const int n = s.cpu->step();
+                        clock->advance(n - 1);
+                        total += clock->t;
+                        continue;
+                    }
                     const int n = s.cpu->step();
                     const uint32_t writes = s.cpu->lastStepWrites();
                     int t = 0;
@@ -1056,7 +1097,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             int total = 0;
             // A device holding the bus (an REU's DMA) runs instead of the CPU
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
             } else for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
                     total += s.cpu->step();
@@ -1078,7 +1119,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         desc->schedulerStep = [](MachineDescriptor& d) {
             int total = 0;
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
                 return total;
             }
             for (auto& s : d.cpus) {
@@ -1194,7 +1235,19 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 remove();
                 if (ds->irq) dev->setIrqLine(ds->irq);
                 io->registerHandler(dev);
-                if (ds->busMaster) { dev->setBaSource(baSource); desc->busMasterStep = [dev]() { return dev->busMasterCycle(); }; }
+                if (ds->busMaster) {
+                    dev->setBaSource(baSource);
+                    if (baSource) {
+                        // Its accesses see the other devices ticked through their cycle, as the CPU's do
+                        dev->setBusMasterSync([desc](int k) {
+                            if (k + 1 > desc->busMasterTicked && desc->ioRegistry) {
+                                desc->ioRegistry->tickAll(k + 1 - desc->busMasterTicked);
+                                desc->busMasterTicked = k + 1;
+                            }
+                        });
+                    }
+                    desc->busMasterStep = [desc, dev]() { desc->busMasterTicked = 0; return dev->busMasterCycle(); };
+                }
                 if (ds->linkTo) ds->linkTo->setLinkedDevice(ds->linkAs.c_str(), dev);
                 if (auto* p = dynamic_cast<IPointerDevice*>(dev); p && ds->pointerJoystick >= 0) {
                     // The host mouse moves it; its buttons are that joystick port's switches

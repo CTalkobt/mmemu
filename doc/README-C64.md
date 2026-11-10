@@ -279,6 +279,22 @@ mouse 10 -3 1                       # CLI: dx dy buttons (bit 0 left, 1 right); 
 
 The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
 
+### 2.15 VICE's test programs
+VICE's `testprogs` tree reports most results through its debug cartridge: a write to `$D7FF`, 0 for a pass. `DebugCart` (`src/libdevices/main/debug_cart.h`) catches that write, and the test `c64_vice_testprogs` runs every PAL "exitcode" program in `testbench/c64-testlist.in` the way VICE's testbench does. Each program is autostarted (injected, then `RUN`) and run until it writes an exit code or reaches its cycle limit.
+
+```
+svn export https://svn.code.sf.net/p/vice-emu/code/testprogs ../refs/vice-testprogs   # or just the parts wanted
+MMEMU_VICE_TESTPROGS=../refs/vice-testprogs bin/mmemu-test c64_vice_testprogs
+MMEMU_VICE_TESTPROGS=../refs/vice-testprogs MMEMU_VICE_FILTER=Lorenz bin/mmemu-test c64_vice_testprogs
+```
+
+Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. Programs for NTSC, the new CIA or other hardware than an REU are skipped.
+
+What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, and `REU/reutiming2` `e2`, `f`, `f2`, `g`, `g2` (and `-m2`). What fails: `reutiming2` `e`, `e3`, `e4`-`e6`, `f3`, `f4`, `g3`, `g4`: on real hardware, an REU read of I/O as BA falls returns the RAM underneath once, which mmsim doesn't model. `MMEMU_VICE_SCREEN=1` prints a failing program's screen.
+
+### 2.16 Cycle timing
+On the C64 every CPU access happens on its own cycle: the 6502 core calls back before each access (`ICore::setAccessSync`), and the scheduler ticks the devices through that cycle first, waiting on BA for reads. So a CPU access in a cycle sees the devices as they are in that cycle. Interrupts are polled in an instruction's second-to-last cycle. An REU transfer gets the same treatment (`IOHandler::setBusMasterSync`).
+
 ---
 
 ## 3. Dependencies

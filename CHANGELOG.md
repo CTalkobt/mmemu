@@ -43,6 +43,57 @@ The canonical version is defined in the `VERSION` file at the repository root.
   active gun, which latches the PPU's counters every frame it points at the
   picture. Gun 1 follows the host mouse. Test `snes_justifier`.
 
+### VICE's test programs and the 6502's read-modify-write (#304)
+
+- **The NMOS 6502 writes twice in a read-modify-write instruction** (`ASL`,
+  `LSR`, `ROL`, `ROR`, `INC`, `DEC`, `DCP`, `ISC`...): the value it read,
+  unchanged, then the result. So `ASL $D019` and `INC $D019` now acknowledge
+  a VIC-II interrupt, as raster code expects; before, the interrupt was never
+  cleared and such programs hung in their IRQ handler. The 65C02 still writes
+  once. Test `cpu6502_rmw_writes_twice`.
+- **VICE's debug cartridge** (`DebugCart`, a write to `$D7FF` is the exit
+  code), and the test `c64_vice_testprogs`. It runs VICE's PAL "exitcode"
+  programs from a local copy of VICE's `testprogs` (`MMEMU_VICE_TESTPROGS`).
+  `MMEMU_VICE_SCREEN=1` prints a
+  failing program's screen.
+- **The 6526 CIA is cycle-exact for the old 6526** (C64 breadbox), after
+  VICE's `ciatimer`/`ciacore`: the timers run a per-cycle pipeline of start,
+  force-load and one-shot bits (a started timer decrements from the third
+  cycle, a force load lands two cycles after the write, the period is latch
+  + 1), the interrupt flags go through the old 6526's delay line (IR and the
+  IRQ output one cycle after a flag; two after enabling the mask of a set
+  flag; an ICR read clears the flags at once and IR two cycles on), timer B
+  counts timer A underflows one by one, PB6/PB7 carry the timer outputs
+  (pulse or toggle), and the timer B bug. Steady counting is skipped in bulk.
+  The 6502 core, with access sync, now also fetches opcodes and operands on
+  their own cycles (code run from the CIA's registers), latches an NMI edge
+  between polls, polls RTI in its fourth cycle with the pulled I, and runs
+  BRK/IRQ/NMI sequences without a poll at the end (an NMI by their fourth
+  cycle takes over the vector; a later one waits for the handler's first
+  instruction). Fetches below the I/O area skip the sync (the new
+  `IBus::isPlainMemory`). Tests `cia_timer_start_delay`,
+  `cia_timer_force_load_delay`, `cia_timer_one_shot_stops`,
+  `cia_icr_read_clears`, `cia_irq_delay`, `cia_irq_on_mask_enable`,
+  `cia_timer_b_counts_ta_exactly`, `cia_tick_bulk_matches_single`.
+- **The 6510's port at `$00`/`$01` reads as VICE's:** all 8 direction bits
+  read back; bit 5 reads 0 as an input and bit 3 what was last driven on it;
+  the unconnected bits 6 and 7 keep the charge last driven on them for
+  350000 cycles.
+- **The VIC-II's raster line moves on in the line's first cycle**, as a CPU
+  access in that cycle sees it (it moved a cycle early, in the last cycle of
+  the line before), and BA is looked up a cycle on to match. Code timed by
+  `$D012` now meets sprite DMA where real code does.
+- **REU DMA accesses on their own cycle:** the C64 brings its other devices
+  up to an REU access's cycle before it, as for the CPU (the new
+  `IOHandler::setBusMasterSync`); a transfer reading the CIA's timer read it
+  a cycle early.
+- **Results:** Lorenz's 6510 suite (2.15) passes, all 294 programs (263
+  before); and VICE's `VICII/spritesteal`, `REU/reutiming` and
+  `REU/reutiming2` `e2`, `f`, `f2`, `g`, `g2` (and their `-m2` versions).
+  Still failing: `reutiming2` `e`, `e3` and the swap tests (`e4`-`e6`, `f3`,
+  `f4`, `g3`, `g4`), where the real REU, reading I/O as BA falls, gets the
+  RAM underneath once.
+
 ### C64 and C128: the VIC-II takes the bus (#266)
 
 - **BA cycle by cycle**, after VICE's viciisc cycle tables: badlines hold it
