@@ -363,6 +363,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     IPL ROM, idle cycles) and for external ones, the timers stepping 2, 4,
     8 or 16 with them; the timers' global enable (bit 3) and disable (bit 0),
     switching which can count a tick; and RAM writes on or off (bit 1).
+  - **Port latch** (as Mesen): a main-CPU write to `$2140-$2143` that
+    lands in the first half of an SPC700 cycle is seen in that cycle; one
+    in the second half only from the next cycle on.
 - **S-DSP** (`snes::Dsp`):
   - **Pipeline:** the hardware's 32-step pipeline, one step per SPC700
     cycle (32 kHz stereo).
@@ -452,6 +455,5 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- The APU ports' half-cycle latch delay, and the H/V IRQ's exact counter
-  timing (Mesen's ProcessIrqCounters).
+- The H/V IRQ's exact counter timing (Mesen's ProcessIrqCounters).
 - PAL timing, the mouse, Super Scope and multitap.

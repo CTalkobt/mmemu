@@ -72,6 +72,8 @@ void Apu::reset() {
     m_timersEnabled = true; m_timersDisabled = false; m_writeEnabled = true;
     m_inStep = false; m_accesses = 0;
     std::memset(m_fromCpu, 0, sizeof m_fromCpu);
+    std::memset(m_fromCpuNew, 0, sizeof m_fromCpuNew);
+    m_portsPending = false; m_portsAt = 0;
     std::memset(m_toCpu, 0, sizeof m_toCpu);
     m_dspAddr = 0;
     m_ramReg[0] = m_ramReg[1] = 0;
@@ -105,8 +107,21 @@ void Apu::tick(uint8_t sel) {
     for (auto& t : m_timers) t.run(TIMER_STEP[sel & 3]);
 }
 
+void Apu::cpuWrite(int port, uint8_t v, uint64_t visibleFrom) {
+    port &= 3;
+    if (m_fromCpuNew[port] == v) return;
+    m_fromCpuNew[port] = v;
+    if (visibleFrom <= m_cycle) m_fromCpu[port] = v;
+    else { m_portsPending = true; m_portsAt = visibleFrom; }   // then all four, as Mesen
+}
+
 uint8_t Apu::smpRead(uint16_t a) {
+    const uint64_t at = m_cycle;                               // the cycle this access is in
     if (m_inStep) { ++m_accesses; tick(speedFor(a)); }
+    if (m_portsPending && at >= m_portsAt) {
+        std::memcpy(m_fromCpu, m_fromCpuNew, sizeof m_fromCpu);
+        m_portsPending = false;
+    }
     const uint8_t v = smpPeek(a);
     if (a >= 0xFD && a <= 0xFF) m_timers[a - 0xFD].output = 0;   // reading a counter clears it
     return v;
@@ -129,8 +144,8 @@ void Apu::smpWrite(uint16_t a, uint8_t v) {
         }
         break;
     case 0xF1:
-        if (v & 0x10) { m_fromCpu[0] = m_fromCpu[1] = 0; }
-        if (v & 0x20) { m_fromCpu[2] = m_fromCpu[3] = 0; }
+        if (v & 0x10) { m_fromCpu[0] = m_fromCpu[1] = m_fromCpuNew[0] = m_fromCpuNew[1] = 0; }
+        if (v & 0x20) { m_fromCpu[2] = m_fromCpu[3] = m_fromCpuNew[2] = m_fromCpuNew[3] = 0; }
         for (int i = 0; i < 3; ++i) m_timers[i].enable(v & (1 << i));
         m_iplOn = v & 0x80;
         break;
