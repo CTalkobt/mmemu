@@ -514,3 +514,58 @@ TEST_CASE(snes_open_bus) {
     EXPECT_EQ(bus->read8(0x002137), 0x5A);                      // $2137: open bus too
     delete m;
 }
+
+// The H/V IRQ (Mesen's counters): the counters tick at clocks 2, 6, 10... of the line and the flag ($4211)
+// is set a tick after they match, so: V alone at clock 10 of the line, H at 4 * HTIME + 14, H = 0 a tick
+// later still (14); a write that makes them match sets it two ticks on. At clock 2, H is the last line's
+// last count + 1 (339) and V is still the last line's, except on line 0 where it's reset
+TEST_CASE(snes_hv_irq_timing) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM HVIRQ          ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    img[0] = 0x80; img[1] = 0xFE;
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "hv.sfc", err));
+    IBus* bus = m->buses[0].bus;
+    // Set up with the IRQ off, then run until the flag shows; true if it rose on `line` within (before, after]
+    auto setFlag = [&](int line, int at, uint8_t nmitimen, uint16_t h, uint16_t v) {
+        bus->write8(0x004200, 0x00);
+        bus->write8(0x004207, (uint8_t)h); bus->write8(0x004208, (uint8_t)(h >> 8));
+        bus->write8(0x004209, (uint8_t)v); bus->write8(0x00420A, (uint8_t)(v >> 8));
+        const int enableOn = (nmitimen & 0x20) ? (line + 261) % 262 : line;     // H alone: from the line it's enabled on
+        while (snes::scanline(m) != enableOn) bus->read8(0x004300);
+        bus->write8(0x004200, nmitimen);
+        int prevLine = snes::scanline(m), prevH = snes::hclock(m);
+        for (int i = 0; i < 100000 && !(bus->peek8(0x004211) & 0x80); ++i) {
+            prevLine = snes::scanline(m); prevH = snes::hclock(m);
+            bus->read8(0x004300);
+        }
+        const bool before = prevLine < line || (prevLine == line && prevH < at);
+        const bool after = snes::scanline(m) == line && snes::hclock(m) >= at;
+        if (!(before && after)) std::printf("  flag between %d:%d and %d:%d, wanted %d:%d\n", prevLine, prevH, snes::scanline(m), snes::hclock(m), line, at);
+        return before && after;
+    };
+    EXPECT_TRUE(setFlag(100, 10, 0x20, 0x1FF, 100));            // V = 100
+    EXPECT_TRUE(setFlag(120, 4 * 50 + 14, 0x10, 50, 0));         // H = 50
+    EXPECT_TRUE(setFlag(150, 14, 0x30, 0, 150));                 // H = 0, V = 150
+    EXPECT_TRUE(setFlag(170, 4 * 200 + 14, 0x30, 200, 170));     // H = 200, V = 170
+    // Reading $4211 clears it, and it stays clear with the counters still matching
+    EXPECT_EQ(bus->read8(0x004211) & 0x80, 0x80);
+    EXPECT_EQ(bus->peek8(0x004211) & 0x80, 0);
+    EXPECT_TRUE(setFlag(0, 6, 0x20, 0x1FF, 0));                  // V = 0: V is reset at clock 2 of line 0
+    EXPECT_TRUE(setFlag(51, 6, 0x30, 339, 50));                  // H = 339 is clock 2 of the next line, V not yet counted
+    // A V-only IRQ already enabled, made to match the line it's on
+    bus->write8(0x004209, 0xFF); bus->write8(0x00420A, 0x01);
+    bus->write8(0x004200, 0x20);
+    while (snes::scanline(m) != 30 || snes::hclock(m) < 600) bus->read8(0x004300);
+    bus->read8(0x004211);
+    bus->write8(0x004209, 30); bus->write8(0x00420A, 0);
+    const uint64_t w = snes::masterClock(m);
+    while (!(bus->peek8(0x004211) & 0x80) && snes::masterClock(m) - w < 100) bus->read8(0x004300);
+    EXPECT_TRUE(snes::scanline(m) == 30 && snes::masterClock(m) - w <= 14);
+    delete m;
+}

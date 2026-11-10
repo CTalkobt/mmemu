@@ -57,6 +57,16 @@ one powers the console on; the machine's reset is the RESET button.
   `$4211` read within 4 clocks of the IRQ flag rising. When DMA or HDMA ran
   in an instruction's last cycle, an IRQ waits one more instruction, and so
   does an NMI that rose in that cycle (Mesen's IrqLock).
+- **H/V IRQ counters** (Mesen's ProcessIrqCounters): H and V tick every 4
+  clocks, at clocks 2, 6, 10... of the line, through DRAM refresh too. H is
+  reset at clocks 6 and 10 and counts from 14; at clock 2 it is the last
+  line's last count + 1 (339), so `HTIME` 339 matches at the start of the
+  next line. V counts at clock 6 and is reset at clock 2 of line 0. When
+  they come to match `$4207-$420A` the flag is set a tick later (clock 10
+  for V alone, `4*HTIME + 14` for H) and the CPU sees it the tick after
+  (H = 0 a tick later still). A write to `$4207-$420A` that makes them
+  match raises it as well. The CPU samples the IRQ line as each of its
+  cycles starts.
 - **Open bus** (as Mesen): reads of the internal registers (`$42xx`) don't
   change it; `$4210`, `$4211`, `$4212`, `$4016`/`$4017` fill their unused
   bits from it. The write-only PPU registers `$21x4-6` and `$21x8-A` give
@@ -455,5 +465,4 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- The H/V IRQ's exact counter timing (Mesen's ProcessIrqCounters).
 - PAL timing, the mouse, Super Scope and multitap.
