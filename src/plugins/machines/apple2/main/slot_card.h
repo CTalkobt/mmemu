@@ -14,6 +14,7 @@ namespace apple2 {
  * - `$Cn00-$CnFF` (IOSEL): pageIo(); an access also selects the card's
  *   `$C800-$CFFF` expansion ROM (I/O STROBE) until `$CFFF` is touched.
  * - /IRQ: irq(); sound: sample(), mixed with the speaker.
+ * - vbl(): the start of vertical blanking (a mouse card's sync input).
  * Return -1 where the card doesn't drive the bus (it floats).
  */
 class SlotCard : public IOHandler {
@@ -27,6 +28,7 @@ public:
     virtual const uint8_t* expansionRom() const { return nullptr; }
     virtual bool irq() const { return false; }
     virtual bool hasSound() const { return false; }
+    virtual void vbl() {}
     /** Its average level up to `until` (cycles) since the last call. */
     virtual float sample(uint64_t /*until*/) { return 0.0f; }
 

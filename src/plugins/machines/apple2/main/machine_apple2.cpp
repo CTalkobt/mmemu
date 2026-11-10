@@ -5,6 +5,7 @@
 #include "machine_apple2.h"
 #include "smartport_bus.h"
 #include "mockingboard.h"
+#include "mouse_card.h"
 #include "super_serial.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -184,6 +185,8 @@ public:
     void setCard(int slot, SlotCard* card) {
         m_card[slot & 7] = card;
         if (m_c8Slot == (slot & 7)) m_c8Slot = 0;
+        m_vblCards = false;
+        for (SlotCard* c : m_card) if (dynamic_cast<MouseCard*>(c)) m_vblCards = true;
         std::vector<SlotCard*> boards;
         for (SlotCard* c : m_card) if (c && c->hasSound()) boards.push_back(c);
         if (boards.empty()) { m_spk->setMix(nullptr); return; }
@@ -214,7 +217,12 @@ public:
             for (Acia6551* a : m_acia) if (a && a->irqAsserted()) line = true;
             if (onIrq) onIrq(line);
         } else if (onIrq) {
-            bool line = false;                          // the cards' /IRQ (a Mockingboard's VIAs)
+            if (m_vblCards) {                           // the vertical blank to the cards that take it
+                const bool vbl = !m_video->vblBar();
+                if (vbl && !m_lastVbl) for (SlotCard* c : m_card) if (c) c->vbl();
+                m_lastVbl = vbl;
+            }
+            bool line = false;                          // the cards' /IRQ (a Mockingboard's VIAs, a mouse card)
             for (SlotCard* c : m_card) if (c && c->irq()) line = true;
             if (line != m_cardIrq) { m_cardIrq = line; onIrq(line); }
         }
@@ -227,6 +235,16 @@ public:
     void setButton(int n, bool down) { m_button[n % 3] = down; }
     // IIe: Open Apple and Closed Apple are buttons 0 and 1
     void setAppleKey(int n, bool down) { m_appleKey[n & 1] = down; }
+    /** A mouse card's mouse (the first fitted); false if there's none. */
+    bool cardMouse(int dx, int dy, uint8_t buttons) {
+        for (SlotCard* c : m_card)
+            if (auto* m = dynamic_cast<MouseCard*>(c)) {
+                m->move(dx, dy);
+                m->setButtons(buttons & 1, buttons & 2);
+                return true;
+            }
+        return false;
+    }
     // IIc: the mouse, moves to step through and the button
     void mouse(int dx, int dy, bool button) { m_mouseDx += dx; m_mouseDy += dy; m_mouseButton = button; }
 
@@ -731,7 +749,7 @@ private:
     int m_c8Slot = 0;                           // the card owning $C800-$CFFF (0: none)
     bool m_cardIrq = false;
     bool m_iouDis = true, m_vblMask = false, m_xyMask = false, m_x0Edge = false, m_y0Edge = false;
-    bool m_lastVbl = false, m_romSwitch = false;
+    bool m_lastVbl = false, m_romSwitch = false, m_vblCards = false;
     // IIc mouse (MAME apple2e.cpp update_iic_mouse): each step toggles X0/Y0,
     // X1/Y1 give the direction; an interrupt on X0/Y0's chosen edge
     int m_mouseDx = 0, m_mouseDy = 0;
@@ -934,7 +952,8 @@ MachineDescriptor* create(Model model, std::string* err) {
                              "F, $C" + n + "00-$C" + n + "FF";
             sl.devices = {{"mockingboard", "Sweet Micro Systems Mockingboard: two 6522 VIAs and two AY-3-8910s (six voices, stereo mixed to mono), /IRQ from the VIAs", {}, ""},
                           {"ssc", "Apple Super Serial Card: a 6551 and its firmware (PR#/IN#); the DIP switches' baud rate as the option; its far end: CLI serial",
-                           {"300", "1200", "2400", "9600", "19200"}, "9600"}};
+                           {"300", "1200", "2400", "9600", "19200"}, "9600"},
+                          {"mouse", "Apple AppleMouse II card: a 6821 and the 68705's protocol, its firmware; the host mouse moves it, /IRQ on movement, a button or the VBL", {}, ""}};
             sl.install = [bus, io, card, slotNo](const std::string& device, const std::string& option, std::string& err) {
                 SlotCard* fresh = nullptr;
                 if (device == "mockingboard") {
@@ -943,8 +962,12 @@ MachineDescriptor* create(Model model, std::string* err) {
                 } else if (device == "ssc") {
                     fresh = SuperSerialCard::create(slotNo, option.empty() ? 9600 : std::atoi(option.c_str()), err);
                     if (!fresh) return false;
+                } else if (device == "mouse") {
+                    if (!option.empty()) { err = "the mouse card takes no option"; return false; }
+                    fresh = MouseCard::create(slotNo, err);
+                    if (!fresh) return false;
                 } else if (!device.empty()) {
-                    err = "no device '" + device + "' for this slot (mockingboard, ssc)";
+                    err = "no device '" + device + "' for this slot (mockingboard, ssc, mouse)";
                     return false;
                 }
                 if (*card) {
@@ -963,10 +986,21 @@ MachineDescriptor* create(Model model, std::string* err) {
                 if (!*card) return "";
                 if (auto* ssc = dynamic_cast<SuperSerialCard*>(*card))
                     return "ssc (Super Serial Card, " + std::to_string(ssc->baud()) + " bps)";
+                if (dynamic_cast<MouseCard*>(*card)) return "mouse (AppleMouse II card)";
                 return "mockingboard (Mockingboard)";
             };
             desc->expansionSlots.push_back(std::move(sl));
         }
+        // The host mouse moves a mouse card's, in picture pixels (560 wide)
+        // halved to the 280-dot screen
+        desc->onMouse = [bus, fx = 0.0, fy = 0.0](int dx, int dy, uint8_t buttons, int) mutable {
+            fx += dx * 0.5;
+            fy += dy * 0.5;
+            const int ix = (int)fx, iy = (int)fy;
+            fx -= ix;
+            fy -= iy;
+            bus->cardMouse(ix, iy, buttons);
+        };
     }
 
     // The RESET key (AppleWin CtrlReset): on a IIe the memory switches, the

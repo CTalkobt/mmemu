@@ -147,6 +147,7 @@ On the II, II+, IIe and enhanced IIe, slots 1, 2, 4, 5 and 7 can each take a car
 ```
 expansion slot4 mockingboard     # CLI; MCP expansion and the GUI's Control > Expansions... too
 expansion slot2 ssc 9600         # a Super Serial Card; its DIP switches' rate
+expansion slot4 mouse            # an AppleMouse II card; the host mouse moves it
 serial modem                     # the SSC's far end: a Hayes modem (ATDT host:port)
 expansion slot4 remove
 ```
@@ -183,6 +184,21 @@ It follows AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`:
 - **IRQ:** both VIAs' IRQs go to the 6502's /IRQ, which also reaches the CPU on the II, II+ and IIe now. Their timers pace most music players.
 - **Sound:** the six voices (left chip and right chip) are mixed with the speaker into the machine's one mono output. One voice at full volume is about a quarter of the speaker's swing.
 - **Not emulated:** the speech chip (the SSI-263 on the "C" and Sound II), the Phasor's modes, and the IIc and IIgs (the IIc has no slots; the IIgs is a separate machine).
+
+### Mouse card
+
+Apple's AppleMouse II card, after AppleWin's `MouseInterface.cpp` (from Kyle Kim's Apple in PC), with its firmware (`roms/apple2/MouseInterface.rom`, 2 KB from AppleWin's resources):
+
+| Address | |
+|---------|--|
+| `$C0n0-$C0n3` | the 6821 PIA. Port A carries data to and from the card's 68705. Port B is the handshake (b5: the 6502 writes a byte, b4: it reads one, b6/b7: the 68705's replies) and b1-b3 page the firmware. |
+| `$Cn00-$CnFF` | one 256-byte page of the 2 KB firmware, chosen by port B (no `$C800` ROM) |
+
+- **The 68705's program isn't run.** Its protocol is: SETMOUSE, READMOUSE, SERVEMOUSE, CLEARMOUSE, POSMOUSE, CLAMPMOUSE, HOMEMOUSE, INITMOUSE and the timing command, with a position clamped to a window (0-1023 at start).
+- **Interrupts:** on movement, a button change or the start of vertical blanking, as SETMOUSE's mode asks. SERVEMOUSE takes the /IRQ down and reports the cause.
+- **The host mouse:** in the GUI, or with CLI `mouse dx dy buttons` and the MCP `mouse` tool. A move is in picture pixels (560 wide), halved to the 280-dot screen. Bit 0 of the buttons is the mouse button; bit 1 is the second button that some software reads.
+- **Applesoft:** `PR#4:PRINT CHR$(1):PR#0` turns it on. `IN#4:INPUT "";X,Y,S:IN#0` reads the position and the button state.
+- **Test:** `apple2_mouse_card` calls the firmware's INITMOUSE, SETMOUSE, READMOUSE, CLAMPMOUSE and SERVEMOUSE on an enhanced IIe, and takes a VBL interrupt.
 
 
 ## IIc
