@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -101,6 +102,15 @@ struct Cart {
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     bool pal = false;                  // a PAL cartridge, by the header's destination code (as Mesen)
+    // The Sufami Turbo (as Mesen): `rom` is the adapter's BIOS, slot A's ROM is stA (its RAM `sram`, the
+    // battery), slot B's cartridge is stB with its own RAM and save
+    bool sufami = false;
+    std::vector<uint8_t> stA;
+    struct SufamiSlot {
+        std::vector<uint8_t> rom, ram, saved;
+        std::string path, savePath;
+    };
+    std::unique_ptr<SufamiSlot> stB;
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -143,6 +153,10 @@ struct Cart {
     }
     /** Write the battery RAM if it changed since the last write. */
     void flushSave() {
+        if (stB && !stB->ram.empty() && !stB->savePath.empty() && stB->ram != stB->saved) {
+            std::ofstream f(stB->savePath, std::ios::binary | std::ios::trunc);
+            if (f && f.write((const char*)stB->ram.data(), (std::streamsize)stB->ram.size())) stB->saved = stB->ram;
+        }
         if (spc7110 && spc7110->hasRtc() && !savePath.empty()) {
             const auto st = spc7110->rtcState();
             if (st != savedRtc) {
@@ -241,8 +255,86 @@ struct Cart {
         return s;
     }
 
+    /** A Sufami Turbo cartridge: it starts "BANDAI SFC-ADX" (the BIOS too, but it has a SNES header). */
+    static bool isSufami(const std::vector<uint8_t>& img) {
+        static const char sig[] = "BANDAI SFC-ADX";
+        if (img.size() < 0x8000 || std::memcmp(img.data(), sig, 14) != 0) return false;
+        return std::memcmp(img.data() + 0x7FC0, "ADD-ON BASE CASSETE", 19) != 0;
+    }
+    /** Its RAM by the title, as Mesen (Poi Poi Ninja and SD Ultra Battle 2 KB, SD Gundam Generation 8 KB). */
+    static uint32_t sufamiRamSize(const std::vector<uint8_t>& img) {
+        auto has = [&](const char* m) {
+            const size_t n = std::strlen(m);
+            return std::search(img.begin(), img.end(), m, m + n) != img.end();
+        };
+        if (has("POIPOI.Ver") || has("SDBATTLE ")) return 0x800;
+        if (has("SD \xB6\xDE\xDD\xC0\xDE\xD1 GN")) return 0x2000;
+        return 0;
+    }
+    /** Slot A's cartridge on the adapter, whose BIOS is roms/snes/sufamiturbo.sfc (256 KB). */
+    bool loadSufami(std::vector<uint8_t> img, std::string& err) {
+        const std::string path = firmwareDir() + "/sufamiturbo.sfc";
+        std::vector<uint8_t> bios;
+        if (!readFile(path, bios) || bios.size() != 0x40000) {
+            err = "This is a Sufami Turbo cartridge: the adapter's BIOS is needed in " + path + " (262144 bytes)";
+            return false;
+        }
+        rom = std::move(bios);
+        map = Map::LoRom;
+        headerAt = 0x7FC0;
+        title = "Sufami Turbo";
+        sufami = true;
+        sram.assign(sufamiRamSize(img), 0);
+        battery = !sram.empty();
+        stA = std::move(img);
+        return true;
+    }
+    /** Slot B's cartridge (empty: none); its RAM saved to `savePath`. */
+    bool loadSufamiB(const std::string& path, const std::string& savePath, std::string& err) {
+        if (!sufami) { err = "Slot B is on the Sufami Turbo: put a Sufami Turbo cartridge in first"; return false; }
+        if (stB) flushSave();
+        if (path.empty()) { stB.reset(); return true; }
+        auto b = std::make_unique<SufamiSlot>();
+        if (!readFile(path, b->rom) || !isSufami(b->rom)) { err = "Not a Sufami Turbo cartridge: " + path; return false; }
+        b->ram.assign(sufamiRamSize(b->rom), 0);
+        b->path = path;
+        b->savePath = savePath;
+        std::vector<uint8_t> data;
+        if (!b->ram.empty() && !savePath.empty() && readFile(savePath, data) && !data.empty())
+            for (size_t i = 0; i < b->ram.size(); ++i) b->ram[i] = data[i % data.size()];
+        b->saved = b->ram;
+        if (!b->ram.empty()) battery = true;              // (for the regular flush)
+        stB = std::move(b);
+        return true;
+    }
+    /** Mesen's 4 KB pages over banks of $8000-$FFFF from `first`: the page number wraps at the size. */
+    static int32_t pageOffset(size_t size, uint8_t b, uint8_t first, uint16_t a) {
+        if (!size) return -1;
+        if (size < 0x1000) return (int32_t)(a & (size - 1));
+        const uint32_t pages = (uint32_t)((size + 0xFFF) >> 12);
+        const uint32_t page = ((uint32_t)(b - first) * 8 + ((a - 0x8000u) >> 12)) % pages;
+        return (int32_t)(page << 12 | (a & 0xFFF));
+    }
+    /** The Sufami Turbo's map: BIOS $00-$1F, slot A $20-$3F (RAM $60-$63), slot B $40-$5F (RAM $70-$73). */
+    uint8_t* sufamiAt(uint8_t bank, uint16_t a, bool& ram) {
+        const uint8_t b = bank & 0x7F;
+        ram = false;
+        if (a < 0x8000) return nullptr;
+        std::vector<uint8_t>* v = nullptr;
+        uint8_t first = 0;
+        if (b < 0x20) v = &rom;
+        else if (b < 0x40) { v = &stA; first = 0x20; }
+        else if (b < 0x60) { if (stB) v = &stB->rom; first = 0x40; }
+        else if (b < 0x64) { v = &sram; first = 0x60; ram = true; }
+        else if (b >= 0x70 && b < 0x74) { if (stB) v = &stB->ram; first = 0x70; ram = true; }
+        if (!v) return nullptr;
+        const int32_t off = pageOffset(v->size(), b, first, a);
+        return off >= 0 && (size_t)off < v->size() ? &(*v)[(size_t)off] : nullptr;
+    }
+
     bool load(std::vector<uint8_t> img, std::string& err) {
         if (img.size() % 1024 == 512) img.erase(img.begin(), img.begin() + 512);   // copier header
+        if (isSufami(img)) return loadSufami(std::move(img), err);
         if (img.size() < 0x8000) { err = "SNES ROM too small (" + std::to_string(img.size()) + " bytes)"; return false; }
         rom = std::move(img);
         int best = -1000;
@@ -307,6 +399,11 @@ struct Cart {
         static const char* names[] = {"LoROM", "HiROM", "ExHiROM"};
         std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
         if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
+        if (sufami) {
+            s = "Sufami Turbo: slot A " + std::to_string(stA.size() / 1024) + "K ROM";
+            if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
+            return s;
+        }
         if (battery) s += ", battery";
         if (pal) s += ", PAL";
         if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
@@ -335,6 +432,11 @@ struct Cart {
 
     /** -1: the cartridge does not answer (open bus). */
     int read(uint8_t bank, uint16_t a) const {
+        if (sufami) {
+            bool ram;
+            const uint8_t* p = const_cast<Cart*>(this)->sufamiAt(bank, a, ram);
+            return p ? *p : -1;
+        }
         if (gsu) {
             uint32_t off;
             const int k = gsuMap(bank, a, off);
@@ -349,6 +451,12 @@ struct Cart {
         return -1;
     }
     void write(uint8_t bank, uint16_t a, uint8_t v) {
+        if (sufami) {
+            bool ram;
+            uint8_t* p = sufamiAt(bank, a, ram);
+            if (p && ram) *p = v;
+            return;
+        }
         if (gsu) {
             uint32_t off;
             if (gsuMap(bank, a, off) == 1) gsu->cpuWriteRam(off, v);
@@ -1474,6 +1582,22 @@ int scanline(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->line() : 
 int hclock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->hclock() : 0; }
 bool isPal(MachineDescriptor* m) { auto* b = busOf(m); return b && b->pal(); }
 
+bool insertSufamiSlotB(MachineDescriptor* m, const std::string& path, std::string& err) {
+    auto* bus = busOf(m);
+    if (!bus || !bus->cart()) { err = "Slot B is on the Sufami Turbo: put a Sufami Turbo cartridge in first"; return false; }
+    std::string save = path.empty() ? "" : savePathFor(path);
+    // The same game in both slots: slot B's save is <name>_SlotB.srm (Mesen)
+    if (!save.empty() && save == bus->cart()->savePath) save = save.substr(0, save.size() - 4) + "_SlotB.srm";
+    if (!bus->cart()->loadSufamiB(path, save, err)) return false;
+    powerOn(m);                                           // as if it had been in from the start
+    return true;
+}
+
+std::string sufamiSlotB(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    return bus && bus->cart() && bus->cart()->stB ? bus->cart()->stB->path : "";
+}
+
 bool setRegion(MachineDescriptor* m, const std::string& region) {
     auto* bus = busOf(m);
     if (!bus) return false;
@@ -1592,6 +1716,20 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
             return true;
         };
         sl.info = [bus, port]() { return std::string(SnesBus::portKindName(bus->portKind(port))); };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
+    // The Sufami Turbo's slot B: a second cartridge (Mesen asks for it when slot A's goes in)
+    {
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "slotb";
+        sl.description = "The Sufami Turbo's slot B (with a Sufami Turbo cartridge in slot A; it powers on again)";
+        sl.devices = {{"cart", "A Sufami Turbo cartridge; the option is its file", {}, ""}};
+        sl.install = [desc](const std::string& dev, const std::string& option, std::string& err) {
+            if (!dev.empty() && dev != "cart") { err = "No such device for slot B: " + dev + " (cart)"; return false; }
+            if (!dev.empty() && option.empty()) { err = "Give the cartridge's file: expansion slotb cart <file>"; return false; }
+            return insertSufamiSlotB(desc, dev.empty() ? "" : option, err);
+        };
+        sl.info = [desc]() { const std::string p = sufamiSlotB(desc); return p.empty() ? p : "cart (" + p + ")"; };
         desc->expansionSlots.push_back(std::move(sl));
     }
     // The region, as Mesen's setting: auto (the cartridge's header), or NTSC or PAL by hand

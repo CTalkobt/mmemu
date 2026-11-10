@@ -16,7 +16,7 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out) {
     return true;
 }
 
-/** SNES cartridges (.sfc, .smc): the CLI `cart`, the GUI's Attach
+/** SNES cartridges (.sfc, .smc; .st for the Sufami Turbo): the CLI `cart`, the GUI's Attach
  *  Cartridge, MCP attach_cartridge. */
 class SnesCartHandler : public ICartridgeHandler {
 public:
@@ -53,7 +53,7 @@ private:
 };
 
 ICartridgeHandler* createHandler(const char* path) { return new SnesCartHandler(path); }
-CartridgePluginInfo s_carts[] = { { "sfc", createHandler }, { "smc", createHandler } };
+CartridgePluginInfo s_carts[] = { { "sfc", createHandler }, { "smc", createHandler }, { "st", createHandler } };
 
 }  // namespace
 
@@ -69,7 +69,7 @@ static SimPluginManifest s_manifest = {
     0, nullptr,     // devices
     0, nullptr,     // machines (registered below)
     0, nullptr,     // loaders
-    2, s_carts      // cartridges
+    3, s_carts      // cartridges
 };
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
