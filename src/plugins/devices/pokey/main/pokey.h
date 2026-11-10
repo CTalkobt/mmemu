@@ -43,6 +43,18 @@ public:
     void tick(uint64_t cycles) override;
     std::vector<std::string> deviceAliases() const override { return {"POKEY", "ATARI_POKEY"}; }
 
+    /**
+     * A second POKEY (stereo upgrade, atari800 STEREO_SOUND) clocked and
+     * mixed by this one: each at half level into this chip's samples. The
+     * second's own tick() then does nothing. Null takes it out.
+     */
+    void setSecond(POKEY* second) {
+        if (m_second) m_second->m_slave = false;
+        m_second = second;
+        if (second) second->m_slave = true;
+    }
+    POKEY* second() const { return m_second; }
+
     // IAudioOutput
     int nativeSampleRate() const override { return m_sampleRate; }
     int pullSamples(float* buffer, int maxSamples) override;
@@ -114,6 +126,9 @@ private:
     void updateIrqs();
     void serialBit();
     float mixOutput() const;
+    void step();                            // one machine cycle: the polys and the channels
+    POKEY* m_second = nullptr;
+    bool m_slave = false;
 
     std::string  m_name;
     uint32_t     m_baseAddr;

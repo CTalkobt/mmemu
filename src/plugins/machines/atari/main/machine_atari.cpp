@@ -63,6 +63,8 @@ public:
         resetBanking();
     }
 
+    /** A second POKEY at $D210-$D21F (null: $D210 mirrors $D200 again). */
+    void setSecondPokey(IOHandler* p) { m_pokey2 = p; }
     void setDevices(IOHandler* gtia, IOHandler* pokey, IOHandler* pia, IOHandler* antic) {
         m_gtia = gtia; m_pokey = pokey; m_pia = pia; m_antic = antic;
     }
@@ -137,6 +139,11 @@ public:
         uint8_t before = m_ram[addr];
         if (addr >= 0xD500 && addr < 0xD600) {
             if (m_cart) { m_cart->writeCctl((uint16_t)addr, val); if (m_cartChanged) m_cartChanged(); }
+        } else if (m_pokey2 && (addr & 0xFF10) == 0xD210) {
+            // The second POKEY (atari800 STEREO_SOUND): its sound registers,
+            // STIMER and SKCTL
+            const uint32_t reg = addr & 0x0F;
+            if (reg <= 9 || reg == 0x0F) m_pokey2->ioWrite(this, 0xD200 | reg, val);
         } else if (addr >= 0xD000 && addr < 0xD800) {
             IOHandler* h = nullptr;
             uint32_t a = ioAddr(addr, h);
@@ -212,6 +219,7 @@ private:
         if (m_cart && addr >= 0x8000 && addr < 0xC000 &&
             (addr < 0xA000 ? m_cart->rd4() : m_cart->rd5()))
             return m_cart->read((uint16_t)addr);
+        if (m_pokey2 && (addr & 0xFF10) == 0xD210) return 0;   // the second POKEY reads 0 (atari800)
         if (addr >= 0xD000 && addr < 0xD800) {
             IOHandler* h = nullptr;
             uint32_t a = ioAddr(addr, h);
@@ -270,6 +278,7 @@ private:
     Cartridge* m_cart = nullptr;
     std::function<void()> m_cartChanged;
     IOHandler *m_gtia = nullptr, *m_pokey = nullptr, *m_pia = nullptr, *m_antic = nullptr;
+    IOHandler* m_pokey2 = nullptr;
 };
 
 /** ANTIC's view of memory: the main bus but for its own extended bank. */
@@ -673,6 +682,41 @@ MachineDescriptor* create(Model model, std::string* err, bool pal) {
             return t ? std::string("xe (") + NAMES[t] + ")" : "";
         };
         desc->expansionSlots.push_back(std::move(ram));
+    }
+
+    {
+        // A second POKEY (the stereo upgrade): $D210-$D21F, its four voices
+        // mixed with the first's (atari800 STEREO_SOUND)
+        auto second = std::make_shared<POKEY*>(nullptr);
+        auto take = [bus, pokey, io, second]() {
+            if (!*second) return;
+            bus->setSecondPokey(nullptr);
+            pokey->setSecond(nullptr);
+            io->unregisterHandler(*second);
+            delete *second;
+            *second = nullptr;
+        };
+        desc->deleters.push_back(take);
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "pokey2";
+        sl.description = "A second POKEY at $D210-$D21F (the stereo upgrade)";
+        sl.devices = {{"pokey", "POKEY: four more voices (AUDF/AUDC/AUDCTL/STIMER/SKCTL), mixed with the first's; reads 0", {}, ""}};
+        sl.install = [bus, pokey, io, second, take, clockHz](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "pokey") { err = "no device '" + device + "' for the pokey2 slot (pokey)"; return false; }
+            if (!option.empty()) { err = "the second POKEY takes no option"; return false; }
+            take();
+            if (device.empty()) return true;
+            auto* p = new POKEY();
+            p->setName("POKEY (second)");
+            p->setClockHz(clockHz);
+            *second = p;
+            pokey->setSecond(p);
+            bus->setSecondPokey(p);
+            io->registerHandler(p);
+            return true;
+        };
+        sl.info = [second]() { return *second ? std::string("pokey (second POKEY, $D210)") : std::string(); };
+        desc->expansionSlots.push_back(std::move(sl));
     }
 
     MachineDescriptor* self = desc;

@@ -60,6 +60,20 @@ expansion ram remove
 - **Removing it:** the window shows base RAM again.
 - `atari800xl_extended_ram` writes a signature into every combination of each size's bits, counts the banks that keep it (4 to 64), and checks ANTIC's separate view.
 
+### Second POKEY (stereo)
+
+On all the models, the `pokey2` expansion slot takes a second POKEY, as the stereo upgrades fit one. It follows atari800's `STEREO_SOUND`:
+
+```
+expansion pokey2 pokey
+expansion pokey2 remove
+```
+
+- **Addresses:** it answers at `$D210-$D21F`. Without it, `$D210` mirrors `$D200`.
+- **Registers:** it takes AUDF1-4, AUDC1-4, AUDCTL, STIMER and SKCTL. Reads from it give 0, and it raises no interrupts.
+- **Sound:** its four voices are mixed with the first POKEY's into the machine's mono output, each chip at half level. True stereo isn't done.
+- **Test:** `atari_second_pokey` plays a tone on the second chip alone and hears it.
+
 ## Timing and interrupts
 
 - **Scheduler:** each step runs one CPU instruction and clocks the devices for its cycles. While ANTIC holds the CPU (WSYNC, or the DMA cycles ANTIC takes), the step instead clocks the devices one cycle without the CPU.

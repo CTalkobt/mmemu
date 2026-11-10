@@ -237,10 +237,10 @@ float POKEY::mixOutput() const {
     return (float)sum / 60.0f;
 }
 
-void POKEY::tick(uint64_t cycles) {
+void POKEY::step() {
     const uint8_t ctl = m_regs[AUDCTL];
     const bool running = (m_regs[SKCTL] & 0x03) != 0;
-    for (uint64_t i = 0; i < cycles; ++i) {
+    {
         if (running) clockPolys();
 
         bool tick64 = ++m_div28 >= 28;
@@ -265,9 +265,20 @@ void POKEY::tick(uint64_t cycles) {
             if (clk3 && --m_ch[2].counter <= 0) { reloadChannel(2); underflow(2); }
             if (base && --m_ch[3].counter <= 0) { reloadChannel(3); underflow(3); }
         }
+    }
+}
 
+void POKEY::tick(uint64_t cycles) {
+    if (m_slave) return;                    // the first POKEY clocks this one
+    for (uint64_t i = 0; i < cycles; ++i) {
+        step();
+        float level = mixOutput();
+        if (m_second) {
+            m_second->step();
+            level = (level + m_second->mixOutput()) * 0.5f;
+        }
         // Audio: average the cycles of each output sample
-        m_sampleSum += mixOutput();
+        m_sampleSum += level;
         ++m_sampleCycles;
         m_sampleFrac += (uint32_t)m_sampleRate;
         if (m_sampleFrac >= m_clockHz) {
