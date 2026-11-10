@@ -827,3 +827,23 @@ TEST_CASE(cli_sid_voices_and_scope) {
 
     fs::remove_all(dir);
 }
+
+// load takes a quoted path with spaces (as `-i` passes it); a bare word as
+// before; the address after either
+TEST_CASE(cli_load_quoted_path) {
+    CliContext ctx;
+    MachineDescriptor md;
+    md.buses.push_back({"system", new FlatMemoryBus("system", 16)});
+    ctx.machine = &md;
+    ctx.bus = md.buses[0].bus;
+    std::string output;
+    CliInterpreter interpreter(ctx, [&](const std::string& s) { output += s; });
+    interpreter.processLine("load \"no such dir/DOS 3.3 Master.zzz\"");
+    EXPECT_TRUE(output.find("'no such dir/DOS 3.3 Master.zzz'") != std::string::npos);
+    output.clear();
+    interpreter.processLine("load \"a b.zzz\" nonsense!");
+    EXPECT_TRUE(output.find("Invalid address 'nonsense!'") != std::string::npos);
+    output.clear();
+    interpreter.processLine("load plain.zzz");
+    EXPECT_TRUE(output.find("'plain.zzz'") != std::string::npos);
+}

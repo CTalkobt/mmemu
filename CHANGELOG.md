@@ -7,6 +7,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CLI: paths with spaces
+
+- **`load` takes a quoted path** (`load "DOS 3.3 System Master.dsk"`), and
+  `-i`/`--mount` quotes what it passes. Before, a path with a space was cut
+  at the space ("No loader found"). Test: `cli_load_quoted_path`.
+
 ### Apple II Saturn 128K
 
 - **A Saturn Systems RAM card** in slot 0 of the II and II+, in place of
