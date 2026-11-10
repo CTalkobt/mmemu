@@ -55,6 +55,7 @@ void Ppu::reset() {
     m_brightness = 0;
     m_objBase = 0; m_objGap = 0x1000; m_objSize = 0;
     m_oamAddr = m_oamReload = 0; m_oamPriority = false; m_oamLatch = 0;
+    m_beamLine = 0; m_beamHClock = 0; m_evalLine = -1; m_evalStart = m_timeIndex = m_cgInternal = 0;
     m_bgMode = 0; m_bg3Priority = false; m_tile16 = 0;
     m_mosaicSize = 1; m_mosaicMask = 0;
     for (int i = 0; i < 4; ++i) { m_mapBase[i] = m_charBase[i] = 0; m_mapSize[i] = 0; m_hofs[i] = m_vofs[i] = 0; }
@@ -107,7 +108,8 @@ void Ppu::vramIncrement(bool high) {
 void Ppu::write(uint8_t reg, uint8_t v) {
     switch (reg & 0x3F) {
     case 0x00:
-        if (m_forcedBlank && !(v & 0x80)) { /* rendering resumes */ }
+        // In forced blank on the first line of vertical blank, the OAM address reloads (Mesen)
+        if (m_forcedBlank && m_beamLine == vblankLine()) m_oamAddr = m_oamReload;
         m_forcedBlank = v & 0x80;
         m_brightness = v & 0x0F;
         break;
@@ -126,14 +128,18 @@ void Ppu::write(uint8_t reg, uint8_t v) {
         m_oamAddr = m_oamReload;
         break;
     case 0x04: {
-        const uint16_t a = m_oamAddr & 0x3FF;
+        // During the picture: where the PPU is reading, and the high table too (Mesen)
+        uint16_t a = oamAccessAddr();
         if (a < 0x200) {
             if (!(a & 1)) m_oamLatch = v;
             else { m_oam[a - 1] = m_oamLatch; m_oam[a] = v; }
-        } else {
+        }
+        if (rendering()) a = (uint16_t)(0x200 | ((a & 0x1F0) >> 4));
+        if (a >= 0x200) {
+            if (!(a & 1)) m_oamLatch = v;
             m_oam[0x200 | (a & 0x1F)] = v;
         }
-        m_oamAddr = (uint16_t)((a + 1) & 0x3FF);
+        m_oamAddr = (uint16_t)((m_oamAddr + 1) & 0x3FF);
         break;
     }
     case 0x05:
@@ -167,10 +173,11 @@ void Ppu::write(uint8_t reg, uint8_t v) {
         break;
     }
     case 0x15: m_vmain = v; break;
-    case 0x16: m_vramAddr = (uint16_t)((m_vramAddr & 0xFF00) | v); m_vramPrefetch = m_vram[vramAddrRemap() & 0x7FFF]; break;
-    case 0x17: m_vramAddr = (uint16_t)((m_vramAddr & 0x00FF) | v << 8); m_vramPrefetch = m_vram[vramAddrRemap() & 0x7FFF]; break;
-    case 0x18: { auto& w = m_vram[vramAddrRemap() & 0x7FFF]; w = (uint16_t)((w & 0xFF00) | v); vramIncrement(false); break; }
-    case 0x19: { auto& w = m_vram[vramAddrRemap() & 0x7FFF]; w = (uint16_t)((w & 0x00FF) | v << 8); vramIncrement(true); break; }
+    case 0x16: m_vramAddr = (uint16_t)((m_vramAddr & 0xFF00) | v); m_vramPrefetch = vramFetch(); break;
+    case 0x17: m_vramAddr = (uint16_t)((m_vramAddr & 0x00FF) | v << 8); m_vramPrefetch = vramFetch(); break;
+    // VRAM is only written outside the picture (vertical or forced blank); the address steps anyway
+    case 0x18: if (!rendering()) { auto& w = m_vram[vramAddrRemap() & 0x7FFF]; w = (uint16_t)((w & 0xFF00) | v); } vramIncrement(false); break;
+    case 0x19: if (!rendering()) { auto& w = m_vram[vramAddrRemap() & 0x7FFF]; w = (uint16_t)((w & 0x00FF) | v << 8); } vramIncrement(true); break;
     case 0x1A: m_m7sel = v; break;
     case 0x1B: case 0x1C: case 0x1D: case 0x1E:
         m_m7[reg - 0x1B] = (int16_t)(v << 8 | m_m7latch);
@@ -182,7 +189,11 @@ void Ppu::write(uint8_t reg, uint8_t v) {
     case 0x21: m_cgAddr = v; m_cgHigh = false; break;
     case 0x22:
         if (!m_cgHigh) m_cgLatch = v;
-        else m_cgram[m_cgAddr++] = (uint16_t)(((v & 0x7F) << 8) | m_cgLatch);
+        else {
+            // During the picture: the address the PPU is reading (Mesen)
+            m_cgram[canAccessCgram() ? m_cgAddr : m_cgInternal] = (uint16_t)(((v & 0x7F) << 8) | m_cgLatch);
+            ++m_cgAddr;
+        }
         m_cgHigh = !m_cgHigh;
         break;
     case 0x23: m_winSel[0] = v; break;
@@ -214,10 +225,13 @@ uint8_t Ppu::peek(uint8_t reg) const {
     case 0x34: return (uint8_t)m_mpyResult;
     case 0x35: return (uint8_t)(m_mpyResult >> 8);
     case 0x36: return (uint8_t)(m_mpyResult >> 16);
-    case 0x38: { const uint16_t a = m_oamAddr & 0x3FF; return m_oam[a < 0x200 ? a : (0x200 | (a & 0x1F))]; }
+    case 0x38: { const uint16_t a = oamAccessAddr(); return m_oam[a < 0x200 ? a : (0x200 | (a & 0x1F))]; }
     case 0x39: return (uint8_t)m_vramPrefetch;
     case 0x3A: return (uint8_t)(m_vramPrefetch >> 8);
-    case 0x3B: return m_cgHigh ? (uint8_t)((m_cgram[m_cgAddr] >> 8) | (m_ppu2Bus & 0x80)) : (uint8_t)m_cgram[m_cgAddr];
+    case 0x3B: {
+        const uint8_t a = canAccessCgram() ? m_cgAddr : m_cgInternal;
+        return m_cgHigh ? (uint8_t)((m_cgram[a] >> 8) | (m_ppu2Bus & 0x80)) : (uint8_t)m_cgram[a];
+    }
     case 0x3E: return (uint8_t)((m_timeOver << 7) | (m_rangeOver << 6) | (m_ppu1Bus & 0x10) | 0x01);
     case 0x3F: return (uint8_t)((m_interlaceField << 7) | (m_latched << 6) | (m_ppu2Bus & 0x20) | (m_pal << 4) | 0x03);
     default: return m_ppu1Bus;
@@ -240,7 +254,7 @@ uint8_t Ppu::read(uint8_t reg) {
     case 0x39: case 0x3A: {
         v = peek(reg);
         if (((reg & 0x3F) == 0x3A) == ((m_vmain & 0x80) != 0)) {
-            m_vramPrefetch = m_vram[vramAddrRemap() & 0x7FFF];
+            m_vramPrefetch = vramFetch();
             vramIncrement((reg & 0x3F) == 0x3A);
         }
         m_ppu1Bus = v;
@@ -308,8 +322,10 @@ void Ppu::endLine(int line) {
     m_drawLine = line + 1;
     m_drawX = 0;
     if (m_drawLine >= vblankLine()) { m_drawLine = -1; return; }
-    if (m_forcedBlank || !((m_tm | m_ts) & 0x10)) { m_obj.opaque.fill(false); return; }
+    if (m_forcedBlank) { m_obj.opaque.fill(false); return; }
+    // Sprites are evaluated and fetched whether or not they're shown (Mesen): the flags in $213E
     renderObj(m_drawLine, m_obj, m_objPal);
+    if (!((m_tm | m_ts) & 0x10)) m_obj.opaque.fill(false);
 }
 
 IVideoOutput::VideoDimensions Ppu::getDimensions() const {
@@ -322,6 +338,21 @@ IVideoOutput::VideoDimensions Ppu::getDimensions() const {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+
+uint16_t Ppu::oamAccessAddr() const {
+    if (!rendering()) return m_oamAddr & 0x3FF;
+    // As Mesen (not cycle-exact either): the sprite being evaluated through dot 255, then the one fetched
+    if (m_beamHClock <= 255 * 4) return (uint16_t)(((m_evalStart + ((m_beamHClock >> 2) + 1) / 2) & 0x7F) << 2);
+    return (uint16_t)(m_timeIndex << 2);
+}
+
+int16_t Ppu::paletteIndex(int bpp, int bg, int pal, int idx) const {
+    switch (bpp) {
+    case 2: return (int16_t)((m_bgMode == 0 ? bg * 32 : 0) + pal * 4 + idx);
+    case 4: return (int16_t)(pal * 16 + idx);
+    default: return (m_cgwsel & 1) ? (int16_t)-1 : (int16_t)idx;
+    }
+}
 
 uint16_t Ppu::paletteColor(int bpp, int bg, int pal, int idx) const {
     switch (bpp) {
@@ -404,6 +435,7 @@ void Ppu::renderBg(int bg, int bpp, int line, Layer& out, int x0, int x1, bool e
         out.opaque[x] = true;
         out.prio[x] = (uint8_t)((e >> 13) & 1);
         out.color[x] = paletteColor(bpp, bg, pal, idx);
+        out.cg[x] = paletteIndex(bpp, bg, pal, idx);
     }
 }
 
@@ -436,12 +468,14 @@ void Ppu::renderMode7(int bg, int line, Layer& out, int x0, int x1) {
             out.opaque[x] = true;
             out.prio[x] = idx >> 7;
             out.color[x] = m_cgram[idx & 0x7F];
+            out.cg[x] = idx & 0x7F;
             continue;
         }
         if (!idx) continue;
         out.opaque[x] = true;
         out.prio[x] = 0;
         out.color[x] = paletteColor(8, 0, 0, idx);
+        out.cg[x] = paletteIndex(8, 0, 0, idx);
     }
 }
 
@@ -465,6 +499,8 @@ void Ppu::renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal) {
         if (n == 32) { m_rangeOver = true; break; }
         list[n++] = i;
     }
+    // The fetch goes from the last sprite in range to the first, which stays the PPU's OAM address
+    if (n) m_timeIndex = (uint8_t)list[0];
     int slivers = 0;
     for (int k = n - 1; k >= 0; --k) {
         const int i = list[k];
@@ -498,6 +534,7 @@ void Ppu::renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal) {
                 out.opaque[sxp] = true;
                 out.prio[sxp] = (uint8_t)prio;
                 out.color[sxp] = m_cgram[128 + p * 16 + idx];
+                out.cg[sxp] = (int16_t)(128 + p * 16 + idx);
                 pal[sxp] = (uint8_t)p;
             }
         }
@@ -607,6 +644,8 @@ void Ppu::drawPixels(int line, int x0, int x1) {
     // math matters when a layer takes part or the clip-to-black is on
     const bool mathUsed = (m_cgadsub & 0x3F) || (m_cgwsel & 0xC0);
     const bool needSub = wide || (mathUsed && (m_cgwsel & 0x02));
+    bool cgZero = false;
+    int cgLast = -1;
     for (int x = x0; x <= x1; ++x) {
         auto pick = [&](uint8_t enabled, uint8_t winMask, bool even) {
             Pixel best;
@@ -621,6 +660,7 @@ void Ppu::drawPixels(int line, int x0, int x1) {
                     best.z = zz;
                     best.color = ly.color[x];
                     best.layer = (uint8_t)l;
+                    best.cg = ly.cg[x];
                     best.objMath = l != 4 || m_objPal[x] >= 4;
                 }
             }
@@ -628,16 +668,23 @@ void Ppu::drawPixels(int line, int x0, int x1) {
         };
         const Pixel main = pick(m_tm, m_tmw, false);
         m_main[x] = main.z ? main.color : backdrop;
+        // The PPU's CGRAM address: Mesen's last lookup, the backdrop (0) if either screen shows it
+        if (!main.z) cgZero = true;
+        else if (main.cg >= 0) cgLast = main.cg;
+        if (!needSub && !cgZero && (!m_ts || !pick(m_ts, m_tsw, true).z)) cgZero = true;
         m_mainFlags[x] = (uint8_t)(((m_cgadsub >> main.layer) & 1) && main.objMath);
         if (needSub) {
             const Pixel sub = pick(m_ts, m_tsw, true);
             m_sub[x] = sub.z ? sub.color : backdrop;
             m_subHas[x] = sub.z != 0;
+            if (!sub.z) cgZero = true;
         } else {
             m_sub[x] = backdrop;
             m_subHas[x] = false;
         }
     }
+    if (cgZero) m_cgInternal = 0;
+    else if (cgLast >= 0) m_cgInternal = (uint8_t)cgLast;
     // Colour math; in hi-res the even pixel is the sub screen's, mixed with the main screen's previous pixel
     if (mathUsed) {
         for (int x = x0; x <= x1; ++x) {

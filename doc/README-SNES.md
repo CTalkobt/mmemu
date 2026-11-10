@@ -442,9 +442,21 @@ horizontal blank.
   write latch, `$2134` multiply, the H/V latches (`$2137` and `WRIO`) and
   `$213C-$213F`.
 
+- **During the picture** (not forced blank, before vertical blank; as
+  Mesen): VRAM isn't written (the address still steps) and its reads give
+  0. CGRAM outside H 88-1095 (line 0 excepted) goes to the address the PPU
+  is reading: the last colour looked up, 0 when the backdrop shows on
+  either screen. OAM goes to the sprite being evaluated (one per two dots
+  from the line's start, by the priority rotation) and then to the first
+  sprite fetched, and a `$2104` write lands in the high table too.
+  Sprites are evaluated even when not shown, for `$213E`'s flags. Writing
+  `$2100` in forced blank on vertical blank's first line reloads the OAM
+  address.
+
 **Not yet**: the PPU's per-dot fetches (a mid-line change to a BG's
-scroll or tile base takes effect at the next pixel, not the next tile);
-VRAM, OAM and CGRAM writes are allowed during the picture.
+scroll or tile base takes effect at the next pixel, not the next tile).
+The OAM and CGRAM addresses during the picture are approximate (Mesen's
+are too).
 
 ### Sound
 

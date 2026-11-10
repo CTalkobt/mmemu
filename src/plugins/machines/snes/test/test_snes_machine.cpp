@@ -366,6 +366,62 @@ TEST_CASE(snes_ppu_overscan) {
     EXPECT_EQ(p.getDimensions().height, 239);
 }
 
+// During the picture (as Mesen): VRAM isn't written (the address still steps) and reads give 0; CGRAM goes to
+// the address the PPU is reading (0 when the backdrop shows) outside H 88-1095; OAM to the sprite being
+// evaluated, the high table too; forced blank on the first line of vertical blank reloads the OAM address
+TEST_CASE(snes_ppu_access_during_picture) {
+    snes::Ppu p;
+    auto vramWrite = [&](uint16_t a, uint16_t v) { p.write(0x16, (uint8_t)a); p.write(0x17, (uint8_t)(a >> 8)); p.write(0x18, (uint8_t)v); p.write(0x19, (uint8_t)(v >> 8)); };
+    p.write(0x15, 0x80);                    // step after the high byte
+    p.setBeam(100, 400);                    // forced blank (power-on): all reachable
+    vramWrite(0x0010, 0x1234);
+    EXPECT_EQ(p.vram(0x0010), 0x1234);
+    p.write(0x00, 0x0F);                    // the picture on
+    vramWrite(0x0010, 0xBEEF);
+    EXPECT_EQ(p.vram(0x0010), 0x1234);
+    p.write(0x18, 0x55); p.write(0x19, 0x66);   // the address stepped to $0011, not written either
+    EXPECT_EQ(p.vram(0x0011), 0x0000);
+    p.write(0x16, 0x10); p.write(0x17, 0x00);
+    EXPECT_EQ(p.read(0x39), 0x00);          // the prefetch is 0
+    p.setBeam(230, 400);                    // vertical blank
+    p.write(0x16, 0x10); p.write(0x17, 0x00);
+    EXPECT_EQ(p.read(0x39), 0x34);
+    vramWrite(0x0011, 0xBEEF);
+    EXPECT_EQ(p.vram(0x0011), 0xBEEF);
+
+    // CGRAM: in the picture's dots, colour 0 (the backdrop shows: nothing drawn); in H blank, the address
+    p.setBeam(100, 400);
+    p.write(0x21, 0x20); p.write(0x22, 0x1F); p.write(0x22, 0x00);
+    EXPECT_EQ(p.cgram(0x20), 0x0000);
+    EXPECT_EQ(p.cgram(0x00), 0x001F);
+    p.setBeam(100, 1100);
+    p.write(0x22, 0xE0); p.write(0x22, 0x03);   // the address stepped to $21
+    EXPECT_EQ(p.cgram(0x21), 0x03E0);
+    p.setBeam(0, 400);                      // line 0 isn't drawn
+    p.write(0x21, 0x40); p.write(0x22, 0x00); p.write(0x22, 0x7C);
+    EXPECT_EQ(p.cgram(0x40), 0x7C00);
+
+    // OAM: fill it in forced blank, then in the picture at dot 100 the PPU is at sprite 50 (no priority
+    // rotation): $2138 reads its byte 0; $2104 writes the latch and the high table's byte ($200 | 50 >> 2)
+    p.write(0x00, 0x8F);
+    p.setBeam(230, 0);
+    p.write(0x02, 0); p.write(0x03, 0);
+    for (int i = 0; i < 0x220; ++i) p.write(0x04, (uint8_t)(i * 7));
+    p.write(0x00, 0x0F);
+    p.setBeam(50, 0);                       // the line's first access: the evaluation starts at sprite 0
+    p.setBeam(50, 400);
+    EXPECT_EQ(p.read(0x38), (uint8_t)(200 * 7));
+    p.write(0x04, 0xA5);
+    EXPECT_EQ(p.oam(200), (uint8_t)(200 * 7));
+    EXPECT_EQ(p.oam(0x200 + 12), 0xA5);
+    // Forced blank written on line 225 while in forced blank: the OAM address reloads ($2102/3: 0)
+    p.write(0x00, 0x80);
+    p.setBeam(225, 100);
+    p.read(0x38); p.read(0x38);
+    p.write(0x00, 0x80);
+    EXPECT_EQ(p.read(0x38), (uint8_t)0);
+}
+
 // Battery RAM: loaded from the .srm, written back within a second of a change
 TEST_CASE(snes_battery_save) {
     EXPECT_EQ(snes::savePathFor("/x/y/Game.v1.sfc"), std::string("/x/y/Game.v1.srm"));
