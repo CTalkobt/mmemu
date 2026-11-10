@@ -7,6 +7,35 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES Super Game Boy, and a Game Boy core
+
+- **A Game Boy (DMG) core**, `gb::Gameboy` in
+  `src/plugins/machines/gameboy/` (after Mesen's `Core/Gameboy`): the SM83
+  timed per machine cycle with Mesen's interrupt, HALT (and HALT bug) and
+  EI timing; the timer, OAM DMA with its bus conflicts, the joypad and the
+  serial port; the dot-by-dot PPU (pixel FIFO, sprite fetches, window,
+  STAT timing, the DMG quirks, OAM corruption); the four-channel APU with
+  Mesen's quirks; ROM, MBC1/MBC1M, MBC2, MBC3 (clock, MBC30) and MBC5
+  cartridges. Without a boot ROM it starts in the state the DMG's leaves.
+  See doc/README-GAMEBOY.md. Tests: `gb_*`; with c-sp's gameboy-test-roms
+  in `../refs`, Blargg's `cpu_instrs`, `instr_timing` and `mem_timing` pass
+  and `dmg-acid2` matches its reference picture (`gb_blargg_tests`);
+  `MMEMU_GB_SURVEY=1` runs a wider survey (`gb_rom_survey`: the rest of
+  Blargg's DMG tests and Mooneye's acceptance tests, 102 PASS, 6 FAIL: the
+  `boot_div`, `boot_hwio` and `boot_sclk_align` tests, which need the boot
+  ROM's exact timing, and `oam_bug` 7-timing_effect; `boot_regs-sgb` passes
+  with the SGB boot ROM).
+- **The Super Game Boy** (after Mesen's `SuperGameboy`): load a `.gb` and it
+  goes in the SGB, its BIOS from `roms/snes/SGB1.sfc` or `SGB2.sfc` (not
+  included); or attach the BIOS (chipset `$E3` / game code `042J`) and put
+  a Game Boy cartridge in the new `gameboy` expansion slot. The ICD2's
+  registers at `$6000-$7FFF` (LCD row buffers, joypad packets, four
+  players' buttons, the Game Boy's reset and clock divider), the Game Boy
+  at the master clock / 5 (SGB2: 20.97 MHz / 5), SameBoy's open source SGB
+  boot ROM sending the header packets, the Game Boy's sound mixed into the
+  S-DSP's output, its battery RAM and MBC3 clock saved beside it. Tests:
+  `snes_sgb`, `snes_sgb_battery_and_sgb2`.
+
 ### SNES PPU: per-dot background fetches
 
 - **As Mesen:** the BG tilemap and character data are fetched ahead of

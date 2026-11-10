@@ -7,6 +7,7 @@ contributors) and the fullsnes / Anomie documentation:
 - **Cartridges:** `BaseCartridge.cpp`.
 - **PPU:** `SnesPpu.cpp`.
 - **Sound:** `Spc.cpp`, `SpcTimer.h`, `DSP/`.
+- **Super Game Boy:** `Coprocessors/SGB/SuperGameboy.cpp` and `Core/Gameboy/`.
 
 ## Profiles
 
@@ -247,6 +248,51 @@ Mesen's `BsxCart`, `BsxMemoryPack`, `BsxSatellaview` and `BsxStream`):
   `$C0-$EF` (LoROM) or `$20-$3F`/`$60-$7D`/`$A0-$BF`/`$E0-$FF` (HiROM),
   an erased 1 MB pack at first, saved beside the ROM as `<rom>.bs`. As
   Mesen, not on SA-1 cartridges.
+
+### Super Game Boy
+
+Nintendo's adapter: a SNES cartridge holding a whole Game Boy behind the
+ICD2 chip (`snes::Sgb`, after Mesen's `SuperGameboy`, with the Game Boy core
+of [README-GAMEBOY.md](README-GAMEBOY.md)).
+
+- **Supplying it:** load the Game Boy cartridge itself (`cart game.gb`,
+  `.gb`/`.gbc`, any frontend): as in Mesen it goes in the SGB, whose BIOS is
+  read from `roms/snes/SGB1.sfc` (or `SGB2.sfc`; `MMEMU_SNES_FIRMWARE`
+  moves the folder). The BIOS is not included (Nintendo's copyright);
+  without it the cartridge is refused with a message naming the file.
+  Attaching the BIOS itself (chipset `$E3`, or game code `042J`, as Mesen)
+  gives an SGB with an empty slot: a Game Boy cartridge goes in through
+  CLI/MCP `expansion gameboy cart <file>` (empty to take it out), the GUI's
+  Control > Expansions, or `snes::insertSgbCartridge`. Either way the
+  console powers on again. The cartridge's description ends
+  `, Super Game Boy: <title>, <mapper>, <sizes>`.
+- **SGB or SGB2** by the BIOS (`GAMEBOY2` in its title, or 512 KB): the
+  SGB1's Game Boy runs at the SNES master clock / 5 (4.295 MHz, a little
+  fast, as on the real one), the SGB2's at its own 20.97 MHz crystal / 5;
+  `$6003`'s divider gives / 4, 5, 7 or 9. The Game Boy is brought up to
+  the master clock on every CPU cycle and before each ICD2 access.
+- **The ICD2's registers** at `$6000-$7FFF` of `$00-$3F`/`$80-$BF`: the LCD
+  row being written and its buffer (`$6000`), the row buffer to read
+  (`$6001`), packet ready (`$6002`), the Game Boy's reset, player count and
+  divider (`$6003`), the four players' buttons (`$6004-$6007`), the version
+  `$21` (`$600F`), the 16-byte packet (`$7000-$700F`), and the row buffer a
+  byte at a time (`$7800`: 20 tiles of 2bpp, 320 bytes, then `$FF`).
+- **The Game Boy's side:** its LCD pixels fill four 8-line buffers in turn;
+  its writes to P14/P15 are decoded as packets (a reset pulse, 128 bits, a
+  stop bit), or with both lines high step to the next player; `$FF00`
+  reads the current player's buttons, or `$F` minus the player. The boot
+  ROM is SameBoy's open source SGB boot ROM (MIT licence, as Mesen embeds
+  it), which sends the cartridge's header to the BIOS in six packets. What
+  the packets mean (palettes, borders, `MLT_REQ`, sound) is the SGB BIOS's
+  own work, so nothing of it is emulated here.
+- **Sound:** the Game Boy's APU is box-filtered to 32 kHz and added to the
+  S-DSP's output a sample at a time, not while the DSP's `FLG` mutes it (as
+  Mesen). Unlike Mesen, which resamples with a Hermite filter, a DC
+  blocker takes out the Game Boy's offset.
+- **Battery RAM:** the Game Boy cartridge's RAM is saved beside it
+  (`<game>.srm`), an MBC3's clock to `<game>.rtc` (Mesen's format).
+- **Not emulated:** the link port (the SGB has none), the SGB2's link
+  cable; Game Boy Color cartridges run as on a Game Boy.
 
 ### MSU-1
 
@@ -563,6 +609,13 @@ are too).
 - `test_snes_msu1.cpp`: hand-made data and tracks beside a ROM (and
   `msu1.rom`): the ID, the status, the data port, a missing track, the
   audio at full and half volume, pausing, a track's end and its loop.
+- `test_snes_sgb.cpp`: a hand-built SGB BIOS and Game Boy cartridge: the
+  message when the BIOS is missing, the boot ROM's first header packet at
+  `$7000`, the Game Boy's clock ratio (SGB1, SGB2, divider 9, held in
+  reset), the LCD row buffers read at `$7800`, the buttons from `$6004`,
+  the Game Boy's tone in the SNES's output once the DSP isn't muted, the
+  `gameboy` expansion slot, and an MBC1 cartridge's battery RAM saved and
+  reloaded.
 - `test_snes_sufami.cpp`: a hand-built BIOS and two cartridges: the map
   and its mirrors, both RAMs and their saves, slot B through the expansion
   slot, and the message when the BIOS is missing.
@@ -611,6 +664,6 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018, the Sufami Turbo, the
-  Satellaview and the MSU-1 (the Super Game Boy, which needs a Game Boy).
+  Satellaview, the Super Game Boy and the MSU-1.
 - The Satellaview's Soundlink audio and serial I/O (fixed values, as Mesen).
 - Two Justifiers from the host (the second gun is there for the API only).

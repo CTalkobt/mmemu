@@ -5,6 +5,7 @@
 #include <vector>
 
 struct MachineDescriptor;
+namespace gb { class Gameboy; }
 
 /**
  * Super Nintendo / Super Famicom (#15), after Mesen2 (GPL-3.0): the 5A22
@@ -12,7 +13,7 @@ struct MachineDescriptor;
  * HDMA, joypad ports), 128 KB of work RAM, the PPU (64 KB VRAM, CGRAM,
  * OAM), the sound system (SPC700, 64 KB ARAM, S-DSP) and a cartridge
  * (LoROM, HiROM, ExHiROM; battery RAM saved to `.srm`; DSP-1..4, ST010/011, Super FX,
- * SA-1, Cx4, S-DD1, SPC7110, OBC1, ST018).
+ * SA-1, Cx4, S-DD1, SPC7110, OBC1, ST018, the Super Game Boy with a Game Boy inside).
  *
  * Time is the 21.477 MHz master clock (21.281 MHz PAL): each CPU bus cycle
  * takes 6, 8 or 12 clocks by region (FastROM through MEMSEL), internal
@@ -35,6 +36,9 @@ MachineDescriptor* create(bool superFamicom = false, std::string* err = nullptr)
 
 /**
  * Plug a cartridge in (.sfc / .smc, a copier header is skipped) and power on.
+ * A label ending .gb/.gbc is a Game Boy cartridge: it goes in the Super Game
+ * Boy, whose BIOS is roms/snes/SGB1.sfc or SGB2.sfc (Mesen's names); .st and
+ * .bs likewise go in the Sufami Turbo and BS-X BIOSes.
  * `savePath`: where a battery-backed cartridge keeps its RAM (Mesen's and
  * snes9x's `<rom>.srm`): loaded now, written back within a second of a
  * change and when the cartridge is removed. Empty: not saved.
@@ -78,6 +82,13 @@ bool setSatellaviewDate(MachineDescriptor* m, int64_t date);
  *  Its RAM is saved beside it (`.srm`); the console powers on again. */
 bool insertSufamiSlotB(MachineDescriptor* m, const std::string& path, std::string& err);
 std::string sufamiSlotB(MachineDescriptor* m);
+/** The Super Game Boy's Game Boy cartridge (the SGB BIOS cartridge in first; or load the .gb itself, the
+ *  BIOS from roms/snes/SGB1.sfc): a .gb file, or "" to take it out. Its RAM is saved beside it; the console
+ *  powers on again. */
+bool insertSgbCartridge(MachineDescriptor* m, const std::string& path, std::string& err);
+std::string sgbCartridge(MachineDescriptor* m);
+/** The Super Game Boy's Game Boy (for tests and the debugger), or null. */
+gb::Gameboy* sgbGameboy(MachineDescriptor* m);
 /** The region setting: "auto" (the cartridge's header, as Mesen), "ntsc" or "pal"; setting it powers on again. */
 bool setRegion(MachineDescriptor* m, const std::string& region);
 std::string region(MachineDescriptor* m);

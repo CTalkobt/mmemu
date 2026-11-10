@@ -143,7 +143,13 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 	src/plugins/machines/snes/main/snes_st018.cpp \
 	src/plugins/machines/snes/main/snes_bsx.cpp \
 	src/plugins/machines/snes/main/snes_msu1.cpp \
+	src/plugins/machines/snes/main/snes_sgb.cpp \
 	src/plugins/machines/snes/main/spc700.cpp \
+	src/plugins/machines/gameboy/main/gameboy.cpp \
+	src/plugins/machines/gameboy/main/gb_cpu.cpp \
+	src/plugins/machines/gameboy/main/gb_ppu.cpp \
+	src/plugins/machines/gameboy/main/gb_apu.cpp \
+	src/plugins/machines/gameboy/main/gb_cart.cpp \
 	src/plugins/machines/snes/main/plugin_init.cpp
 
 PLUGIN_NES_SRCS = src/plugins/machines/nes/main/machine_nes.cpp \
@@ -552,6 +558,9 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/snes/test/test_snes_bsx.cpp \
 	src/plugins/machines/snes/test/test_snes_msu1.cpp \
 	src/plugins/machines/snes/test/test_snes_st018.cpp \
+	src/plugins/machines/snes/test/test_snes_sgb.cpp \
+	src/plugins/machines/gameboy/test/test_gameboy.cpp \
+	src/plugins/machines/gameboy/test/test_gameboy_roms.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
@@ -689,6 +698,12 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/snes/main/snes_st018.o \
 	src/plugins/machines/snes/main/snes_bsx.o \
 	src/plugins/machines/snes/main/snes_msu1.o \
+	src/plugins/machines/snes/main/snes_sgb.o \
+	src/plugins/machines/gameboy/main/gameboy.o \
+	src/plugins/machines/gameboy/main/gb_cpu.o \
+	src/plugins/machines/gameboy/main/gb_ppu.o \
+	src/plugins/machines/gameboy/main/gb_apu.o \
+	src/plugins/machines/gameboy/main/gb_cart.o \
 	src/plugins/machines/snes/main/snes_apu.o \
 	src/plugins/machines/snes/main/snes_ppu.o \
 	src/plugins/machines/snes/main/machine_snes.o \
