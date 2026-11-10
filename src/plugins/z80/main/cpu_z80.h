@@ -44,6 +44,18 @@ public:
     virtual int ioAfter(uint16_t port, uint64_t t, bool write) { (void)port; (void)t; (void)write; return 3; }
 };
 
+/**
+ * Opcode fetches a machine watches (Fuse z80_ops.c's divide/divmmc checks):
+ * before() ahead of an instruction's first M1, after() once it's read. Not
+ * for the bytes after a prefix.
+ */
+class IZ80FetchHook {
+public:
+    virtual ~IZ80FetchHook() = default;
+    virtual void before(uint16_t pc) = 0;
+    virtual void after(uint16_t pc) = 0;
+};
+
 class Z80 : public ICore {
 public:
     Z80();
@@ -92,6 +104,8 @@ public:
     uint64_t cycles() const override { return m_cycles; }
     /** Contention (the Spectrum); nullptr for none. */
     void setTiming(IZ80Timing* t) { m_timing = t; }
+    /** Watching the instructions' opcode fetches (null: none). */
+    void setFetchHook(IZ80FetchHook* h) { m_fetchHook = h; }
     /** Set the T-state clock (a machine counting T-states in a frame, tests). */
     void setCycles(uint64_t t) { m_cycles = t; }
     /** The byte on the data bus when an interrupt is acknowledged (IM 2's
@@ -119,6 +133,15 @@ private:
     int wait(uint16_t a, bool mreq) { return m_timing ? m_timing->contend(a, m_cycles, mreq) : 0; }
     uint8_t rd(uint16_t a) { m_cycles += wait(a, true) + 3; return m_bus ? m_bus->read8(a) : 0xFF; }
     void    wr(uint16_t a, uint8_t v) { m_cycles += wait(a, true) + 3; if (m_bus) m_bus->write8(a, v); }
+    /** An instruction's first opcode fetch, seen by the fetch hook. */
+    uint8_t m1First() {
+        if (!m_fetchHook) return m1();
+        const uint16_t pc = m_pc;
+        m_fetchHook->before(pc);
+        const uint8_t v = m1();
+        m_fetchHook->after(pc);
+        return v;
+    }
     /** An M1 opcode fetch. */
     uint8_t m1() { m_cycles += wait(m_pc, true) + 4; uint8_t v = m_bus ? m_bus->read8(m_pc) : 0xFF; m_pc++; return v; }
     /** A memory cycle that reads nothing (JR/DJNZ not taken: Fuse's contend_read(PC, 3)). */
@@ -191,6 +214,7 @@ private:
     IBus* m_bus = nullptr;
     IBus* m_io = nullptr;
     IZ80Timing* m_timing = nullptr;
+    IZ80FetchHook* m_fetchHook = nullptr;
 
     uint8_t m_a = 0xFF, m_f = 0xFF, m_b = 0, m_c = 0, m_d = 0, m_e = 0, m_h = 0, m_l = 0;
     uint16_t m_af2 = 0xFFFF, m_bc2 = 0, m_de2 = 0, m_hl2 = 0;

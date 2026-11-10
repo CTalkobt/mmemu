@@ -172,6 +172,7 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
 	src/plugins/machines/spectrum/main/spectrum_tape.cpp \
 	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
+	src/plugins/machines/spectrum/main/spi_sd_card.cpp \
 	src/plugins/machines/spectrum/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
@@ -706,6 +707,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/spectrum/main/machine_spectrum.o \
 	src/plugins/machines/spectrum/main/spectrum_tape.o \
 	src/plugins/machines/spectrum/main/spectrum_ay.o \
+	src/plugins/machines/spectrum/main/spi_sd_card.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \

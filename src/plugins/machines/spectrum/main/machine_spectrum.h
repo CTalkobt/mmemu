@@ -23,6 +23,10 @@ enum class Model { S48, S128, Plus2 };
  */
 MachineDescriptor* create(Model model, std::string* err = nullptr);
 
+class DivMmc;
+/** The DivMMC on `m`'s edge connector, or null. */
+DivMmc* divMmcOf(MachineDescriptor* m);
+
 /** `load` for snapshots: `.sna` (48K, 128K) and `.z80` (versions 1-3, 48K and 128K). */
 IImageLoader* createSnapshotLoader();
 /** `load` for tapes: `.tap` and `.tzx`, mounted, the machine reset, loading started. */

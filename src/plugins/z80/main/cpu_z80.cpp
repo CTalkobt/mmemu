@@ -355,7 +355,7 @@ int Z80::step() {
     }
     m_eiDelay = false;
     if (m_halted) {                                          // HALT fetches itself again
-        m1();
+        m1First();
         m_pc--;
         incR();
         return (int)(m_cycles - start);
@@ -377,7 +377,7 @@ int Z80::step() {
     m_qNext = 0;
     m_prefix = 0;
     m_dispFetched = false;
-    uint8_t op = m1();
+    uint8_t op = m1First();
     incR();
     while (op == 0xDD || op == 0xFD) {                       // the last prefix wins
         m_prefix = op == 0xDD ? 1 : 2;

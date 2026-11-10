@@ -8,6 +8,7 @@
 #include "machine_spectrum.h"
 #include "spectrum_tape.h"
 #include "spectrum_ay.h"
+#include "divmmc.h"
 #include "libcore/main/image_loader.h"
 #include "libdevices/main/disk_file.h"
 #include "libcore/main/machine_desc.h"
@@ -257,6 +258,10 @@ struct Memory {
     uint8_t port7ffd = 0;
     int page[4] = {-1, 5, 2, 0};                // -1: ROM
     int rom = 0;
+    DivMmc* div = nullptr;                      // a DivMMC on the edge connector
+
+    /** $0000-$3FFF is the DivMMC's just now. */
+    bool divPaged(uint16_t a) const { return div && a < 0x4000 && div->paged(); }
 
     void map() {
         rom = is128 ? ((port7ffd >> 4) & 1) : 0;
@@ -273,6 +278,7 @@ struct Memory {
         return is128 ? (b & 1) : b == 5;
     }
     uint8_t read(uint16_t a) const {
+        if (divPaged(a)) return div->read(a);
         const int b = bankAt(a);
         return b < 0 ? roms[rom][a & 0x3FFF] : ram[(size_t)b * 0x4000 + (a & 0x3FFF)];
     }
@@ -523,9 +529,11 @@ public:
         return v;
     }
     uint8_t peek8(uint32_t addr) override { return m_mem->read(addr & 0xFFFF); }
+    Memory* memory() const { return m_mem; }
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t a = addr & 0xFFFF;
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
+        if (m_mem->divPaged(a)) { m_mem->div->write(a, v); return; }
         const int b = m_mem->bankAt(a);
         if (b < 0) return;                       // ROM
         if (b == m_mem->screenBank() && (a & 0x3FFF) < 0x1B00) m_ula->drawTo(m_cpu->cycles());
@@ -574,6 +582,7 @@ public:
         }
         if (!(port & 0xE0)) { v &= kempston; attached = 0xFF; }
         if (ay && (port & 0xC002) == 0xC000) { v &= ay->read(); attached = 0xFF; }   // $FFFD
+        if (m_mem->div) { uint8_t d; if (m_mem->div->portRead(port, d)) { v &= d; attached = 0xFF; } }
         if (attached != 0xFF) v &= (uint8_t)(m_ula->floating(m_cpu->cycles()) | attached);
         return v;
     }
@@ -581,6 +590,7 @@ public:
     void write8(uint32_t addr, uint8_t v) override {
         const uint16_t port = addr & 0xFFFF;
         if (!(port & 1)) m_ula->out(m_cpu->cycles(), v);
+        if (m_mem->div) m_mem->div->portWrite(port, v);
         if (ay && (port & 0xC002) == 0xC000) ay->selectRegister(v);                 // $FFFD
         if (ay && (port & 0xC002) == 0x8000) { m_ula->syncAudio(m_cpu->cycles()); ay->write(v); }   // $BFFD
         if (m_mem->is128 && !(port & 0x8002) && !m_mem->locked()) {
@@ -733,6 +743,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->onReset = [mem, ula, io, cpu, kbd, ay](MachineDescriptor&) {     // power on
         if (ay) ay->reset();
         std::fill(mem->ram.begin(), mem->ram.end(), 0);
+        if (mem->div) mem->div->reset(true);
         mem->port7ffd = 0;
         mem->map();
         io->resetAll();
@@ -749,7 +760,7 @@ MachineDescriptor* create(Model model, std::string* err) {
     for (const auto& r : mem->roms) tapeRom.push_back(r[0x056B] == 0xC0 && r[0x04D0] == 0x08);
     desc->schedulerStep = [cpu, ula, kbd, tim, mem, keyRead, tape, tapeRom](MachineDescriptor&) -> int {
         const uint16_t pc = (uint16_t)cpu->pc();
-        if (pc < 0x4000) {
+        if (pc < 0x4000 && !mem->divPaged(pc)) {       // the ROM's own code (not a DivMMC's)
             if (kbd->typing()) {
                 const auto& k = keyRead[(size_t)mem->rom];
                 if ((int)pc == k.first) kbd->atKeyRead(k.second);
@@ -773,8 +784,58 @@ MachineDescriptor* create(Model model, std::string* err) {
         }
         return c;
     };
+
+    {
+        // The edge connector: a DivMMC (esxDOS in its EEPROM) and its SD card
+        auto div = std::make_shared<std::unique_ptr<DivMmc>>();
+        auto take = [mem, cpu, div]() {
+            mem->div = nullptr;
+            cpu->setFetchHook(nullptr);
+            div->reset();
+        };
+        // At teardown the memory is gone already (an earlier deleter): just the card
+        desc->deleters.push_back([div]() { div->reset(); });
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "edge";
+        sl.description = "The edge connector: a DivMMC (esxDOS, roms/spectrum/esxmmc.bin) with an SD card image";
+        sl.devices = {{"divmmc", "DivMMC: 8K EEPROM (esxDOS), 128K RAM, an SD card on SPI; the option is the card's image file (none: no card)", {}, ""}};
+        sl.install = [mem, cpu, div, take](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "divmmc") { err = "no device '" + device + "' for the edge connector (divmmc)"; return false; }
+            if (device.empty()) { take(); return true; }
+            std::vector<uint8_t> rom;
+            {
+                std::ifstream f("roms/spectrum/esxmmc.bin", std::ios::binary);
+                if (f) rom.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+                if (rom.size() != 0x2000) {
+                    err = "the DivMMC needs esxDOS's 8 KB firmware in roms/spectrum/esxmmc.bin (ESXMMC.BIN from esxdos.org)";
+                    return false;
+                }
+            }
+            auto fresh = std::make_unique<DivMmc>(std::move(rom));
+            if (!option.empty() && !fresh->card().insert(option, err)) return false;
+            take();
+            *div = std::move(fresh);
+            (*div)->reset(true);
+            mem->div = div->get();
+            cpu->setFetchHook(div->get());
+            return true;
+        };
+        sl.info = [div]() -> std::string {
+            if (!*div) return "";
+            const auto& c = (*div)->card();
+            return c.inserted() ? "divmmc (DivMMC, card " + c.path() + ")" : std::string("divmmc (DivMMC, no card)");
+        };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
+
     if (desc->onReset) desc->onReset(*desc);
     return desc;
+}
+
+DivMmc* divMmcOf(MachineDescriptor* m) {
+    if (!m || m->buses.empty()) return nullptr;
+    auto* bus = dynamic_cast<SpecBus*>(m->buses[0].bus);
+    return bus ? bus->memory()->div : nullptr;
 }
 
 

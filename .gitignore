@@ -50,3 +50,5 @@ roms/apple2/apple2c-*.rom
 roms/apple2/apple2gs-*.rom
 # SNES coprocessor firmware (DSP-1..4): local only (Nintendo/NEC copyright); see doc/README-SNES.md
 roms/snes
+# esxDOS firmware for the DivMMC: local only (no redistribution licence); see doc/README-SPECTRUM.md
+roms/spectrum/esxmmc.bin
