@@ -85,7 +85,15 @@ bool Reu::setOption(const std::string& key, const std::string& value, std::strin
         reset();
         return true;
     }
-    err = "the REU's options are a size (128K-16M) or an image file";
+    if (key == "glue") {
+        // The board: a C64C's custom-IC glue logic lets a DMA read made as
+        // BA falls see the RAM under I/O (VICE testprogs REU/reutiming2)
+        if (value == "c64c") m_c64cGlue = true;
+        else if (value == "c64" || value == "breadbin") m_c64cGlue = false;
+        else { err = "the REU's glue is c64 (breadbin) or c64c"; return false; }
+        return true;
+    }
+    err = "the REU's options are a size (128K-16M), an image file, or glue (c64, c64c)";
     return false;
 }
 
@@ -189,6 +197,23 @@ void Reu::start() {
     m_left = m_len ? m_len : 0x10000;
     m_hostStep = (m_addrCtl & AC_FIX_C64) ? 0 : 1;
     m_reuStep = (m_addrCtl & AC_FIX_REU) ? 0 : 1;
+    m_swapRead = false;
+    m_firstByte = true;
+}
+
+uint8_t Reu::baHistory() const {
+    uint8_t h = 0;
+    for (int n = 0; n < 4; ++n)
+        if (m_ba->baLowForDma(-n)) h |= (uint8_t)(1 << n);
+    return h;
+}
+
+// A read of the C64 side; on a C64C, one made while BA is low gets the RAM
+// under I/O (Denise Reu::stash, Reu::swap)
+uint8_t Reu::hostRead(bool baLow) {
+    syncTo(0);
+    if (baLow && m_c64cGlue && m_ram64) return m_ram64[m_dHost];
+    return m_bus->read8(m_dHost);
 }
 
 // The REC's 19-bit counter wraps at 512 KB (128 KB on the 1700); the bank's
@@ -212,23 +237,49 @@ void Reu::ramWrite(uint32_t a, uint8_t v) {
 int Reu::busMasterCycle() {
     if (!m_active) return 0;
     if (!m_bus) { m_active = false; return 0; }
-    // The VIC-II has the bus (VICE reu.c reu_ba): a read waits; writes to
-    // the C64 go on for two cycles after BA falls, then wait too
-    if (m_ba && m_ba->baLow(0)) {
-        if (m_type != FROM_REU || m_baWrites >= 2) return 1;
-        ++m_baWrites;
-    } else {
-        m_baWrites = 0;
-    }
     auto advance = [&]() {
         m_dHost = (uint16_t)(m_dHost + m_hostStep);
         m_dReu = step(m_dReu);
         --m_left;
     };
+    if (m_type == SWAP && m_ba) {
+        // Denise Reu::swap: read and write cycles alternate, whether or not
+        // the access happens. A read goes ahead unless BA has been low for
+        // four cycles (the first byte not in the cycle BA falls); a write
+        // waits for BA, but for the last byte. A byte read again overwrites
+        // the one before, so the read that counts is the last before BA
+        // ends: on a badline, cycle 14 (VICE testprogs REU/reutiming2 e4-g4)
+        const uint8_t h = baHistory();
+        if (!m_swapRead) {
+            if ((h & 3) == 1 && m_firstByte) return 1;
+            if ((h & 15) != 15) {
+                m_swapReu = ramRead(m_dReu);
+                m_swapC64 = hostRead(h & 1);
+            }
+        } else if (!(h & 1) || m_left == 1) {
+            ramWrite(m_dReu, m_swapC64);
+            syncTo(0);
+            m_bus->write8(m_dHost, m_swapReu);
+            m_firstByte = false;
+            advance();
+            if (!m_left) { finish(m_dHost, m_dReu, 1, ST_EOB); return 1; }
+        }
+        m_swapRead = !m_swapRead;
+        return 1;
+    }
+    // The VIC-II has the bus (VICE reu.c reu_ba): a read waits; writes to
+    // the C64 go on for two cycles after BA falls, then wait too
+    if (m_ba && m_ba->baLowForDma(0)) {
+        if (m_type != FROM_REU || m_baWrites >= 2) return 1;
+        ++m_baWrites;
+    } else {
+        m_baWrites = 0;
+    }
     switch (m_type) {
         case TO_REU: {
-            syncTo(0);
-            const uint8_t v = m_bus->read8(m_dHost);
+            // BA is low for the CPU but not yet for the REU: sprite 0's DMA
+            // starting (Denise reuSprite0)
+            const uint8_t v = hostRead(m_ba && m_ba->baLow(0));
             ramWrite(m_dReu, v);
             advance();
             if (!m_left) { finish(m_dHost, m_dReu, 1, ST_EOB); m_floating = v; }

@@ -1056,6 +1056,12 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
     if (!desc) return -3;
     std::string err;
     if (reu && !desc->expansionSlot("port")->install("reu", "512K", err)) { delete desc; return -3; }
+    // REU/reutiming2's references come from a C64C, but for the -m2 programs'
+    // (a breadbin); Denise's test runner picks the board the same way
+    if (reu && prgPath.find("reutiming2") != std::string::npos && prgPath.find("m2.") == std::string::npos) {
+        IOHandler* r = desc->ioRegistry->findHandler("REU");
+        if (!r || !r->setOption("glue", "c64c", err)) { delete desc; return -3; }
+    }
     DebugCart cart;
     desc->ioRegistry->registerHandler(&cart);
     desc->onReset(*desc);
@@ -1082,6 +1088,12 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
                 line += v == 0 ? '@' : v < 27 ? (char)('A' + v - 1) : v >= 32 && v < 64 ? (char)v : '.';
             }
             if (line.find_first_not_of(' ') != std::string::npos) printf("    | %s\n", line.c_str());
+        }
+    }
+    if (code != 0) {
+        if (const char* dump = std::getenv("MMEMU_VICE_DUMP")) {   // the 64K as the CPU sees it, for diffing
+            std::ofstream out(dump, std::ios::binary);
+            for (uint32_t a = 0; a < 0x10000; ++a) out.put((char)bus->peek8(a));
         }
     }
     desc->ioRegistry->unregisterHandler(&cart);

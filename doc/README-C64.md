@@ -142,7 +142,7 @@ The 6510 stops on RDY only when it reads. After each instruction the scheduler w
 
 So a badline costs 40-43 cycles depending on the instruction under it. The instruction's own memory accesses still happen when it starts; only the time it takes changes.
 
-The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and its writes to the C64 continue for two cycles after BA falls, then wait.
+The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and its writes to the C64 continue for two cycles after BA falls, then wait. Where sprite 0's DMA starts, the VIC-II pulls BA a cycle late, and the REU still gets that cycle (VICE `vicii_cycle_reu`; `IBaSource::baLowForDma`). A swap follows Denise instead (§2.10).
 
 Tests (`src/libcore/test/test_machine_boot.cpp`):
 - `vic2_ba_cycles`: the tables, PAL and NTSC.
@@ -178,6 +178,8 @@ It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c6
 - The registers repeat every 32 bytes up to `$DFFF`; `$DF0B-$DF1F` read `$FF`.
 - **Starting a transfer:** execute with bit 4 set starts at once. With bit 4 clear, the REU waits for any write to `$FF00`; the write still goes on to the RAM under the KERNAL.
 - **Timing:** the CPU waits while the REU transfers one byte a cycle (a swap takes two). The VIC-II's badlines and sprite fetches pause the transfer (§2.9).
+- **Swap and BA:** a swap alternates a read cycle and a write cycle, after Denise's `Reu::swap`, and the cycles alternate whether or not the access happens. A read goes ahead unless BA has been low for four cycles; a write waits for BA, but for the last byte. So on a badline the byte read at cycle 12 is read again at cycle 14, and its write waits for cycle 55.
+- **C64C glue:** on a C64C, a DMA read made while BA is low returns the RAM under I/O, not the chip's register. That's the first read of a swap after BA falls, and a copy's read in the late sprite-0 cycle. The REU's `glue` option (`c64`, the default, or `c64c`) selects the board. There is no CLI or GUI control for it yet; the VICE test runner sets it (§2.15).
   - Verify stops at the first difference, plus one cycle when bytes were left. With one byte left, that byte is compared too.
   - A finished transfer leaves the registers past the block, with length 1. With autoload they are reloaded instead.
 - **What the DMA sees:** the CPU's memory map, so I/O and ROMs are included. The 6510's port at `$00/$01` is not on the bus, so a transfer there writes the RAM underneath.
@@ -290,7 +292,7 @@ MMEMU_VICE_TESTPROGS=../refs/vice-testprogs MMEMU_VICE_FILTER=Lorenz bin/mmemu-t
 
 Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. Programs for NTSC, the new CIA or other hardware than an REU are skipped.
 
-What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, and `REU/reutiming2` `e2`, `f`, `f2`, `g`, `g2` (and `-m2`). What fails: `reutiming2` `e`, `e3`, `e4`-`e6`, `f3`, `f4`, `g3`, `g4`: on real hardware, an REU read of I/O as BA falls returns the RAM underneath once, which mmsim doesn't model. `MMEMU_VICE_SCREEN=1` prints a failing program's screen.
+What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, and all 28 `REU/reutiming2` exitcode programs. The `reutiming2` references without `-m2` come from a C64C, so the runner sets the REU's `glue` to `c64c` for those, as Denise's runner does; the `-m2` ones come from a breadbin. `MMEMU_VICE_SCREEN=1` prints a failing program's screen, and `MMEMU_VICE_DUMP=<file>` saves its 64K.
 
 ### 2.16 Cycle timing
 On the C64 every CPU access happens on its own cycle: the 6502 core calls back before each access (`ICore::setAccessSync`), and the scheduler ticks the devices through that cycle first, waiting on BA for reads. So a CPU access in a cycle sees the devices as they are in that cycle. Interrupts are polled in an instruction's second-to-last cycle. An REU transfer gets the same treatment (`IOHandler::setBusMasterSync`).
