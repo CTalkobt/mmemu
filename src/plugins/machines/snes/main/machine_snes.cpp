@@ -14,6 +14,7 @@
 #include "snes_obc1.h"
 #include "snes_sdd1.h"
 #include "snes_spc7110.h"
+#include "snes_st018.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -94,6 +95,8 @@ struct Cart {
     std::unique_ptr<Spc7110> spc7110;
     // The OBC1: its ports over the battery RAM at $6000-$7FFF; the rest is the plain map
     std::unique_ptr<Obc1> obc1;
+    // The ST018 (an ARM): its link registers at $3000-$3FFF; the rest is the plain map
+    std::unique_ptr<St018> st018;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     std::string savePath;
@@ -276,6 +279,18 @@ struct Cart {
             if (!loadDsp(raw, err, true)) return false;
             battery = true;
         }
+        // The ST018: chipset $Fx with cartridge type $02; battery-backed (as Mesen). Its firmware: st018.rom
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x02) {
+            const std::string path = firmwareDir() + "/st018.rom";
+            std::vector<uint8_t> fw;
+            if (!readFile(path, fw) || fw.size() != St018::PRG_SIZE + St018::DATA_SIZE) {
+                err = "This cartridge has an ST018 chip: its firmware is needed in " + path + " (" +
+                      std::to_string(St018::PRG_SIZE + St018::DATA_SIZE) + " bytes)";
+                return false;
+            }
+            st018 = std::make_unique<St018>(fw);
+            battery = true;
+        }
         // The SPC7110: chipset $Fx with cartridge type $00; $F9 has the RTC. Always battery-backed (as Mesen)
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x00) {
             spc7110 = std::make_unique<Spc7110>(&rom, &sram, chipLow == 0x09);
@@ -295,6 +310,7 @@ struct Cart {
         if (cx4) s += ", Cx4";
         if (sdd1) s += ", S-DD1";
         if (obc1) s += ", OBC1";
+        if (st018) s += ", ST018";
         if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
         return s;
     }
@@ -435,6 +451,7 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->reset();
         if (m_cart && m_cart->sa1) m_cart->sa1->reset();
         if (m_cart && m_cart->cx4) m_cart->cx4->reset();
+        if (m_cart && m_cart->st018) m_cart->st018->powerOn();
         if (m_cart && m_cart->sdd1) m_cart->sdd1->reset();
         if (m_cart && m_cart->spc7110) m_cart->spc7110->reset();
     }
@@ -478,7 +495,8 @@ public:
         }
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
         if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
-        if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);    // and the Cx4
+        if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);
+        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM    // and the Cx4
     }
     void idle(uint32_t) override { advance(6); }
 
@@ -567,6 +585,11 @@ private:
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->cx4->read(a);
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->obc1->read(a);
+            if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
+                if (!peek) m_cart->st018->runTo(m_master);
+                const int v = m_cart->st018->read(a, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
             if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
                 if (!peek) m_cart->dsp->runTo(m_master, MASTER_HZ);
                 const uint16_t w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
@@ -612,6 +635,11 @@ private:
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->cx4->write(a, v); return; }
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->obc1->write(a, v); return; }
+            if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
+                m_cart->st018->runTo(m_master);
+                m_cart->st018->write(a, v);
+                return;
+            }
             if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
                 m_cart->dsp->runTo(m_master, MASTER_HZ);
                 uint16_t& w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
@@ -1080,6 +1108,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         if (bus->cart() && bus->cart()->gsu) bus->cart()->gsu->reset();
         if (bus->cart() && bus->cart()->sa1) bus->cart()->sa1->reset();
         if (bus->cart() && bus->cart()->cx4) bus->cart()->cx4->reset();
+        // The ST018 isn't reset by the button (as Mesen): the SNES resets it through $3804
         if (bus->cart() && bus->cart()->sdd1) bus->cart()->sdd1->reset();
         if (bus->cart() && bus->cart()->spc7110) bus->cart()->spc7110->reset();
         cpu->setNmiLine(false);
