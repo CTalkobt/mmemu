@@ -1,7 +1,10 @@
 #include "test_harness.h"
 #include "plugins/6502/main/cpu6502.h"
+#include "plugins/6502/main/cpu65c02.h"
+#include <memory>
 #include "libmem/main/memory_bus.h"
 #include <cstring>
+#include <vector>
 
 TEST_CASE(cpu6502_reset) {
     FlatMemoryBus bus("system", 16);
@@ -352,4 +355,50 @@ TEST_CASE(cpu6502_binary_unchanged_without_sed) {
     cpu.setPc(0xC000);
     for (int i = 0; i < 4; ++i) cpu.step();
     ASSERT_EQ((int)cpu.regRead(0), 0x0E);
+}
+
+// A read-modify-write instruction on the NMOS 6502 writes twice: the value it
+// read, unchanged, then the result; the 65C02 writes only the result (#304:
+// `ASL $D019` acknowledges a VIC-II interrupt with the first write)
+namespace {
+struct WriteRecorder : public FlatMemoryBus {
+    WriteRecorder() : FlatMemoryBus("system", 16) {}
+    std::vector<std::pair<uint32_t, uint8_t>> writes;
+    void write8(uint32_t addr, uint8_t val) override {
+        writes.push_back({addr, val});
+        FlatMemoryBus::write8(addr, val);
+    }
+};
+}
+
+TEST_CASE(cpu6502_rmw_writes_twice) {
+    // ASL $D019; INC $10; LSR $11,X; ROL $1234; ROR $12; DEC $13; DCP $14; ISC $15
+    const uint8_t prog[] = {0x0E, 0x19, 0xD0, 0xE6, 0x10, 0x56, 0x11, 0x2E, 0x34, 0x12,
+                            0x66, 0x12, 0xC6, 0x13, 0xC7, 0x14, 0xE7, 0x15};
+    for (int cmos = 0; cmos < 2; ++cmos) {
+        WriteRecorder bus;
+        std::unique_ptr<MOS6502> core(cmos ? new MOS65C02() : new MOS6502());
+        MOS6502& cpu = *core;
+        cpu.setDataBus(&bus);
+        for (size_t i = 0; i < sizeof(prog); ++i) bus.write8(0xC000 + (uint32_t)i, prog[i]);
+        bus.write8(0xD019, 0x81);
+        for (uint32_t a = 0x10; a <= 0x15; ++a) bus.write8(a, 0x40);
+        bus.write8(0x1234, 0x40);
+        cpu.setPc(0xC000);
+        const int count = cmos ? 6 : 8;    // the 65C02 has no DCP/ISC
+        for (int i = 0; i < count; ++i) {
+            bus.writes.clear();
+            cpu.step();
+            if (cmos) {
+                ASSERT_EQ((int)bus.writes.size(), 1);
+            } else {
+                ASSERT_EQ((int)bus.writes.size(), 2);
+                ASSERT_EQ(bus.writes[0].first, bus.writes[1].first);
+                if (i == 0) {
+                    ASSERT_EQ(bus.writes[0].second, 0x81);   // the value read
+                    ASSERT_EQ(bus.writes[1].second, 0x02);   // shifted
+                }
+            }
+        }
+    }
 }

@@ -43,6 +43,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
   active gun, which latches the PPU's counters every frame it points at the
   picture. Gun 1 follows the host mouse. Test `snes_justifier`.
 
+### VICE's test programs and the 6502's read-modify-write (#304)
+
+- **The NMOS 6502 writes twice in a read-modify-write instruction** (`ASL`,
+  `LSR`, `ROL`, `ROR`, `INC`, `DEC`, `DCP`, `ISC`...): the value it read,
+  unchanged, then the result. So `ASL $D019` and `INC $D019` now acknowledge
+  a VIC-II interrupt, as raster code expects; before, the interrupt was never
+  cleared and such programs hung in their IRQ handler. The 65C02 still writes
+  once. Test `cpu6502_rmw_writes_twice`.
+- **VICE's debug cartridge** (`DebugCart`, a write to `$D7FF` is the exit
+  code), and the test `c64_vice_testprogs`. It runs VICE's PAL "exitcode"
+  programs from a local copy of VICE's `testprogs` (`MMEMU_VICE_TESTPROGS`).
+  The Lorenz 2.15 suite passes 263 of 294.
+
 ### C64 and C128: the VIC-II takes the bus (#266)
 
 - **BA cycle by cycle**, after VICE's viciisc cycle tables: badlines hold it

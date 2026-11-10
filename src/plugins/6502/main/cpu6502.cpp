@@ -128,6 +128,14 @@ void MOS6502::write(uint16_t addr, uint8_t val) {
     }
 }
 
+// A read-modify-write instruction's writes: the NMOS 6502 writes the value it
+// read back unchanged, then the result (so `ASL $D019` acknowledges a VIC-II
+// interrupt with the first write); the 65C02 writes only the result
+void MOS6502::rmwWrite(uint16_t addr, uint8_t old, uint8_t val) {
+    if (!m_cmos) write(addr, old);
+    write(addr, val);
+}
+
 void MOS6502::push(uint8_t val) {
     write(0x0100 | m_state.sp--, val);
 }
@@ -441,10 +449,11 @@ int MOS6502::opASL(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x80) m_state.p |= FLAG_C;
         m <<= 1;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -596,8 +605,9 @@ int MOS6502::opCPY(uint16_t addr) {
 }
 
 int MOS6502::opDEC(uint16_t addr) {
-    uint8_t m = read(addr) - 1;
-    write(addr, m);
+    const uint8_t old = read(addr);
+    uint8_t m = old - 1;
+    rmwWrite(addr, old, m);
     updateNZ(m);
     return 0;
 }
@@ -612,8 +622,9 @@ int MOS6502::opEOR(uint16_t addr) {
 }
 
 int MOS6502::opINC(uint16_t addr) {
-    uint8_t m = read(addr) + 1;
-    write(addr, m);
+    const uint8_t old = read(addr);
+    uint8_t m = old + 1;
+    rmwWrite(addr, old, m);
     updateNZ(m);
     return 0;
 }
@@ -648,10 +659,11 @@ int MOS6502::opLSR(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x01) m_state.p |= FLAG_C;
         m >>= 1;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -681,10 +693,11 @@ int MOS6502::opROL(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x80) m_state.p |= FLAG_C;
         m = (m << 1) | c;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -701,10 +714,11 @@ int MOS6502::opROR(uint16_t addr) {
         updateNZ(m_state.a);
     } else {
         m = read(addr);
+        const uint8_t old = m;
         m_state.p &= ~FLAG_C;
         if (m & 0x01) m_state.p |= FLAG_C;
         m = (m >> 1) | c;
-        write(addr, m);
+        rmwWrite(addr, old, m);
         updateNZ(m);
     }
     return 0;
@@ -777,8 +791,8 @@ int MOS6502::opSRE(uint16_t addr) { opLSR(addr); return opEOR(addr); }
 int MOS6502::opRRA(uint16_t addr) { opROR(addr); return opADC(addr); }
 int MOS6502::opSAX(uint16_t addr) { write(addr, m_state.a & m_state.x); return 0; }
 int MOS6502::opLAX(uint16_t addr) { m_state.a = m_state.x = read(addr); updateNZ(m_state.a); return 0; }
-int MOS6502::opDCP(uint16_t addr) { write(addr, read(addr) - 1); return opCMP(addr); }
-int MOS6502::opISC(uint16_t addr) { write(addr, read(addr) + 1); return opSBC(addr); }
+int MOS6502::opDCP(uint16_t addr) { const uint8_t m = read(addr); rmwWrite(addr, m, (uint8_t)(m - 1)); return opCMP(addr); }
+int MOS6502::opISC(uint16_t addr) { const uint8_t m = read(addr); rmwWrite(addr, m, (uint8_t)(m + 1)); return opSBC(addr); }
 // The immediate operand is at `addr` (the IMM mode has already stepped the PC)
 int MOS6502::opANC(uint16_t addr) { m_state.a &= read(addr); updateNZ(m_state.a); if (m_state.p & FLAG_N) m_state.p |= FLAG_C; else m_state.p &= ~FLAG_C; return 0; }
 int MOS6502::opALR(uint16_t addr) { m_state.a &= read(addr); return opLSR(0xFFFF); }

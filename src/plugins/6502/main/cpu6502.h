@@ -112,6 +112,7 @@ private:
     // Internal helpers
     uint8_t  read(uint16_t addr);
     void     write(uint16_t addr, uint8_t val);
+    void rmwWrite(uint16_t addr, uint8_t old, uint8_t val);
     void     push(uint8_t val);
     uint8_t  pop();
     void     updateNZ(uint8_t val);
