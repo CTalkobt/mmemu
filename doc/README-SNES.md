@@ -60,7 +60,38 @@ one powers the console on; the machine's reset is the RESET button.
     header as bsnes and Mesen do.
   - **ROM sizes:** sizes that aren't a power of two mirror as in bsnes.
   - **Battery RAM:** LoROM `$70-$7D:$0000-$7FFF`, HiROM `$20-$3F:$6000-$7FFF`.
-  - **Coprocessors:** none yet (no DSP-1, Super FX or SA-1).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4 (see below).
+
+### DSP-1 to DSP-4
+
+The NEC uPD7725 (`snes::NecDsp`, after Mesen's `NecDsp.cpp`): a 16-bit
+fixed-point DSP at 7.6 MHz running its own program (2048 24-bit words), with
+a 1024-word data ROM, 256 words of RAM, a 16x16 multiplier working every
+cycle, and two accumulators with their flags. Pilotwings, Super Mario Kart and
+the other DSP-1 games use it for 3D maths.
+
+- **Detection:** a chipset byte (`$FFD6`) of `$03`-`$0F` in the `$0x` range.
+  The title picks the firmware as Mesen does: `PILOTWINGS` takes the
+  DSP-1, `DUNGEON MASTER` the DSP-2, SD Gundam GX the DSP-3, Top Gear 3000
+  the DSP-4, and everything else the DSP-1B.
+- **Registers:**
+  - **LoROM:** `$30-$3F:$8000-$FFFF` and `$60-$6F:$0000-$7FFF`, with DR
+    below `$C000`/`$4000` and SR above.
+  - **HiROM:** `$00-$1F:$6000-$7FFF`, with SR at `$7000`.
+  - **Transfers:** DR goes through the byte latch, 16 or 8 bits.
+- **Timing:** the DSP is brought up to the CPU's time whenever its registers
+  are touched. While the firmware waits on RQM it sleeps until the next access.
+- **Firmware:** the chip's ROM is not in the cartridge dump, and it is not
+  part of mmsim (Nintendo/NEC copyright). Put it in `roms/snes/`
+  (gitignored), or point `MMEMU_SNES_FIRMWARE` at another directory, under
+  Mesen's names:
+  - `dsp1.rom`, `dsp1b.rom`, `dsp2.rom`, `dsp3.rom` or `dsp4.rom`, 8192
+    bytes each (the program, then the data);
+  - or `<name>.program.rom` (6144 bytes) plus `<name>.data.rom` (2048 bytes).
+
+  A ROM image with the firmware appended (8 KB past a 32 KB boundary) is
+  used as it is. Without firmware, the cartridge is refused with a message
+  naming the file it needs.
 
 ### PPU
 
@@ -151,6 +182,10 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
   - **Sound:** the Twinkle music demo has to make sound.
   - **Pictures:** `MMEMU_SNES_SHOTS=<dir>` runs every PPU demo for 3
     seconds and saves a PNG of each, with the speed.
+- `test_snes_necdsp.cpp`: the uPD7725 with a small hand-assembled program
+  (multiply, data ROM, RQM handshakes, ALU flags), on its own and through a
+  LoROM cartridge driven by the 65816. It needs no Nintendo firmware, and it
+  checks the error given when firmware is missing.
 - `test_snes_machine.cpp` also checks a mid-line write splitting a line,
   hi-res and interlace frame sizes and fields, and overscan.
 
@@ -162,7 +197,8 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors (DSP-1..4, Super FX, SA-1, S-DD1, Cx4, SPC7110...).
+- Cartridge coprocessors other than the DSP-1..4 (Super FX, SA-1, S-DD1,
+  Cx4, SPC7110, ST010/011...).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, battery RAM saving, the mouse, Super Scope and multitap.

@@ -48,3 +48,5 @@ roms/x16
 # Apple IIc / IIgs ROMs: local only (Apple copyright); see doc/README-APPLE2.md
 roms/apple2/apple2c-*.rom
 roms/apple2/apple2gs-*.rom
+# SNES coprocessor firmware (DSP-1..4): local only (Nintendo/NEC copyright); see doc/README-SNES.md
+roms/snes

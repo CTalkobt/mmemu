@@ -7,6 +7,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES DSP-1
+
+- **The NEC uPD7725** (`snes::NecDsp`, after Mesen) for DSP-1, 1B, 2, 3 and
+  4 cartridges (Pilotwings, Super Mario Kart...). It is found by the
+  header's chipset byte, and the title picks the firmware as Mesen does.
+- **Registers:** at the LoROM and HiROM addresses, and run lazily up to the
+  CPU's time.
+- **Firmware:** local only. Use `roms/snes/dsp1b.rom` etc. (gitignored), or
+  `MMEMU_SNES_FIRMWARE`, or a ROM image with the firmware appended. Without
+  it the cartridge is refused, with a message naming the file it needs.
+- **Tests:** a hand-assembled uPD7725 program checks the core and the
+  cartridge interface without any Nintendo firmware.
+
 ### SNES picture
 
 - **Drawn to the dot:** the PPU draws each line up to the current dot before
