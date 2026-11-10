@@ -7,6 +7,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES PPU: per-dot background fetches
+
+- **As Mesen:** the BG tilemap and character data are fetched ahead of
+  the beam, 8-pixel column c in dots 8c-8c+7 in each mode's slot order
+  (offset-per-tile reading BG3's entries for the next column), and drawn
+  from what was fetched. A mid-line change to the scroll, the map or
+  character bases, the BG mode or the mosaic now reaches the tiles at the
+  next column fetched (a tile boundary) instead of the next pixel; the fine
+  scroll still applies as each pixel is drawn. Nothing is fetched in forced
+  blank or mode 7. Test: `snes_ppu_bg_fetch_midline`.
+
 ### SNES PPU: VRAM, CGRAM and OAM during the picture
 
 - **As Mesen:** VRAM writes are dropped during the picture (the address

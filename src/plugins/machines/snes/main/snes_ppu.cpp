@@ -81,7 +81,9 @@ void Ppu::reset() {
     m_frames = 0;
     m_interlaceField = false;
     m_overscanFrame = m_interlaceFrame = m_wideFrame = false;
-    m_drawLine = -1; m_drawX = 0;
+    m_drawLine = -1; m_drawX = 0; m_fetchX = 0;
+    for (auto& l : m_bgTiles) for (auto& t : l) t = BgTile{};
+    m_optH = m_optV = 0;
     for (auto& o : m_obj.opaque) o = false;
 }
 
@@ -310,7 +312,9 @@ void Ppu::startVblank() {
 }
 
 void Ppu::sync(int line, int dot) {
-    if (line != m_drawLine || m_drawX > 255) return;
+    if (line != m_drawLine) return;
+    fetchTo(line, dot);
+    if (m_drawX > 255) return;
     const int end = std::min(dot - 22, 255);
     if (end < m_drawX) return;
     drawPixels(line, m_drawX, end);
@@ -318,9 +322,13 @@ void Ppu::sync(int line, int dot) {
 }
 
 void Ppu::endLine(int line) {
-    if (line == m_drawLine && m_drawX <= 255) drawPixels(line, m_drawX, 255);
+    if (line == m_drawLine) {
+        fetchTo(line, 263);
+        if (m_drawX <= 255) drawPixels(line, m_drawX, 255);
+    }
     m_drawLine = line + 1;
     m_drawX = 0;
+    m_fetchX = 0;
     if (m_drawLine >= vblankLine()) { m_drawLine = -1; return; }
     if (m_forcedBlank) { m_obj.opaque.fill(false); return; }
     // Sprites are evaluated and fetched whether or not they're shown (Mesen): the flags in $213E
@@ -370,70 +378,159 @@ uint16_t Ppu::paletteColor(int bpp, int bg, int pal, int idx) const {
     }
 }
 
-void Ppu::renderBg(int bg, int bpp, int line, Layer& out, int x0, int x1, bool even) {
+// ---------------------------------------------------------------------------
+// BG fetches (Mesen's FetchTileData): column c's tilemap and character data are read in dots 8c-8c+7, in
+// each mode's order; 33 columns by dot 263. Offset-per-tile reads BG3's entries for column c, which the
+// next column's tilemap fetch uses. Nothing is fetched in forced blank or mode 7.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+enum : uint8_t { F_NONE, F_MAP, F_CHR, F_OPTH, F_OPTV };
+struct FetchSlot { uint8_t op, bg, plane; bool second; };
+const FetchSlot FETCH_SLOTS[7][8] = {
+    {{F_MAP, 3, 0, false}, {F_MAP, 2, 0, false}, {F_MAP, 1, 0, false}, {F_MAP, 0, 0, false},
+     {F_CHR, 3, 0, false}, {F_CHR, 2, 0, false}, {F_CHR, 1, 0, false}, {F_CHR, 0, 0, false}},
+    {{F_MAP, 2, 0, false}, {F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_CHR, 2, 0, false},
+     {F_CHR, 1, 0, false}, {F_CHR, 1, 1, false}, {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}},
+    {{F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_OPTH, 0, 0, false}, {F_OPTV, 0, 0, false},
+     {F_CHR, 1, 0, false}, {F_CHR, 1, 1, false}, {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}},
+    {{F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_CHR, 1, 0, false}, {F_CHR, 1, 1, false},
+     {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}, {F_CHR, 0, 2, false}, {F_CHR, 0, 3, false}},
+    {{F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_OPTH, 0, 0, false}, {F_CHR, 1, 0, false},
+     {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}, {F_CHR, 0, 2, false}, {F_CHR, 0, 3, false}},
+    {{F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_CHR, 1, 0, false}, {F_CHR, 1, 0, true},
+     {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}, {F_CHR, 0, 0, true}, {F_CHR, 0, 1, true}},
+    {{F_MAP, 1, 0, false}, {F_MAP, 0, 0, false}, {F_OPTH, 0, 0, false}, {F_OPTV, 0, 0, false},
+     {F_CHR, 0, 0, false}, {F_CHR, 0, 1, false}, {F_CHR, 0, 0, true}, {F_CHR, 0, 1, true}},
+};
+// Bits per pixel by mode and BG
+const int BG_BPP[8][4] = {{2, 2, 2, 2}, {4, 4, 2, 0}, {4, 4, 0, 0}, {8, 4, 0, 0}, {8, 2, 0, 0}, {4, 2, 0, 0}, {4, 0, 0, 0}, {8, 0, 0, 0}};
+
+}  // namespace
+
+uint16_t Ppu::mapEntry(int bg, int tileX, int tileY) const {
+    const int tx = tileX & 63, ty = tileY & 63;
+    uint16_t a = (uint16_t)(m_mapBase[bg] + ((ty & 31) << 5) + (tx & 31));
+    if ((tx & 32) && (m_mapSize[bg] & 1)) a = (uint16_t)(a + 0x400);
+    if ((ty & 32) && (m_mapSize[bg] & 2)) a = (uint16_t)(a + ((m_mapSize[bg] & 1) ? 0x800 : 0x400));
+    return m_vram[a & 0x7FFF];
+}
+
+int Ppu::bgRow(int bg, int line) const {
     const bool hires = m_bgMode == 5 || m_bgMode == 6;
-    const bool t16 = (m_tile16 >> bg) & 1;
-    const int tw = (t16 || hires) ? 16 : 8, th = t16 ? 16 : 8;
     const bool mosaic = (m_mosaicMask >> bg) & 1;
     const int msz = mosaic ? m_mosaicSize : 1;
-    // The BG row is the line counter (the first visible line is 1) plus VOFS;
+    // The line counter (the first visible line is 1), held for the mosaic's height;
     // interlaced modes 5/6 draw the field's rows of a 448-row picture
     int y = line - ((line - 1) % msz);
     if (hires && (m_setini & 1)) y = y * 2 + (mosaic ? 0 : (int)m_interlaceField);
-    const bool opt = m_bgMode == 2 || m_bgMode == 4 || m_bgMode == 6;
-    const int wordsPerTile = bpp * 4;
-    auto mapEntry = [&](int b, int tileX, int tileY) -> uint16_t {
-        const int tx = tileX & 63, ty = tileY & 63;
-        uint16_t a = (uint16_t)(m_mapBase[b] + ((ty & 31) << 5) + (tx & 31));
-        if ((tx & 32) && (m_mapSize[b] & 1)) a = (uint16_t)(a + 0x400);
-        if ((ty & 32) && (m_mapSize[b] & 2)) a = (uint16_t)(a + ((m_mapSize[b] & 1) ? 0x800 : 0x400));
-        return m_vram[a & 0x7FFF];
-    };
+    return y;
+}
+
+void Ppu::fetchTo(int line, int dot) {
+    const int end = std::min(dot, 263);
+    if (end < m_fetchX) return;
+    if (!m_forcedBlank && m_bgMode != 7) fetchBg(line, m_fetchX, end);
+    m_fetchX = end + 1;
+}
+
+void Ppu::fetchBg(int line, int x0, int x1) {
+    if (x0 == 0) m_optH = m_optV = 0;
+    const FetchSlot* slots = FETCH_SLOTS[m_bgMode];
+    for (int x = x0; x <= x1; ++x) {
+        const FetchSlot& s = slots[x & 7];
+        const int col = x >> 3;
+        switch (s.op) {
+        case F_MAP: fetchMap(s.bg, line, col); break;
+        case F_CHR: fetchChr(s.bg, BG_BPP[m_bgMode][s.bg], line, col, s.plane, s.second); break;
+        case F_OPTH: case F_OPTV: {
+            // BG3's entries for this column (the next column's offsets): its row, and the row below for VOFS
+            const int tx = ((col << 3) + (m_hofs[2] & ~7)) >> 3, ty = m_vofs[2] >> 3;
+            if (s.op == F_OPTH) m_optH = mapEntry(2, tx, ty);
+            else m_optV = mapEntry(2, tx, ty + 1);
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void Ppu::fetchMap(int bg, int line, int col) {
+    const bool hires = m_bgMode == 5 || m_bgMode == 6;
+    const bool t16 = (m_tile16 >> bg) & 1;
+    int hofs = m_hofs[bg], vofs = m_vofs[bg];
+    if (bg < 2 && (m_optH || m_optV)) {
+        // Offset-per-tile: the entries fetched for the previous column (Mesen's GetTilemapData)
+        const uint16_t enable = (uint16_t)(0x2000 << bg);
+        if (m_bgMode == 4) {
+            if (m_optH & enable) {
+                if (m_optH & 0x8000) vofs = m_optH & 0x3FF;
+                else hofs = (hofs & 7) | (m_optH & 0x3F8);
+            }
+        } else {
+            if (m_optH & enable) hofs = (hofs & 7) | (m_optH & 0x3F8);
+            if (m_optV & enable) vofs = m_optV & 0x3FF;
+        }
+    }
+    BgTile& t = m_bgTiles[bg][col];
+    // The BG's 8-pixel column (in hi-res, a 16-half-pixel tile)
+    t.tileX = (uint16_t)(col + (hofs >> 3));
+    t.vofs = (uint16_t)vofs;
+    const int tileX = (t16 && !hires) ? t.tileX >> 1 : t.tileX;
+    t.entry = mapEntry(bg, tileX, (bgRow(bg, line) + vofs) / (t16 ? 16 : 8));
+}
+
+void Ppu::fetchChr(int bg, int bpp, int line, int col, int plane, bool second) {
+    const bool hires = m_bgMode == 5 || m_bgMode == 6;
+    const bool t16 = (m_tile16 >> bg) & 1;
+    const int th = t16 ? 16 : 8;
+    BgTile& t = m_bgTiles[bg][col];
+    const uint16_t e = t.entry;
+    int tile = e & 0x3FF;
+    int fy = (bgRow(bg, line) + t.vofs) % th;
+    if (e & 0x8000) fy = th - 1 - fy;
+    if (fy >= 8) tile += 16;
+    if (t16 || hires) {
+        // A 16-wide tile: the half this column (in hi-res, this fetch) shows, mirrored
+        const int half = hires ? (int)second : (t.tileX & 1);
+        tile += (e & 0x4000) ? 1 - half : half;
+    }
+    tile &= 0x3FF;
+    const uint16_t addr = (uint16_t)(m_charBase[bg] + tile * bpp * 4 + (fy & 7) + plane * 8);
+    t.chr[(plane + (second ? bpp / 2 : 0)) & 3] = m_vram[addr & 0x7FFF];
+}
+
+void Ppu::renderBg(int bg, int bpp, Layer& out, int x0, int x1, bool even) {
+    const bool hires = m_bgMode == 5 || m_bgMode == 6;
+    const bool mosaic = (m_mosaicMask >> bg) & 1;
+    const int msz = mosaic ? m_mosaicSize : 1;
+    // The fetched columns, placed by the fine scroll as each pixel is drawn (Mesen's RenderTilemap)
+    const int hofs = m_hofs[bg];
+    const int planes = bpp / 2;
     for (int x = x0; x <= x1; ++x) {
         out.opaque[x] = false;
         const int xm = x - (x % msz);
-        int hofs = m_hofs[bg], vofs = m_vofs[bg];
-        if (opt && bg < 2) {
-            // Offset-per-tile: BG3's map row gives each column's offsets
-            const int col = (xm + (hofs & 7)) >> 3;
-            if (col > 0) {
-                const int optX = ((col - 1) << 3) + (m_hofs[2] & ~7);
-                const int tx = optX >> 3, ty = m_vofs[2] >> 3;
-                const uint16_t enable = (uint16_t)(0x2000 << bg);
-                if (m_bgMode == 4) {
-                    const uint16_t e = mapEntry(2, tx, ty);
-                    if (e & enable) {
-                        if (e & 0x8000) vofs = e & 0x3FF;
-                        else hofs = (hofs & 7) | (e & 0x3F8);
-                    }
-                } else {
-                    const uint16_t eh = mapEntry(2, tx, ty), ev = mapEntry(2, tx, ty + 1);
-                    if (eh & enable) hofs = (hofs & 7) | (eh & 0x3F8);
-                    if (ev & enable) vofs = ev & 0x3FF;
-                }
-            }
+        const BgTile& t = m_bgTiles[bg][(xm + (hofs & 7)) >> 3];
+        int fx, base = 0;
+        if (hires) {
+            const int px = xm * 2 + (even ? 0 : 1) + hofs * 2;
+            fx = px & 7;
+            if (px & 8) base = planes;
+        } else {
+            fx = (xm + hofs) & 7;
         }
-        const int px = (hires ? (xm * 2 + (even ? 0 : 1)) + hofs * 2 : xm + hofs);
-        const int py = y + vofs;
-        const int tileX = px / tw, tileY = py / th;
-        const uint16_t e = mapEntry(bg, tileX, tileY);
-        int tile = e & 0x3FF;
-        const int pal = (e >> 10) & 7;
-        int fx = px % tw, fy = py % th;
-        if (e & 0x4000) fx = tw - 1 - fx;
-        if (e & 0x8000) fy = th - 1 - fy;
-        if (fx >= 8) tile += 1;
-        if (fy >= 8) tile += 16;
-        fx &= 7; fy &= 7;
-        const uint16_t addr = (uint16_t)(m_charBase[bg] + tile * wordsPerTile + fy);
+        const uint16_t e = t.entry;
+        if (e & 0x4000) fx = 7 - fx;
         int idx = 0;
-        for (int p = 0; p < bpp / 2; ++p) {
-            const uint16_t w = m_vram[(addr + p * 8) & 0x7FFF];
+        for (int p = 0; p < planes; ++p) {
+            const uint16_t w = t.chr[(base + p) & 3];
             idx |= ((w >> (7 - fx)) & 1) << (2 * p) | ((w >> (15 - fx)) & 1) << (2 * p + 1);
         }
         if (!idx) continue;
         out.opaque[x] = true;
         out.prio[x] = (uint8_t)((e >> 13) & 1);
+        const int pal = (e >> 10) & 7;
         out.color[x] = paletteColor(bpp, bg, pal, idx);
         out.cg[x] = paletteIndex(bpp, bg, pal, idx);
     }
@@ -629,9 +726,9 @@ void Ppu::drawPixels(int line, int x0, int x1) {
             continue;
         }
         if (!BPP[m_bgMode][bg]) continue;
-        renderBg(bg, BPP[m_bgMode][bg], line, layers[bg], x0, x1, false);
+        renderBg(bg, BPP[m_bgMode][bg], layers[bg], x0, x1, false);
         have[bg] = true;
-        if (hiresBg && (m_ts & (1 << bg))) { renderBg(bg, BPP[m_bgMode][bg], line, evenLayers[bg], x0, x1, true); haveEven[bg] = true; }
+        if (hiresBg && (m_ts & (1 << bg))) { renderBg(bg, BPP[m_bgMode][bg], evenLayers[bg], x0, x1, true); haveEven[bg] = true; }
     }
     have[4] = (used & 0x10) != 0;
 

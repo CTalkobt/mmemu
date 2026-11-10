@@ -6,7 +6,11 @@
 // contributors, and the fullsnes / Anomie documentation. Drawn as the beam
 // goes: before every register write the pixels up to the current dot are
 // drawn with the old values (pixel x leaves at dot x + 22), so mid-line
-// changes split the line as on the hardware. Sprites for a line are found
+// changes split the line as on the hardware. The BG tilemap and character
+// data are fetched ahead, a column of 8 pixels in dots 8c-8c+7 (Mesen's
+// slots per mode), so a mid-line change to the scroll, the bases, the mode
+// or the mosaic reaches the tiles at the next fetch; the fine scroll is
+// taken as each pixel is drawn. Sprites for a line are found
 // and fetched in the previous line's horizontal blank. BG modes 0-7 with
 // 8x8 and 16x16 tiles, 2/4/8 bpp, direct
 // colour, offset-per-tile (modes 2, 4, 6), mode 7 (the matrix, flips,
@@ -124,8 +128,20 @@ private:
     bool doubleWidth() const { return (m_setini & 0x08) || m_bgMode == 5 || m_bgMode == 6; }
     /** Draw pixels [x0, x1] of line `line` with the registers as they are. */
     void drawPixels(int line, int x0, int x1);
-    /** BG pixels x0..x1; `even`: hi-res modes' even (sub screen) half-pixels. */
-    void renderBg(int bg, int bpp, int line, Layer& out, int x0, int x1, bool even);
+    /** One BG column's fetched data (Mesen's TileData): the map entry, the vertical offset it was fetched
+     *  with, its 8-pixel column in the BG, and the character words (two halves in hi-res). */
+    struct BgTile { uint16_t entry = 0, vofs = 0, tileX = 0; uint16_t chr[4] = {}; };
+    /** The BG fetches of dots [x0, x1] (0-263) of line `line`, as Mesen's FetchTileData. */
+    void fetchBg(int line, int x0, int x1);
+    /** Fetch up to dot `dot` of the line being drawn. */
+    void fetchTo(int line, int dot);
+    void fetchMap(int bg, int line, int col);
+    void fetchChr(int bg, int bpp, int line, int col, int plane, bool second);
+    uint16_t mapEntry(int bg, int tileX, int tileY) const;
+    /** The BG row of line `line` before the vertical offset (mosaic, interlaced hi-res). */
+    int bgRow(int bg, int line) const;
+    /** BG pixels x0..x1 from the fetched columns; `even`: hi-res modes' even (sub screen) half-pixels. */
+    void renderBg(int bg, int bpp, Layer& out, int x0, int x1, bool even);
     void renderMode7(int bg, int line, Layer& out, int x0, int x1);
     void renderObj(int line, Layer& out, std::array<uint8_t, 256>& pal);
     void mathPixel(uint16_t& a, uint16_t b, int x, bool inWindow);
@@ -197,6 +213,9 @@ private:
 
     // The line being drawn
     int m_drawLine = -1, m_drawX = 0;
+    int m_fetchX = 0;                               // the next dot to fetch (0-263)
+    BgTile m_bgTiles[4][33];                        // the line's columns, by BG
+    uint16_t m_optH = 0, m_optV = 0;                // offset-per-tile: BG3's entries for the last column
     Layer m_obj;                                    // this line's sprites
     std::array<uint8_t, 256> m_objPal{};
     std::array<uint16_t, 256> m_main{}, m_sub{};    // BGR555, before brightness
