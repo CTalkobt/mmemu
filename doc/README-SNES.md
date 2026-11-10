@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1, the Cx4 and the S-DD1 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110 and the OBC1 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -196,6 +196,45 @@ public-domain code, as Mesen uses it.
   returns decompressed data, until the DMA length runs out. It watches the
   DMA registers for that address and length.
 
+### SPC7110
+
+The SPC7110 (`snes::Spc7110`, after Mesen's `Spc7110.cpp`, `Spc7110Decomp.cpp`
+and `Rtc4513.cpp`) is in Far East of Eden Zero, Momotarou Dentetsu Happy and
+Super Power League 4. The decompressor is bsnes', as Mesen uses it.
+
+- **Detection:** chipset `$F5`/`$F9` with cartridge type `$00` (`$FFBF`).
+  `$F9` has the clock. These cartridges always have battery RAM.
+- **ROM:** the first 1 MB is the program (HiROM at `$00-$3F`/`$80-$BF`
+  `$8000-$FFFF` and at `$C0-$CF`). The rest is data ROM, seen through three
+  1 MB windows at `$D0-$DF`, `$E0-$EF` and `$F0-$FF` (`$4831-$4833`). A ROM
+  of 6 MB or more also puts its second program megabyte at `$40-$4F`.
+- **Battery RAM:** at `$6000-$7FFF` in `$00-$3F`/`$80-$BF`.
+- **Decompression (`$4800-$480C`):** a directory of 4-byte entries (mode,
+  source address) in data ROM. Writing `$4806` starts it; the tiles are read
+  from `$4800` or anywhere in bank `$50`, at 1, 2 or 4 bits a pixel.
+- **The data port (`$4810-$481A`):** reads data ROM from a base, an offset
+  and a step, signed or not.
+- **The ALU (`$4820-$482F`):** 16 x 16 multiply and 32 / 16 divide, signed
+  or not, with no delay.
+- **The RTC-4513 (`$4840-$4842`):** as far as Mesen goes, without the
+  30-second adjust, 12-hour mode or calendar flags. It keeps time from the
+  host clock and is saved beside the `.srm` as `<rom>.rtc` (Mesen's layout:
+  16 registers, then the time as 8 bytes, high first). The date arithmetic
+  is done in UTC, where Mesen uses local time, so daylight saving can't
+  move it.
+
+### OBC1
+
+The OBC1 (`snes::Obc1`, after Mesen's `Obc1.cpp`) is in Metal Combat:
+Falcon's Revenge. It helps with sprites, over the cartridge's battery RAM at
+`$6000-$7FFF` in `$00-$3F`/`$80-$BF`; the rest is the plain LoROM map.
+
+- **Detection:** chipset `$2x` (with cartridge RAM).
+- **Tables:** two OAM-shaped tables in the RAM, at `$1C00` or `$1800`
+  (`$7FF5` bit 0), and a sprite index at `$7FF6`.
+- **Ports:** `$7FF0-$7FF3` are the chosen sprite's four bytes. `$7FF4` is
+  its two bits in the high table; writing it changes only those two.
+
 ### PPU
 
 Drawn as the beam goes: before each write to a PPU register (by the CPU,
@@ -290,6 +329,12 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_obc1.cpp`: the OBC1's ports, both tables and the high bits,
+  on a hand-built cartridge.
+- `test_snes_spc7110.cpp`: the SPC7110's map, data port, ALU, clock and
+  `.rtc` file, and decompression in all three modes. The expected tiles came
+  from Mesen's own decompressor, compiled on its own and fed the same
+  pseudo-random data ROM.
 - `test_snes_sdd1.cpp`: the S-DD1's banking and mirroring, and a DMA
   receiving decompressed data. The bytes are checked against the
   decompressor run on the same ROM, since there is no compressor to make
@@ -319,8 +364,9 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4 and
-  S-DD1 (SPC7110, ST010/011, ST018, OBC1...).
+- Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
+  S-DD1, SPC7110 and OBC1 (ST010/011, ST018, and the Satellaview and
+  Super Game Boy).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, the mouse, Super Scope and multitap.

@@ -11,7 +11,9 @@
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "snes_sa1.h"
+#include "snes_obc1.h"
 #include "snes_sdd1.h"
+#include "snes_spc7110.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -85,10 +87,22 @@ struct Cart {
     std::unique_ptr<Cx4> cx4;
     // The S-DD1: its own map ($4800 registers, banked ROM, decompression on DMA)
     std::unique_ptr<Sdd1> sdd1;
+    // The SPC7110: its own map too ($4800 registers, data ROM windows, decompression, RTC)
+    std::unique_ptr<Spc7110> spc7110;
+    // The OBC1: its ports over the battery RAM at $6000-$7FFF; the rest is the plain map
+    std::unique_ptr<Obc1> obc1;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
+    std::vector<uint8_t> savedRtc;              // what the clock's file holds
+
+    /** The clock's file beside the save: `<rom>.rtc`, as Mesen. */
+    std::string rtcPath() const {
+        if (savePath.empty()) return "";
+        const auto dot = savePath.find_last_of('.');
+        return (dot == std::string::npos ? savePath : savePath.substr(0, dot)) + ".rtc";
+    }
 
     std::vector<uint8_t>* batteryRam() {
         if (!battery) return nullptr;
@@ -97,6 +111,11 @@ struct Cart {
     }
     void loadSave(const std::string& path) {
         savePath = path;
+        if (spc7110 && spc7110->hasRtc() && !path.empty()) {
+            std::vector<uint8_t> data;
+            if (readFile(rtcPath(), data)) spc7110->setRtcState(data);
+            savedRtc = spc7110->rtcState();
+        }
         auto* ram = batteryRam();
         if (!ram || path.empty()) return;
         std::vector<uint8_t> data;
@@ -106,6 +125,13 @@ struct Cart {
     }
     /** Write the battery RAM if it changed since the last write. */
     void flushSave() {
+        if (spc7110 && spc7110->hasRtc() && !savePath.empty()) {
+            const auto st = spc7110->rtcState();
+            if (st != savedRtc) {
+                std::ofstream f(rtcPath(), std::ios::binary | std::ios::trunc);
+                if (f && f.write((const char*)st.data(), (std::streamsize)st.size())) savedRtc = st;
+            }
+        }
         auto* ram = batteryRam();
         if (!ram || savePath.empty() || *ram == saved) return;
         std::ofstream f(savePath, std::ios::binary | std::ios::trunc);
@@ -224,6 +250,13 @@ struct Cart {
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x10)
             cx4 = std::make_unique<Cx4>(&rom, &sram);
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x4) sdd1 = std::make_unique<Sdd1>(&rom, &sram);
+        // The OBC1: chipset $2x, given cartridge RAM (as Mesen)
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x2 && !sram.empty()) obc1 = std::make_unique<Obc1>(&sram);
+        // The SPC7110: chipset $Fx with cartridge type $00; $F9 has the RTC. Always battery-backed (as Mesen)
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x00) {
+            spc7110 = std::make_unique<Spc7110>(&rom, &sram, chipLow == 0x09);
+            battery = true;
+        }
         return true;
     }
 
@@ -237,6 +270,8 @@ struct Cart {
         if (sa1) s += ", SA-1";
         if (cx4) s += ", Cx4";
         if (sdd1) s += ", S-DD1";
+        if (obc1) s += ", OBC1";
+        if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
         return s;
     }
 
@@ -377,6 +412,7 @@ public:
         if (m_cart && m_cart->sa1) m_cart->sa1->reset();
         if (m_cart && m_cart->cx4) m_cart->cx4->reset();
         if (m_cart && m_cart->sdd1) m_cart->sdd1->reset();
+        if (m_cart && m_cart->spc7110) m_cart->spc7110->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -499,9 +535,14 @@ private:
                 const int v = m_cart->sdd1->cpuRead(bank, a, peek);
                 return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
             }
+            if (m_cart->spc7110) {
+                const int v = m_cart->spc7110->cpuRead(bank, a, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000)
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->cx4->read(a);
+            if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->obc1->read(a);
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 if (peek) { const auto& st = m_cart->dsp->state(); return sr ? (uint8_t)(st.sr >> 8) : (uint8_t)st.dr; }
@@ -538,8 +579,10 @@ private:
         if (m_cart) {
             if (m_cart->sa1) { m_cart->sa1->cpuWrite(bank, a, v); return; }
             if (m_cart->sdd1) { m_cart->sdd1->cpuWrite(bank, a, v); return; }
+            if (m_cart->spc7110) { m_cart->spc7110->cpuWrite(bank, a, v); return; }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->cx4->write(a, v); return; }
+            if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->obc1->write(a, v); return; }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 m_cart->dsp->runTo(m_master, MASTER_HZ);
@@ -1003,6 +1046,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         if (bus->cart() && bus->cart()->sa1) bus->cart()->sa1->reset();
         if (bus->cart() && bus->cart()->cx4) bus->cart()->cx4->reset();
         if (bus->cart() && bus->cart()->sdd1) bus->cart()->sdd1->reset();
+        if (bus->cart() && bus->cart()->spc7110) bus->cart()->spc7110->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();

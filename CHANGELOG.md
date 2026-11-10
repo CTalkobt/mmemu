@@ -18,6 +18,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **Checks:** NS.CLOCK.SYSTEM's own clock routine sets ProDOS's date and
   time with it. Test: `apple2_no_slot_clock`.
 
+### SNES OBC1
+
+- **The OBC1** (`snes::Obc1`, after Mesen) for Metal Combat: Falcon's
+  Revenge: its sprite-table ports over the battery RAM at `$7FF0-$7FF6`.
+- **Tests:** checked with a hand-built cartridge.
+
+### SNES SPC7110
+
+- **The SPC7110** (`snes::Spc7110`, after Mesen; bsnes' decompressor) for
+  Far East of Eden Zero, Momotarou Dentetsu Happy and Super Power League 4:
+  - **Map:** the program megabyte and three 1 MB data ROM windows.
+  - **Decompression, the data port and the multiply/divide unit.**
+  - **The RTC-4513 clock** in Far East of Eden Zero, saved as `<rom>.rtc`.
+- **Tests:** decompression checked against Mesen's own decompressor on the
+  same data, plus the map, data port, ALU and clock.
+
 ### Apple II mouse card
 
 - **An AppleMouse II card** (`apple2::MouseCard`, after AppleWin's
