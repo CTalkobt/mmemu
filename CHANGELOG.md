@@ -163,6 +163,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - See `doc/README-VIC20.md` §2.2.1.
 
 ### Commodore 64 / 128
+- **1351 mouse** in the C64's control port 1, fitted at run time (`expansion control1 1351`), after VICE's `mouse_1351.c`.
+  - Its position goes to the SID's POTX/POTY, which read `$FF` until now.
+  - The left button is fire and the right is up.
+  - New interfaces `IPointerDevice` and `IPotSource`. JSON expansions gain `"pointer"`, which routes the host mouse to the device.
+  - The GUI now forwards mouse events to the machine's handler as it is at the time, so a mouse fitted later works.
 - **A second SID,** fitted at run time on the C64 and C128 (`expansion sid2 sid D420`).
   - Addresses: `$D420`, `$D500` (C64), `$D700` (C128), `$DE00` or `$DF00`.
   - It is mixed into the first SID's output (`SID6581::setLinkedDevice("mix")`).

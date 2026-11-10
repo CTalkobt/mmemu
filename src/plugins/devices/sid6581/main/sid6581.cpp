@@ -1,4 +1,5 @@
 #include "sid6581.h"
+#include "libdevices/main/ipointer.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -131,7 +132,8 @@ bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
     switch (reg) {
         case POTX:
         case POTY:
-            *val = 0xFF; // paddle inputs not implemented
+            // A pot source (a 1351 mouse) or nothing there: $FF
+            *val = m_pots ? m_pots->pot(reg == POTY) : 0xFF;
             break;
         case OSC3:
             // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
@@ -461,6 +463,7 @@ int SID6581::pullSamples(float* buffer, int maxSamples) {
 
 void SID6581::setLinkedDevice(const char* role, IOHandler* dev) {
     if (std::string(role) == "mix") m_mix = dynamic_cast<IAudioOutput*>(dev);
+    else if (std::string(role) == "pots") m_pots = dynamic_cast<const IPotSource*>(dev);
 }
 
 bool SID6581::setOption(const std::string& key, const std::string& value, std::string& err) {

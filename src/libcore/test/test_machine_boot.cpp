@@ -26,6 +26,7 @@
 #include "plugins/devices/reu/main/reu.h"
 #include "plugins/devices/georam/main/georam.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
+#include "plugins/devices/mouse1351/main/mouse1351.h"
 #include <vector>
 #include <algorithm>
 #include <string>
@@ -104,6 +105,7 @@ static void ensureBootTestRegistriesReady() {
         auto* a = new Acia6551(0xDE00); a->setMode(Acia6551::Mode::SwiftLink); return a; });
     DeviceRegistry::instance().registerDevice("turbo232", []() -> IOHandler* {
         auto* a = new Acia6551(0xDE00); a->setMode(Acia6551::Mode::Turbo232); return a; });
+    DeviceRegistry::instance().registerDevice("mouse1351", []() -> IOHandler* { return new Mouse1351(); });
     DeviceRegistry::instance().registerDevice("georam",
         []() -> IOHandler* { return new GeoRam(); });
     DeviceRegistry::instance().registerDevice("reu",
@@ -851,5 +853,43 @@ TEST_CASE(c64_second_sid) {
     EXPECT_TRUE(desc->ioRegistry->findHandler("SID2") == nullptr);
     const float after = level(0.1);
     EXPECT_TRUE(after < loud * 0.5f);
+    delete desc;
+}
+
+// A 1351 mouse in control port 1, fitted at run time: the host mouse's
+// motion shows on the SID's POTX/POTY (position mod 64 in bits 1-6, up
+// raising Y), its left button as port 1's fire (CIA1 $DC01 bit 4), the
+// right as up (bit 0); taken out, the pots read $FF again
+TEST_CASE(c64_1351_mouse) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("control1");
+    ASSERT(slot != nullptr);
+    IBus* bus = desc->buses[0].bus;
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    EXPECT_EQ(bus->read8(0xD419), 0xFF);            // nothing on the pots
+    EXPECT_TRUE(!desc->onMouse);
+    std::string err;
+    ASSERT(slot->install("1351", "", err));
+    EXPECT_EQ(slot->info(), std::string("1351 (1351 Mouse)"));
+    ASSERT(desc->onMouse != nullptr);
+    desc->onMouse(10, -3, 0, 0);                    // right 10, up 3
+    EXPECT_EQ(bus->read8(0xD419), 10 << 1);
+    EXPECT_EQ(bus->read8(0xD41A), 3 << 1);
+    desc->onMouse(60, 0, 0, 0);                     // 70: wraps at 64
+    EXPECT_EQ(bus->read8(0xD419), 6 << 1);
+    // The buttons through CIA1 port B (keyboard columns released: $DC00 = $FF)
+    bus->write8(0xDC02, 0xFF); bus->write8(0xDC00, 0xFF); bus->write8(0xDC03, 0x00);
+    EXPECT_EQ(bus->read8(0xDC01) & 0x11, 0x11);
+    desc->onMouse(0, 0, 1, 0);                      // left
+    EXPECT_EQ(bus->read8(0xDC01) & 0x11, 0x01);
+    desc->onMouse(0, 0, 2, 0);                      // right
+    EXPECT_EQ(bus->read8(0xDC01) & 0x11, 0x10);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(!desc->onMouse);
+    EXPECT_EQ(bus->read8(0xD419), 0xFF);
+    EXPECT_EQ(bus->read8(0xDC01) & 0x11, 0x11);     // buttons let go
     delete desc;
 }

@@ -223,6 +223,7 @@ private:
     uint64_t m_scopeTotal = 0;  // entries since reset
 
     IAudioOutput* m_mix = nullptr;          // a second SID mixed in
+    const class IPotSource* m_pots = nullptr;   // what POTX/POTY read (a 1351 mouse)
     // Ring buffer for pullSamples()
     static constexpr int AUDIO_BUF = 8192;
     float   m_audioBuf[AUDIO_BUF] = {};

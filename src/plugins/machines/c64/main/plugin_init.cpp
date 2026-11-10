@@ -5,7 +5,7 @@
 
 static const SimPluginHostAPI* g_host = nullptr;
 
-static const char* s_c64Deps[] = { "6502", "c64-pla", "cia6526", "vic2", "sid6581", "cbm-loader", "reu", "georam", "acia6551", nullptr };
+static const char* s_c64Deps[] = { "6502", "c64-pla", "cia6526", "vic2", "sid6581", "cbm-loader", "reu", "georam", "acia6551", "mouse1351", nullptr };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
