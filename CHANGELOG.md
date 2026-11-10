@@ -112,6 +112,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Machine:** OAM DMA (513/514 cycles), two controllers (gamepad, joystick or keyboard), and NMI/IRQ sampled before an instruction's last cycle. Inserting a cartridge powers the console on; reset is the RESET button.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
+### VIC-20
+- **RAM expansions fitted at run time:** every VIC-20 profile has a `ram` expansion slot (`expansion ram ram 16K`).
+  - Presets 3K, 8K (the default), 16K, 24K, 32K and 35K (VICE's `-memory`), or any blocks by number or name (`1,5`).
+  - BASIC's start-up message checks each preset (`vic20_ram_expansion_slot`): 6655, 11775, 19967 and 28159 BYTES FREE.
+  - In JSON: `"ramExpansionSlot"` over the existing `"ramExpansions"` blocks.
+  - See `doc/README-VIC20.md` §2.2.1.
+
 ### Commodore 64 / 128
 - **GeoRAM / NeoRAM, 512 KB-4 MB,** in the C64's and C128's expansion port (`expansion port georam 1M`), after VICE's `georam.c`.
   - A 256-byte page of its RAM at `$DE00`.

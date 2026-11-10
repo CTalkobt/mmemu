@@ -33,6 +33,43 @@ The VIC-20 machine plugin acts as the composition layer that integrates individu
 | $C000-$DFFF | 8 KB | BASIC ROM |
 | $E000-$FFFF | 8 KB | KERNAL ROM |
 
+### 2.2.1 RAM expansions
+The expansion blocks are RAM only when fitted. Unfitted blocks are open bus: reads give `$FF` and writes are lost.
+
+| Block | Range | Size |
+|-------|-------|------|
+| BLK0 | $0400-$0FFF | 3 KB |
+| BLK1 | $2000-$3FFF | 8 KB |
+| BLK2 | $4000-$5FFF | 8 KB |
+| BLK3 | $6000-$7FFF | 8 KB |
+| BLK5 | $A000-$BFFF | 8 KB (the cartridge area) |
+
+The profiles `vic20+3k`, `+8k`, `+16k` and `+32k` start with blocks fitted. Every profile also has a `ram` expansion slot, so you can change the blocks while the machine runs (VICE's `-memory` presets):
+
+```
+expansion ram ram 8K       # BLK1 (the default)
+expansion ram ram 24K      # BLK1-3
+expansion ram ram 1,5      # any blocks, by number or name (BLK0 ... BLK5)
+expansion ram remove       # unexpanded
+```
+
+| Preset | Blocks | BASIC says |
+|--------|--------|------------|
+| (none) | | 3583 BYTES FREE |
+| 3K | BLK0 | 6655 |
+| 8K | BLK1 | 11775 |
+| 16K | BLK1, BLK2 | 19967 |
+| 24K | BLK1-3 | 28159 |
+| 32K | BLK1-3, BLK5 | 28159 (BASIC doesn't use BLK5) |
+| 35K | BLK0-3, BLK5 | 28159 |
+
+MCP `expansion` and the GUI's Control > Expansions... do the same.
+- The machine resets after a change, and a block that comes in starts cleared.
+- With 8K or more, the KERNAL moves the screen to `$1000` and the colour RAM to `$9400`.
+- RAM in BLK5 and a cartridge at `$A000` both answer there; take the RAM out to use such a cartridge.
+
+The slot comes from the JSON: `"ramExpansions"` lists the blocks, and `"ramExpansionSlot"` gives the presets and the default.
+
 ### 2.3 Datasette (Tape)
 The VIC-20 machine includes a Datasette wired through VIA2 and VIA1:
 
