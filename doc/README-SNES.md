@@ -51,7 +51,11 @@ one powers the console on; the machine's reset is the RESET button.
 - **Interrupts**: NMI (`$4200` bit 7) and the H/V timer IRQ (`HTIME`,
   `VTIME`, `$4211`).
 - **Multiply/divide**: `$4202`/`$4203` and `$4204-$4206`, with results at
-  `$4214-$4217`. They are given at once, not after 8/16 cycles.
+  `$4214-$4217`. As Mesen's `AluMulDiv`, they work a bit a CPU cycle on
+  the result registers themselves: 8 cycles to multiply, 16 to divide.
+  Reading early gives the partial result, a write while one runs doesn't
+  start another, and they stand still during DMA (they count the CPU's own
+  cycles). Dividing by zero gives `$FFFF` remainder the dividend.
 - **DMA**: modes 0-7 in both directions, with A-bus increment, decrement or
   fixed. The CPU waits 8 clocks a byte.
 - **HDMA**: direct and indirect tables, repeat and line counts.
@@ -418,6 +422,6 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
+- DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, the mouse, Super Scope and multitap.

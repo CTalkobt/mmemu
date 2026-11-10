@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES multiply/divide timing
+
+- **The 5A22's multiplier and divider take their time**, as Mesen's
+  `AluMulDiv`: 8 and 16 CPU cycles, a bit a cycle, so a read too soon sees
+  the partial result, and a write while one runs doesn't start another.
+  They no longer answer at once.
+- **Tests:** `snes_muldiv_timing` reads partial and finished results from a
+  65816 program. krom's CPU tests still give 585 PASS, 0 FAIL.
+
 ### Atari second POKEY
 
 - **A second POKEY** (the stereo upgrade, after atari800's `STEREO_SOUND`)

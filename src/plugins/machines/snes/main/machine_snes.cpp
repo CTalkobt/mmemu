@@ -437,6 +437,7 @@ public:
         m_irqFired = false;
         m_nmitimen = 0; m_wrio = 0xFF;
         m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
+        m_aluShift = 0; m_multCounter = m_divCounter = 0; m_aluPrev = m_cpu ? m_cpu->cycles() : 0;
         m_htime = m_vtime = 0x1FF;
         m_hdmaen = 0; m_fastRom = false;
         m_nmiFlag = false; m_irqFlag = false;
@@ -496,7 +497,7 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
         if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
         if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);
-        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM    // and the Cx4
+        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM
     }
     void idle(uint32_t) override { advance(6); }
 
@@ -706,15 +707,71 @@ private:
             return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
         }
         case 0x4213: return m_wrio;
-        case 0x4214: return (uint8_t)m_quotient;
-        case 0x4215: return (uint8_t)(m_quotient >> 8);
-        case 0x4216: return (uint8_t)m_product;
-        case 0x4217: return (uint8_t)(m_product >> 8);
+        case 0x4214: if (!peek) runAlu(true); return (uint8_t)m_quotient;
+        case 0x4215: if (!peek) runAlu(true); return (uint8_t)(m_quotient >> 8);
+        case 0x4216: if (!peek) runAlu(true); return (uint8_t)m_product;
+        case 0x4217: if (!peek) runAlu(true); return (uint8_t)(m_product >> 8);
         default:
             if (a >= 0x4218) return m_joy[a - 0x4218];
             return m_openBus;
         }
     }
+    // The multiplier and divider (Mesen's AluMulDiv): a bit a CPU cycle, 8 cycles to multiply and 16 to
+    // divide, shift-and-add on the result registers themselves, so a read part way through sees the
+    // partial result. They count the CPU's own cycles, so they stand still during DMA.
+    void runAlu(bool forRead) {
+        uint64_t now = m_cpu->cycles();
+        if (forRead) --now;                       // a read happens earlier in its cycle than a write
+        if (m_multCounter || m_divCounter) {
+            uint64_t n = now - m_aluPrev;
+            while (n-- && (m_multCounter || m_divCounter)) {
+                if (m_multCounter) {
+                    --m_multCounter;
+                    if (m_quotient & 1) m_product = (uint16_t)(m_product + m_aluShift);
+                    m_aluShift <<= 1;
+                    m_quotient >>= 1;
+                }
+                if (m_divCounter) {
+                    --m_divCounter;
+                    m_aluShift >>= 1;
+                    m_quotient = (uint16_t)(m_quotient << 1);
+                    if (m_product >= m_aluShift) { m_product = (uint16_t)(m_product - m_aluShift); m_quotient |= 1; }
+                }
+            }
+        }
+        m_aluPrev = now;
+    }
+    void aluWrite(uint16_t a, uint8_t v) {
+        runAlu(true);
+        // One finishing on this cycle still counts as running: it blocks starting another
+        const bool busy = m_multCounter || m_divCounter;
+        runAlu(false);
+        switch (a) {
+        case 0x4202: m_mpyA = v; break;
+        case 0x4203:
+            m_product = 0;
+            if (!busy) {
+                m_multCounter = 8;
+                m_mpyB = v;
+                m_quotient = (uint16_t)(v << 8 | m_mpyA);
+                m_aluShift = v;
+            } else if (!m_multCounter && !m_divCounter) {
+                m_quotient = (uint16_t)(v << 8 | m_mpyA);   // on the last clock: the value lands, nothing starts
+            }
+            break;
+        case 0x4204: m_dividend = (uint16_t)((m_dividend & 0xFF00) | v); break;
+        case 0x4205: m_dividend = (uint16_t)((m_dividend & 0x00FF) | v << 8); break;
+        case 0x4206:
+            m_product = m_dividend;
+            if (!busy) {
+                m_divCounter = 16;
+                m_aluShift = (uint32_t)v << 16;
+            }
+            break;
+        default: break;
+        }
+    }
+
     void internalWrite(uint16_t a, uint8_t v) {
         switch (a) {
         case 0x4200:
@@ -726,14 +783,7 @@ private:
             if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(dot(), m_line);
             m_wrio = v;
             break;
-        case 0x4202: m_mpyA = v; break;
-        case 0x4203: m_mpyB = v; m_product = (uint16_t)(m_mpyA * m_mpyB); m_quotient = v; break;
-        case 0x4204: m_dividend = (uint16_t)((m_dividend & 0xFF00) | v); break;
-        case 0x4205: m_dividend = (uint16_t)((m_dividend & 0x00FF) | v << 8); break;
-        case 0x4206:
-            if (v) { m_quotient = (uint16_t)(m_dividend / v); m_product = (uint16_t)(m_dividend % v); }
-            else { m_quotient = 0xFFFF; m_product = m_dividend; }
-            break;
+        case 0x4202: case 0x4203: case 0x4204: case 0x4205: case 0x4206: aluWrite(a, v); break;
         case 0x4207: m_htime = (uint16_t)((m_htime & 0x100) | v); break;
         case 0x4208: m_htime = (uint16_t)((m_htime & 0xFF) | (v & 1) << 8); break;
         case 0x4209: m_vtime = (uint16_t)((m_vtime & 0x100) | v); break;
@@ -925,6 +975,9 @@ private:
 
     uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;
     uint16_t m_dividend = 0xFFFF, m_quotient = 0, m_product = 0, m_htime = 0x1FF, m_vtime = 0x1FF;
+    uint32_t m_aluShift = 0;
+    uint8_t m_multCounter = 0, m_divCounter = 0;
+    uint64_t m_aluPrev = 0;
     bool m_fastRom = false, m_nmiFlag = false, m_irqFlag = false;
     int m_joyBusy = 0;
     std::array<uint8_t, 8> m_joy{};
