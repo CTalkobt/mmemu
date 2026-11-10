@@ -7,6 +7,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES ST010 and ST011
+
+- **The ST010 and ST011** (Seta's uPD96050, after Mesen) for F1 ROC II and
+  2dan Morita Shougi: the DSP-1's `NecDsp` with the larger program, data
+  ROM, RAM and stack. Registers at `$60`, the RAM at `$68-$6F` saved as the
+  battery. Firmware from `roms/snes/st010.rom`/`st011.rom`, like the DSP-1.
+- **Tests:** a hand-built uPD96050 firmware and cartridge.
+
 ### Apple II Saturn 128K
 
 - **A Saturn Systems RAM card** in slot 0 of the II and II+, in place of
