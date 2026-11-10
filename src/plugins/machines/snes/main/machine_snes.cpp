@@ -6,6 +6,7 @@
 
 #include "machine_snes.h"
 #include "snes_apu.h"
+#include "snes_gsu.h"
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "libcore/main/machine_desc.h"
@@ -73,6 +74,8 @@ struct Cart {
     std::unique_ptr<NecDsp> dsp;
     std::string dspName;
     uint16_t dspSrMask = 0;
+    // The Super FX: it owns the map ($3000 registers, its RAM, ROM in two layouts)
+    std::unique_ptr<Gsu> gsu;
 
     /** DSP-1/2/3/4 by the header's chipset byte and the title (as Mesen). */
     bool loadDsp(const std::string& rawTitle, std::string& err) {
@@ -171,6 +174,12 @@ struct Cart {
         // The chipset byte: a coprocessor when the low nibble is 3 or more; 0x in the high nibble is a NEC DSP
         const uint8_t chips = rom[headerAt + 0x16];
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x0 && !loadDsp(raw, err)) return false;
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x1) {
+            // The Super FX's RAM: the expansion RAM size ($FFBD), else 64 KB (as Mesen)
+            const uint8_t exp = headerAt >= 3 ? rom[headerAt - 3] : 0;
+            gsu = std::make_unique<Gsu>(&rom, exp >= 1 && exp <= 7 ? (1024u << exp) : 0x10000);
+            sram.clear();
+        }
         return true;
     }
 
@@ -179,11 +188,32 @@ struct Cart {
         std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
         if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
         if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
+        if (gsu) s += ", Super FX, " + std::to_string(gsu->ram().size() / 1024) + "K RAM";
         return s;
+    }
+
+    /** The Super FX map for the SNES: 0 ROM, 1 RAM (offset in `off`), -1 nothing. */
+    int gsuMap(uint8_t bank, uint16_t a, uint32_t& off) const {
+        const uint8_t b = bank & 0x7F;
+        if (b < 0x40) {
+            if (a >= 0x8000) { off = (uint32_t)b * 0x8000 + (a - 0x8000); return 0; }
+            if (a >= 0x6000) { off = (uint32_t)(a - 0x6000); return 1; }
+            return -1;
+        }
+        if (b < 0x60) { off = (uint32_t)(b - 0x40) << 16 | a; return 0; }
+        if (b == 0x70 || b == 0x71) { off = (uint32_t)(b & 1) << 16 | a; return 1; }
+        return -1;
     }
 
     /** -1: the cartridge does not answer (open bus). */
     int read(uint8_t bank, uint16_t a) const {
+        if (gsu) {
+            uint32_t off;
+            const int k = gsuMap(bank, a, off);
+            if (k == 0) return gsu->cpuReadRom(mirror(off, (uint32_t)rom.size()), a);
+            if (k == 1) return gsu->cpuReadRam(off);
+            return -1;
+        }
         const int32_t r = romOffset(bank, a);
         if (r >= 0) return rom[mirror((uint32_t)r, (uint32_t)rom.size())];
         const int32_t s = sramOffset(bank, a);
@@ -191,6 +221,11 @@ struct Cart {
         return -1;
     }
     void write(uint8_t bank, uint16_t a, uint8_t v) {
+        if (gsu) {
+            uint32_t off;
+            if (gsuMap(bank, a, off) == 1) gsu->cpuWriteRam(off, v);
+            return;
+        }
         const int32_t s = sramOffset(bank, a);
         if (s >= 0) sram[(uint32_t)s % sram.size()] = v;
     }
@@ -243,6 +278,7 @@ struct DmaChannel {
     uint16_t a2a = 0xFFFF;
     uint8_t nltr = 0xFF, unused = 0xFF;
     bool doTransfer = false, done = true;
+    bool dmaActive = false;     // a general DMA in progress (HDMA on the channel cancels it)
 };
 
 const uint8_t MODE_LEN[8] = {1, 2, 2, 4, 4, 4, 2, 4};
@@ -289,12 +325,13 @@ public:
         for (auto& c : m_dma) c = DmaChannel{};
         m_apuSynced = 0;
         if (m_cart && m_cart->dsp) m_cart->dsp->reset();
+        if (m_cart && m_cart->gsu) m_cart->gsu->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
     void endStep() {
         m_cpu->setNmiLine(m_nmiFlag && (m_nmitimen & 0x80));
-        m_cpu->setIrqLine(m_irqFlag);
+        m_cpu->setIrqLine(m_irqFlag || (m_cart && m_cart->gsu && m_cart->gsu->irq()));
         syncApu();
     }
     void syncApu() {
@@ -328,6 +365,7 @@ public:
                 }
             }
         }
+        if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
     }
     void idle(uint32_t) override { advance(6); }
 
@@ -400,6 +438,8 @@ private:
             if (a >= 0x4300 && a < 0x4380) return dmaRead(a);
         }
         if (m_cart) {
+            if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000)
+                return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 if (peek) { const auto& st = m_cart->dsp->state(); return sr ? (uint8_t)(st.sr >> 8) : (uint8_t)st.dr; }
@@ -430,6 +470,7 @@ private:
             if (a >= 0x4300 && a < 0x4380) { dmaWrite(a, v); return; }
         }
         if (m_cart) {
+            if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 m_cart->dsp->runTo(m_master, MASTER_HZ);
@@ -582,11 +623,15 @@ private:
     }
 
     void generalDma(uint8_t channels) {
+        // Every channel is active from the start: HDMA on a channel cancels its DMA, even before its turn
+        for (int ch = 0; ch < 8; ++ch) m_dma[ch].dmaActive = (channels >> ch) & 1;
         advance(8);                                           // the DMA starts after a few clocks
         for (int ch = 0; ch < 8; ++ch) {
             if (!(channels & (1 << ch))) continue;
             DmaChannel& c = m_dma[ch];
+            if (!c.dmaActive) continue;
             advance(8);
+            if (!c.dmaActive) continue;
             const int mode = c.ctrl & 7;
             int i = 0;
             do {
@@ -595,7 +640,8 @@ private:
                 if (!(c.ctrl & 0x08)) c.a1t = (c.ctrl & 0x10) ? (uint16_t)(c.a1t - 1) : (uint16_t)(c.a1t + 1);
                 --c.das;
                 ++i;
-            } while (c.das != 0);
+            } while (c.das != 0 && c.dmaActive);     // HDMA on this channel ends it (as Mesen)
+            c.dmaActive = false;
         }
     }
 
@@ -605,6 +651,7 @@ private:
             DmaChannel& c = m_dma[ch];
             c.done = !(m_hdmaen & (1 << ch));
             if (c.done) continue;
+            c.dmaActive = false;
             c.a2a = c.a1t;
             loadHdmaLine(c);
         }
@@ -626,7 +673,9 @@ private:
         int clocks = 18;
         for (int ch = 0; ch < 8; ++ch) {
             DmaChannel& c = m_dma[ch];
-            if (!(m_hdmaen & (1 << ch)) || c.done) continue;
+            if (!(m_hdmaen & (1 << ch))) continue;
+            c.dmaActive = false;
+            if (c.done) continue;
             clocks += 8;
             if (c.doTransfer) {
                 const int mode = c.ctrl & 7;
@@ -863,6 +912,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
     desc->onReset = [bus, cpu, apu](MachineDescriptor&) {
         apu->reset();
         if (bus->cart() && bus->cart()->dsp) bus->cart()->dsp->reset();
+        if (bus->cart() && bus->cart()->gsu) bus->cart()->gsu->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();

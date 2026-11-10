@@ -60,7 +60,7 @@ one powers the console on; the machine's reset is the RESET button.
     header as bsnes and Mesen do.
   - **ROM sizes:** sizes that aren't a power of two mirror as in bsnes.
   - **Battery RAM:** LoROM `$70-$7D:$0000-$7FFF`, HiROM `$20-$3F:$6000-$7FFF`.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, and the Super FX (see below).
 
 ### DSP-1 to DSP-4
 
@@ -92,6 +92,32 @@ the other DSP-1 games use it for 3D maths.
   A ROM image with the firmware appended (8 KB past a 32 KB boundary) is
   used as it is. Without firmware, the cartridge is refused with a message
   naming the file it needs.
+
+### Super FX
+
+The GSU-1/GSU-2 (`snes::Gsu`, after Mesen's `Gsu.cpp`), used by Star Fox,
+Yoshi's Island, Stunt Race FX, Doom and others. It is a 16-bit RISC CPU
+running at the master clock (or half that), kept in step with the 65816
+after every bus cycle.
+
+- **Detection:** a chipset byte (`$FFD6`) of `$13`-`$1A`. Its RAM size
+  comes from `$FFBD`, else 64 KB.
+- **The chip:** sixteen registers and every instruction, with the ALT
+  prefixes and FROM/TO/WITH. Also:
+  - **Cache:** the 512-byte instruction cache.
+  - **Buffered memory:** ROM reads through R14 and buffered RAM writes.
+  - **Multiplies:** MULT/UMULT, FMULT/LMULT.
+  - **PLOT/RPIX:** 2/4/8 bpp, with the 128/160/192-line and OBJ layouts,
+    dither, transparency, and the two pixel caches.
+- **Map:**
+  - **Registers:** `$3000-$3FFF`, including the cache at `$3100`.
+  - **RAM:** at `$6000-$7FFF` (its first 8 KB) and in `$70-$71`.
+  - **ROM:** LoROM at `$8000`, and 64 KB a bank in `$40-$5F`.
+  - **While the GSU runs:** when the GSU has the ROM or RAM (SCMR), the 65816
+    sees the fixed interrupt-vector values from ROM and 0 from RAM. While it
+    runs, only SFR and SCMR answer.
+- **IRQ:** STOP raises the IRQ (unless CFGR masks it); reading `$3031`
+  clears it.
 
 ### PPU
 
@@ -177,11 +203,19 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
 - `test_snes_roms.cpp`, with krom's ROMs
   ([PeterLemon/SNES](https://github.com/PeterLemon/SNES);
   `MMEMU_SNES_TEST_ROMS`, default `../refs/snes-krom`):
-  - **Instruction tests:** the 65816 and SPC700 `CPUTest` ROMs, read back
-    from the screen (`MMEMU_SNES_SURVEY=1`; 127 PASS, 0 FAIL).
+  - **Instruction tests:** the 65816 and SPC700 `CPUTest` ROMs and the
+    Super FX's `CHIP/GSU/GSUTest` ROMs (31), read back from the screen
+    (`MMEMU_SNES_SURVEY=1`; 585 PASS, 0 FAIL).
   - **Sound:** the Twinkle music demo has to make sound.
-  - **Pictures:** `MMEMU_SNES_SHOTS=<dir>` runs every PPU demo for 3
-    seconds and saves a PNG of each, with the speed.
+  - **Pictures:** `MMEMU_SNES_SHOTS=<dir>` runs every PPU demo and Super
+    FX drawing demo for 3 seconds and saves a PNG of each, with the speed.
+    24 of krom's 27 Super FX demo pictures match his reference PNGs pixel
+    for pixel. The other three (PlotPixel at 192 lines) start 2 lines
+    lower. Their HDMA table is the same as PlotLine's, which matches, so
+    those three reference pictures look stale.
+- `test_snes_gsu.cpp`: a hand-built Super FX cartridge. The 65816 starts a
+  GSU program from work RAM and reads back its registers, its RAM, and the
+  STOP IRQ.
 - `test_snes_necdsp.cpp`: the uPD7725 with a small hand-assembled program
   (multiply, data ROM, RQM handshakes, ALU flags), on its own and through a
   LoROM cartridge driven by the 65816. It needs no Nintendo firmware, and it
@@ -197,8 +231,8 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors other than the DSP-1..4 (Super FX, SA-1, S-DD1,
-  Cx4, SPC7110, ST010/011...).
+- Cartridge coprocessors other than the DSP-1..4 and Super FX (SA-1,
+  S-DD1, Cx4, SPC7110, ST010/011...); Super FX battery RAM saving.
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, battery RAM saving, the mouse, Super Scope and multitap.
