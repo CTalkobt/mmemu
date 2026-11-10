@@ -47,6 +47,12 @@ public:
     uint8_t read(uint8_t reg);
     uint8_t peek(uint8_t reg) const;
 
+    /** Where the beam is (line, H clock 0-1363), given before each register access: during the picture
+     *  VRAM can't be reached, and CGRAM and OAM accesses go where the PPU is reading (Mesen). */
+    void setBeam(int line, int hclock) {
+        m_beamLine = line; m_beamHClock = hclock;
+        if (line != m_evalLine) { m_evalLine = line; m_evalStart = m_oamPriority ? (uint8_t)((m_oamAddr & 0x1FC) >> 2) : 0; }
+    }
     /** Draw line `line` up to dot `dot` (before a register write). */
     void sync(int line, int dot);
     /** Horizontal blank of line `line` (0 to the last visible): finish it, fetch the next line's sprites. */
@@ -100,9 +106,18 @@ private:
         uint16_t color = 0;     // BGR555
         uint8_t z = 0;          // 0 = transparent
         uint8_t layer = 5;      // 0-3 BG1-4, 4 OBJ, 5 backdrop
+        int16_t cg = -1;        // its CGRAM address (-1: direct colour)
         bool objMath = true;    // OBJ palettes 0-3 never take part in colour math
     };
-    struct Layer { std::array<uint16_t, 256> color; std::array<uint8_t, 256> prio; std::array<bool, 256> opaque; };
+    /** `cg`: the CGRAM address the colour came from (-1: direct colour). */
+    struct Layer { std::array<uint16_t, 256> color; std::array<uint8_t, 256> prio; std::array<bool, 256> opaque; std::array<int16_t, 256> cg; };
+    // Access during the picture (Mesen's CanAccessVram / CanAccessCgram / GetOamAddress)
+    bool rendering() const { return !m_forcedBlank && m_beamLine < vblankLine(); }
+    bool canAccessCgram() const {
+        return m_beamLine >= vblankLine() || m_beamLine == 0 || m_forcedBlank || m_beamHClock < 88 || m_beamHClock >= 1096;
+    }
+    uint16_t oamAccessAddr() const;
+    uint16_t vramFetch() const { return rendering() ? 0 : m_vram[vramAddrRemap() & 0x7FFF]; }
 
     uint16_t vramAddrRemap() const;
     void vramIncrement(bool high);
@@ -116,6 +131,8 @@ private:
     void mathPixel(uint16_t& a, uint16_t b, int x, bool inWindow);
     bool window(int layerSel, int x) const;           // layerSel 0-3 BG, 4 OBJ, 5 colour
     uint16_t paletteColor(int bpp, int bg, int pal, int idx) const;
+    /** The CGRAM address paletteColor() reads (-1: direct colour). */
+    int16_t paletteIndex(int bpp, int bg, int pal, int idx) const;
 
     std::string m_name = "ppu";
 
@@ -172,6 +189,11 @@ private:
     uint32_t m_mpyResult = 0;
     bool m_interlaceField = false;
     bool m_pal = false, m_ioBit = true;
+    // The beam at the access, and where the PPU reads OAM and CGRAM: the sprite being evaluated (one per two
+    // dots from the line's first, by the priority rotation), then the one being fetched; the CGRAM address
+    // of the last colour looked up (0 when the backdrop shows on either screen, as Mesen)
+    int m_beamLine = 0, m_beamHClock = 0, m_evalLine = -1;
+    uint8_t m_evalStart = 0, m_timeIndex = 0, m_cgInternal = 0;
 
     // The line being drawn
     int m_drawLine = -1, m_drawX = 0;

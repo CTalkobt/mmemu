@@ -986,6 +986,8 @@ private:
             const int v = m_cart->bsx->satRead(r, m_master, m_masterHz, peek);
             if (v >= 0) return (uint8_t)v;
         }
+        if (r < 0x40) m_ppu->setBeam(m_line, m_hClock);
+        if (r == 0x3B && !peek) m_ppu->sync(m_line, m_hClock >> 2);    // CGRAM during the picture: the PPU's address now
         if (r == 0x37) {
             // SLHV: latch the H/V counters (when WRIO bit 7 is set); open bus
             if (!peek && (m_wrio & 0x80)) m_ppu->latchCounters(dot(), m_line);
@@ -1009,6 +1011,7 @@ private:
     void bWrite(uint8_t r, uint8_t v) {
         if (m_cart && m_cart->bsx && m_cart->bsx->satWrite(r, v, m_master, m_masterHz)) return;
         if (r < 0x40) {
+            m_ppu->setBeam(m_line, m_hClock);
             if (r < 0x34) m_ppu->sync(m_line, m_hClock >> 2);     // the pixels so far with the old value
             m_ppu->write(r, v);
             return;

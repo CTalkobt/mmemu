@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES PPU: VRAM, CGRAM and OAM during the picture
+
+- **As Mesen:** VRAM writes are dropped during the picture (the address
+  still steps) and reads give 0; CGRAM accesses outside H blank go to the
+  colour the PPU is reading (0 on the backdrop); OAM accesses go to the
+  sprite being evaluated or fetched, and `$2104` writes reach the high table
+  too; sprites are evaluated for `$213E` even when not shown; `$2100` in
+  forced blank on vertical blank's first line reloads the OAM address.
+  Test: `snes_ppu_access_during_picture`.
+
 ### SNES MSU-1
 
 - **The MSU-1**, after Mesen: with `<rom>.msu` beside the ROM (tracks
