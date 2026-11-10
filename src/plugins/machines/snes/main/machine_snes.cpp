@@ -9,6 +9,7 @@
 #include "snes_gsu.h"
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
+#include "snes_sa1.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -76,6 +77,8 @@ struct Cart {
     uint16_t dspSrMask = 0;
     // The Super FX: it owns the map ($3000 registers, its RAM, ROM in two layouts)
     std::unique_ptr<Gsu> gsu;
+    // The SA-1: it owns the map too (I-RAM, BW-RAM = sram, the MMC's ROM banks)
+    std::unique_ptr<Sa1> sa1;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     std::string savePath;
@@ -210,6 +213,7 @@ struct Cart {
             gsu = std::make_unique<Gsu>(&rom, exp >= 1 && exp <= 7 ? (1024u << exp) : 0x10000);
             sram.clear();
         }
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x3) sa1 = std::make_unique<Sa1>(&rom, &sram);
         return true;
     }
 
@@ -220,6 +224,7 @@ struct Cart {
         if (battery) s += ", battery";
         if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
         if (gsu) s += ", Super FX, " + std::to_string(gsu->ram().size() / 1024) + "K RAM";
+        if (sa1) s += ", SA-1";
         return s;
     }
 
@@ -357,12 +362,13 @@ public:
         m_apuSynced = 0;
         if (m_cart && m_cart->dsp) m_cart->dsp->reset();
         if (m_cart && m_cart->gsu) m_cart->gsu->reset();
+        if (m_cart && m_cart->sa1) m_cart->sa1->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
     void endStep() {
         m_cpu->setNmiLine(m_nmiFlag && (m_nmitimen & 0x80));
-        m_cpu->setIrqLine(m_irqFlag || (m_cart && m_cart->gsu && m_cart->gsu->irq()));
+        m_cpu->setIrqLine(m_irqFlag || (m_cart && ((m_cart->gsu && m_cart->gsu->irq()) || (m_cart->sa1 && m_cart->sa1->cpuIrq()))));
         syncApu();
     }
     void syncApu() {
@@ -397,6 +403,7 @@ public:
             }
         }
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
+        if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
     }
     void idle(uint32_t) override { advance(6); }
 
@@ -469,6 +476,10 @@ private:
             if (a >= 0x4300 && a < 0x4380) return dmaRead(a);
         }
         if (m_cart) {
+            if (m_cart->sa1) {
+                const int v = m_cart->sa1->cpuRead(bank, a, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000)
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             bool sr;
@@ -501,6 +512,7 @@ private:
             if (a >= 0x4300 && a < 0x4380) { dmaWrite(a, v); return; }
         }
         if (m_cart) {
+            if (m_cart->sa1) { m_cart->sa1->cpuWrite(bank, a, v); return; }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
@@ -962,6 +974,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         apu->reset();
         if (bus->cart() && bus->cart()->dsp) bus->cart()->dsp->reset();
         if (bus->cart() && bus->cart()->gsu) bus->cart()->gsu->reset();
+        if (bus->cart() && bus->cart()->sa1) bus->cart()->sa1->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();

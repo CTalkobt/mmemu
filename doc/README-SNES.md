@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, and the Super FX (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX and the SA-1 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -123,6 +123,39 @@ after every bus cycle.
     runs, only SFR and SCMR answer.
 - **IRQ:** STOP raises the IRQ (unless CFGR masks it); reading `$3031`
   clears it.
+
+### SA-1
+
+The SA-1 (`snes::Sa1`, after Mesen's `Sa1.cpp`) is used by Super Mario RPG,
+Kirby Super Star, Kirby's Dream Land 3 and others. It is a second 65C816 at
+10.74 MHz (a second `W65C816` on its own bus), with 2 KB of I-RAM. It
+shares the ROM and the battery RAM (BW-RAM) with the S-CPU and is kept in
+step after every S-CPU bus cycle.
+
+- **Detection:** a chipset byte of `$34`/`$35`. BW-RAM is the cartridge
+  RAM from the header, saved like any battery RAM.
+- **Memory:**
+  - **ROM blocks:** the MMC's four 1 MB ROM blocks (`$2220-$2223`), LoROM in
+    `$00-$3F`/`$80-$BF` and 64 KB banks in `$C0-$FF`.
+  - **I-RAM:** at `$3000` (and `$0000` for the SA-1), with write protection.
+  - **BW-RAM:** windows at `$6000-$7FFF` (`$2224`/`$2225`) and linear in
+    `$40-$4F` (`$40-$5F` for the SA-1). The SA-1 also sees a 2- or 4-bit
+    bitmap view in `$60-$6F` (and at `$6000` in bitmap mode). Writes are
+    protected unless enabled.
+- **CPU control:**
+  - **Reset and wait:** the S-CPU starts, stops and holds the SA-1
+    (`$2200`).
+  - **Vectors:** the SA-1 has its own reset/NMI/IRQ vectors, and the S-CPU's
+    NMI/IRQ vectors can be replaced.
+  - **Signals:** messages and IRQs go both ways.
+- **DMA:** between ROM, BW-RAM and I-RAM. The character conversion DMA turns
+  bitmaps into SNES tiles: type 1 on the S-CPU's reads, type 2 through the
+  bitmap registers.
+- **Arithmetic:** signed multiply, divide and a 40-bit multiply-accumulate,
+  with results after 5 or 6 cycles.
+- **Variable-length bit reader:** `$2258-$225B`, `$230C/$230D`.
+- **Not yet, as in Mesen:** the H/V timers, and the waits when both CPUs
+  want the same memory. A BW-RAM access costs the SA-1 two cycles.
 
 ### PPU
 
@@ -218,6 +251,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_sa1.cpp`: hand-built SA-1 cartridges. The S-CPU starts the
+  SA-1, which multiplies and divides, writes BW-RAM (plain and as a
+  bitmap), runs a DMA, reads a bit stream and messages back.
 - `test_snes_gsu.cpp`: a hand-built Super FX cartridge. The 65816 starts a
   GSU program from work RAM and reads back its registers, its RAM, and the
   STOP IRQ.
@@ -237,8 +273,8 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors other than the DSP-1..4 and Super FX (SA-1,
-  S-DD1, Cx4, SPC7110, ST010/011...).
+- Cartridge coprocessors other than the DSP-1..4, Super FX and SA-1
+  (S-DD1, Cx4, SPC7110, ST010/011...).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, the mouse, Super Scope and multitap.

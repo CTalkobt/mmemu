@@ -7,6 +7,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES SA-1
+
+- **The SA-1** (`snes::Sa1`, after Mesen) for Super Mario RPG, Kirby Super
+  Star and others. It is a second 65C816 at 10.74 MHz with its I-RAM, and
+  includes:
+  - **Memory:** the MMC's ROM banks, the BW-RAM windows, bitmap views and
+    write protection.
+  - **Control:** reset/wait, messages and interrupts both ways, and the
+    replaceable vectors.
+  - **DMA:** with character conversion types 1 and 2.
+  - **Arithmetic:** multiply, divide and multiply-accumulate.
+  - **Bit reader:** the variable-length bit reader.
+- **Tests:** two hand-built cartridges check it, as there are no free SA-1
+  test ROMs. The H/V timers and memory-conflict waits are left out, as in
+  Mesen.
+
 ### SNES battery saves
 
 - **Battery-backed RAM saved to `<rom>.srm`**, the format Mesen and snes9x
