@@ -114,7 +114,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below), and the Sufami Turbo adapter.
 
 ### DSP-1 to DSP-4
 
@@ -189,6 +189,30 @@ zlib licence).
   it through `$3804`).
 - **Firmware:** `roms/snes/st018.rom` (163840 bytes: the program, then the
   data ROM), Mesen's name. Not included (Seta's copyright).
+
+### Sufami Turbo
+
+Bandai's adapter takes two small cartridges (`.st`) on top of its own BIOS
+cartridge, mapped as Mesen:
+
+- **Slot A** is the cartridge attached as usual (`cart game.st`, any
+  frontend); a file starting `BANDAI SFC-ADX` without a SNES header is
+  taken as one, whatever its extension.
+- **Slot B**: CLI/MCP `expansion slotb cart <file>` (empty to take it
+  out), the GUI's Control > Expansions, `snes::insertSufamiSlotB`. Putting
+  one in or out powers the console on again; a new slot A cartridge leaves
+  slot B empty.
+- **Map:** the BIOS at `$00-$1F:8000-FFFF`, slot A's ROM at `$20-$3F`,
+  slot B's at `$40-$5F`, slot A's RAM at `$60-$63` and slot B's at
+  `$70-$73` (all mirrored at `$80+`). As Mesen, they are 4 KB pages whose
+  number wraps at the size.
+- **RAM**, by the game as Mesen: 2 KB for Poi Poi Ninja and SD Ultra
+  Battle, 8 KB for SD Gundam Generation, none otherwise. Each slot saves
+  beside its file (`.srm`); the same game in both slots saves slot B as
+  `<name>_SlotB.srm`.
+- **BIOS:** `roms/snes/sufamiturbo.sfc` (262144 bytes, Mesen's
+  `SufamiTurbo.sfc`). Not included (Bandai's copyright); without it the
+  cartridge is refused with a message naming the file.
 
 ### Super FX
 
@@ -457,6 +481,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_sufami.cpp`: a hand-built BIOS and two cartridges: the map
+  and its mirrors, both RAMs and their saves, slot B through the expansion
+  slot, and the message when the BIOS is missing.
 - `test_snes_st018.cpp`: the ST018's ARM and link. A hand-assembled ARM
   program answers the SNES through the link and the cartridge map, and the
   reset hold is checked. A random firmware run is checked against Mesen's
@@ -501,6 +528,6 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
-  S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
-  Super Game Boy).
+  S-DD1, SPC7110, OBC1, ST010/011 and ST018, and the Sufami Turbo (the
+  Satellaview and the Super Game Boy).
 - Two Justifiers from the host (the second gun is there for the API only).

@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES Sufami Turbo
+
+- **Bandai's Sufami Turbo**, mapped as Mesen: slot A's cartridge (`.st`, or
+  any file starting `BANDAI SFC-ADX`) attaches as usual, slot B's through
+  `expansion slotb cart <file>`. The BIOS at `$00-$1F`, the slots' ROMs at
+  `$20-$3F` and `$40-$5F`, their RAMs (2 or 8 KB by the game, as Mesen) at
+  `$60-$63` and `$70-$73`, each saved beside its file. The BIOS is
+  `roms/snes/sufamiturbo.sfc`, not included. Test `snes_sufami_turbo`.
+
 ### SNES region by hand and the Justifier
 
 - **The region can be chosen by hand**, as Mesen's setting: CLI/MCP

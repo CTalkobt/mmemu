@@ -69,6 +69,10 @@ int scanline(MachineDescriptor* m);
 int hclock(MachineDescriptor* m);
 /** True when the console runs as PAL (by the cartridge's header, or chosen by hand). */
 bool isPal(MachineDescriptor* m);
+/** The Sufami Turbo's slot B (slot A's cartridge in first): a cartridge file, or "" to take it out.
+ *  Its RAM is saved beside it (`.srm`); the console powers on again. */
+bool insertSufamiSlotB(MachineDescriptor* m, const std::string& path, std::string& err);
+std::string sufamiSlotB(MachineDescriptor* m);
 /** The region setting: "auto" (the cartridge's header, as Mesen), "ntsc" or "pal"; setting it powers on again. */
 bool setRegion(MachineDescriptor* m, const std::string& region);
 std::string region(MachineDescriptor* m);
