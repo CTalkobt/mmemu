@@ -171,6 +171,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - C128 BASIC 7.0's `STASH`, `FETCH` and `SWAP` work.
   - See `doc/README-C64.md` §2.10.
 
+### Atari 8-bit
+- **Extended RAM on the XL/XE,** fitted at run time (`expansion ram xe 128K`), banked into `$4000-$7FFF` by PORTB as atari800 does.
+  - 128K (130XE), 192K, 320K Rambo, 320K Compy-Shop, 576K and 1088K.
+  - On the 130XE and Compy-Shop types, ANTIC has its own bank selection (bit 5).
+  - See "Extended RAM" in `doc/README-ATARI.md`.
+
 ### Apple II
 - **Super Serial Card,** fitted at run time in slot 1, 2, 4, 5 or 7 (`expansion slot2 ssc 9600`), after AppleWin's `SerialComms.cpp`, with its firmware (`roms/apple2/SSC.rom`, from AppleWin's resources).
   - The DIP switches are at `$C0n1/2` and the 6551 at `$C0n8-B`.

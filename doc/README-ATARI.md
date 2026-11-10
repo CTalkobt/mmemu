@@ -35,6 +35,31 @@ Each has a PAL twin: `atari800-pal`, `atari800xl-pal`, `atari65xe-pal`. PAL runs
 
 On reset, port B's lines float high, so the OS is on and BASIC off. The OS then turns BASIC on unless OPTION is held.
 
+### Extended RAM (XL/XE)
+
+The 800XL and 65XE have a `ram` expansion slot that takes extended RAM banked into `$4000-$7FFF` by PORTB, as a 130XE has or an upgrade adds. The bank bits follow atari800's `memory.c` (`MEMORY_HandlePORTB`):
+
+```
+expansion ram xe 128K          # CLI; MCP expansion and the GUI's Control > Expansions... too
+expansion ram xe 1088K
+expansion ram remove
+```
+
+| Option | Bank bits (PORTB) | Banks |
+|---|---|---|
+| `128K` (130XE) | 2-3 | 4 |
+| `192K` | 2, 3, 6 | 8 |
+| `320K-rambo` | 2, 3, 5, 6 | 16 |
+| `320K-compy` | 2, 3, 6, 7 | 16 |
+| `576K` | 1, 2, 3, 5, 6 | 32 |
+| `1088K` | 1, 2, 3, 5, 6, 7 | 64 |
+
+- **Which bank is seen:** bit 4 low gives the CPU the selected bank. With bits 4 and 5 both high, both see base RAM.
+- **ANTIC:** on the 130XE and Compy-Shop types, bit 5 low gives ANTIC the bank separately, so the screen can come from extended RAM while the CPU works in base RAM. On the other types bit 5 picks a bank, and ANTIC sees what the CPU sees.
+- **Priority:** the self-test ROM keeps `$5000-$57FF` while it's on.
+- **Removing it:** the window shows base RAM again.
+- `atari800xl_extended_ram` writes a signature into every combination of each size's bits, counts the banks that keep it (4 to 64), and checks ANTIC's separate view.
+
 ## Timing and interrupts
 
 - **Scheduler:** each step runs one CPU instruction and clocks the devices for its cycles. While ANTIC holds the CPU (WSYNC, or the DMA cycles ANTIC takes), the step instead clocks the devices one cycle without the CPU.

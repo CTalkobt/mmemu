@@ -78,12 +78,47 @@ public:
         m_osOn = v & 0x01;
         m_basicOn = !(v & 0x02);
         m_selfTestOn = !(v & 0x80) && m_osOn;
+        xeBanking(v);
+    }
+
+    /**
+     * Extended RAM banked into $4000-$7FFF by PORTB (atari800 memory.c
+     * MEMORY_HandlePORTB): bit 4 low gives the CPU the selected bank, bit 5
+     * low ANTIC (on the 130XE and Compy-Shop types; on the others bit 5
+     * picks a bank and ANTIC sees what the CPU does). The bank bits:
+     * 128K (130XE) 2-3; 192K 2, 3, 6; 320K Rambo 2, 3, 5, 6; 320K Compy-Shop
+     * 2, 3, 6, 7; 576K 1, 2, 3, 5, 6; 1088K 1, 2, 3, 5, 6, 7. The self-test
+     * ROM keeps $5000-$57FF while it's on.
+     */
+    enum class XeRam { None, K128, K192, Rambo320, Compy320, K576, K1088 };
+    void setXeRam(XeRam type) {
+        static const int BANKS[] = {0, 4, 8, 16, 16, 32, 64};
+        m_xeType = type;
+        m_xe.assign((size_t)BANKS[(int)type] * 0x4000, 0);
+        m_cpuBank = m_anticBank = -1;
+        xeBanking(m_portB);
+    }
+    XeRam xeRam() const { return m_xeType; }
+    int cpuBank() const { return m_cpuBank; }
+    int anticBank() const { return m_anticBank; }
+    /** What ANTIC fetches: its own bank on the 130XE and Compy-Shop types. */
+    uint8_t anticRead(uint32_t addr) {
+        addr &= 0xFFFF;
+        if (m_anticBank >= 0 && addr >= 0x4000 && addr < 0x8000 && !(m_selfTestOn && addr >= 0x5000 && addr < 0x5800))
+            return m_xe[(size_t)m_anticBank * 0x4000 + (addr - 0x4000)];
+        return read(addr, true);
     }
     void resetBanking() {
         if (m_xl) setPortB(0xFF);           // PIA reset: inputs, pulled high
         else { m_osOn = true; m_basicOn = !m_basic.empty() && !m_cart; m_selfTestOn = false; }
     }
     bool basicOn() const { return m_basicOn; }
+    /** The extended bank the CPU sees at `addr`, or -1 for base RAM. */
+    int xeIndex(uint32_t addr) const {
+        if (m_cpuBank < 0 || addr < 0x4000 || addr >= 0x8000) return -1;
+        if (m_selfTestOn && addr >= 0x5000 && addr < 0x5800) return -1;
+        return m_cpuBank;
+    }
     bool osOn() const { return m_osOn; }
 
     const BusConfig& config() const override { return m_cfg; }
@@ -107,7 +142,9 @@ public:
             uint32_t a = ioAddr(addr, h);
             if (h) h->ioWrite(this, a, val);
         } else if (writable(addr)) {
-            m_ram[addr] = val;
+            const int b = xeIndex(addr);
+            if (b >= 0) m_xe[(size_t)b * 0x4000 + (addr - 0x4000)] = val;
+            else m_ram[addr] = val;
         }
         if (m_observer) m_observer->onMemoryWrite(this, addr, before, val);
     }
@@ -191,6 +228,8 @@ private:
                 return m_os[0x1000 + (addr - 0x5000)];   // the ROM's $D000-$D7FF part
             if (m_basicOn && addr >= 0xA000 && addr < 0xC000)
                 return m_basic[addr - 0xA000];
+            const int b = xeIndex(addr);
+            if (b >= 0) return m_xe[(size_t)b * 0x4000 + (addr - 0x4000)];
             return m_ram[addr];
         }
         if (addr >= 0xD800) return m_os[addr - 0xD800];  // OS-B: FP at $D800, OS at $E000
@@ -199,14 +238,59 @@ private:
         return m_ram[addr];
     }
 
+    void xeBanking(uint8_t v) {
+        m_portB = v;
+        m_cpuBank = m_anticBank = -1;
+        if (m_xeType == XeRam::None || (v & 0x30) == 0x30) return;
+        int bank = 0;
+        switch (m_xeType) {
+            case XeRam::K128:     bank = (v & 0x0C) >> 2; break;
+            case XeRam::K192:     bank = ((v & 0x0C) + ((v & 0x40) >> 2)) >> 2; break;
+            case XeRam::Rambo320: bank = ((v & 0x0C) + ((v & 0x60) >> 1)) >> 2; break;
+            case XeRam::Compy320: bank = ((v & 0x0C) + ((v & 0xC0) >> 2)) >> 2; break;
+            case XeRam::K576:     bank = ((v & 0x0E) + ((v & 0x60) >> 1)) >> 1; break;
+            case XeRam::K1088:    bank = ((v & 0x0E) + ((v & 0xE0) >> 1)) >> 1; break;
+            default: break;
+        }
+        if (!(v & 0x10)) m_cpuBank = bank;
+        const bool ownAntic = m_xeType == XeRam::K128 || m_xeType == XeRam::Compy320;
+        if (ownAntic) { if (!(v & 0x20)) m_anticBank = bank; }
+        else m_anticBank = m_cpuBank;
+    }
+
     BusConfig m_cfg;
     bool m_xl;
+    XeRam m_xeType = XeRam::None;
+    std::vector<uint8_t> m_xe;
+    int m_cpuBank = -1, m_anticBank = -1;
+    uint8_t m_portB = 0xFF;
     std::vector<uint8_t> m_os, m_basic;
     uint8_t m_ram[65536];
     bool m_osOn = true, m_basicOn = false, m_selfTestOn = false;
     Cartridge* m_cart = nullptr;
     std::function<void()> m_cartChanged;
     IOHandler *m_gtia = nullptr, *m_pokey = nullptr, *m_pia = nullptr, *m_antic = nullptr;
+};
+
+/** ANTIC's view of memory: the main bus but for its own extended bank. */
+class AnticView : public IBus {
+public:
+    explicit AnticView(AtariBus* bus) : m_bus(bus) { m_cfg = {16, 8, BusRole::DATA, true, 0xFFFF}; }
+    const BusConfig& config() const override { return m_cfg; }
+    const char* name() const override { return "antic"; }
+    uint8_t read8(uint32_t a) override { return m_bus->anticRead(a); }
+    uint8_t peek8(uint32_t a) override { return m_bus->anticRead(a); }
+    void write8(uint32_t, uint8_t) override {}
+    void reset() override {}
+    size_t stateSize() const override { return 0; }
+    void saveState(uint8_t*) const override {}
+    void loadState(const uint8_t*) override {}
+    int writeCount() const override { return 0; }
+    void getWrites(uint32_t*, uint8_t*, uint8_t*, int) const override {}
+    void clearWriteLog() override {}
+private:
+    AtariBus* m_bus;
+    BusConfig m_cfg;
 };
 
 // ---------------------------------------------------------------------------
@@ -516,7 +600,9 @@ MachineDescriptor* create(Model model, std::string* err, bool pal) {
     auto* gtia  = new GTIA();
     auto* pokey = new POKEY();
     auto* pia   = new PIA6520("PIA", 0xD300);
-    antic->setDmaBus(bus);
+    auto* anticView = new AnticView(bus);
+    desc->deleters.push_back([anticView]() { delete anticView; });
+    antic->setDmaBus(anticView);
     antic->setGtia(gtia);
     antic->setPal(pal);
     gtia->setPal(pal);
@@ -556,6 +642,38 @@ MachineDescriptor* create(Model model, std::string* err, bool pal) {
     auto* nmi = new NmiLine(cpu);
     desc->deleters.push_back([nmi]() { delete nmi; });
     antic->setNmiLine(nmi);
+
+    if (xl) {
+        // Extended RAM in $4000-$7FFF banked by PORTB, fitted at run time
+        // (atari800's sizes and bank bits)
+        MachineDescriptor::ExpansionSlot ram;
+        ram.name = "ram";
+        ram.description = "Extended RAM banked into $4000-$7FFF by PORTB (the 130XE's, or an upgrade)";
+        ram.devices = {{"xe", "Extended RAM: 128K (130XE, ANTIC banked apart), 192K, 320K Rambo, 320K Compy-Shop, 576K, 1088K (the machine's 64K included)",
+                        {"128K", "192K", "320K-rambo", "320K-compy", "576K", "1088K"}, "128K"}};
+        ram.install = [bus](const std::string& device, const std::string& option, std::string& err) {
+            if (device.empty()) { bus->setXeRam(AtariBus::XeRam::None); return true; }
+            if (device != "xe") { err = "no device '" + device + "' for the ram slot (xe)"; return false; }
+            std::string o = option.empty() ? "128K" : option;
+            for (auto& c : o) c = (char)toupper((unsigned char)c);
+            AtariBus::XeRam t;
+            if (o == "128K") t = AtariBus::XeRam::K128;
+            else if (o == "192K") t = AtariBus::XeRam::K192;
+            else if (o == "320K-RAMBO" || o == "320K") t = AtariBus::XeRam::Rambo320;
+            else if (o == "320K-COMPY") t = AtariBus::XeRam::Compy320;
+            else if (o == "576K") t = AtariBus::XeRam::K576;
+            else if (o == "1088K") t = AtariBus::XeRam::K1088;
+            else { err = "the sizes are 128K, 192K, 320K-rambo, 320K-compy, 576K and 1088K"; return false; }
+            bus->setXeRam(t);
+            return true;
+        };
+        ram.info = [bus]() -> std::string {
+            static const char* const NAMES[] = {"", "128K", "192K", "320K Rambo", "320K Compy-Shop", "576K", "1088K"};
+            const int t = (int)bus->xeRam();
+            return t ? std::string("xe (") + NAMES[t] + ")" : "";
+        };
+        desc->expansionSlots.push_back(std::move(ram));
+    }
 
     MachineDescriptor* self = desc;
     auto* keyboard = new AtariKeyboard(pokey, gtia, antic, bus, xl, frameCycles, [self]() {

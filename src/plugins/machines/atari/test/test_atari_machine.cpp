@@ -8,6 +8,7 @@
 #include "libdevices/main/ivideo_output.h"
 #include "plugins/devices/gtia/main/gtia.h"
 #include "plugins/devices/pokey/main/pokey.h"
+#include "plugins/devices/antic/main/antic.h"
 #include "plugins/machines/atari/main/atari_cart.h"
 #include "plugins/machines/atari/main/atari_sio.h"
 #include <filesystem>
@@ -416,4 +417,65 @@ TEST_CASE(atari_antic_video_inspect) {
     ASSERT_EQ(px(0, 0), vi->paletteColor(0x46) & 0xFFFFFF);    // $81: pixels 0 and 7 lit
     ASSERT_EQ(px(7, 0), vi->paletteColor(0x46) & 0xFFFFFF);
     ASSERT(px(1, 0) != (vi->paletteColor(0x46) & 0xFFFFFF));
+}
+
+// Extended RAM fitted at run time in the XL/XE's $4000-$7FFF window, banked
+// by PORTB as atari800 does: a signature in every bank the size's bits
+// reach, then counted back (as RAM-disk drivers size it); base RAM kept
+// apart; the 130XE's ANTIC bank apart from the CPU's
+TEST_CASE(atari800xl_extended_ram) {
+    std::string err;
+    Machine m(atari::create(atari::Model::Atari800XL, &err));
+    ASSERT(m != nullptr);
+    auto* slot = m->expansionSlot("ram");
+    ASSERT(slot != nullptr);
+    EXPECT_EQ(slot->info(), std::string(""));
+    EXPECT_TRUE(!slot->install("xe", "256K", err));
+    IBus* b = bus(*m);
+    b->write8(0xD303, 0x00); b->write8(0xD301, 0xFF); b->write8(0xD303, 0x04);   // PORTB: outputs
+    struct Case { const char* opt; uint8_t mask; int banks; };
+    const Case cases[] = {{"128K", 0x0C, 4}, {"192K", 0x4C, 8}, {"320K-rambo", 0x6C, 16},
+                          {"320K-compy", 0xCC, 16}, {"576K", 0x6E, 32}, {"1088K", 0xEE, 64}};
+    for (const auto& c : cases) {
+        ASSERT(slot->install("xe", c.opt, err));
+        b->write8(0xD301, 0xFF);                    // base RAM
+        b->write8(0x4000, 0x99);
+        // Every combination of the bank bits, with the CPU's access on (bit 4 low)
+        std::vector<uint8_t> values;
+        for (int v = 0; v < 256; ++v)
+            if ((v & ~c.mask & 0xFF) == ((0xFF & ~c.mask) & ~0x10)) values.push_back((uint8_t)v);
+        for (size_t i = 0; i < values.size(); ++i) {
+            b->write8(0xD301, values[i]);
+            b->write8(0x4000, (uint8_t)i); b->write8(0x7FFF, (uint8_t)~i);
+        }
+        int kept = 0;
+        for (size_t i = 0; i < values.size(); ++i) {
+            b->write8(0xD301, values[i]);
+            if (b->peek8(0x4000) == (uint8_t)i && b->peek8(0x7FFF) == (uint8_t)~i) ++kept;
+        }
+        if (kept != c.banks) printf("  %s: %d banks\n", c.opt, kept);
+        EXPECT_EQ(kept, c.banks);
+        b->write8(0xD301, 0xFF);
+        EXPECT_EQ(b->peek8(0x4000), 0x99);           // base RAM untouched
+    }
+    EXPECT_EQ(slot->info(), std::string("xe (1088K)"));
+    // 130XE: the CPU on base RAM, ANTIC on bank 2 (bits 3-2 = 10, bit 5 low)
+    ASSERT(slot->install("xe", "128K", err));
+    b->write8(0xD301, (0xFF & ~0x10 & ~0x0C) | 0x08);  // CPU: bank 2
+    b->write8(0x4123, 0x5A);
+    b->write8(0xD301, (0xFF & ~0x20 & ~0x0C) | 0x08);  // CPU base, ANTIC bank 2
+    EXPECT_TRUE(b->peek8(0x4123) != 0x5A);
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    Antic* antic = nullptr;
+    for (auto* h : hs) if ((antic = dynamic_cast<Antic*>(h))) break;
+    ASSERT(antic != nullptr);
+    EXPECT_EQ(antic->peekVideo(0x4123), 0x5A);       // what ANTIC fetches: its bank
+    EXPECT_EQ(antic->peekVideo(0x3FFF), b->peek8(0x3FFF));
+    b->write8(0xD301, 0xFF);                          // both on base RAM again
+    EXPECT_EQ(antic->peekVideo(0x4123), b->peek8(0x4123));
+    ASSERT(slot->install("", "", err));
+    EXPECT_EQ(slot->info(), std::string(""));
+    b->write8(0xD301, 0xEF);
+    EXPECT_EQ(b->peek8(0x4000), 0x99);               // no extended RAM: base
 }
