@@ -9,15 +9,16 @@ It starts at BASIC's `>` prompt in Mode 6. After "Acorn Electron" the OS draws A
 ROMs (from the Elkulator 1.0 release, in `roms/electron/`):
 - `os100.rom`: OS 1.00, 16 KB at `&C000`.
 - `basic2.rom`: BASIC 2, the same as the BBC Micro's.
+- `plus1.rom`: the Plus 1's 4 KB ROM, repeated through ROM page 12.
 
 ## Memory map
 
 | Address | Contents |
 |---------|----------|
 | `&0000-&7FFF` | 32 KB of RAM, shared with the ULA |
-| `&8000-&BFFF` | Paged ROM: BASIC (pages 10 and 11), the keyboard (pages 8 and 9), external ROMs (none fitted) |
+| `&8000-&BFFF` | Paged ROM: BASIC (pages 10 and 11), the keyboard (pages 8 and 9), external ROMs (the Plus 1's: page 12, cartridges in 0-3) |
 | `&C000-&FBFF` | OS ROM |
-| `&FC00-&FDFF` | FRED, JIM: nothing fitted |
+| `&FC00-&FDFF` | FRED, JIM: the Plus 1 at `&FC70-&FC72` when fitted |
 | `&FE00-&FEFF` | The ULA (16 registers, repeated) |
 | `&FF00-&FFFF` | OS ROM |
 
@@ -54,6 +55,26 @@ ROMs (from the Elkulator 1.0 release, in `roms/electron/`):
 
 I worked at the byte level rather than Elkulator's bit-level shift register, and left out its shortened carrier tones.
 
+## The Plus 1
+
+The Plus 1 plugs into the expansion connector, after Elkulator (`adc.c`, `parallel.c`, `mem.c`):
+```
+expansion edge plus1 [printer.txt]     fit it (and reset); the option is a file for the printer's output
+expansion cart1 rom game.rom           a cartridge in slot 1 (ROM pages 0-1); cart2: pages 2-3
+expansion edge remove                  take it out
+```
+- **ROM:** `roms/electron/plus1.rom` in page 12. It gives the OS `ADVAL` and the printer.
+- **Cartridges:** a 16 KB image fills the slot's first page, and a 32 KB one both. The slots work only with the Plus 1 fitted.
+- **Joysticks:** two analogue sticks on an ADC0844. The host's joysticks drive the channels to their ends, as on the BBC Micro (left and up read high).
+
+| Register | Write | Read |
+|----------|-------|------|
+| `&FC70` | Start a conversion: the channel (bits 0-1) and mode (bits 2-3) | The result |
+| `&FC71` | A byte to the printer | |
+| `&FC72` | | Status: fire buttons (bits 4 and 5, low when pressed), conversion done (bit 6, low), printer busy (bit 7, never) |
+
+A conversion finishes at the end of the next 128-cycle line, as Elkulator's does. I left out Elkulator's serial port at `&FC60`, which isn't part of the Plus 1.
+
 ## Keyboard
 
 The 14 columns are on address lines A0-A13, selected low, and the 4 rows on data bits 0-3. With the keyboard paged in, a read of `&8000-&BFFF` returns the rows of every selected column.
@@ -80,8 +101,11 @@ Named keys go to the key in the same place:
 - `electron_mode2_graphics`: a filled Mode 2 rectangle.
 - `electron_sound_tone`: `SOUND` pitch on the audio output.
 - `electron_tape_save_and_chain`: `SAVE` to a recording, then `CHAIN ""` on a fresh machine.
+- `electron_plus1_joystick_adval`: `ADVAL` reads a stick held left and its fire button.
+- `electron_plus1_printer`: `VDU 2` text reaches the printer file.
+- `electron_plus1_cartridge`: a service ROM in a cartridge is called at power-on.
 
 ## Not yet
 
-- **Expansions:** the Plus 1 (cartridges, ADC, printer) and the Plus 3 (disc).
+- **Expansions:** the Plus 3 (disc).
 - **Video:** the enhanced ULA modes.

@@ -20,6 +20,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 namespace electron {
@@ -491,6 +492,72 @@ constexpr uint16_t ElkUla::MODE_LEN[8];
 constexpr int ElkUla::MODE_END[8];
 
 // ---------------------------------------------------------------------------
+// The Plus 1 (Elkulator adc.c, parallel.c, mem.c): its ROM in page 12, two
+// cartridge slots (pages 0-1 and 2-3), the joysticks on an ADC0844 and a
+// Centronics printer port
+//   &FC70  write: start a conversion (b0-1 the channel, b2-3 the mode); read: the result
+//   &FC71  write: a byte to the printer
+//   &FC72  read: status: b4/b5 fire (joystick 0/1, low = pressed), b6 low
+//          when the conversion is done, b7 the printer busy (never)
+// ---------------------------------------------------------------------------
+class Plus1 {
+public:
+    explicit Plus1(std::vector<uint8_t> rom) : m_rom(std::move(rom)) {}
+
+    std::function<void(uint8_t)> onPrint;
+
+    uint8_t rom(uint16_t a) const { return m_rom[a & 0x0FFF]; }   // 4 KB, repeated
+    void reset() { m_status = 0x7F; m_data = 0; m_doneAt = 0; m_converting = false; }
+
+    /** A joystick: x, y as the ADC reads them (255 left/up, 128 centred,
+     *  1 right/down), fire held. */
+    void setStick(int n, uint8_t x, uint8_t y, bool fire) {
+        m_axis[n & 1][0] = x;
+        m_axis[n & 1][1] = y;
+        m_fire[n & 1] = fire;
+    }
+
+    uint8_t read(uint16_t a, uint64_t now) {
+        if (m_converting && now >= m_doneAt) { m_converting = false; m_status &= (uint8_t)~0x40; }
+        if (a == 0xFC70) return m_data;
+        uint8_t v = (uint8_t)(m_status | 0x30);
+        if (m_fire[0]) v &= (uint8_t)~0x10;
+        if (m_fire[1]) v &= (uint8_t)~0x20;
+        return v;
+    }
+    uint8_t peek(uint16_t a) const { return a == 0xFC70 ? m_data : (uint8_t)(m_status | 0x30); }
+
+    /** `line`: the cycle the next 128-cycle line starts (Elkulator finishes
+     *  a conversion at the next line's end) */
+    void write(uint16_t a, uint8_t v, uint64_t line) {
+        if (a == 0xFC71) { if (onPrint) onPrint(v); return; }
+        if (a != 0xFC70) return;
+        m_status |= 0x40;
+        m_converting = true;
+        m_doneAt = line;
+        // Elkulator writeadc: a channel (less a second one in differential modes)
+        // (dat = -position, -128..127; the result wraps as Elkulator's byte does)
+        auto dat = [this](int c) { return std::max(-128, std::min(127, (int)m_axis[(c >> 1) & 1][c & 1] - 128)); };
+        const int c = v & 3;
+        int d2 = 0;
+        switch (v & 0xC) {
+            case 0: case 8: d2 = dat(c ^ 1); break;
+            case 4: d2 = 0; break;
+            case 12: d2 = dat(3); break;
+        }
+        m_data = (uint8_t)(dat(c) - d2 + 128);
+    }
+
+private:
+    std::vector<uint8_t> m_rom;
+    uint8_t m_status = 0x7F, m_data = 0;
+    uint8_t m_axis[2][2] = {{128, 128}, {128, 128}};
+    bool m_fire[2] = {};
+    uint64_t m_doneAt = 0;
+    bool m_converting = false;
+};
+
+// ---------------------------------------------------------------------------
 // The bus (Elkulator mem.c)
 // ---------------------------------------------------------------------------
 class ElkBus : public IBus {
@@ -507,6 +574,19 @@ public:
     ~ElkBus() override { delete m_ula; }
 
     ElkUla* ula() { return m_ula; }
+
+    /** The Plus 1 (taken, not owned: nullptr removes it) */
+    void setPlus1(Plus1* p) { m_plus1 = p; }
+    Plus1* plus1() const { return m_plus1; }
+    /** A cartridge's ROMs in pages `page` and `page`+1 (16 KB: the first only;
+     *  empty: none) */
+    void setCartridge(int page, std::vector<uint8_t> image) {
+        m_cart[page].clear();
+        m_cart[page + 1].clear();
+        if (image.size() >= 0x4000) m_cart[page].assign(image.begin(), image.begin() + 0x4000);
+        if (image.size() >= 0x8000) m_cart[page + 1].assign(image.begin() + 0x4000, image.begin() + 0x8000);
+    }
+    bool hasCartridge(int page) const { return !m_cart[page].empty(); }
 
     void powerOn() {
         std::fill(m_ram.begin(), m_ram.end(), 0);
@@ -530,6 +610,7 @@ public:
         uint8_t v;
         if (a < 0x8000) { ramWait(); v = m_ram[a]; }
         else if (a >= 0xFE00 && a < 0xFF00) { syncNow(); v = m_ula->read(a); irqUpdate(); }
+        else if (m_plus1 && (a == 0xFC70 || a == 0xFC72)) { syncNow(); v = m_plus1->read(a, m_devCycle); }
         else v = peekMem(a);
         ++m_access;
         if (m_observer) m_observer->onMemoryRead(this, a, v);
@@ -545,6 +626,7 @@ public:
         if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
         if (a < 0x8000) { ramWait(); m_ram[a] = v; }
         else if (a >= 0xFE00 && a < 0xFF00) { syncNow(); m_ula->write(a, v); irqUpdate(); }
+        else if (m_plus1 && (a == 0xFC70 || a == 0xFC71)) { syncNow(); m_plus1->write(a, v, (m_devCycle / 128 + 1) * 128); }
         ++m_access;
     }
     void reset() override {}
@@ -560,9 +642,15 @@ private:
         if (a < 0x8000) return m_ram[a];
         if (a < 0xC000) {
             if (!m_ula->externalRom()) return m_ula->basicPaged() ? m_basic[a & 0x3FFF] : m_kbd->read(a);
-            return (uint8_t)(a >> 8);                    // no cartridge or expansion ROM
+            const int page = m_ula->romBank();
+            if (m_plus1) {
+                if (page == 12) return m_plus1->rom(a);
+                if (page < 4 && !m_cart[page].empty()) return m_cart[page][a & 0x3FFF];
+            }
+            return (uint8_t)(a >> 8);                    // nothing in that page
         }
         if (a < 0xFC00 || a >= 0xFF00) return m_os[a & 0x3FFF];
+        if (m_plus1 && (a == 0xFC70 || a == 0xFC72)) return m_plus1->peek(a);
         if (a < 0xFE00) return (uint8_t)(a >> 8);        // FRED, JIM: nothing fitted
         return 0xFE;
     }
@@ -589,6 +677,8 @@ private:
     ElkKeyboard* m_kbd;
     bbc::UefTape* m_tape;
     ElkUla* m_ula;
+    Plus1* m_plus1 = nullptr;
+    std::vector<uint8_t> m_cart[4];
     uint64_t m_cycles = 0, m_devCycle = 0;
     int m_access = 0, m_stretch = 0;
 };
@@ -650,8 +740,88 @@ MachineDescriptor* create(std::string* err) {
     desc->onKey = [kbd](const std::string& n, bool down) { return kbd->key(n, down); };
     desc->screenButtons = {{"BREAK", {"break"}, "BREAK: the 6502 restarts (a soft reset; the program in memory stays)."}};
 
+    // The Plus 1, fitted at run time on the expansion connector, and the
+    // cartridges in its two slots
+    auto plus1 = std::make_shared<std::unique_ptr<Plus1>>();
+    auto printer = std::make_shared<std::ofstream>();
+    auto printerPath = std::make_shared<std::string>();
+    {
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "edge";
+        sl.description = "The expansion (edge) connector: a Plus 1 (roms/electron/plus1.rom), with two cartridge slots, joysticks and a printer port";
+        sl.devices = {{"plus1", "Plus 1: cartridge slots (cart1, cart2), two analogue joysticks, a Centronics printer; the option is a file for the printer's output (none: discarded)", {}, ""}};
+        sl.install = [desc, bus, plus1, printer, printerPath](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "plus1") { err = "no device '" + device + "' for the edge connector (plus1)"; return false; }
+            auto take = [&]() {
+                bus->setPlus1(nullptr);
+                plus1->reset();
+                if (printer->is_open()) printer->close();
+                printerPath->clear();
+                desc->joystickPorts = 0;
+            };
+            if (device.empty()) { take(); return true; }
+            std::vector<uint8_t> rom;
+            if (!loadFile("roms/electron/plus1.rom", 0x1000, rom, &err)) return false;
+            std::ofstream out;
+            if (!option.empty()) {
+                out.open(option, std::ios::binary | std::ios::app);
+                if (!out) { err = "can't open the printer's output file '" + option + "'"; return false; }
+            }
+            take();
+            *printer = std::move(out);
+            *printerPath = option;
+            *plus1 = std::make_unique<Plus1>(std::move(rom));
+            (*plus1)->onPrint = [printer](uint8_t v) { if (printer->is_open()) { printer->put((char)v); printer->flush(); } };
+            bus->setPlus1(plus1->get());
+            desc->joystickPorts = 2;
+            return true;
+        };
+        sl.info = [plus1, printerPath]() -> std::string {
+            if (!*plus1) return "";
+            return printerPath->empty() ? std::string("plus1 (Plus 1)") : "plus1 (Plus 1, printer to " + *printerPath + ")";
+        };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
+    for (int n = 0; n < 2; ++n) {
+        const int page = n == 0 ? 0 : 2;
+        auto path = std::make_shared<std::string>();
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = n == 0 ? "cart1" : "cart2";
+        sl.description = std::string("The Plus 1's cartridge slot ") + (n == 0 ? "1 (ROM pages 0 and 1)" : "2 (ROM pages 2 and 3)");
+        sl.devices = {{"rom", "A cartridge: the option is its image, 16 KB (one ROM) or 32 KB (two)", {}, ""}};
+        sl.install = [bus, page, path](const std::string& device, const std::string& option, std::string& err) {
+            if (!device.empty() && device != "rom") { err = "no device '" + device + "' for a cartridge slot (rom)"; return false; }
+            if (device.empty()) { bus->setCartridge(page, {}); path->clear(); return true; }
+            if (!bus->plus1()) { err = "the cartridge slots are on the Plus 1: fit it first (expansion edge plus1)"; return false; }
+            std::vector<uint8_t> image;
+            std::ifstream f(option, std::ios::binary);
+            if (f) image.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+            if (image.size() != 0x4000 && image.size() != 0x8000) {
+                err = option.empty() ? "a cartridge needs its image file (16 or 32 KB)" : "'" + option + "' isn't a 16 or 32 KB cartridge image";
+                return false;
+            }
+            bus->setCartridge(page, std::move(image));
+            *path = option;
+            return true;
+        };
+        sl.info = [bus, page, path]() -> std::string {
+            return bus->hasCartridge(page) ? "rom (" + *path + ")" : std::string();
+        };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
+    // Joysticks (the Plus 1's): digital sticks drive the channels to their ends
+    desc->joystickPorts = 0;
+    desc->primaryJoystickPort = 0;
+    desc->onJoystick = [bus](int port, uint8_t bits) {
+        if (!bus->plus1()) return;
+        const uint8_t x = !(bits & 0x04) ? 255 : !(bits & 0x08) ? 1 : 128;
+        const uint8_t y = !(bits & 0x01) ? 255 : !(bits & 0x02) ? 1 : 128;
+        bus->plus1()->setStick(port, x, y, !(bits & 0x10));
+    };
+
     desc->onReset = [bus, io, cpu](MachineDescriptor&) {     // power on
         bus->powerOn();
+        if (bus->plus1()) bus->plus1()->reset();
         io->resetAll();
         cpu->reset();
     };

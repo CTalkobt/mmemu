@@ -7,6 +7,20 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Acorn Electron Plus 1
+
+- **The Plus 1** on the Electron's new `edge` slot
+  (`expansion edge plus1 [printer-file]`), after Elkulator's `adc.c`,
+  `parallel.c` and `mem.c`.
+  - **ROM:** `roms/electron/plus1.rom` (from the Elkulator 1.0 release) in
+    page 12.
+  - **Cartridges:** two slots, `cart1` (pages 0-1) and `cart2` (pages 2-3),
+    for 16 or 32 KB images.
+  - **Joysticks:** two on the ADC at `&FC70`, with fire buttons in `&FC72`.
+  - **Printer:** the Centronics port at `&FC71`, written to a file.
+- **Tests:** `electron_plus1_joystick_adval`, `electron_plus1_printer`,
+  `electron_plus1_cartridge`.
+
 ### SNES PAL
 
 - **PAL cartridges run on a PAL console**, chosen by the header's
