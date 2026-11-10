@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1 and the Cx4 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1, the Cx4 and the S-DD1 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -179,6 +179,23 @@ comes from Mesen's source.
 - **SNES side:** the data RAM and registers are at `$6000-$7FFF` in banks
   `$00-$3F`/`$80-$BF`. ROM and battery RAM keep the LoROM map.
 
+### S-DD1
+
+The S-DD1 (`snes::Sdd1`, after Mesen's `Sdd1.cpp`/`Sdd1Mmc.cpp`) is used by
+Star Ocean and Street Fighter Alpha 2. Its decompressor is Andreas Naive's
+public-domain code, as Mesen uses it.
+
+- **Detection:** chipset `$43`/`$45`.
+- **ROM:**
+  - **`$C0-$FF`:** four 1 MB blocks, chosen by `$4804-$4807`.
+  - **`$00-$3F`/`$80-$BF`:** LoROM. Bit 7 of `$4805`/`$4807` mirrors
+    `$20-$3F` onto `$00-$1F` (and `$A0-$BF` onto `$80-$9F`).
+- **Battery RAM:** at `$6000-$7FFF` and `$70-$73`.
+- **Decompression:** `$4800` and `$4801` enable DMA channels. When an
+  enabled channel reads its own source address in `$C0-$FF`, the S-DD1
+  returns decompressed data, until the DMA length runs out. It watches the
+  DMA registers for that address and length.
+
 ### PPU
 
 Drawn as the beam goes: before each write to a PPU register (by the CPU,
@@ -273,6 +290,10 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_sdd1.cpp`: the S-DD1's banking and mirroring, and a DMA
+  receiving decompressed data. The bytes are checked against the
+  decompressor run on the same ROM, since there is no compressor to make
+  known data.
 - `test_snes_cx4.cpp`: a hand-built Cx4 cartridge. A program is loaded
   through the cache, and the test reads back the registers, the data ROM,
   the data RAM, the multiplier and the STOP IRQ flag.
@@ -298,8 +319,8 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1 and Cx4
-  (S-DD1, SPC7110, ST010/011...).
+- Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4 and
+  S-DD1 (SPC7110, ST010/011, ST018, OBC1...).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, the mouse, Super Scope and multitap.

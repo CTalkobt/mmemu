@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES S-DD1
+
+- **The S-DD1** (`snes::Sdd1`, after Mesen; Andreas Naive's public-domain
+  decompressor) for Star Ocean and Street Fighter Alpha 2:
+  - **Banking:** the 1 MB ROM banks at `$C0-$FF` and the `$20-$3F`
+    mirroring.
+  - **Decompression:** a DMA from the S-DD1 receives decompressed data.
+- **Tests:** banking and mirroring, plus the DMA's bytes checked against the
+  decompressor itself.
+
 ### SNES Cx4
 
 - **The Capcom Cx4** (`snes::Cx4`, after Mesen) for Mega Man X2 and X3:

@@ -11,6 +11,7 @@
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "snes_sa1.h"
+#include "snes_sdd1.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -82,6 +83,8 @@ struct Cart {
     std::unique_ptr<Sa1> sa1;
     // The Cx4: its registers and data RAM at $6000-$7FFF; ROM and RAM keep the LoROM map
     std::unique_ptr<Cx4> cx4;
+    // The S-DD1: its own map ($4800 registers, banked ROM, decompression on DMA)
+    std::unique_ptr<Sdd1> sdd1;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     std::string savePath;
@@ -220,6 +223,7 @@ struct Cart {
         // The Cx4: chipset $Fx with cartridge type $10 ($FFBF), as Mesen
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x10)
             cx4 = std::make_unique<Cx4>(&rom, &sram);
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x4) sdd1 = std::make_unique<Sdd1>(&rom, &sram);
         return true;
     }
 
@@ -232,6 +236,7 @@ struct Cart {
         if (gsu) s += ", Super FX, " + std::to_string(gsu->ram().size() / 1024) + "K RAM";
         if (sa1) s += ", SA-1";
         if (cx4) s += ", Cx4";
+        if (sdd1) s += ", S-DD1";
         return s;
     }
 
@@ -371,6 +376,7 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->reset();
         if (m_cart && m_cart->sa1) m_cart->sa1->reset();
         if (m_cart && m_cart->cx4) m_cart->cx4->reset();
+        if (m_cart && m_cart->sdd1) m_cart->sdd1->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -489,6 +495,10 @@ private:
                 const int v = m_cart->sa1->cpuRead(bank, a, peek);
                 return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
             }
+            if (m_cart->sdd1) {
+                const int v = m_cart->sdd1->cpuRead(bank, a, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000)
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->cx4->read(a);
@@ -519,10 +529,15 @@ private:
                 return;
             }
             if (a >= 0x4200 && a < 0x4220) { internalWrite(a, v); return; }
-            if (a >= 0x4300 && a < 0x4380) { dmaWrite(a, v); return; }
+            if (a >= 0x4300 && a < 0x4380) {
+                if (m_cart && m_cart->sdd1) m_cart->sdd1->dmaRegWrite(a, v);     // the S-DD1 watches the DMA setup
+                dmaWrite(a, v);
+                return;
+            }
         }
         if (m_cart) {
             if (m_cart->sa1) { m_cart->sa1->cpuWrite(bank, a, v); return; }
+            if (m_cart->sdd1) { m_cart->sdd1->cpuWrite(bank, a, v); return; }
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->cx4->write(a, v); return; }
             bool sr;
@@ -987,6 +1002,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         if (bus->cart() && bus->cart()->gsu) bus->cart()->gsu->reset();
         if (bus->cart() && bus->cart()->sa1) bus->cart()->sa1->reset();
         if (bus->cart() && bus->cart()->cx4) bus->cart()->cx4->reset();
+        if (bus->cart() && bus->cart()->sdd1) bus->cart()->sdd1->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();
