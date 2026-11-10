@@ -172,6 +172,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - See `doc/README-C64.md` §2.10.
 
 ### Apple II
+- **Super Serial Card,** fitted at run time in slot 1, 2, 4, 5 or 7 (`expansion slot2 ssc 9600`), after AppleWin's `SerialComms.cpp`, with its firmware (`roms/apple2/SSC.rom`, from AppleWin's resources).
+  - The DIP switches are at `$C0n1/2` and the 6551 at `$C0n8-B`.
+  - The ACIA is a Synertek SY6551: its command register resets to 0, which tells the firmware to set the chip up (`Acia6551::setResetCommand`).
+  - `serial modem` puts the Hayes modem behind it. Applesoft's `PR#2:PRINT "ATI"` gets the modem's answer (`apple2_super_serial_card`).
+- **Apple II slots take cards:** slots 1, 2, 4, 5 and 7 each take a Mockingboard or an SSC (`SlotCard`).
+  - The bus now selects a card's `$C800` expansion ROM when its `$Cn00` page is touched, and lets it go at `$CFFF` (I/O STROBE).
+  - Cards' `$C0n0` registers are decoded for every slot.
+- **The Hayes modem's `&C`:** `&C0` (the default, as Hayes) keeps DCD on, and `&C1` makes it follow the carrier. The SSC's firmware only sends with DCD on.
+  - Command mode ignores bit 7, except for PETSCII's shifted letters, so an Apple's characters and a C64's shifted RETURN work.
 - **Mockingboard in slot 4 or 5,** fitted at run time on the II, II+ and IIe (`expansion slot4 mockingboard`), after AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`.
   - Two 6522 VIAs (the `via6522` device) drive two AY-3-8910s (the Spectrum 128's AY core) at 1.0205 MHz, through BC1/BDIR//RESET on port B.
   - The VIAs' IRQs reach the 6502. The II, II+ and IIe now take /IRQ from cards: before, only the IIc's IOU and ACIAs could interrupt.

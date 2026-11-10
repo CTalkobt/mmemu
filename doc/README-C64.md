@@ -218,7 +218,8 @@ ATDT 192.168.1.10:23
 | `ATZ`, `AT&F` | defaults |
 | `ATE0/1`, `ATV0/1`, `ATQ0/1` | echo, verbose results, quiet |
 | `ATI`, `ATSn=v`, `ATSn?`, `A/` | identify, S-registers, repeat |
-| `X`, `M`, `L`, `&C`, `&D`, `&K`, `&W` | accepted, no effect (for terminals' init strings) |
+| `&C0/1` | DCD always on (default) / DCD follows the carrier |
+| `X`, `M`, `L`, `&D`, `&K`, `&W` | accepted, no effect (for terminals' init strings) |
 | `AT*P0/1` | commands and results in ASCII / PETSCII (default) |
 | `AT*T0/1` | online data passed as is (default) / translated PETSCII<->ASCII, for plain-ASCII hosts |
 | `AT*N0/1` | raw TCP / telnet (default) |
@@ -227,7 +228,7 @@ ATDT 192.168.1.10:23
 - **Results:** `\rOK\r`, `\rCONNECT\r`, `\rNO CARRIER\r`, `\rERROR\r`, in shifted PETSCII so they show in upper case.
 - **Online:** bytes pass as they are, since C64 BBSes speak PETSCII over telnet.
   - With telnet on, the far end's option requests are answered: it may echo and suppress go-ahead, and nothing else is accepted. Subnegotiations are skipped, and a data `$FF` is doubled out and undoubled in.
-- **Status lines:** while the modem is there, DSR is asserted; DCD follows the carrier.
+- **Status lines:** while the modem is there, DSR is asserted. DCD is on (`&C0`, the Hayes default) or follows the carrier (`&C1`).
 - **Connecting:** DNS lookup and the connection run without stopping the machine. A call gives up after 15 s.
 - The far end hanging up gives NO CARRIER.
 

@@ -34,6 +34,7 @@ void HayesModem::reset() {
     m_petscii = true;
     m_translate = false;
     m_telnet = true;
+    m_dcdFollowsCarrier = false;
     std::memset(m_s, 0, sizeof m_s);
     m_s[2] = '+';
     m_s[3] = 13;
@@ -98,8 +99,12 @@ void HayesModem::fromComputer(uint8_t b, double seconds) {
         sendOnline(b);
         return;
     }
-    // Command mode
-    const uint8_t a = m_petscii ? petsciiToAscii(b) : b;
+    // Command mode. Bit 7 is dropped but from PETSCII's shifted letters
+    // ($C1-$DA, which are an Apple's capitals too): an Apple sends its
+    // characters with bit 7 set ($8D is CR), a C64's shifted RETURN is $8D
+    uint8_t c = b;
+    if (c >= 0x80 && !(c >= 0xC1 && c <= 0xDA)) c &= 0x7F;
+    const uint8_t a = m_petscii ? petsciiToAscii(c) : (uint8_t)(c & 0x7F);
     if (m_echo) out(b);
     if (a == '\r') {
         if (m_sawA) command(m_line);
@@ -177,9 +182,10 @@ void HayesModem::command(const std::string& raw) {
             case '&': {
                 if (i >= line.size()) { result(RES_ERROR); return; }
                 const char f = (char)toupper((unsigned char)line[i++]);
-                num();
+                const int v = num();
                 if (f == 'F') reset();
-                else if (!strchr("CDKWV", f)) { result(RES_ERROR); return; }
+                else if (f == 'C') m_dcdFollowsCarrier = v != 0;
+                else if (!strchr("DKWV", f)) { result(RES_ERROR); return; }
                 break;
             }
             case '*': {                             // mmemu's extensions

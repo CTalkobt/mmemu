@@ -14,7 +14,8 @@
  * are PETSCII by default.
  *
  * Command mode (a line ends with CR; backspace is PETSCII $14 or ASCII
- * $08/$7F; with echo on the line is echoed):
+ * $08/$7F; with echo on the line is echoed; bit 7 is ignored but in
+ * PETSCII's shifted letters, so an Apple's high-bit characters work):
  *
  * | Command | |
  * |---------|--|
@@ -29,14 +30,17 @@
  * | `ATI` | identify |
  * | `A/` | repeat the last command |
  * | `ATSn=v`, `ATSn?` | S-registers (stored; S2 the escape char) |
- * | `X`, `M`, `L`, `&C`, `&D`, `&K`, `&W` | accepted, no effect |
+ * | `&C0/1` | DCD always on (default, as Hayes) / DCD follows the carrier |
+ * | `X`, `M`, `L`, `&D`, `&K`, `&W` | accepted, no effect |
  * | `AT*P0/1` | commands and results in ASCII / PETSCII (default) |
  * | `AT*T0/1` | online data as is (default) / PETSCII<->ASCII translated |
  * | `AT*N0/1` | raw TCP / telnet (default: IAC answered and stripped) |
  *
  * Online, bytes pass through (C64 BBSes speak PETSCII over telnet). `+++`
  * with a second of silence before and after returns to command mode (OK).
- * The far end closing gives NO CARRIER. Carrier (DCD) is up while online.
+ * The far end closing gives NO CARRIER. DCD is on (&C0) or up while
+ * connected (&C1); the Apple Super Serial Card's firmware only sends with
+ * DCD on, as AppleWin's mirroring DSR to it allows.
  *
  * PETSCII <-> ASCII as terminal programs do it: PETSCII $41-$5A are ASCII
  * lower case, $C1-$DA (and $61-$7A) upper case.
@@ -54,6 +58,8 @@ public:
     void poll(double seconds);
     /** Carrier detect: online with a connection. */
     bool carrier() const { return m_fd >= 0 && !m_dialing; }
+    /** The DCD line: on (&C0), or the carrier (&C1). */
+    bool dcd() const { return m_dcdFollowsCarrier ? carrier() : true; }
     bool online() const { return carrier() && !m_commandMode; }
     bool dialing() const { return m_dialing; }
     void hangUp();
@@ -81,7 +87,7 @@ private:
 
     // Settings
     bool m_echo = true, m_verbose = true, m_quiet = false;
-    bool m_petscii = true, m_translate = false, m_telnet = true;
+    bool m_petscii = true, m_translate = false, m_telnet = true, m_dcdFollowsCarrier = false;
     uint8_t m_s[16] = {};
 
     // Command mode

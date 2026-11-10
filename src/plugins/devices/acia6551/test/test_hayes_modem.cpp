@@ -236,7 +236,7 @@ TEST_CASE(hayes_through_swiftlink) {
     ASSERT(a.attachSerial("modem"));
     uint8_t st = 0;
     a.ioPeek(nullptr, 0xDE01, &st);
-    EXPECT_EQ(st & 0x60, 0x20);                                   // DSR asserted, no carrier
+    EXPECT_EQ(st & 0x60, 0x00);                                   // DSR asserted; DCD too (&C0, the default)
     EXPECT_TRUE(a.ioWrite(nullptr, 0xDE03, 0x1F));                // 19200 x2 = 38400, 8N1
     EXPECT_EQ((int)a.bitRate(), 38400);
     a.ioWrite(nullptr, 0xDE02, 0x0B);                             // DTR, transmitter on, no IRQs
@@ -255,6 +255,11 @@ TEST_CASE(hayes_through_swiftlink) {
     }
     pump(20000);
     EXPECT_TRUE(got.find("OK") != std::string::npos);
+    // &C1: DCD follows the carrier (none yet)
+    for (uint8_t b : {0x41, 0x54, 0x26, 0x43, 0x31, 0x0D}) { a.ioWrite(nullptr, 0xDE00, b); pump(400); }   // "at&c1"
+    pump(20000);
+    a.ioPeek(nullptr, 0xDE01, &st);
+    EXPECT_EQ(st & 0x60, 0x20);
     EXPECT_TRUE(!a.ioWrite(nullptr, 0xDE04, 0));                  // a SwiftLink is 4 registers
 }
 

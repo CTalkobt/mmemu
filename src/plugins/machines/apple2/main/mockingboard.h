@@ -1,6 +1,6 @@
 #pragma once
 
-#include "libdevices/main/io_handler.h"
+#include "slot_card.h"
 #include "plugins/devices/via6522/main/via6522.h"
 #include "plugins/machines/spectrum/main/spectrum_ay.h"
 #include <cstdint>
@@ -23,29 +23,33 @@ namespace apple2 {
  *   mono sound with the speaker.
  * - No speech chip (the SSI-263 of the "C"/Sound-II).
  */
-class Mockingboard : public IOHandler {
+class Mockingboard : public SlotCard {
 public:
     explicit Mockingboard(int slot = 4);
-    int slot() const { return m_slot; }
+    int slot() const override { return m_slot; }
+    // SlotCard: $Cn00-$CnFF are the VIAs
+    int pageIo(uint8_t off, const uint8_t* wr, uint64_t at) override {
+        const uint16_t a = (uint16_t)(0xC000 + m_slot * 0x100 + off);
+        if (wr) { write(a, *wr, at); return 0; }
+        return read(a, at);
+    }
+    int pagePeek(uint8_t off) override { return peek((uint16_t)(0xC000 + m_slot * 0x100 + off)); }
+    bool hasSound() const override { return true; }
 
     /** $Cn00-$CnFF; `at` is the access's cycle. */
     uint8_t read(uint16_t addr, uint64_t at);
     uint8_t peek(uint16_t addr);
     void write(uint16_t addr, uint8_t v, uint64_t at);
     /** Either VIA asserting /IRQ. */
-    bool irq() const { return m_irq[0].get() || m_irq[1].get(); }
+    bool irq() const override { return m_irq[0].get() || m_irq[1].get(); }
     /** The AYs run up to `until` (cycles); the average level since the last
      *  call, -1..1, both chips mixed. */
-    float sample(uint64_t until);
+    float sample(uint64_t until) override;
     /** A chip's register (tests). */
     uint8_t ayReg(int chip, int r) const { return m_ay[chip & 1].reg(r); }
 
     // IOHandler
     const char* name() const override { return m_name.c_str(); }
-    uint32_t baseAddr() const override { return 0; }
-    uint32_t addrMask() const override { return 0; }
-    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
-    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override;
     void tick(uint64_t cycles) override;
     void getDeviceInfo(DeviceInfo& out) const override;
