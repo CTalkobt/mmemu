@@ -18,6 +18,7 @@
 #include "libdevices/main/open_bus_handler.h"
 #include "libdevices/main/shared_irq_manager.h"
 #include "libdevices/main/simple_signal_line.h"
+#include "libdevices/main/ipointer.h"
 #include "util/logging.h"
 #include <fstream>
 #include <sstream>
@@ -1082,6 +1083,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 bool busMaster = false;
                 IOHandler* linkTo = nullptr;        // "linkTo": {"device", "as"}: e.g. a second SID mixed into the first
                 std::string linkAs;
+                int pointerJoystick = -1;           // "pointer": {"joystickPort"}: the host mouse moves it
             };
             struct Fitted {
                 IOHandler* dev = nullptr;
@@ -1110,13 +1112,15 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     if (devPtrs.count(ld)) d.linkTo = devPtrs[ld];
                     d.linkAs = ds["linkTo"].value("as", "");
                 }
+                if (ds.contains("pointer")) d.pointerJoystick = ds["pointer"].value("joystickPort", 0);
                 std::vector<std::string> opts;
                 for (const auto& o : ds.value("options", nlohmann::json::array())) opts.push_back(o.get<std::string>());
                 slot.devices.push_back({d.id, ds.value("description", ""), opts, d.defaultOption});
                 specs->push_back(std::move(d));
             }
             const std::string slotName = slot.name;
-            slot.install = [desc, io, dmaBus, specs, fitted, slotName](const std::string& device, const std::string& option,
+            auto savedMouse = std::make_shared<std::function<void(int, int, uint8_t, int)>>();
+            slot.install = [desc, io, dmaBus, specs, fitted, slotName, savedMouse](const std::string& device, const std::string& option,
                                                                        std::string& err) {
                 auto remove = [&]() {
                     if (!fitted->dev) return;
@@ -1124,6 +1128,10 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     if (fitted->spec->irq) fitted->spec->irq->set(false);
                     if (fitted->spec->busMaster) desc->busMasterStep = nullptr;
                     if (fitted->spec->linkTo) fitted->spec->linkTo->setLinkedDevice(fitted->spec->linkAs.c_str(), nullptr);
+                    if (fitted->spec->pointerJoystick >= 0) {
+                        desc->onMouse = *savedMouse;
+                        if (desc->onJoystick) desc->onJoystick(fitted->spec->pointerJoystick, 0x1F);
+                    }
                     delete fitted->dev;
                     fitted->dev = nullptr;
                     fitted->spec = nullptr;
@@ -1154,6 +1162,15 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 io->registerHandler(dev);
                 if (ds->busMaster) desc->busMasterStep = [dev]() { return dev->busMasterCycle(); };
                 if (ds->linkTo) ds->linkTo->setLinkedDevice(ds->linkAs.c_str(), dev);
+                if (auto* p = dynamic_cast<IPointerDevice*>(dev); p && ds->pointerJoystick >= 0) {
+                    // The host mouse moves it; its buttons are that joystick port's switches
+                    *savedMouse = desc->onMouse;
+                    const int port = ds->pointerJoystick;
+                    desc->onMouse = [desc, p, port](int dx, int dy, uint8_t buttons, int) {
+                        p->pointer(dx, dy, buttons);
+                        if (desc->onJoystick) desc->onJoystick(port, p->joystickBits());
+                    };
+                }
                 fitted->dev = dev;
                 fitted->spec = ds;
                 fitted->option = opt;

@@ -90,6 +90,12 @@
             { "id": "georam", "type": "georam", "name": "GeoRAM",
               "description": "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
               "options": ["512K", "1M", "2M", "4M"], "default": "512K", "optionKey": "size" } ] },
+        { "name": "control1",
+          "description": "Control port 1: a mouse (the host's mouse moves it)",
+          "devices": [
+            { "id": "1351", "type": "mouse1351", "name": "1351 Mouse",
+              "description": "Commodore 1351 mouse, proportional mode: position on the SID's POTX/POTY, left button = fire, right = up",
+              "linkTo": { "device": "SID", "as": "pots" }, "pointer": { "joystickPort": 0 } } ] },
         { "name": "sid2",
           "description": "A second SID (a stereo-SID cartridge or mod), mixed with the first; its address is the option",
           "devices": [

@@ -245,6 +245,20 @@ expansion sid2 remove
 
 The front ends play one sound device, so the second SID's output is mixed into the first's, half of each (the JSON's `"linkTo": {"device": "SID", "as": "mix"}`, `SID6581::setLinkedDevice`). The C128 has the same slot at `$D420`, `$D700`, `$DE00` or `$DF00`; its second SID answers before the first, which is mirrored through `$D4xx`. Stereo output is not done yet.
 
+### 2.14 1351 mouse
+The `control1` expansion slot takes a Commodore 1351 mouse in proportional mode, after VICE's `mouse_1351.c`:
+
+```
+expansion control1 1351
+mouse 10 -3 1                       # CLI: dx dy buttons (bit 0 left, 1 right); MCP mouse_input; the GUI's mouse
+```
+
+- **Position:** each count is one picture pixel. The position, modulo 64, goes to the SID's POTX and POTY as bits 1-6; bit 0, the real mouse's noise bit, stays 0. Moving up raises Y.
+- **Buttons:** the left button is control port 1's fire (`$DC01` bit 4), the right button is up (bit 0).
+- **Without a mouse,** the pots read `$FF` (no paddles).
+- **Not modelled:** the CIA's PA6/PA7 choice of which port's pots the SID reads. The mouse is always read, as if in port 1 and selected.
+- **In the JSON:** `"linkTo": {"device": "SID", "as": "pots"}` and `"pointer": {"joystickPort": 0}`. The host mouse goes to the device while it's fitted.
+
 The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
 
 ---

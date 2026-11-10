@@ -231,6 +231,8 @@ PLUGIN_REU_SRCS = src/plugins/devices/reu/main/reu.cpp \
 PLUGIN_GEORAM_SRCS = src/plugins/devices/georam/main/georam.cpp \
 	src/plugins/devices/georam/main/plugin_init.cpp
 
+PLUGIN_MOUSE1351_SRCS = src/plugins/devices/mouse1351/main/plugin_init.cpp
+
 PLUGIN_ACIA6551_SRCS = src/plugins/devices/acia6551/main/acia6551.cpp \
 	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/acia6551/main/plugin_init.cpp
@@ -817,6 +819,7 @@ PLUGIN_MEGA65IMPORTER_OBJS = $(PLUGIN_MEGA65IMPORTER_SRCS:.cpp=.o)
 PLUGIN_C64PLA_OBJS   = $(PLUGIN_C64PLA_SRCS:.cpp=.o)
 PLUGIN_REU_OBJS      = $(PLUGIN_REU_SRCS:.cpp=.o)
 PLUGIN_GEORAM_OBJS   = $(PLUGIN_GEORAM_SRCS:.cpp=.o)
+PLUGIN_MOUSE1351_OBJS = $(PLUGIN_MOUSE1351_SRCS:.cpp=.o)
 PLUGIN_ACIA6551_OBJS = $(PLUGIN_ACIA6551_SRCS:.cpp=.o)
 PLUGIN_CIA6526_OBJS  = $(PLUGIN_CIA6526_SRCS:.cpp=.o)
 PLUGIN_VIC2_OBJS   = $(PLUGIN_VIC2_SRCS:.cpp=.o)
@@ -895,6 +898,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-c64-pla.so \
 	$(LIBDIR)/mmemu-plugin-reu.so \
 	$(LIBDIR)/mmemu-plugin-georam.so \
+	$(LIBDIR)/mmemu-plugin-mouse1351.so \
 	$(LIBDIR)/mmemu-plugin-acia6551.so \
 	$(LIBDIR)/mmemu-plugin-cia6526.so \
 	$(LIBDIR)/mmemu-plugin-vic2.so \
@@ -1014,6 +1018,9 @@ $(LIBDIR)/mmemu-plugin-reu.so: $(PLUGIN_REU_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-georam.so: $(PLUGIN_GEORAM_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-mouse1351.so: $(PLUGIN_MOUSE1351_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-acia6551.so: $(PLUGIN_ACIA6551_OBJS) | $(LIBDIR)

@@ -449,7 +449,11 @@ static void onScreenMachineLoad(void* paneHandle, MachineDescriptor* desc, void*
         }
     }
     pane->SetVideoOutput(vid);
-    if (desc && desc->onMouse) pane->SetMouseHandler(desc->onMouse);
+    // Forwarded at the time of each event: a mouse can be fitted after the
+    // machine is made (an expansion slot, e.g. the C64's 1351)
+    if (desc) pane->SetMouseHandler([desc](int dx, int dy, uint8_t buttons, int wheel) {
+        if (desc->onMouse) desc->onMouse(dx, dy, buttons, wheel);
+    });
     else pane->SetMouseHandler(nullptr);
     // The machine's buttons under Capture Keyboard (RUN/STOP + RESTORE, ...):
     // keys pressed in order while held, released in reverse
