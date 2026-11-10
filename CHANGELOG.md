@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Atari second POKEY
+
+- **A second POKEY** (the stereo upgrade, after atari800's `STEREO_SOUND`)
+  in the new `pokey2` slot: `expansion pokey2 pokey`.
+  - **Bus:** `$D210-$D21F` (AUDF/AUDC/AUDCTL/STIMER/SKCTL; reads 0).
+  - **Sound:** clocked by the first POKEY and mixed with it at half level
+    each (`POKEY::setSecond`).
+- **Test:** `atari_second_pokey`.
+
 ### SNES ST010 and ST011
 
 - **The ST010 and ST011** (Seta's uPD96050, after Mesen) for F1 ROC II and

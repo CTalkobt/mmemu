@@ -479,3 +479,51 @@ TEST_CASE(atari800xl_extended_ram) {
     b->write8(0xD301, 0xEF);
     EXPECT_EQ(b->peek8(0x4000), 0x99);               // no extended RAM: base
 }
+
+// A second POKEY (the stereo upgrade) at $D210: a tone written there plays,
+// mixed into the first POKEY's output (the first's voices silent); it reads
+// 0 (atari800); taken out, $D210 mirrors $D200 again.
+#include "plugins/devices/pokey/main/pokey.h"
+TEST_CASE(atari_second_pokey) {
+    std::string err;
+    Machine m(atari::create(atari::Model::Atari800XL, &err));
+    ASSERT(m != nullptr);
+    auto* slot = m->expansionSlot("pokey2");
+    ASSERT(slot != nullptr);
+    EXPECT_TRUE(!slot->install("pokey", "x", err));
+    ASSERT(slot->install("pokey", "", err));
+    EXPECT_EQ(slot->info(), std::string("pokey (second POKEY, $D210)"));
+    m->onReset(*m);
+    runCycles(*m, atari::CLOCK_HZ / 2);
+    IBus* b = bus(*m);
+    POKEY* first = nullptr;
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    for (auto* h : hs) if ((first = dynamic_cast<POKEY*>(h))) break;
+    ASSERT(first && first->second());
+    for (uint16_t r = 0; r < 8; r += 2) b->write8((uint16_t)(0xD201 + r), 0);   // the first's voices off
+    b->write8(0xD218, 0x00);                         // second's AUDCTL: 64 kHz
+    b->write8(0xD21F, 0x03);                         // SKCTL
+    b->write8(0xD210, 80);                           // AUDF1: ~395 Hz
+    b->write8(0xD211, 0xAF);                         // AUDC1: pure tone, volume 15
+    EXPECT_EQ(b->read8(0xD210), 0);                  // the second POKEY reads 0
+    std::vector<float> buf(100000);
+    first->pullSamples(buf.data(), (int)buf.size()); // drop what came before
+    runCycles(*m, atari::CLOCK_HZ / 10);
+    const int n = first->pullSamples(buf.data(), (int)buf.size());
+    EXPECT_TRUE(n > 4000);
+    int crossings = 0;
+    float lo = 1, hi = -1;
+    for (int i = 1; i < n; ++i) {
+        lo = std::min(lo, buf[i]); hi = std::max(hi, buf[i]);
+        if ((buf[i - 1] < 0) != (buf[i] < 0)) ++crossings;
+    }
+    if (crossings < 60 || crossings > 100) printf("  %d crossings, %.3f..%.3f\n", crossings, lo, hi);
+    EXPECT_TRUE(crossings >= 60 && crossings <= 100);   // ~395 Hz: ~79 sign changes in 0.1 s
+    EXPECT_TRUE(hi - lo > 0.1f);
+    // Taken out: $D210 is the first POKEY's POT0 again (not 0 after a while)
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(first->second() == nullptr);
+    EXPECT_EQ(slot->info(), std::string());
+    EXPECT_EQ(b->peek8(0xD210), b->peek8(0xD200));
+}
