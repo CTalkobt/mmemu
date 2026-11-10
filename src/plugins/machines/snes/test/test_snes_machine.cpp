@@ -441,3 +441,49 @@ TEST_CASE(snes_muldiv_timing) {
     EXPECT_EQ(bus->peek8(0x7E0004), 0x02);   // remainder 2
     delete m;
 }
+
+// A general DMA's length, as Mesen times it: it starts at the CPU's next cycle but one, on a whole
+// multiple of 8 master clocks, takes 8 clocks of overhead, 8 for the channel and 8 a byte, and ends on
+// a whole CPU cycle.
+TEST_CASE(snes_dma_timing) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM DMATIME        ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    const uint8_t code[] = {
+        0x78, 0x18, 0xFB, 0xE2, 0x30,                   // SEI CLC XCE SEP #$30
+        0x9C, 0x81, 0x21, 0x9C, 0x82, 0x21, 0x9C, 0x83, 0x21,   // WRAM port at $7E:0000
+        0xA9, 0x00, 0x8D, 0x00, 0x43,                   // DMA 0: A -> B, one register
+        0xA9, 0x80, 0x8D, 0x01, 0x43,                   //   to $2180
+        0x9C, 0x02, 0x43, 0xA9, 0x80, 0x8D, 0x03, 0x43, 0x9C, 0x04, 0x43,   // from $00:8000 (ROM)
+        0xA9, 0x10, 0x8D, 0x05, 0x43, 0x9C, 0x06, 0x43, // 16 bytes
+        0xA9, 0x01, 0x8D, 0x0B, 0x42,                   // go
+        0xEA,                                           // the DMA happens during this NOP
+        0xEA,
+        0x80, 0xFE,
+    };
+    std::copy(code, code + sizeof code, img.begin());
+    const uint32_t nopAt = 0x8000 + (uint32_t)sizeof code - 4;
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "dt.sfc", err));
+    ICore* cpu = m->cpus[0].cpu;
+    int guard = 0;
+    while (cpu->pc() != nopAt && guard++ < 1000) m->schedulerStep(*m);
+    ASSERT(cpu->pc() == nopAt);
+    const uint64_t before = snes::masterClock(m);
+    m->schedulerStep(*m);                               // NOP: opcode fetch (8), then the DMA, then its idle cycle (6)
+    const uint64_t took = snes::masterClock(m) - before;
+    const uint64_t start = before + 8;
+    const uint64_t sync = 8 - (start & 7);
+    const uint64_t dmaClock = sync + 8 + 8 + 16 * 8;
+    const uint64_t want = 8 + dmaClock + (6 - dmaClock % 6) + 6;
+    EXPECT_TRUE(took == want || took == want + 40);     // + 40 if DRAM refresh fell inside
+    IBus* bus = m->buses[0].bus;
+    int same = 0;
+    for (int i = 0; i < 16; ++i) same += bus->peek8(0x7E0000 + (uint32_t)i) == img[i];
+    EXPECT_EQ(same, 16);
+    delete m;
+}
