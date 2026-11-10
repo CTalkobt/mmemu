@@ -24,6 +24,7 @@
 #include "keyboard_matrix_pet.h"
 #include "plugins/devices/datasette/main/datasette.h"
 #include "plugins/devices/reu/main/reu.h"
+#include "plugins/devices/georam/main/georam.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -97,6 +98,8 @@ static void ensureBootTestRegistriesReady() {
     DeviceRegistry::instance().registerDevice("kbd_c64",
         []() -> IOHandler* { return new KbdC64(); });
 
+    DeviceRegistry::instance().registerDevice("georam",
+        []() -> IOHandler* { return new GeoRam(); });
     DeviceRegistry::instance().registerDevice("reu",
         []() -> IOHandler* { return new Reu(); });
     DeviceRegistry::instance().registerDevice("datasette",
@@ -591,7 +594,7 @@ TEST_CASE(c64_reu_expansion) {
     EXPECT_EQ(slot->info(), std::string(""));
     std::string err;
     EXPECT_TRUE(!slot->install("reu", "3M", err));
-    EXPECT_TRUE(!slot->install("georam", "", err));
+    EXPECT_TRUE(!slot->install("no-such-device", "", err));
     ASSERT(slot->install("reu", "1M", err));
     EXPECT_EQ(slot->info(), std::string("reu (REU, 1 MB)"));
     desc->onReset(*desc);
@@ -668,5 +671,39 @@ TEST_CASE(c64_reu_irq_program) {
     bool same = true;
     for (int i = 0; i < 40; ++i) same = same && reu->ram()[(size_t)i] == bus->peek8(0x0400 + (uint32_t)i);
     EXPECT_TRUE(same);
+    delete desc;
+}
+
+// A GeoRAM in the C64's port: the CPU pages it through $DE00 with $DFFE/$DFFF;
+// BASIC's RAM and the REU's slot sharing stay out of each other's way
+TEST_CASE(c64_georam_expansion) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    auto* slot = desc->expansionSlot("port");
+    std::string err;
+    EXPECT_TRUE(!slot->install("georam", "128K", err));
+    ASSERT(slot->install("georam", "1M", err));
+    EXPECT_EQ(slot->info(), std::string("georam (GeoRAM, 1 MB)"));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->buses[0].bus;
+    bus->write8(0xDFFF, 40);                        // block 40, page 17
+    bus->write8(0xDFFE, 17);
+    bus->write8(0xDE00, 0x12);
+    bus->write8(0xDEFF, 0x34);
+    bus->write8(0xDFFE, 18);
+    EXPECT_TRUE(bus->read8(0xDE00) != 0x12 || bus->read8(0xDEFF) != 0x34);
+    bus->write8(0xDFFE, 17);
+    EXPECT_EQ(bus->read8(0xDE00), 0x12);
+    EXPECT_EQ(bus->read8(0xDEFF), 0x34);
+    auto* g = dynamic_cast<GeoRam*>(desc->ioRegistry->findHandler("GeoRAM"));
+    ASSERT(g != nullptr);
+    EXPECT_EQ(g->ram()[40 * 16384 + 17 * 256], 0x12);
+    EXPECT_TRUE(!desc->busMasterStep);              // no DMA
+    // Swapped for an REU: $DE00 is no longer RAM
+    ASSERT(slot->install("reu", "512K", err));
+    EXPECT_TRUE(desc->ioRegistry->findHandler("GeoRAM") == nullptr);
+    EXPECT_TRUE(desc->ioRegistry->findHandler("REU") != nullptr);
     delete desc;
 }

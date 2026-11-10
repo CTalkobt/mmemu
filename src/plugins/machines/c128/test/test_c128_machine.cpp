@@ -2,6 +2,7 @@
 #include "plugins/machines/c128/main/machine_c128.h"
 #include "plugins/devices/vdc8563/main/vdc8563.h"
 #include "plugins/devices/reu/main/reu.h"
+#include "plugins/devices/georam/main/georam.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/ikeyboard_matrix.h"
@@ -572,5 +573,28 @@ TEST_CASE(c128_reu_basic_stash_fetch) {
     EXPECT_TRUE(screenHas(m, " 77088  77"));
     EXPECT_EQ(reu->ram()[0x30064], 1);               // SWAP put 1 and 2 there
     EXPECT_EQ(reu->ram()[0x30065], 2);
+    delete m;
+}
+
+// A GeoRAM on the C128's port: paged through $DE00 in C128 mode
+TEST_CASE(c128_georam_expansion) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("port");
+    ASSERT(slot->install("georam", "4M", err));
+    EXPECT_EQ(slot->info(), std::string("georam (GeoRAM, 4 MB)"));
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xDFFF, 200);
+    bus->write8(0xDFFE, 63);
+    bus->write8(0xDE80, 0x99);
+    auto* g = dynamic_cast<GeoRam*>(m->ioRegistry->findHandler("GeoRAM"));
+    ASSERT(g != nullptr);
+    EXPECT_EQ(g->ram()[200 * 16384 + 63 * 256 + 0x80], 0x99);
+    EXPECT_EQ(bus->read8(0xDE80), 0x99);
+    bus->write8(0xFF00, bus->peek8(0xFF00));        // $FF00 means nothing to it
+    EXPECT_TRUE(!m->busMasterStep);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(m->ioRegistry->findHandler("GeoRAM") == nullptr);
     delete m;
 }

@@ -43,6 +43,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
   - **Tests:** `nes_*` unit tests (14), plus `nes_test_roms_survey`, which runs the nes-test-roms collection when it is present. Passing: `instr_test` v3/v5, `instr_timing`, `apu_test`, `cpu_reset`, `ppu_vbl_nmi` 1-4 and 9-10, `ppu_open_bus`, `oam_read`/`oam_stress`, and `mmc3_test_2` 1-3 and 5.
 
 ### Commodore 64 / 128
+- **GeoRAM / NeoRAM, 512 KB-4 MB,** in the C64's and C128's expansion port (`expansion port georam 1M`), after VICE's `georam.c`.
+  - A 256-byte page of its RAM at `$DE00`.
+  - The page (`$DFFE`) and 16 KB block (`$DFFF`) registers are write-only, mirrored from `$DF80`, and taken modulo the size.
+  - Raw images can be loaded and saved.
+  - The C128's port now takes any of these devices (`C128Bus::setPortDevice`), with I/O1, I/O2 and `$FF00` passing on to a cartridge when the device doesn't answer.
+  - See `doc/README-C64.md` §2.11.
 - **REU (RAM Expansion Unit), 128 KB-16 MB** (#264), fitted at run time in the C64's and C128's expansion port (`expansion port reu 512K`), after VICE's `reu.c`.
   - The 8726 REC's registers at `$DF00`.
   - All four transfer types, with fixed addresses, autoload, the `$FF00` trigger and the end-of-block and verify IRQs.

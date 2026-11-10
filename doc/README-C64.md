@@ -173,6 +173,23 @@ Not modelled:
 - Badlines and sprite fetches don't pause the DMA. The C64 machine has no VIC-II cycle stealing yet.
 - The REU's pass-through doesn't arbitrate with a cartridge that also uses I/O2.
 
+### 2.11 GeoRAM / NeoRAM
+The `port` slot also takes a GeoRAM (Berkeley Softworks' RAM expansion for GEOS), after VICE's `src/c64/cart/georam.c`:
+
+```
+expansion port georam 1M       # 512K, 1M, 2M or 4M (VICE: smaller units never existed)
+expansion port georam ram.bin  # a raw image (its size picks the unit)
+expansion port save ram.bin
+```
+
+| Address | |
+|---------|--|
+| `$DE00-$DEFF` | the selected 256-byte page of its RAM |
+| `$DFFE` | the page within a 16 KB block (0-63), write-only |
+| `$DFFF` | the 16 KB block (modulo the blocks fitted), write-only |
+
+The two registers repeat in pairs from `$DF80`; reads there aren't driven. A reset clears them; the RAM stays. It has no DMA and no IRQ. One RAM expansion at a time: fitting a GeoRAM takes out an REU and the other way round.
+
 The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
 
 ---

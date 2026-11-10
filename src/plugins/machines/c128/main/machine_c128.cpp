@@ -22,6 +22,7 @@
 #include "plugins/devices/iec_drive/main/iec_drive.h"
 #include "plugins/devices/datasette/main/datasette.h"
 #include "plugins/devices/reu/main/reu.h"
+#include "plugins/devices/georam/main/georam.h"
 #include "util/path_util.h"
 #include <algorithm>
 #include <cctype>
@@ -102,8 +103,10 @@ public:
         m_cartLabel = m_cart ? std::move(label) : "";
     }
     c128::C128Cart* cartridge() const { return m_cart.get(); }
-    /** An REU on the expansion port (I/O2 and the $FF00 trigger), or null. */
-    void setReu(Reu* reu) { m_reu = reu; }
+    /** A device in the expansion port beside the cartridge (an REU, a
+     *  GeoRAM): it sees I/O1, I/O2 and writes to $FF00 (the REU's trigger),
+     *  or null. */
+    void setPortDevice(IOHandler* dev) { m_port = dev; }
     const std::string& cartridgeLabel() const { return m_cartLabel; }
     const std::string& internalFunctionRomLabel() const { return m_intLabel; }
     uint8_t funcByte(int sel, uint16_t addr, bool peek = true) const {
@@ -316,7 +319,7 @@ private:
     }
 
     void write(uint16_t addr, uint8_t val) {
-        if (addr == 0xFF00 && m_reu) m_reu->ff00Write();   // the REU's trigger (beside the MMU's CR)
+        if (addr == 0xFF00 && m_port) m_port->ioWrite(this, 0xFF00, val);   // the REU's trigger (beside the MMU's CR)
         if (c64Mode()) { writeC64(addr, val); return; }
         if (addr >= 0xFF00 && addr <= 0xFF04) {             // mmu_ffxx_store
             mmuStore(0, addr == 0xFF00 ? val : m_mmu[addr & 0x0F]);
@@ -361,11 +364,10 @@ private:
             case 0xDC00: dev(m_cia1, 0xDC00 | (addr & 0x0F)); break;
             case 0xDD00: dev(m_cia2, 0xDD00 | (addr & 0x0F)); break;
             case 0xDE00: case 0xDF00:                       // I/O1, I/O2: the cartridge
-                if (m_reu && (addr & 0xFF00) == 0xDF00) {   // an REU takes I/O2
-                    if (wr) m_reu->ioWrite(this, addr, *wr);
-                    else if (peek) m_reu->ioPeek(this, addr, &v);
-                    else if (!m_reu->ioRead(this, addr, &v)) v = 0xFF;
-                    break;
+                if (m_port) {                               // an REU or GeoRAM first; what it doesn't take goes on
+                    const bool took = wr ? m_port->ioWrite(this, addr, *wr)
+                                    : peek ? m_port->ioPeek(this, addr, &v) : m_port->ioRead(this, addr, &v);
+                    if (took) break;
                 }
                 if (m_cart && !c64Mode()) {
                     uint8_t cv = 0xFF;
@@ -408,7 +410,7 @@ private:
     Rom m_basic, m_kernal, m_chargen, m_c64;
     Rom m_intFunc;
     std::unique_ptr<c128::C128Cart> m_cart;
-    Reu* m_reu = nullptr;
+    IOHandler* m_port = nullptr;
     std::string m_cartLabel, m_intLabel;
     uint8_t m_mmu[12];
     uint8_t m_p0hLatch = 0, m_p1hLatch = 0;
@@ -891,51 +893,60 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
         delete irq; delete nmi;
     });
 
-    // The expansion port's REU, fitted at run time (VICE reu.c): I/O2, the
-    // $FF00 trigger, /IRQ to both CPUs, DMA through the 8502's view of memory
+    // The expansion port's RAM expansions, fitted at run time: an REU (VICE
+    // reu.c: I/O2, the $FF00 trigger, /IRQ to both CPUs, DMA through the
+    // 8502's map) or a GeoRAM (VICE georam.c: a page at I/O1)
     {
-        auto reuIrq = std::make_shared<FanoutLine>(irq->createLine(), irqZ80->createLine());
-        auto reu = std::make_shared<Reu*>(nullptr);
-        desc->deleters.push_back([reu, bus]() { bus->setReu(nullptr); delete *reu; *reu = nullptr; });
+        auto portIrq = std::make_shared<FanoutLine>(irq->createLine(), irqZ80->createLine());
+        auto dev = std::make_shared<IOHandler*>(nullptr);
+        desc->deleters.push_back([dev, bus]() { bus->setPortDevice(nullptr); delete *dev; *dev = nullptr; });
         MachineDescriptor::ExpansionSlot port;
         port.name = "port";
-        port.description = "The expansion port: a Commodore RAM Expansion Unit (REU) at $DF00, beside any cartridge";
+        port.description = "The expansion port: a RAM expansion beside any cartridge (an REU at $DF00, or a GeoRAM paged through $DE00)";
         port.devices = {{"reu", "Commodore REU: 128K (1700), 256K (1764), 512K (1750), or 1M-16M (1750 XL style); or a .reu image file",
-                         {"128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"}, "512K"}};
-        port.install = [desc, bus, io, reu, reuIrq](const std::string& device, const std::string& option, std::string& err) {
+                         {"128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"}, "512K"},
+                        {"georam", "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
+                         {"512K", "1M", "2M", "4M"}, "512K"}};
+        port.install = [desc, bus, io, dev, portIrq](const std::string& device, const std::string& option, std::string& err) {
             auto remove = [&]() {
-                if (!*reu) return;
-                bus->setReu(nullptr);
-                io->unregisterHandler(*reu);
+                if (!*dev) return;
+                bus->setPortDevice(nullptr);
+                io->unregisterHandler(*dev);
                 desc->busMasterStep = nullptr;
-                reuIrq->set(false);
-                delete *reu;
-                *reu = nullptr;
+                portIrq->set(false);
+                delete *dev;
+                *dev = nullptr;
             };
             if (device.empty()) { remove(); return true; }
-            if (device != "reu") { err = "no device '" + device + "' for the port slot (reu)"; return false; }
-            auto* r = new Reu();
+            IOHandler* d = nullptr;
+            if (device == "reu") d = new Reu();
+            else if (device == "georam") d = new GeoRam();
+            else { err = "no device '" + device + "' for the port slot (reu, georam)"; return false; }
             const std::string opt = option.empty() ? "512K" : option;
             std::ifstream probe(opt, std::ios::binary);
-            if (!r->setOption(probe.good() ? "image" : "size", opt, err)) { delete r; return false; }
+            if (!d->setOption(probe.good() ? "image" : "size", opt, err)) { delete d; return false; }
             remove();
-            r->setName("REU");
-            r->setDmaBus(bus);
-            r->setIrqLine(reuIrq.get());
-            *reu = r;
-            bus->setReu(r);
-            io->registerHandler(r);                 // reset, the debugger's device list
-            desc->busMasterStep = [r]() { return r->busMasterCycle(); };
+            d->setName(device == "reu" ? "REU" : "GeoRAM");
+            d->setDmaBus(bus);
+            d->setIrqLine(portIrq.get());
+            *dev = d;
+            bus->setPortDevice(d);
+            io->registerHandler(d);                 // reset, the debugger's device list
+            if (device == "reu") desc->busMasterStep = [d]() { return d->busMasterCycle(); };
             return true;
         };
-        port.info = [reu]() -> std::string {
-            if (!*reu) return "";
-            const uint32_t s = (*reu)->size();
-            return "reu (REU, " + (s >= (1u << 20) ? std::to_string(s >> 20) + " MB" : std::to_string(s >> 10) + " KB") + ")";
+        port.info = [dev]() -> std::string {
+            if (!*dev) return "";
+            DeviceInfo di;
+            (*dev)->getDeviceInfo(di);
+            std::string size;
+            for (const auto& kv : di.state) if (kv.first == "Size") size = kv.second;
+            const std::string id = std::string((*dev)->name()) == "REU" ? "reu" : "georam";
+            return id + " (" + (*dev)->name() + ", " + size + ")";
         };
-        port.save = [reu](const std::string& path, std::string& err) {
-            if (!*reu) { err = "nothing is fitted"; return false; }
-            return (*reu)->saveImage(path, err);
+        port.save = [dev](const std::string& path, std::string& err) {
+            if (!*dev) { err = "nothing is fitted"; return false; }
+            return (*dev)->saveDeviceImage(path, err);
         };
         desc->expansionSlots.push_back(std::move(port));
     }
