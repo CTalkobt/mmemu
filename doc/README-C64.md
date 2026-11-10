@@ -290,6 +290,11 @@ MMEMU_VICE_TESTPROGS=../refs/vice-testprogs MMEMU_VICE_FILTER=Lorenz bin/mmemu-t
 
 Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. Programs for NTSC, the new CIA or other hardware than an REU are skipped.
 
+What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, and `REU/reutiming2` `e2`, `f`, `f2`, `g`, `g2` (and `-m2`). What fails: `reutiming2` `e`, `e3`, `e4`-`e6`, `f3`, `f4`, `g3`, `g4`: on real hardware, an REU read of I/O as BA falls returns the RAM underneath once, which mmsim doesn't model. `MMEMU_VICE_SCREEN=1` prints a failing program's screen.
+
+### 2.16 Cycle timing
+On the C64 every CPU access happens on its own cycle: the 6502 core calls back before each access (`ICore::setAccessSync`), and the scheduler ticks the devices through that cycle first, waiting on BA for reads. So a CPU access in a cycle sees the devices as they are in that cycle. Interrupts are polled in an instruction's second-to-last cycle. An REU transfer gets the same treatment (`IOHandler::setBusMasterSync`).
+
 ---
 
 ## 3. Dependencies

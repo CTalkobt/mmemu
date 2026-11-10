@@ -283,8 +283,10 @@ bool VIC2::baAt(int line, int cycle) const {
 
 bool VIC2::baLow(int ahead) const {
     if (fastMode()) return false;                     // the VIC-IIe at 2 MHz takes nothing
+    // m_cycleAccum is the cycle last ticked (the one a CPU access in it
+    // sees); `ahead` counts from the next
     int line = m_rasterLine;
-    int64_t c = (int64_t)(m_cycleAccum % (uint64_t)m_cyclesPerLine) + ahead;
+    int64_t c = (int64_t)(m_cycleAccum % (uint64_t)m_cyclesPerLine) + 1 + ahead;
     while (c >= m_cyclesPerLine) {
         c -= m_cyclesPerLine;
         if (++line >= m_linesPerFrame) line = 0;

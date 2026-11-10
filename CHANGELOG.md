@@ -79,8 +79,20 @@ The canonical version is defined in the `VERSION` file at the repository root.
   read back; bit 5 reads 0 as an input and bit 3 what was last driven on it;
   the unconnected bits 6 and 7 keep the charge last driven on them for
   350000 cycles.
-- **Lorenz's 6510 suite (2.15) passes:** all 294 programs, before 263; and
-  VICE's `REU/reutiming`.
+- **The VIC-II's raster line moves on in the line's first cycle**, as a CPU
+  access in that cycle sees it (it moved a cycle early, in the last cycle of
+  the line before), and BA is looked up a cycle on to match. Code timed by
+  `$D012` now meets sprite DMA where real code does.
+- **REU DMA accesses on their own cycle:** the C64 brings its other devices
+  up to an REU access's cycle before it, as for the CPU (the new
+  `IOHandler::setBusMasterSync`); a transfer reading the CIA's timer read it
+  a cycle early.
+- **Results:** Lorenz's 6510 suite (2.15) passes, all 294 programs (263
+  before); and VICE's `VICII/spritesteal`, `REU/reutiming` and
+  `REU/reutiming2` `e2`, `f`, `f2`, `g`, `g2` (and their `-m2` versions).
+  Still failing: `reutiming2` `e`, `e3` and the swap tests (`e4`-`e6`, `f3`,
+  `f4`, `g3`, `g4`), where the real REU, reading I/O as BA falls, gets the
+  RAM underneath once.
 
 ### C64 and C128: the VIC-II takes the bus (#266)
 

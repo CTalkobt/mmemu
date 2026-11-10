@@ -1061,7 +1061,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {
             int total = 0;
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
                 return total;
             }
             for (auto& s : d.cpus) {
@@ -1097,7 +1097,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             int total = 0;
             // A device holding the bus (an REU's DMA) runs instead of the CPU
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
             } else for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
                     total += s.cpu->step();
@@ -1119,7 +1119,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         desc->schedulerStep = [](MachineDescriptor& d) {
             int total = 0;
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
-                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                if (d.ioRegistry && total > d.busMasterTicked) d.ioRegistry->tickAll(total - d.busMasterTicked);
                 return total;
             }
             for (auto& s : d.cpus) {
@@ -1235,7 +1235,19 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 remove();
                 if (ds->irq) dev->setIrqLine(ds->irq);
                 io->registerHandler(dev);
-                if (ds->busMaster) { dev->setBaSource(baSource); desc->busMasterStep = [dev]() { return dev->busMasterCycle(); }; }
+                if (ds->busMaster) {
+                    dev->setBaSource(baSource);
+                    if (baSource) {
+                        // Its accesses see the other devices ticked through their cycle, as the CPU's do
+                        dev->setBusMasterSync([desc](int k) {
+                            if (k + 1 > desc->busMasterTicked && desc->ioRegistry) {
+                                desc->ioRegistry->tickAll(k + 1 - desc->busMasterTicked);
+                                desc->busMasterTicked = k + 1;
+                            }
+                        });
+                    }
+                    desc->busMasterStep = [desc, dev]() { desc->busMasterTicked = 0; return dev->busMasterCycle(); };
+                }
                 if (ds->linkTo) ds->linkTo->setLinkedDevice(ds->linkAs.c_str(), dev);
                 if (auto* p = dynamic_cast<IPointerDevice*>(dev); p && ds->pointerJoystick >= 0) {
                     // The host mouse moves it; its buttons are that joystick port's switches

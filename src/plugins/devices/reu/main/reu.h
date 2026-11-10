@@ -66,6 +66,7 @@ public:
     void tick(uint64_t) override {}
     int busMasterCycle() override;
     void setBaSource(IBaSource* ba) override { m_ba = ba; }
+    void setBusMasterSync(std::function<void(int)> sync) override { m_sync = std::move(sync); }
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     bool saveDeviceImage(const std::string& path, std::string& err) override { return saveImage(path, err); }
     void getDeviceInfo(DeviceInfo& out) const override;
@@ -93,6 +94,8 @@ private:
     IBus* m_bus = nullptr;
     IBaSource* m_ba = nullptr;          // the VIC-II: DMA waits while BA is low
     int m_baWrites = 0;                 // writes let through since BA fell
+    std::function<void(int)> m_sync;    // the machine up to an access's cycle
+    void syncTo(int cycle) { if (m_sync) m_sync(cycle); }
     ISignalLine* m_irq = nullptr;
 
     // How the size wires the REC to the DRAM (VICE rec_options)
