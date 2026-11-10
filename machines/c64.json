@@ -81,12 +81,15 @@
       },
       "expansions": [
         { "name": "port",
-          "description": "The expansion port: a Commodore RAM Expansion Unit (REU) at $DF00, beside any cartridge",
+          "description": "The expansion port: a RAM expansion beside any cartridge (an REU at $DF00, or a GeoRAM paged through $DE00)",
           "devices": [
             { "id": "reu", "type": "reu", "name": "REU",
               "description": "Commodore REU: 128K (1700), 256K (1764), 512K (1750), or 1M-16M (1750 XL style); or a .reu image file",
               "options": ["128K", "256K", "512K", "1M", "2M", "4M", "8M", "16M"], "default": "512K",
-              "optionKey": "size", "irq": "expansion_irq", "busMaster": true } ] } ],
+              "optionKey": "size", "irq": "expansion_irq", "busMaster": true },
+            { "id": "georam", "type": "georam", "name": "GeoRAM",
+              "description": "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
+              "options": ["512K", "1M", "2M", "4M"], "default": "512K", "optionKey": "size" } ] } ],
       "scheduler": { "type": "step_tick", "frameAccumulator": null }
     }
 

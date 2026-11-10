@@ -309,7 +309,7 @@ From `roms/c128/` (ftp.funet.fi, the US set VICE uses):
 - `c64.251913-01.bin` - BASIC and KERNAL for C64 mode: the first half of
   `complete.318023-02.bin`, identical to the C64's 901226-01 / 901227-03
 
-## REU
+## REU and GeoRAM
 
 The expansion port takes a Commodore REU at run time, as the C64's does (see `doc/README-C64.md` §2.10): `expansion port reu 512K` in the CLI, MCP `expansion`, or the GUI's Control > Expansions....
 
@@ -319,6 +319,8 @@ The expansion port takes a Commodore REU at run time, as the C64's does (see `do
 - The DMA goes through the 8502's view of memory, so the MMU picks the bank.
 - The VIC-II's badlines delay the DMA as they delay the 8502. A DMA doesn't start while the Z80 is running.
 - BASIC 7.0's `STASH`, `FETCH` and `SWAP` work through the KERNAL's DMA call at `$FF50`.
+
+A GeoRAM fits the same slot (`expansion port georam 1M`; see `doc/README-C64.md` §2.11), paged through `$DE00` in either mode.
 
 ## Not yet emulated
 
