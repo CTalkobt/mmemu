@@ -11,7 +11,7 @@ struct MachineDescriptor;
  * (the WDC 65C816 core with the console's multiply/divide, timers, DMA and
  * HDMA, joypad ports), 128 KB of work RAM, the PPU (64 KB VRAM, CGRAM,
  * OAM), the sound system (SPC700, 64 KB ARAM, S-DSP) and a cartridge
- * (LoROM, HiROM, ExHiROM; battery RAM).
+ * (LoROM, HiROM, ExHiROM; battery RAM saved to `.srm`; DSP-1..4, Super FX).
  *
  * Time is the 21.477 MHz master clock: each CPU bus cycle takes 6, 8 or 12
  * clocks by region (FastROM through MEMSEL), internal cycles 6. A line is
@@ -28,9 +28,20 @@ namespace snes {
 /** A new SNES (NTSC) or Super Famicom (the same machine here). */
 MachineDescriptor* create(bool superFamicom = false, std::string* err = nullptr);
 
-/** Plug a cartridge in (.sfc / .smc, a copier header is skipped) and power on. */
-bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err);
+/**
+ * Plug a cartridge in (.sfc / .smc, a copier header is skipped) and power on.
+ * `savePath`: where a battery-backed cartridge keeps its RAM (Mesen's and
+ * snes9x's `<rom>.srm`): loaded now, written back within a second of a
+ * change and when the cartridge is removed. Empty: not saved.
+ */
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err,
+                     const std::string& savePath = "");
+/** Unplug the cartridge (its battery RAM is saved first). */
 void removeCartridge(MachineDescriptor* m);
+/** Write the battery RAM out now if it changed (also done once a second). */
+void flushSave(MachineDescriptor* m);
+/** `<rom path without its extension>.srm` */
+std::string savePathFor(const std::string& romPath);
 /** "<label> (<title>, <map>, <ROM size>, <RAM size>)", or "". */
 std::string cartridgeInfo(MachineDescriptor* m);
 

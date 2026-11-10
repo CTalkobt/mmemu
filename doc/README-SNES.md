@@ -60,6 +60,11 @@ one powers the console on; the machine's reset is the RESET button.
     header as bsnes and Mesen do.
   - **ROM sizes:** sizes that aren't a power of two mirror as in bsnes.
   - **Battery RAM:** LoROM `$70-$7D:$0000-$7FFF`, HiROM `$20-$3F:$6000-$7FFF`.
+    A cartridge with a battery (chipset low nibble 2, 5, 6, 9 or A, as
+    Mesen) keeps its RAM, or the Super FX's, in `<rom>.srm` next to the ROM
+    (Mesen's and snes9x's format). The file is loaded when the cartridge goes
+    in, written within a second of a change, and written again when the
+    cartridge is removed.
   - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, and the Super FX (see below).
 
 ### DSP-1 to DSP-4
@@ -220,7 +225,8 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
   (multiply, data ROM, RQM handshakes, ALU flags), on its own and through a
   LoROM cartridge driven by the 65816. It needs no Nintendo firmware, and it
   checks the error given when firmware is missing.
-- `test_snes_machine.cpp` also checks a mid-line write splitting a line,
+- `test_snes_machine.cpp` also checks the battery RAM's `.srm` (written,
+  reloaded, saved on removal), and a mid-line write splitting a line,
   hi-res and interlace frame sizes and fields, and overscan.
 
 Also seen running: all of krom's PPU demos (mode 7 rotate/zoom and
@@ -232,7 +238,7 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4 and Super FX (SA-1,
-  S-DD1, Cx4, SPC7110, ST010/011...); Super FX battery RAM saving.
+  S-DD1, Cx4, SPC7110, ST010/011...).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
-- PAL timing, battery RAM saving, the mouse, Super Scope and multitap.
+- PAL timing, the mouse, Super Scope and multitap.

@@ -7,6 +7,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES battery saves
+
+- **Battery-backed RAM saved to `<rom>.srm`**, the format Mesen and snes9x
+  use. It covers both the cartridge RAM and the Super FX's. The file is
+  loaded when the cartridge goes in, written within a second of a change
+  and again when the cartridge is removed.
+
 ### SNES Super FX
 
 - **The GSU** (`snes::Gsu`, after Mesen) for Super FX cartridges (Star Fox,
