@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110 and the OBC1 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110 and the OBC1 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -97,6 +97,24 @@ the other DSP-1 games use it for 3D maths.
   A ROM image with the firmware appended (8 KB past a 32 KB boundary) is
   used as it is. Without firmware, the cartridge is refused with a message
   naming the file it needs.
+
+### ST010 and ST011
+
+Seta's ST010 (F1 ROC II) and ST011 (2dan Morita Shougi) are a NEC
+uPD96050, the uPD7725's bigger relative, run by the same `snes::NecDsp`
+(`setModel(true, ...)`, as Mesen): 16384 program words, a 2048-word data
+ROM, 2048 words of RAM and an 8-level stack, at 11 MHz (ST010) or 22 MHz
+(ST011).
+
+- **Detection:** chipset `$Fx` with cartridge type `$01` (`$FFBF`). The
+  title `2DAN MORITA SHOUGI` picks the ST011, anything else the ST010.
+- **Registers:** `$60:0000-$0FFF` (and `$E0`), DR at even addresses, SR at odd.
+- **RAM:** `$68-$6F:0000-$0FFF` (and `$E8-$EF`), byte by byte (low byte at
+  even addresses). It is the battery RAM, saved as the `.srm` (4096 bytes,
+  little-endian words, as Mesen).
+- **Firmware:** `st010.rom`/`st011.rom` (53248 bytes: 49152 of program, then
+  4096 of data), or `.program.rom` plus `.data.rom`, in `roms/snes/`, or
+  appended to the ROM image (52 KB past a 64 KB boundary).
 
 ### Super FX
 
@@ -351,7 +369,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
 - `test_snes_necdsp.cpp`: the uPD7725 with a small hand-assembled program
   (multiply, data ROM, RQM handshakes, ALU flags), on its own and through a
   LoROM cartridge driven by the 65816. It needs no Nintendo firmware, and it
-  checks the error given when firmware is missing.
+  checks the error given when firmware is missing. A hand-built uPD96050
+  firmware checks the ST010's larger RAM and program, its map, and its
+  RAM saved and reloaded as the battery.
 - `test_snes_machine.cpp` also checks the battery RAM's `.srm` (written,
   reloaded, saved on removal), and a mid-line write splitting a line,
   hi-res and interlace frame sizes and fields, and overscan.
@@ -365,7 +385,7 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
-  S-DD1, SPC7110 and OBC1 (ST010/011, ST018, and the Satellaview and
+  S-DD1, SPC7110, OBC1 and ST010/011 (the ST018, the Satellaview and the
   Super Game Boy).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
