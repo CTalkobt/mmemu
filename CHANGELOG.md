@@ -7,6 +7,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES OBC1
+
+- **The OBC1** (`snes::Obc1`, after Mesen) for Metal Combat: Falcon's
+  Revenge: its sprite-table ports over the battery RAM at `$7FF0-$7FF6`.
+- **Tests:** checked with a hand-built cartridge.
+
 ### SNES SPC7110
 
 - **The SPC7110** (`snes::Spc7110`, after Mesen; bsnes' decompressor) for

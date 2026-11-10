@@ -12,7 +12,7 @@ struct MachineDescriptor;
  * HDMA, joypad ports), 128 KB of work RAM, the PPU (64 KB VRAM, CGRAM,
  * OAM), the sound system (SPC700, 64 KB ARAM, S-DSP) and a cartridge
  * (LoROM, HiROM, ExHiROM; battery RAM saved to `.srm`; DSP-1..4, Super FX,
- * SA-1, Cx4, S-DD1, SPC7110).
+ * SA-1, Cx4, S-DD1, SPC7110, OBC1).
  *
  * Time is the 21.477 MHz master clock: each CPU bus cycle takes 6, 8 or 12
  * clocks by region (FastROM through MEMSEL), internal cycles 6. A line is
