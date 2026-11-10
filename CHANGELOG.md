@@ -7,6 +7,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES Super FX
+
+- **The GSU** (`snes::Gsu`, after Mesen) for Super FX cartridges (Star Fox,
+  Yoshi's Island...):
+  - **Instructions:** all of them, with the instruction cache, the buffered
+    ROM/RAM accesses and the multipliers.
+  - **PLOT/RPIX:** at 2/4/8 bpp, through the pixel caches.
+  - **Map:** the Super FX memory map, the ROM/RAM handover (SCMR), and the
+    STOP IRQ.
+  - **Timing:** the GSU is kept in step with the 65816.
+- **krom's 31 GSU instruction tests:** 585 PASS, 0 FAIL in the survey.
+- **krom's 27 drawing demos:** they draw; 24 match his reference pictures
+  pixel for pixel.
+- **HDMA cancels a general DMA on its own channel** (as Mesen), including a
+  channel still waiting its turn. This fixes krom's demos that start both
+  at once.
+
 ### SNES DSP-1
 
 - **The NEC uPD7725** (`snes::NecDsp`, after Mesen) for DSP-1, 1B, 2, 3 and

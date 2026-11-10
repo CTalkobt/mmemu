@@ -30,11 +30,10 @@ std::string romDir() {
     return v ? v : "../refs/snes-krom";
 }
 
-/** BG1's 32x32 tilemap as text (the tests' font has tile n = ASCII n). */
+/** The text in VRAM (the tests' font has tile n = ASCII n): every 1 KB page with results in it. */
 std::string screenText(MachineDescriptor* m, snes::Ppu* ppu) {
     (void)m;
     std::string s;
-    // The map base is not exposed; scan VRAM for the page that holds "Test"
     for (int base = 0; base < 0x8000; base += 0x400) {
         std::string t;
         for (int i = 0; i < 0x400; ++i) {
@@ -42,7 +41,8 @@ std::string screenText(MachineDescriptor* m, snes::Ppu* ppu) {
             t += (c >= 0x20 && c < 0x7F) ? (char)c : ' ';
             if ((i & 31) == 31) t += '\n';
         }
-        if (t.find("Test") != std::string::npos) { s = t; break; }
+        for (const char* w : {"Test", "PASS", "Pass", "FAIL", "Fail"})
+            if (t.find(w) != std::string::npos) { s += t; break; }
     }
     return s;
 }
@@ -60,8 +60,12 @@ TEST_CASE(snes_krom_cpu_tests) {
     if (!fs::exists(dir)) { std::printf("  (skipped: %s not found)\n", dir.string().c_str()); return; }
     if (!std::getenv("MMEMU_SNES_SURVEY")) { std::printf("  (set MMEMU_SNES_SURVEY=1 to run)\n"); return; }
     std::vector<fs::path> roms;
-    for (auto& e : fs::recursive_directory_iterator(dir))
-        if (e.path().extension() == ".sfc") roms.push_back(e.path());
+    // The 65816 and SPC700 tests, and the Super FX's (CHIP/GSU/GSUTest)
+    for (const fs::path& d : {dir, fs::path(romDir()) / "CHIP" / "GSU" / "GSUTest"}) {
+        if (!fs::exists(d)) continue;
+        for (auto& e : fs::recursive_directory_iterator(d))
+            if (e.path().extension() == ".sfc") roms.push_back(e.path());
+    }
     std::sort(roms.begin(), roms.end());
     int totalPass = 0, totalFail = 0, silent = 0;
     for (auto& rom : roms) {
@@ -77,7 +81,7 @@ TEST_CASE(snes_krom_cpu_tests) {
         uint64_t t = 0;
         while (t < 21477272ull * 4) t += (uint64_t)m->schedulerStep(*m);    // 4 seconds
         const std::string text = screenText(m, ppu);
-        const int pass = count(text, "PASS"), fail = count(text, "FAIL");
+        const int pass = count(text, "PASS") + count(text, "Pass"), fail = count(text, "FAIL") + count(text, "Fail");
         totalPass += pass;
         totalFail += fail;
         if (!pass && !fail) ++silent;
@@ -125,15 +129,19 @@ TEST_CASE(snes_krom_spc_music) {
     delete m;
 }
 
-// krom's PPU demos, run for 3 seconds each and saved as PNGs into
+// krom's PPU and Super FX demos, run for 3 seconds each and saved as PNGs into
 // MMEMU_SNES_SHOTS (a directory) to look at; skipped without it
 TEST_CASE(snes_krom_ppu_shots) {
     const char* out = std::getenv("MMEMU_SNES_SHOTS");
     const fs::path dir = fs::path(romDir()) / "PPU";
     if (!out || !fs::exists(dir)) { std::printf("  (set MMEMU_SNES_SHOTS=<dir> to run)\n"); return; }
     std::vector<fs::path> roms;
-    for (auto& e : fs::recursive_directory_iterator(dir))
-        if (e.path().extension() == ".sfc") roms.push_back(e.path());
+    // The PPU demos, and the Super FX's drawing demos (CHIP/GSU, not the instruction tests)
+    for (const fs::path& d : {dir, fs::path(romDir()) / "CHIP" / "GSU"}) {
+        if (!fs::exists(d)) continue;
+        for (auto& e : fs::recursive_directory_iterator(d))
+            if (e.path().extension() == ".sfc" && e.path().string().find("GSUTest") == std::string::npos) roms.push_back(e.path());
+    }
     std::sort(roms.begin(), roms.end());
     for (auto& rom : roms) {
         std::ifstream f(rom, std::ios::binary);
