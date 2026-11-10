@@ -6,6 +6,9 @@
 #include "libdevices/main/io_registry.h"
 #include "libmem/main/ibus.h"
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -87,6 +90,7 @@ TEST_CASE(snes_hirom) {
     for (int i = 0; i < 21; ++i) img[0xFFC0 + i] = (uint8_t)title[i];
     img[0xFFD5] = 0x21;
     img[0xFFD7] = 0x07;
+    img[0xFFD6] = 0x01;                            // ROM + RAM, no battery
     img[0xFFD8] = 0x03;                            // 8 KB of RAM
     img[0xFFDC] = 0xFF; img[0xFFDD] = 0xFF; img[0xFFDE] = 0; img[0xFFDF] = 0;
     img[0xFFFC] = 0x00; img[0xFFFD] = 0x80;
@@ -359,4 +363,41 @@ TEST_CASE(snes_ppu_overscan) {
     for (int l = 0; l < 240; ++l) p.endLine(l);
     p.startVblank();
     EXPECT_EQ(p.getDimensions().height, 239);
+}
+
+// Battery RAM: loaded from the .srm, written back within a second of a change
+TEST_CASE(snes_battery_save) {
+    EXPECT_EQ(snes::savePathFor("/x/y/Game.v1.sfc"), std::string("/x/y/Game.v1.srm"));
+    EXPECT_EQ(snes::savePathFor("dir.d/game"), std::string("dir.d/game.srm"));
+    std::vector<uint8_t> img(0x20000, 0xEA);
+    const char* title = "BATTERY TEST         ";
+    for (int i = 0; i < 21; ++i) img[0xFFC0 + i] = (uint8_t)title[i];
+    img[0xFFD5] = 0x21; img[0xFFD6] = 0x02; img[0xFFD7] = 0x07; img[0xFFD8] = 0x03;   // HiROM, ROM+RAM+battery, 8 KB
+    img[0xFFDC] = 0xFF; img[0xFFDD] = 0xFF;
+    img[0xFFFC] = 0x00; img[0xFFFD] = 0x80;
+    img[0x8000] = 0x80; img[0x8001] = 0xFE;                 // BRA *
+    const std::string path = (std::filesystem::temp_directory_path() / "mmsim_snes_battery_test.srm").string();
+    std::filesystem::remove(path);
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "b.sfc", err, path));
+    EXPECT_EQ(snes::cartridgeInfo(m), std::string("b.sfc (BATTERY TEST, HiROM, 128K ROM, 8K RAM, battery)"));
+    m->buses[0].bus->write8(0x206000, 0x5A);
+    m->buses[0].bus->write8(0x207FFF, 0xA5);
+    run(m, FRAME * 62);                                     // a second: written out
+    std::ifstream f(path, std::ios::binary);
+    std::vector<uint8_t> file((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    ASSERT_EQ(file.size(), (size_t)0x2000);
+    EXPECT_EQ(file[0], 0x5A);
+    EXPECT_EQ(file[0x1FFF], 0xA5);
+    m->buses[0].bus->write8(0x206001, 0x77);
+    snes::removeCartridge(m);                               // saved on the way out
+    delete m;
+    m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "b.sfc", err, path));
+    EXPECT_EQ(m->buses[0].bus->peek8(0x206000), 0x5A);
+    EXPECT_EQ(m->buses[0].bus->peek8(0x206001), 0x77);
+    EXPECT_EQ(m->buses[0].bus->peek8(0x207FFF), 0xA5);
+    delete m;
+    std::filesystem::remove(path);
 }

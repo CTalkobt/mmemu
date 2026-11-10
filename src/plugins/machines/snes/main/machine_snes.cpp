@@ -76,6 +76,34 @@ struct Cart {
     uint16_t dspSrMask = 0;
     // The Super FX: it owns the map ($3000 registers, its RAM, ROM in two layouts)
     std::unique_ptr<Gsu> gsu;
+    // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
+    bool battery = false;
+    std::string savePath;
+    std::vector<uint8_t> saved;                 // what the file holds
+
+    std::vector<uint8_t>* batteryRam() {
+        if (!battery) return nullptr;
+        if (gsu) return &gsu->ram();
+        return sram.empty() ? nullptr : &sram;
+    }
+    void loadSave(const std::string& path) {
+        savePath = path;
+        auto* ram = batteryRam();
+        if (!ram || path.empty()) return;
+        std::vector<uint8_t> data;
+        if (readFile(path, data) && !data.empty())
+            for (size_t i = 0; i < ram->size(); ++i) (*ram)[i] = data[i % data.size()];
+        saved = *ram;
+    }
+    /** Write the battery RAM if it changed since the last write. */
+    void flushSave() {
+        auto* ram = batteryRam();
+        if (!ram || savePath.empty() || *ram == saved) return;
+        std::ofstream f(savePath, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f.write((const char*)ram->data(), (std::streamsize)ram->size());
+        if (f) saved = *ram;
+    }
 
     /** DSP-1/2/3/4 by the header's chipset byte and the title (as Mesen). */
     bool loadDsp(const std::string& rawTitle, std::string& err) {
@@ -173,6 +201,8 @@ struct Cart {
         sram.assign(ramSize && ramSize <= 0x0C ? (1024u << ramSize) : 0, 0);
         // The chipset byte: a coprocessor when the low nibble is 3 or more; 0x in the high nibble is a NEC DSP
         const uint8_t chips = rom[headerAt + 0x16];
+        const uint8_t chipLow = chips & 0x0F;
+        battery = chipLow == 0x02 || chipLow == 0x05 || chipLow == 0x06 || chipLow == 0x09 || chipLow == 0x0A;
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x0 && !loadDsp(raw, err)) return false;
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x1) {
             // The Super FX's RAM: the expansion RAM size ($FFBD), else 64 KB (as Mesen)
@@ -187,6 +217,7 @@ struct Cart {
         static const char* names[] = {"LoROM", "HiROM", "ExHiROM"};
         std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
         if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
+        if (battery) s += ", battery";
         if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
         if (gsu) s += ", Super FX, " + std::to_string(gsu->ram().size() / 1024) + "K RAM";
         return s;
@@ -721,6 +752,7 @@ private:
         m_lineClocks = (m_line == 240 && m_ppu->oddField() && !m_ppu->interlace()) ? LINE_CLOCKS - 4 : LINE_CLOCKS;
         if (m_line == m_vblankLine) {
             m_ppu->startVblank();
+            if (m_cart && m_cart->battery && ++m_saveFrames >= 60) { m_saveFrames = 0; m_cart->flushSave(); }
             m_nmiFlag = true;
             if (m_nmitimen & 0x01) {
                 // Auto joypad read: the pads' 16 bits into $4218-$421F (3 lines busy)
@@ -744,6 +776,7 @@ private:
     uint64_t m_master = 0, m_apuSynced = 0;
     int m_hClock = 0, m_line = 0;
     int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
+    int m_saveFrames = 0;
     bool m_refreshDone = false, m_hdmaDone = false, m_irqFired = false;
 
     uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;
@@ -796,11 +829,14 @@ uint16_t padBits(uint32_t b) {
 
 }  // namespace
 
-bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err) {
+bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err,
+                     const std::string& savePath) {
     auto* bus = busOf(m);
     if (!bus) { err = "Not a SNES."; return false; }
     auto cart = std::make_unique<Cart>();
     if (!cart->load(image, err)) return false;
+    if (bus->cart()) bus->cart()->flushSave();
+    cart->loadSave(savePath);
     const std::string d = cart->describe();
     bus->setCart(std::move(cart), label + " (" + d + ")");
     powerOn(m);
@@ -810,8 +846,21 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, co
 void removeCartridge(MachineDescriptor* m) {
     auto* bus = busOf(m);
     if (!bus) return;
+    if (bus->cart()) bus->cart()->flushSave();
     bus->setCart(nullptr, "");
     powerOn(m);
+}
+
+void flushSave(MachineDescriptor* m) {
+    auto* bus = busOf(m);
+    if (bus && bus->cart()) bus->cart()->flushSave();
+}
+
+std::string savePathFor(const std::string& romPath) {
+    const auto slash = romPath.find_last_of('/');
+    const auto dot = romPath.find_last_of('.');
+    const std::string stem = (dot != std::string::npos && (slash == std::string::npos || dot > slash)) ? romPath.substr(0, dot) : romPath;
+    return stem + ".srm";
 }
 
 std::string cartridgeInfo(MachineDescriptor* m) {
