@@ -3,6 +3,7 @@
 #include <sstream>
 #include <cstdlib>
 #include "libtoolchain/main/basic_tokenizer.h"
+#include <iomanip>
 #include <string>
 #include <memory>
 #include <csignal>
@@ -154,7 +155,9 @@ int main(int argc, char *argv[]) {
         if ((arg == "--machine" || arg == "-m") && i + 1 < argc) {
             interpreter.processLine("create " + std::string(argv[++i]));
         } else if ((arg == "--mount" || arg == "-i") && i + 1 < argc) {
-            interpreter.processLine("load " + std::string(argv[++i]));
+            std::ostringstream cmd;                     // quoted: the path may have spaces
+            cmd << "load " << std::quoted(std::string(argv[++i]));
+            interpreter.processLine(cmd.str());
         } else if ((arg == "--type" || arg == "-t") && i + 1 < argc) {
             interpreter.processLine("type " + std::string(argv[++i]));
         } else if (arg == "--run") {

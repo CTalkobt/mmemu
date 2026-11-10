@@ -7,6 +7,12 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CLI: paths with spaces
+
+- **`load` takes a quoted path** (`load "DOS 3.3 System Master.dsk"`), and
+  `-i`/`--mount` quotes what it passes. Before, a path with a space was cut
+  at the space ("No loader found"). Test: `cli_load_quoted_path`.
+
 ### SNES ST018
 
 - **The ST018** (`snes::St018`, after Mesen) for Hayazashi Nidan Morita
