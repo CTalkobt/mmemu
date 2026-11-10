@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110 and the OBC1 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -115,6 +115,31 @@ ROM, 2048 words of RAM and an 8-level stack, at 11 MHz (ST010) or 22 MHz
 - **Firmware:** `st010.rom`/`st011.rom` (53248 bytes: 49152 of program, then
   4096 of data), or `.program.rom` plus `.data.rom`, in `roms/snes/`, or
   appended to the ROM image (52 KB past a 64 KB boundary).
+
+### ST018
+
+Seta's ST018 (Hayazashi Nidan Morita Shougi 2) is an ARM: `snes::St018`,
+after Mesen's `St018.cpp` and `ArmV3Cpu.cpp`, an ARMv3 core with 128 KB of
+program ROM, 32 KB of data ROM and 16 KB of work RAM. Its multiplier (result,
+carry and timing) is zaydlang's, copied from Mesen (`snes_arm_multiply.h`,
+zlib licence).
+
+- **Detection:** chipset `$Fx` with cartridge type `$02` (`$FFBF`). It is
+  battery-backed; the rest is the plain LoROM map.
+- **The link (`$3000-$3FFF` in `$00-$3F`/`$80-$BF`, decoded by A1-A2 and
+  A8-A15):** `$3800` reads the ARM's byte, `$3802` writes one to it (a read
+  clears the acknowledge), `$3804` is the status (bit 0 a byte for the SNES,
+  bit 2 acknowledge, bit 3 a byte for the ARM, bit 7 running). Writing
+  `$3804` non-zero holds the ARM in reset; zero restarts it.
+- **The ARM's side:** `$4000_0000` its byte to the SNES, `$4000_0010` the
+  SNES's byte (writing acknowledges), `$4000_0020` the status; ROM at
+  `$0000_0000` and `$A000_0000`, RAM at `$E000_0000`.
+- **Timing:** as Mesen, each ARM bus access or internal cycle takes one
+  master clock; the ARM is run up to the SNES's time after every step and
+  before each link access. The RESET button leaves it alone (the game resets
+  it through `$3804`).
+- **Firmware:** `roms/snes/st018.rom` (163840 bytes: the program, then the
+  data ROM), Mesen's name. Not included (Seta's copyright).
 
 ### Super FX
 
@@ -347,6 +372,12 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_st018.cpp`: the ST018's ARM and link. A hand-assembled ARM
+  program answers the SNES through the link and the cartridge map, and the
+  reset hold is checked. A random firmware run is checked against Mesen's
+  final registers, cycles and work RAM: Mesen's `ArmV3Cpu.cpp`, compiled on
+  its own with the same bus, matched this core register for register and
+  cycle for cycle over 30 million random instructions in all seven modes.
 - `test_snes_obc1.cpp`: the OBC1's ports, both tables and the high bits,
   on a hand-built cartridge.
 - `test_snes_spc7110.cpp`: the SPC7110's map, data port, ALU, clock and
@@ -385,7 +416,7 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
-  S-DD1, SPC7110, OBC1 and ST010/011 (the ST018, the Satellaview and the
+  S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.

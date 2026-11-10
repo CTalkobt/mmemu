@@ -675,7 +675,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "load") {
         if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
         std::string path, expr;
-        if (ss >> path) {
+        if (ss >> std::quoted(path)) {                  // "a path with spaces" or a bare word
             uint32_t addr = 0;
             bool hasAddr = false;
             if (ss >> expr) {
@@ -3467,7 +3467,7 @@ void CliInterpreter::printHelpOverview() {
 void CliInterpreter::printHelpCategory(const std::string& category) {
     if (category == "loading") {
         m_output("LOADING - Program and Cartridge Loading Commands:\n"
-                 "  load <path> [addr]  - Load a program/binary file at address\n"
+                 "  load <path> [addr]  - Load a program/binary file at address (quote a path with spaces)\n"
                  "  load-vice <path>    - Load a VICE snapshot (.vsf) file\n"
                  "  save-vice <path>    - Save current state to VICE snapshot file\n"
                  "  cart <path>         - Attach a cartridge image\n"

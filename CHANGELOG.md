@@ -16,6 +16,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
     each (`POKEY::setSecond`).
 - **Test:** `atari_second_pokey`.
 
+### CLI: paths with spaces
+
+- **`load` takes a quoted path** (`load "DOS 3.3 System Master.dsk"`), and
+  `-i`/`--mount` quotes what it passes. Before, a path with a space was cut
+  at the space ("No loader found"). Test: `cli_load_quoted_path`.
+
+### SNES ST018
+
+- **The ST018** (`snes::St018`, after Mesen) for Hayazashi Nidan Morita
+  Shougi 2: an ARMv3 core (all modes and banked registers, the barrel
+  shifter, multiplies with zaydlang's carry and timing, block transfers,
+  swaps, exceptions) and its byte link to the SNES at `$3800-$3804`.
+  Firmware from `roms/snes/st018.rom`.
+- **Tests:** the core matched Mesen's own ARM core, compiled standalone,
+  over 30 million random instructions; a hand-assembled program checks
+  the link.
+
 ### SNES ST010 and ST011
 
 - **The ST010 and ST011** (Seta's uPD96050, after Mesen) for F1 ROC II and
