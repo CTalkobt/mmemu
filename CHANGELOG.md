@@ -7,6 +7,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES DMA and HDMA timing
+
+- **DMA and HDMA take Mesen's time:** they start at the CPU's next cycle
+  but one after they're asked for (even in WAI), line up on 8 master
+  clocks, cost 8 clocks of overhead, 8 a channel and 8 a byte, then line
+  up on a CPU cycle. HDMA pays for its table reads and indirect addresses.
+  The DRAM refresh and HDMA setup move with the master clock's position in
+  8, as Mesen.
+- **Work RAM and `$2180`:** a DMA between them writes nothing (A to B) or a
+  meaningless byte (B to A), as Mesen.
+- **Tests:** `snes_dma_timing` measures a 16-byte DMA. krom's CPU tests (585
+  PASS) and all 74 PPU and Super FX demo pictures are unchanged.
+
 ### SNES multiply/divide timing
 
 - **The 5A22's multiplier and divider take their time**, as Mesen's

@@ -44,10 +44,12 @@ one powers the console on; the machine's reset is the RESET button.
 - **Timing**: a line is 1364 master clocks (341 dots; dots 323 and 327
   take 6 clocks) and a frame 262 lines. Interlaced, every other frame has
   263 lines; otherwise line 240 of every other frame is 4 clocks short. The
-  DRAM refresh steals 40 clocks a line at clock 538. HDMA runs at dot 276
-  for the next line. Vertical blank starts at line 225 (240 with overscan):
-  the NMI flag (`$4210`), the auto joypad read (`$4218-$421F`, 3 lines
-  busy), and the OAM address reload. HDMA restarts at line 0.
+  DRAM refresh steals 40 clocks a line at clock 538 less the master clock's
+  position in 8 (as Mesen). HDMA is asked for at dot 276, for the next
+  line. Vertical blank starts at line 225 (240 with overscan): the NMI flag
+  (`$4210`), the auto joypad read (`$4218-$421F`, 3 lines busy), and the
+  OAM address reload. HDMA is set up again at clock 12 (plus the same
+  position in 8) of line 0.
 - **Interrupts**: NMI (`$4200` bit 7) and the H/V timer IRQ (`HTIME`,
   `VTIME`, `$4211`).
 - **Multiply/divide**: `$4202`/`$4203` and `$4204-$4206`, with results at
@@ -57,8 +59,18 @@ one powers the console on; the machine's reset is the RESET button.
   start another, and they stand still during DMA (they count the CPU's own
   cycles). Dividing by zero gives `$FFFF` remainder the dividend.
 - **DMA**: modes 0-7 in both directions, with A-bus increment, decrement or
-  fixed. The CPU waits 8 clocks a byte.
-- **HDMA**: direct and indirect tables, repeat and line counts.
+  fixed. Work RAM to `$2180` writes nothing, and `$2180` to work RAM
+  writes a meaningless byte, as Mesen.
+- **HDMA**: direct and indirect tables, repeat and line counts. The last
+  active channel ending an indirect table reads one address byte, not two.
+- **DMA timing** (Mesen's `SnesDmaController`): a DMA or HDMA asked for
+  (by `$420B`, or at dot 276) runs at the start of the CPU's next cycle but
+  one, even in WAI. It begins on a whole multiple of 8 master clocks, takes
+  8 clocks of overhead, then 8 a channel and 8 a byte (read at 4, written
+  at 8). HDMA reads each channel's next table byte (8) and indirect
+  addresses (16). It ends on a whole CPU cycle. HDMA cuts in between a
+  DMA's bytes. Mesen also holds off interrupts after a cycle with DMA in
+  it; that isn't done here.
 - **Cartridges** (`.sfc`, `.smc`; a 512-byte copier header is skipped):
   - **Maps:** LoROM, HiROM and ExHiROM, chosen by scoring the internal
     header as bsnes and Mesen do.
@@ -422,6 +434,6 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- DMA/HDMA timing to the clock, open-bus
-  details, and the SPC700's TEST register.
+- Interrupts held off after DMA, open-bus details, and the SPC700's TEST
+  register.
 - PAL timing, the mouse, Super Scope and multitap.
