@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Apple II mouse card
+
+- **An AppleMouse II card** (`apple2::MouseCard`, after AppleWin's
+  `MouseInterface.cpp`) fits in slots 1, 2, 4, 5 or 7 of a II, II+ or IIe
+  while the machine runs: `expansion slot4 mouse`.
+  - **Hardware:** its 6821 PIA, the 68705's command protocol (position,
+    clamps, buttons, interrupt status) and its firmware
+    (`roms/apple2/MouseInterface.rom`, AppleWin's resource), paged into
+    `$Cn00` by port B.
+  - **Interrupts:** /IRQ on movement, a button or the vertical blank, which
+    the bus now passes to cards (`SlotCard::vbl()`).
+  - **Input:** the host mouse (GUI, CLI `mouse`, MCP `mouse`) moves it.
+- **Checks:** Applesoft's `PR#4` / `IN#4` mouse input reads it back.
+  Test: `apple2_mouse_card` drives the firmware's entry points.
+
 ### SNES S-DD1
 
 - **The S-DD1** (`snes::Sdd1`, after Mesen; Andreas Naive's public-domain

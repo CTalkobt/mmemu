@@ -1476,7 +1476,7 @@ TEST_CASE(apple2_mockingboard) {
     auto* slot = m->expansionSlot("slot4");
     ASSERT(slot != nullptr);
     EXPECT_TRUE(m->expansionSlot("slot5") != nullptr);
-    EXPECT_TRUE(!slot->install("mouse", "", err));
+    EXPECT_TRUE(!slot->install("no-such-card", "", err));
     ASSERT(slot->install("mockingboard", "", err));
     EXPECT_EQ(slot->info(), std::string("mockingboard (Mockingboard)"));
     m->onReset(*m);
@@ -1592,5 +1592,83 @@ TEST_CASE(apple2_super_serial_card) {
     EXPECT_TRUE(screenHas(m, "]"));                  // back at the prompt
     ASSERT(slot->install("", "", err));
     EXPECT_TRUE(find<apple2::SuperSerialCard>(m) == nullptr);
+    delete m;
+}
+
+// An AppleMouse II card in slot 4 driven through its own firmware (AppleWin's
+// MouseInterface.rom): the Pascal-style entry points at $C412-$C419 give
+// INITMOUSE, SETMOUSE, READMOUSE, CLAMPMOUSE and SERVEMOUSE; READMOUSE
+// leaves the position and buttons in the slot's screen holes. A VBL
+// interrupt comes when SETMOUSE asks; SERVEMOUSE takes it down.
+#include "plugins/machines/apple2/main/mouse_card.h"
+TEST_CASE(apple2_mouse_card) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIeEnhanced, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("slot4");
+    ASSERT(slot != nullptr);
+    EXPECT_TRUE(!slot->install("mouse", "x", err));
+    if (!slot->install("mouse", "", err)) { printf("  (skipped: %s)\n", err.c_str()); delete m; return; }
+    EXPECT_EQ(slot->info(), std::string("mouse (AppleMouse II card)"));
+    auto* card = find<apple2::MouseCard>(m);
+    ASSERT(card);
+    m->onReset(*m);
+    run(m, 500000);
+    IBus* bus = m->buses[0].bus;
+    // The firmware's identification bytes
+    EXPECT_EQ(bus->peek8(0xC405), 0x38);
+    EXPECT_EQ(bus->peek8(0xC407), 0x18);
+    EXPECT_EQ(bus->peek8(0xC40B), 0x01);
+    EXPECT_EQ(bus->peek8(0xC40C), 0x20);
+    EXPECT_EQ(bus->peek8(0xC4FB), 0xD6);
+    // Calls into the firmware from $0300, then a loop at the end
+    auto call = [&](std::vector<std::pair<uint8_t, int>> calls) {
+        std::vector<uint8_t> p = {0x78};                                    // SEI
+        for (auto& [entry, a] : calls) {
+            if (a >= 0) { p.push_back(0xA9); p.push_back((uint8_t)a); }     // LDA #a
+            const uint8_t lo = bus->peek8(0xC400u + entry);
+            for (uint8_t b : {0xA2, 0xC4, 0xA0, 0x40, 0x20, (int)lo, 0xC4}) p.push_back((uint8_t)b);
+            for (uint8_t b : {0x08, 0x68, 0x85, 0x06}) p.push_back(b);     // PHP; PLA; STA $06 (C from the call)
+        }
+        const uint16_t end = (uint16_t)(0x0300 + p.size());
+        for (uint8_t b : {0x4C, (int)(end & 0xFF), (int)(end >> 8)}) p.push_back((uint8_t)b);
+        for (size_t i = 0; i < p.size(); ++i) bus->write8(0x0300 + (uint32_t)i, p[i]);
+        m->cpus[0].cpu->setPc(0x0300);
+        run(m, 30000);
+        EXPECT_EQ(m->cpus[0].cpu->pc(), end);
+    };
+    const uint8_t SET = 0x12, SERVE = 0x13, READ = 0x14, CLAMP = 0x17, INIT = 0x19;
+    call({{INIT, -1}, {SET, 0x01}});                                        // on, no interrupts
+    EXPECT_EQ(card->mode(), 0x01);
+    m->onMouse(40, 20, 1, 0);                                               // +20, +10; button 0 down
+    call({{READ, -1}});
+    EXPECT_EQ(bus->peek8(0x047C), 20);                                      // X low
+    EXPECT_EQ(bus->peek8(0x057C), 0);                                       // X high
+    EXPECT_EQ(bus->peek8(0x04FC), 10);                                      // Y low
+    EXPECT_EQ(bus->peek8(0x077C) & 0xA0, 0xA0);                             // button 0 down, moved
+    // CLAMPMOUSE X to 0-15 (the bounds in $0478/$04F8/$0578/$05F8)
+    bus->write8(0x0478, 0); bus->write8(0x0578, 0);
+    bus->write8(0x04F8, 15); bus->write8(0x05F8, 0);
+    call({{CLAMP, 0x00}});
+    m->onMouse(200, 0, 0, 0);
+    call({{READ, -1}});
+    EXPECT_EQ(bus->peek8(0x047C), 15);
+    EXPECT_EQ(bus->peek8(0x077C) & 0x80, 0x00);                             // button 0 up
+    // The VBL interrupt (mode $08), and SERVEMOUSE: carry clear, VBL the cause
+    EXPECT_TRUE(!card->irq());                                              // none asked for
+    call({{SET, 0x08}});                                                    // runs more than a frame
+    EXPECT_TRUE(card->irq());
+    // SERVEMOUSE, then nothing for the rest of the frame
+    std::vector<uint8_t> serve = {0x78, 0xA2, 0xC4, 0xA0, 0x40, 0x20, bus->peek8(0xC400u + SERVE), 0xC4,
+                                  0x08, 0x68, 0x85, 0x06, 0x4C, 0x0C, 0x03};
+    for (size_t i = 0; i < serve.size(); ++i) bus->write8(0x0300 + (uint32_t)i, serve[i]);
+    m->cpus[0].cpu->setPc(0x0300);
+    run(m, 2000);
+    EXPECT_EQ(m->cpus[0].cpu->pc(), 0x030C);
+    EXPECT_TRUE(!card->irq());
+    EXPECT_EQ(bus->peek8(0x06) & 0x01, 0x00);                               // C clear: the card's interrupt
+    EXPECT_EQ(bus->peek8(0x077C) & 0x08, 0x08);                             // VBL
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(find<apple2::MouseCard>(m) == nullptr);
     delete m;
 }
