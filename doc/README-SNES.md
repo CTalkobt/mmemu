@@ -51,7 +51,19 @@ one powers the console on; the machine's reset is the RESET button.
   OAM address reload. HDMA is set up again at clock 12 (plus the same
   position in 8) of line 0.
 - **Interrupts**: NMI (`$4200` bit 7) and the H/V timer IRQ (`HTIME`,
-  `VTIME`, `$4211`).
+  `VTIME`, `$4211`). As Mesen, the NMI flag rises at clock 2 of the NMI
+  line (falls at clock 2 of line 0) and the CPU sees it from clock 6; a
+  `$4210` read before clock 6 of that line doesn't clear it, nor does a
+  `$4211` read within 4 clocks of the IRQ flag rising. When DMA or HDMA ran
+  in an instruction's last cycle, an IRQ waits one more instruction, and so
+  does an NMI that rose in that cycle (Mesen's IrqLock).
+- **Open bus** (as Mesen): reads of the internal registers (`$42xx`) don't
+  change it; `$4210`, `$4211`, `$4212`, `$4016`/`$4017` fill their unused
+  bits from it. The write-only PPU registers `$21x4-6` and `$21x8-A` give
+  PPU1's last value read; the others, and `$2137`, the CPU's open bus.
+  `$213B`'s high byte, `$213C`/`$213D`'s high bits and `$213E`/`$213F`'s
+  unused bit come from PPU1/PPU2's own. `$4212`'s horizontal blank starts
+  after dot 274.
 - **Multiply/divide**: `$4202`/`$4203` and `$4204-$4206`, with results at
   `$4214-$4217`. As Mesen's `AluMulDiv`, they work a bit a CPU cycle on
   the result registers themselves: 8 cycles to multiply, 16 to divide.
@@ -69,8 +81,7 @@ one powers the console on; the machine's reset is the RESET button.
   8 clocks of overhead, then 8 a channel and 8 a byte (read at 4, written
   at 8). HDMA reads each channel's next table byte (8) and indirect
   addresses (16). It ends on a whole CPU cycle. HDMA cuts in between a
-  DMA's bytes. Mesen also holds off interrupts after a cycle with DMA in
-  it; that isn't done here.
+  DMA's bytes.
 - **Cartridges** (`.sfc`, `.smc`; a 512-byte copier header is skipped):
   - **Maps:** LoROM, HiROM and ExHiROM, chosen by scoring the internal
     header as bsnes and Mesen do.
@@ -344,7 +355,14 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
   - **Registers:** `$F0-$FF` — the ports both ways, the DSP address/data,
     and the three timers (8 kHz, 8 kHz, 64 kHz) with 4-bit counters.
   - **Clock:** runs at 1.024 MHz, brought up to the main CPU's time at
-    every port access and every instruction.
+    every port access and every instruction. Each bus access takes its
+    time (a DSP step, the timers) as it happens; the rest of an
+    instruction is idle cycles.
+  - **TEST (`$F0`)**, as Mesen (written only with the P flag clear): wait
+    states of 1, 2, 5 or 10 cycles for internal accesses (`$F0-$FF`, the
+    IPL ROM, idle cycles) and for external ones, the timers stepping 2, 4,
+    8 or 16 with them; the timers' global enable (bit 3) and disable (bit 0),
+    switching which can count a tick; and RAM writes on or off (bit 1).
 - **S-DSP** (`snes::Dsp`):
   - **Pipeline:** the hardware's 32-step pipeline, one step per SPC700
     cycle (32 kHz stereo).
@@ -434,6 +452,6 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- Interrupts held off after DMA, open-bus details, and the SPC700's TEST
-  register.
+- The APU ports' half-cycle latch delay, and the H/V IRQ's exact counter
+  timing (Mesen's ProcessIrqCounters).
 - PAL timing, the mouse, Super Scope and multitap.

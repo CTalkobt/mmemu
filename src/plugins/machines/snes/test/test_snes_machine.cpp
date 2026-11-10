@@ -487,3 +487,30 @@ TEST_CASE(snes_dma_timing) {
     EXPECT_EQ(same, 16);
     delete m;
 }
+
+// Open bus (as Mesen): the write-only PPU registers $21x4-6/$21x8-A give PPU1's last value read, the rest the
+// CPU's open bus; $4212's horizontal blank starts after dot 274
+TEST_CASE(snes_open_bus) {
+    std::vector<uint8_t> img(0x8000, 0);
+    const char* title = "MMSIM OPENBUS        ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FD5] = 0x20; img[0x7FD7] = 0x05;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    img[0] = 0x80; img[1] = 0xFE;
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, img, "ob.sfc", err));
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0x00211B, 0x03); bus->write8(0x00211B, 0x00);   // M7A = 3
+    bus->write8(0x00211C, 0x07);                                // x 7 = 21 at $2134
+    bus->write8(0x7E0010, 0x5A);
+    EXPECT_EQ(bus->read8(0x002134), 21);                        // PPU1 now holds 21
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);                      // the CPU's bus holds $5A
+    EXPECT_EQ(bus->read8(0x002105), 21);                        // $2105: PPU1's latch
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);
+    EXPECT_EQ(bus->read8(0x002101), 0x5A);                      // $2101: open bus
+    EXPECT_EQ(bus->read8(0x7E0010), 0x5A);
+    EXPECT_EQ(bus->read8(0x002137), 0x5A);                      // $2137: open bus too
+    delete m;
+}

@@ -213,3 +213,40 @@ TEST_CASE(w65c816_interrupts) {
     EXPECT_TRUE(!cpu.isHalted());
     EXPECT_EQ(cpu.pc(), 0x208u);
 }
+
+// holdInterrupts (the SNES's IrqLock): the next boundary doesn't take an IRQ, nor an NMI if asked
+TEST_CASE(w65c816_hold_interrupts) {
+    FlatMemoryBus mem("ram", 24);
+    W65C816 cpu;
+    cpu.setDataBus(&mem);
+    auto vec = [&](uint16_t at, uint16_t to) { mem.write8(at, to & 0xFF); mem.write8(at + 1, to >> 8); };
+    vec(0xFFFC, 0x0200);
+    vec(0xFFFE, 0x1000);                     // emulation IRQ
+    vec(0xFFFA, 0x1200);                     // emulation NMI
+    const uint8_t prog[] = {0x58, 0xEA, 0xEA, 0xEA, 0xEA};   // CLI, NOPs
+    for (size_t i = 0; i < sizeof prog; ++i) mem.write8(0x200 + (uint32_t)i, prog[i]);
+    cpu.reset();
+    cpu.step();                              // CLI
+    cpu.setIrqLine(true);
+    cpu.holdInterrupts(false);
+    cpu.step();                              // held: the NOP runs
+    EXPECT_EQ(cpu.pc(), 0x202u);
+    cpu.step();                              // then the IRQ
+    EXPECT_EQ(cpu.pc(), 0x1000u);
+    cpu.setIrqLine(false);
+
+    cpu.setPc(0x202);
+    cpu.setNmiLine(true);
+    cpu.holdInterrupts(false);               // an NMI isn't held unless asked
+    cpu.step();
+    EXPECT_EQ(cpu.pc(), 0x1200u);
+    cpu.setNmiLine(false);
+
+    cpu.setPc(0x202);
+    cpu.setNmiLine(true);
+    cpu.holdInterrupts(true);
+    cpu.step();
+    EXPECT_EQ(cpu.pc(), 0x203u);
+    cpu.step();
+    EXPECT_EQ(cpu.pc(), 0x1200u);
+}

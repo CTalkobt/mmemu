@@ -81,6 +81,11 @@ public:
     bool emulation() const { return m_e; }
     /** /VP (vector pull) is low: the current read is of an interrupt or reset vector. */
     bool vectorPull() const { return m_vpb; }
+    /**
+     * Hold interrupts off for the next instruction boundary (the SNES: DMA ran in the instruction's last
+     * cycle, Mesen's IrqLock): an IRQ isn't taken, and an NMI only if `nmiToo` is false. WAI keeps waiting.
+     */
+    void holdInterrupts(bool nmiToo) { m_holdIrq = true; m_holdNmi = nmiToo; }
     /** Internal (bus-idle) cycles happen here; tests can observe them. */
     struct IdleHook { virtual ~IdleHook() = default; virtual void idle(uint32_t addr) = 0; };
     void setIdleHook(IdleHook* h) { m_idleHook = h; }
@@ -136,6 +141,7 @@ private:
     bool m_e = true;
     bool m_irqLine = false, m_nmiLine = false, m_nmiPending = false, m_wait = false, m_stop = false;
     bool m_vpb = false;
+    bool m_holdIrq = false, m_holdNmi = false;
     uint32_t m_lastAddr = 0;
     uint64_t m_cycles = 0;
 };

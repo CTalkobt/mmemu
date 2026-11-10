@@ -6,9 +6,12 @@
 // After Mesen2 (Core/SNES/Spc.cpp, SpcTimer.h), GPL-3.0, Sour and the Mesen
 // contributors. The SPC700 runs at 1.024 MHz (24.576 MHz / 24), one DSP step
 // per cycle (32 kHz stereo). It is clocked lazily: the main CPU's port
-// accesses and the end of each instruction bring it up to time. Left out:
-// the TEST register's wait states ($F0 speed bits) and the half-cycle port
-// latch delay.
+// accesses and the end of each instruction bring it up to time. Each of its
+// bus accesses takes its time as it happens, idle cycles at the end of the
+// instruction. The TEST register ($F0) works as in Mesen: wait states for
+// internal ($F0-$FF, the IPL ROM, idle cycles) and external accesses, the
+// timers' rate with them, the timers' global enable and disable, and RAM
+// writes on or off. Left out: the half-cycle port latch delay.
 
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/iaudio_output.h"
@@ -74,22 +77,39 @@ public:
     uint8_t smpPeek(uint16_t a) const;
     void smpWrite(uint16_t a, uint8_t v);
 
+    /** The TEST register's state (for tests). */
+    bool ramWritesOn() const { return m_writeEnabled; }
+
 private:
-    /** Timer 0/1 at 8 kHz (every 128 cycles), timer 2 at 64 kHz (16). */
+    /**
+     * Mesen's SpcTimer: stage 0 counts by 2 a cycle at normal speed (more or less with the TEST wait states)
+     * and toggles stage 1 every `rate`; stage 2 counts stage 1's falls (8 kHz for timers 0/1, 64 kHz for 2).
+     * The global disable holds stage 1 low, so turning the timers off can itself count one.
+     */
     struct Timer {
-        int rate = 128;
-        bool enabled = false;
-        uint8_t stage0 = 0, stage2 = 0, target = 0, output = 0;
+        uint8_t rate = 128;
+        bool enabled = false, global = true;
+        uint8_t stage0 = 0, stage1 = 0, prev1 = 0, stage2 = 0, target = 0, output = 0x0F;
+        void clockTimer() {
+            const uint8_t cur = global ? stage1 : 0;
+            const uint8_t prev = prev1;
+            prev1 = cur;
+            if (!enabled || !prev || cur) return;
+            if (++stage2 == target) { stage2 = 0; ++output; }
+        }
         void enable(bool on) { if (!enabled && on) { stage2 = 0; output = 0; } enabled = on; }
-        void clock() {
-            if (++stage0 < rate) return;
-            stage0 = 0;
-            if (!enabled) return;
-            if (++stage2 == target) { stage2 = 0; output = (uint8_t)((output + 1) & 0x0F); }
+        void setGlobal(bool on) { global = on; clockTimer(); }
+        void run(uint8_t step) {
+            stage0 = (uint8_t)(stage0 + step);
+            if (stage0 >= rate) { stage1 ^= 1; stage0 = (uint8_t)(stage0 - rate); clockTimer(); }
         }
     };
 
-    void cycles(int n);
+    /** One access's (or idle cycle's) time at speed `sel`: a DSP step, the wait, the timers. */
+    void tick(uint8_t sel);
+    uint8_t speedFor(uint16_t a) const {
+        return ((a & 0xFFF0) == 0x00F0 || (a >= 0xFFC0 && m_iplOn)) ? m_internalSpeed : m_externalSpeed;
+    }
     void drainDsp();
 
     std::string m_name = "apu";
@@ -104,6 +124,12 @@ private:
     uint8_t m_ramReg[2] = {};
     bool m_iplOn = true;
     uint64_t m_cycle = 0;
+    // TEST ($F0)
+    uint8_t m_internalSpeed = 0, m_externalSpeed = 0;
+    bool m_timersEnabled = true, m_timersDisabled = false, m_writeEnabled = true;
+    // The accesses in the instruction being run (time is only counted while the SPC700 runs)
+    bool m_inStep = false;
+    int m_accesses = 0;
 
     // Output: the DSP's 32 kHz stereo, mixed to mono and resampled
     int m_sampleRate = DEFAULT_SAMPLE_RATE;

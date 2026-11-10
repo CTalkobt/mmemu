@@ -63,7 +63,14 @@ Apu::~Apu() {
 void Apu::reset() {
     std::memset(m_ram, 0, sizeof m_ram);
     m_dsp.reset();
-    for (auto& t : m_timers) { t.enabled = false; t.stage0 = t.stage2 = 0; t.target = 0; t.output = 0x0F; }
+    for (auto& t : m_timers) {
+        const uint8_t rate = t.rate;
+        t = Timer{};
+        t.rate = rate;
+    }
+    m_internalSpeed = m_externalSpeed = 0;
+    m_timersEnabled = true; m_timersDisabled = false; m_writeEnabled = true;
+    m_inStep = false; m_accesses = 0;
     std::memset(m_fromCpu, 0, sizeof m_fromCpu);
     std::memset(m_toCpu, 0, sizeof m_toCpu);
     m_dspAddr = 0;
@@ -90,15 +97,37 @@ uint8_t Apu::smpPeek(uint16_t a) const {
     }
 }
 
+void Apu::tick(uint8_t sel) {
+    // Mesen's IncCycleCount: 2, 4, 10 or 20 half-cycles; the timers move 2, 4, 8 or 16
+    static const uint8_t WAIT[4] = {1, 2, 5, 10}, TIMER_STEP[4] = {2, 4, 8, 16};
+    m_dsp.step();
+    m_cycle += WAIT[sel & 3];
+    for (auto& t : m_timers) t.run(TIMER_STEP[sel & 3]);
+}
+
 uint8_t Apu::smpRead(uint16_t a) {
+    if (m_inStep) { ++m_accesses; tick(speedFor(a)); }
     const uint8_t v = smpPeek(a);
     if (a >= 0xFD && a <= 0xFF) m_timers[a - 0xFD].output = 0;   // reading a counter clears it
     return v;
 }
 
 void Apu::smpWrite(uint16_t a, uint8_t v) {
-    m_ram[a] = v;                                                  // writes always reach RAM
+    if (m_inStep) { ++m_accesses; tick(speedFor(a)); }
+    if (m_writeEnabled) m_ram[a] = v;                              // the registers' RAM too, unless TEST says no
     switch (a) {
+    case 0xF0:
+        // TEST: only with the direct page flag clear (as Mesen)
+        if (!(m_cpu->psw() & 0x20)) {
+            m_internalSpeed = (v >> 6) & 3;
+            m_externalSpeed = (v >> 4) & 3;
+            m_timersEnabled = v & 0x08;
+            m_timersDisabled = v & 0x01;
+            m_writeEnabled = v & 0x02;
+            const bool on = m_timersEnabled && !m_timersDisabled;
+            for (auto& t : m_timers) t.setGlobal(on);
+        }
+        break;
     case 0xF1:
         if (v & 0x10) { m_fromCpu[0] = m_fromCpu[1] = 0; }
         if (v & 0x20) { m_fromCpu[2] = m_fromCpu[3] = 0; }
@@ -114,16 +143,15 @@ void Apu::smpWrite(uint16_t a, uint8_t v) {
     }
 }
 
-void Apu::cycles(int n) {
-    for (int i = 0; i < n; ++i) {
-        m_dsp.step();
-        for (auto& t : m_timers) t.clock();
-    }
-    m_cycle += (uint64_t)n;
-}
-
 void Apu::runTo(uint64_t target) {
-    while (m_cycle < target) cycles(m_cpu->step());
+    while (m_cycle < target) {
+        // The accesses took their time as they happened; the rest of the instruction is idle cycles
+        m_inStep = true;
+        m_accesses = 0;
+        const int n = m_cpu->step();
+        m_inStep = false;
+        for (int i = m_accesses; i < n; ++i) tick(m_internalSpeed);
+    }
     drainDsp();
 }
 
