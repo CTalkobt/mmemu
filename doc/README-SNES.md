@@ -32,7 +32,7 @@ one powers the console on; the machine's reset is the RESET button.
 | `$2100-$213F` | the PPU |
 | `$2140-$217F` | the APU's four ports, mirrored |
 | `$2180-$2183` | the work RAM port |
-| `$4016-$4017` | the joypads' serial lines |
+| `$4016-$4017` | the controller ports' serial lines |
 | `$4200-$421F` | interrupts, multiply/divide, timers, DMA enables, auto-read results |
 | `$4300-$437F` | the eight DMA channels |
 | `$6000-$7FFF` | HiROM battery RAM (banks `$20-$3F`) |
@@ -52,8 +52,12 @@ one powers the console on; the machine's reset is the RESET button.
   DRAM refresh steals 40 clocks a line at clock 538 less the master clock's
   position in 8 (as Mesen). HDMA is asked for at dot 276, for the next
   line. Vertical blank starts at line 225 (240 with overscan): the NMI flag
-  (`$4210`), the auto joypad read (`$4218-$421F`, 3 lines busy), and the
-  OAM address reload. HDMA is set up again at clock 12 (plus the same
+  (`$4210`), the auto joypad read, and the OAM address reload. The auto
+  read (Mesen's): from the first multiple of 256 clocks after clock 130 of
+  that line, less 128, it holds the ports' strobe for 256 clocks, then
+  clocks 16 bits in 128-clock steps (a read, then a shift) into
+  `$4218-$421F` (D0 of port 1 and 2, then D1); `$4212` bit 0 is set from
+  128 clocks in until the end. HDMA is set up again at clock 12 (plus the same
   position in 8) of line 0.
 - **Interrupts**: NMI (`$4200` bit 7) and the H/V timer IRQ (`HTIME`,
   `VTIME`, `$4211`). As Mesen, the NMI flag rises at clock 2 of the NMI
@@ -391,8 +395,25 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
 
 ## Input
 
+- **Controller ports**: each takes a pad (the default), the SNES Mouse,
+  the Super Scope or a multitap: CLI/MCP `expansion port1|port2 <device>`
+  (`pad`, `mouse`, `superscope`, `multitap`, or empty for nothing), the
+  GUI's Control > Expansions, `snes::setPortDevice`. After Mesen's devices:
+  - **Pad:** 12 buttons, then `0000`, then 1s.
+  - **Mouse** (the host mouse, left and right buttons): 32 bits, buttons
+    and speed then Y and X (sign and 7 bits; the sign keeps the last way
+    moved). Reading it with the strobe high steps the speed (0-2).
+  - **Super Scope** (aimed with the host mouse; left fires, right is the
+    cursor button, middle pause, the wheel flips turbo): fire, cursor,
+    turbo, pause and offscreen, then 1s. Fire counts once a press unless
+    turbo is on. With fire or cursor held, the PPU latches its counters
+    where it points (10 dots right and 3 lines up, as Mesen) once the
+    picture gets there, so `$213C/$213D` say where.
+  - **Multitap:** four pads, two at a time on D0 and D1, by `$4201` bit 7
+    (port 2) or bit 6 (port 1); strobed it answers D1 high, D0 low.
 - **Gamepad** (`onGamepad`, the CLI/MCP `joy`, host controllers): all
-  twelve buttons, ports 0 and 1.
+  twelve buttons, players 1-5: the pads in port 1, then port 2 (a
+  multitap's four in turn).
 - **Joystick** (`onJoystick`): the d-pad, with fire as B.
 - **Keyboard** (pad 1): arrows, `X` (A), `Z` (B), `S` (X), `A` (Y), `Q`
   (L), `W` (R), Return (Start), Tab or Shift (Select).
@@ -470,4 +491,4 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- The mouse, Super Scope and multitap; choosing the region by hand.
+- Choosing the region by hand; the Justifier.

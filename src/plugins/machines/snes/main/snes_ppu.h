@@ -62,6 +62,8 @@ public:
     bool oddField() const { return m_interlaceField; }
     /** A PAL console: $213F bit 4. */
     void setPal(bool pal) { m_pal = pal; }
+    /** $4201 bit 7 (the I/O line to port 2): a $213F read only clears the latch flag while it's set (Mesen). */
+    void setIoBit(bool on) { m_ioBit = on; }
     /** Latch the H/V counters ($2137 read or WRIO bit 7). */
     void latchCounters(int dot, int line) { m_hLatch = (uint16_t)dot; m_vLatch = (uint16_t)line; m_latched = true; }
     bool forcedBlank() const { return m_forcedBlank; }
@@ -169,7 +171,7 @@ private:
     int16_t m_mpy = 0;
     uint32_t m_mpyResult = 0;
     bool m_interlaceField = false;
-    bool m_pal = false;
+    bool m_pal = false, m_ioBit = true;
 
     // The line being drawn
     int m_drawLine = -1, m_drawX = 0;
