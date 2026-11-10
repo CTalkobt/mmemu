@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES Cx4
+
+- **The Capcom Cx4** (`snes::Cx4`, after Mesen) for Mega Man X2 and X3:
+  - **Execution:** the program cache, all instructions, the 48-bit
+    multiplier and buffered bus accesses.
+  - **DMA, suspend and the STOP IRQ.**
+  - **Data ROM:** the built-in maths table comes from Mesen's source, so no
+    firmware file is needed.
+- **Tests:** checked with a hand-built cartridge.
+
 ### SNES SA-1
 
 - **The SA-1** (`snes::Sa1`, after Mesen) for Super Mario RPG, Kirby Super

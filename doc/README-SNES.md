@@ -65,7 +65,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX and the SA-1 (see below).
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the Super FX, the SA-1 and the Cx4 (see below).
 
 ### DSP-1 to DSP-4
 
@@ -156,6 +156,28 @@ step after every S-CPU bus cycle.
 - **Variable-length bit reader:** `$2258-$225B`, `$230C/$230D`.
 - **Not yet, as in Mesen:** the H/V timers, and the waits when both CPUs
   want the same memory. A BW-RAM access costs the SA-1 two cycles.
+
+### Cx4
+
+The Capcom Cx4 (`snes::Cx4`, after Mesen's `Cx4.cpp`) is used by Mega Man X2
+and X3. It is a 24-bit DSP at 20 MHz and needs no firmware file: its built-in
+table of maths (reciprocals, square roots, sines and tangents, 1024 words)
+comes from Mesen's source.
+
+- **Detection:** chipset `$Fx` with cartridge type `$10` (`$FFBF`).
+- **The chip:**
+  - **Program cache:** 256 16-bit instructions in two pages, loaded from ROM
+    with the ROM/RAM wait states.
+  - **Registers:** sixteen 24-bit registers, flags, and an 8-level call
+    stack.
+  - **Arithmetic:** a 48-bit multiplier.
+  - **Memory:** 3 KB of data RAM, and buffered bus reads and writes.
+  - **DMA:** between ROM, battery RAM and its data RAM. An invalid DMA
+    locks the chip.
+  - **Suspend.**
+  - **IRQ:** raised on STOP.
+- **SNES side:** the data RAM and registers are at `$6000-$7FFF` in banks
+  `$00-$3F`/`$80-$BF`. ROM and battery RAM keep the LoROM map.
 
 ### PPU
 
@@ -251,6 +273,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_cx4.cpp`: a hand-built Cx4 cartridge. A program is loaded
+  through the cache, and the test reads back the registers, the data ROM,
+  the data RAM, the multiplier and the STOP IRQ flag.
 - `test_snes_sa1.cpp`: hand-built SA-1 cartridges. The S-CPU starts the
   SA-1, which multiplies and divides, writes BW-RAM (plain and as a
   bitmap), runs a DMA, reads a bit stream and messages back.
@@ -273,8 +298,8 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 
 ## Not yet
 
-- Cartridge coprocessors other than the DSP-1..4, Super FX and SA-1
-  (S-DD1, Cx4, SPC7110, ST010/011...).
+- Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1 and Cx4
+  (S-DD1, SPC7110, ST010/011...).
 - The multiply/divide delays, DMA/HDMA timing to the clock, open-bus
   details, and the SPC700's TEST register.
 - PAL timing, the mouse, Super Scope and multitap.

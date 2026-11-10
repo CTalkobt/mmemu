@@ -134,6 +134,8 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 	src/plugins/machines/snes/main/snes_necdsp.cpp \
 	src/plugins/machines/snes/main/snes_gsu.cpp \
 	src/plugins/machines/snes/main/snes_sa1.cpp \
+	src/plugins/machines/snes/main/snes_cx4.cpp \
+	src/plugins/machines/snes/main/snes_cx4_rom.cpp \
 	src/plugins/machines/snes/main/spc700.cpp \
 	src/plugins/machines/snes/main/plugin_init.cpp
 
@@ -529,6 +531,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/snes/test/test_snes_necdsp.cpp \
 	src/plugins/machines/snes/test/test_snes_gsu.cpp \
 	src/plugins/machines/snes/test/test_snes_sa1.cpp \
+	src/plugins/machines/snes/test/test_snes_cx4.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
@@ -657,6 +660,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/snes/main/snes_necdsp.o \
 	src/plugins/machines/snes/main/snes_gsu.o \
 	src/plugins/machines/snes/main/snes_sa1.o \
+	src/plugins/machines/snes/main/snes_cx4.o \
+	src/plugins/machines/snes/main/snes_cx4_rom.o \
 	src/plugins/machines/snes/main/snes_apu.o \
 	src/plugins/machines/snes/main/snes_ppu.o \
 	src/plugins/machines/snes/main/machine_snes.o \
