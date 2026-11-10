@@ -62,6 +62,7 @@ public:
     // Execution
     int  step()  override;
     uint32_t lastStepWrites() const override { return m_lastWrites; }
+    void setAccessSync(std::function<void(int)> sync) override { m_sync = std::move(sync); }
     void reset() override;
 
     // Interrupts
@@ -144,7 +145,21 @@ private:
     uint8_t  m_writeKind[256] = {};
     const Opcode* m_writeKindFor = nullptr;
     uint32_t m_lastWrites = 0;
+    bool     m_isRmw[256] = {};         // read-modify-write: the read 3 cycles from the end
     void buildWriteKinds();
+    // Access sync (setAccessSync): the cycle of this instruction's data
+    // reads and writes (-1 outside step), and the interrupt poll
+    std::function<void(int)> m_sync;
+    int  m_readCycle = -1;
+    int  m_writeCycle = -1;
+    int  m_pollCycle = 0;
+    bool m_polled = true;
+    bool m_irqPending = false;          // polled: take an IRQ next
+    bool m_nmiPending = false;          // polled: an NMI edge
+    bool m_replay = false;              // the next read returns m_replayValue (SLO etc. use the RMW result)
+    uint8_t m_replayValue = 0;
+    void syncTo(int cycle);
+    void pollInterrupts();
     uint16_t m_branchTarget = 0;        // BPREL: the branch target
 
 public:

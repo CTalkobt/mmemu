@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <functional>
 #include "libmem/main/ibus.h"
 
 class ISignalLine;
@@ -113,6 +114,12 @@ public:
      *  0) wrote to the bus. 0 when the core doesn't say (all reads). For
      *  RDY/BA: a read cycle waits while BA is low, a write doesn't. */
     virtual uint32_t lastStepWrites() const { return 0; }
+    /** Cycle-exact device access (#304): when set, the core calls `sync(k)`
+     *  before its access in cycle k (from 0) of the instruction in step(),
+     *  so the machine can bring its devices up to that cycle first; and
+     *  polls its interrupt lines in the instruction's second-to-last cycle
+     *  (after a sync to it), as the 6502 does. A core without it ignores it. */
+    virtual void setAccessSync(std::function<void(int)> sync) { (void)sync; }
     virtual void reset() = 0;
 
     // Interrupts

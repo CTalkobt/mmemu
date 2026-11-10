@@ -1,3 +1,4 @@
+#include <memory>
 #include <algorithm>
 #include "json_machine_loader.h"
 #include "util/path_util.h"
@@ -1024,7 +1025,40 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     if (baSource) {
         // The CPU's read cycles wait while BA is low (RDY); its writes go on.
         // A DMA master (an REU) is given the source and waits itself.
-        desc->schedulerStep = [baSource](MachineDescriptor& d) {
+        // The devices are brought up to each CPU access before it happens
+        // (#304): the core calls back with the access's cycle.
+        struct StepClock {
+            MachineDescriptor* d = nullptr;
+            ICore* cpu = nullptr;
+            IBaSource* ba = nullptr;
+            int i = 0;          // next CPU cycle of this instruction
+            int t = 0;          // bus cycles so far, BA waits included
+            int ticked = 0;     // bus cycles the devices have run
+            // Through CPU cycle k: a read cycle waits while BA is low
+            void advance(int k) {
+                const uint32_t writes = cpu->lastStepWrites();
+                while (i <= k) {
+                    if (!(i < 32 && ((writes >> i) & 1)))
+                        while (ba->baLow(t - ticked)) ++t;
+                    ++t;
+                    ++i;
+                }
+                if (t > ticked) {
+                    if (d->ioRegistry) d->ioRegistry->tickAll(t - ticked);
+                    ticked = t;
+                }
+            }
+        };
+        auto clock = std::make_shared<StepClock>();
+        clock->d = desc;
+        clock->ba = baSource;
+        for (auto& s : desc->cpus)
+            if (s.cpu) {
+                clock->cpu = s.cpu;
+                s.cpu->setAccessSync([clock](int k) { clock->advance(k); });
+                break;
+            }
+        desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {
             int total = 0;
             if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
                 if (d.ioRegistry) d.ioRegistry->tickAll(total);
@@ -1032,6 +1066,13 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             }
             for (auto& s : d.cpus) {
                 if (s.active && s.cpu) {
+                    if (s.cpu == clock->cpu) {
+                        clock->i = clock->t = clock->ticked = 0;
+                        const int n = s.cpu->step();
+                        clock->advance(n - 1);
+                        total += clock->t;
+                        continue;
+                    }
                     const int n = s.cpu->step();
                     const uint32_t writes = s.cpu->lastStepWrites();
                     int t = 0;
