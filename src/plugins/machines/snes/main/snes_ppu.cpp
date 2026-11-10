@@ -268,7 +268,7 @@ uint8_t Ppu::read(uint8_t reg) {
         return v;
     case 0x3F:
         v = peek(reg);
-        m_latched = false;
+        if (m_ioBit) m_latched = false;
         m_hFlip = m_vFlip = false;
         m_ppu2Bus = v;
         return v;

@@ -24,6 +24,9 @@ struct MachineDescriptor;
  * Controllers: onGamepad (all twelve buttons), onJoystick (fire is B),
  * and the keyboard for pad 1: arrows, X (A), Z (B), S (X), A (Y), Q (L),
  * W (R), Return (Start), Tab or Shift (Select).
+ * Each controller port takes a pad, the mouse, the Super Scope or a
+ * multitap (snes_input.h; expansion slots port1/port2); onMouse drives the
+ * mouse or the Super Scope.
  */
 namespace snes {
 
@@ -53,7 +56,11 @@ enum Button : uint16_t {
     BTN_RIGHT = 0x0100, BTN_LEFT = 0x0200, BTN_DOWN = 0x0400, BTN_UP = 0x0800,
     BTN_START = 0x1000, BTN_SELECT = 0x2000, BTN_Y = 0x4000, BTN_B = 0x8000,
 };
+/** Player `port`'s pad (0-4): the pads in port 1 then port 2, a multitap's four in turn. */
 void setButtons(MachineDescriptor* m, int port, uint16_t buttons);
+/** What's in controller port `port` (0/1): "pad", "mouse", "superscope", "multitap" or "" (nothing). */
+bool setPortDevice(MachineDescriptor* m, int port, const std::string& device);
+std::string portDevice(MachineDescriptor* m, int port);
 
 /** The master clock (for tests). */
 uint64_t masterClock(MachineDescriptor* m);

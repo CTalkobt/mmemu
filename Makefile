@@ -545,6 +545,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/snes/test/test_snes_spc7110.cpp \
 	src/plugins/machines/snes/test/test_snes_obc1.cpp \
 	src/plugins/machines/snes/test/test_snes_apu.cpp \
+	src/plugins/machines/snes/test/test_snes_input.cpp \
 	src/plugins/machines/snes/test/test_snes_st018.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
