@@ -114,7 +114,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below), and the Sufami Turbo adapter.
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below), the Sufami Turbo adapter and the Satellaview.
 
 ### DSP-1 to DSP-4
 
@@ -213,6 +213,40 @@ cartridge, mapped as Mesen:
 - **BIOS:** `roms/snes/sufamiturbo.sfc` (262144 bytes, Mesen's
   `SufamiTurbo.sfc`). Not included (Bandai's copyright); without it the
   cartridge is refused with a message naming the file.
+
+### Satellaview (BS-X)
+
+Nintendo's satellite modem for the Super Famicom (`snes::Bsx`, after
+Mesen's `BsxCart`, `BsxMemoryPack`, `BsxSatellaview` and `BsxStream`):
+
+- **The BS-X cartridge** (chipset `$E5`): attaching its BIOS as a
+  cartridge runs it with no memory pack; a `.bs` memory pack attached as
+  a cartridge goes in it, with the BIOS from `roms/snes/bsx.bin` (Mesen's
+  `BS-X.bin`; not included, Nintendo's copyright; without it the pack is
+  refused with a message naming the file).
+- **Its registers** at `$00-$0F:5000` (bit 7; `$0E` and `$0F` are
+  write-only): a write is pending until `$0E:5000` is written. They lay
+  out the map: the pack as LoROM or HiROM, the 512 KB PSRAM and where it
+  sits, holes in the pack, and the BIOS over `$00-$3F`/`$80-$BF`. As
+  Mesen, the map is a table of 4 KB pages that each layout rewrites in
+  part, so pages an earlier layout set stay. The BIOS's RAM is also at
+  `$10-$1F:5000`, and is one save for every pack: `roms/snes/bsx.srm`
+  (Mesen's `BsxBios.srm`). The RESET button resets the registers.
+- **The memory pack** is flash: commands written to its first byte (`$10`
+  or `$40` a byte write that only clears bits, `$70` status, `$71`
+  extended status, `$75` vendor information, `$20 $D0` page erase, `$A7
+  $D0` chip erase). As Mesen, a `.bs` pack's changes aren't saved.
+- **The Satellaview** at `$2188-$219A`: two streams (channel, prefix
+  count, prefix, data, status) at 1000 packets of 22 bytes a second, the
+  stream/LED register and fixed status bytes. Channel 0 is the time: the
+  host's clock, or `snes::setSatellaviewDate` (from the next reset). Other
+  channels play `BSX<channel>-<n>.bin` from `roms/snes/satellaview/`
+  (Mesen's file names), going back to file 0 at the end.
+- **A pack slot on an ordinary cartridge** (game code `Zxxx`, maker
+  `$33`, as Mesen: Sound Novel Tsukuru and others): the pack at
+  `$C0-$EF` (LoROM) or `$20-$3F`/`$60-$7D`/`$A0-$BF`/`$E0-$FF` (HiROM),
+  an erased 1 MB pack at first, saved beside the ROM as `<rom>.bs`. As
+  Mesen, not on SA-1 cartridges.
 
 ### Super FX
 
@@ -481,6 +515,10 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     for pixel. The other three (PlotPixel at 192 lines) start 2 lines
     lower. Their HDMA table is the same as PlotLine's, which matches, so
     those three reference pictures look stale.
+- `test_snes_bsx.cpp`: a hand-built BS-X BIOS: its registers and the maps
+  they give (and the pages an earlier map leaves), the RAM's shared save, a
+  `.bs` pack's flash commands, the time channel's packet for a given date,
+  a channel played from a file, and a cartridge's pack slot and its save.
 - `test_snes_sufami.cpp`: a hand-built BIOS and two cartridges: the map
   and its mirrors, both RAMs and their saves, slot B through the expansion
   slot, and the message when the BIOS is missing.
@@ -528,6 +566,7 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
-  S-DD1, SPC7110, OBC1, ST010/011 and ST018, and the Sufami Turbo (the
-  Satellaview and the Super Game Boy).
+  S-DD1, SPC7110, OBC1, ST010/011 and ST018, the Sufami Turbo and the
+  Satellaview (the Super Game Boy, which needs a Game Boy).
+- The Satellaview's Soundlink audio and serial I/O (fixed values, as Mesen).
 - Two Justifiers from the host (the second gun is there for the API only).

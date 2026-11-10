@@ -6,6 +6,7 @@
 
 #include "machine_snes.h"
 #include "snes_apu.h"
+#include "snes_bsx.h"
 #include "snes_cx4.h"
 #include "snes_gsu.h"
 #include "snes_input.h"
@@ -111,6 +112,14 @@ struct Cart {
         std::string path, savePath;
     };
     std::unique_ptr<SufamiSlot> stB;
+    // The BS-X BIOS cartridge (chipset $E5) with its memory pack (`bsPack`, from a .bs file, before load())
+    std::unique_ptr<Bsx> bsx;
+    std::vector<uint8_t> bsPack;
+    // A memory pack slot on an ordinary cartridge (game code Zxxx, maker $33): saved as <rom>.bs (Mesen)
+    std::unique_ptr<BsxPack> slotPack;
+    std::vector<int32_t> slotMap;              // 4 KB pages: the pack's page, or -1
+    std::string slotPackPath;
+    std::vector<uint8_t> slotPackSaved;
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -135,6 +144,14 @@ struct Cart {
     }
     void loadSave(const std::string& path) {
         savePath = path;
+        if (slotPack && !path.empty()) {
+            // The pack in the slot: <rom>.bs if there is one, else an erased 1 MB pack (Mesen)
+            const auto dot = path.find_last_of('.');
+            slotPackPath = (dot == std::string::npos ? path : path.substr(0, dot)) + ".bs";
+            std::vector<uint8_t> data;
+            if (readFile(slotPackPath, data) && data.size() >= 0x1000) { slotPack = std::make_unique<BsxPack>(data); mapSlotPack(); }
+            slotPackSaved = slotPack->data();
+        }
         if (spc7110 && spc7110->hasRtc() && !path.empty()) {
             std::vector<uint8_t> data;
             if (readFile(rtcPath(), data)) spc7110->setRtcState(data);
@@ -153,6 +170,10 @@ struct Cart {
     }
     /** Write the battery RAM if it changed since the last write. */
     void flushSave() {
+        if (slotPack && !slotPackPath.empty() && slotPack->data() != slotPackSaved) {
+            std::ofstream f(slotPackPath, std::ios::binary | std::ios::trunc);
+            if (f && f.write((const char*)slotPack->data().data(), (std::streamsize)slotPack->data().size())) slotPackSaved = slotPack->data();
+        }
         if (stB && !stB->ram.empty() && !stB->savePath.empty() && stB->ram != stB->saved) {
             std::ofstream f(stB->savePath, std::ios::binary | std::ios::trunc);
             if (f && f.write((const char*)stB->ram.data(), (std::streamsize)stB->ram.size())) stB->saved = stB->ram;
@@ -387,12 +408,49 @@ struct Cart {
             st018 = std::make_unique<St018>(fw);
             battery = true;
         }
+        // The BS-X BIOS: chipset $E5 (as Mesen), with the pack from a .bs file or none
+        if (chips == 0xE5) {
+            bsx = std::make_unique<Bsx>(&rom, &sram, std::move(bsPack));
+            bsx->setStreamDir(firmwareDir() + "/satellaview");
+        }
+        // A pack slot: game code Zxxx and maker $33 (Mesen); the plain map only (as Mesen, not the SA-1's)
+        if (!bsx && headerAt >= 0x10 && rom[headerAt + 0x1A] == 0x33) {
+            std::string code;
+            for (int i = 0; i < 4; ++i) if (rom[headerAt - 0x0E + i] > ' ') code += (char)rom[headerAt - 0x0E + i];
+            if (code.size() == 4 && code[0] == 'Z') {
+                slotPack = std::make_unique<BsxPack>(std::vector<uint8_t>(0x100000, 0xFF));
+                mapSlotPack();
+            }
+        }
         // The SPC7110: chipset $Fx with cartridge type $00; $F9 has the RTC. Always battery-backed (as Mesen)
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x00) {
             spc7110 = std::make_unique<Spc7110>(&rom, &sram, chipLow == 0x09);
             battery = true;
         }
         return true;
+    }
+
+    /** The slot's pack over the cartridge's map (Mesen's MapBsxMemoryPack). */
+    void mapSlotPack() {
+        slotMap.assign(0x1000, -1);
+        const uint32_t n = slotPack->pages();
+        if (!n) return;
+        auto reg = [&](uint32_t b0, uint32_t b1, uint32_t a0, uint32_t a1, uint32_t inc) {
+            uint32_t page = 0;
+            for (uint32_t b = b0; b <= b1; ++b) {
+                page = (page + inc) % n;
+                for (uint32_t a = a0; a <= a1; a += 0x1000) { slotMap[b << 4 | a >> 12] = (int32_t)page; if (++page >= n) page = 0; }
+            }
+        };
+        if (map == Map::LoRom) {
+            reg(0xC0, 0xEF, 0x0000, 0x7FFF, 0);
+            reg(0xC0, 0xEF, 0x8000, 0xFFFF, 0);
+        } else {
+            reg(0x20, 0x3F, 0x8000, 0xFFFF, 8);
+            reg(0x60, 0x7D, 0x0000, 0xFFFF, 0);
+            reg(0xA0, 0xBF, 0x8000, 0xFFFF, 8);
+            reg(0xE0, 0xFF, 0x0000, 0xFFFF, 0);
+        }
     }
 
     std::string describe() const {
@@ -413,6 +471,8 @@ struct Cart {
         if (sdd1) s += ", S-DD1";
         if (obc1) s += ", OBC1";
         if (st018) s += ", ST018";
+        if (bsx) s += bsx->pack()->data().empty() ? ", BS-X, no pack" : ", BS-X, " + std::to_string(bsx->pack()->data().size() / 1024) + "K pack";
+        if (slotPack) s += ", BS-X pack slot";
         if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
         return s;
     }
@@ -648,6 +708,8 @@ public:
         if (m_cart && m_cart->st018) m_cart->st018->powerOn();
         if (m_cart && m_cart->sdd1) m_cart->sdd1->reset();
         if (m_cart && m_cart->spc7110) m_cart->spc7110->reset();
+        if (m_cart && m_cart->bsx) m_cart->bsx->powerOn();
+        if (m_cart && m_cart->slotPack) m_cart->slotPack->reset();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -835,6 +897,14 @@ private:
                 m_cart->dsp->runTo(m_master, m_masterHz);
                 return m_openBus = m_cart->dsp->read(sr);
             }
+            if (m_cart->bsx) {
+                const int v = m_cart->bsx->read(bank, a, m_openBus, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
+            if (m_cart->slotPack) {
+                const int32_t pg = m_cart->slotMap[(uint32_t)bank << 4 | a >> 12];
+                if (pg >= 0) return m_openBus = m_cart->slotPack->read((uint32_t)pg, a, peek);
+            }
             const int v = m_cart->read(bank, a);
             if (v >= 0) return m_openBus = (uint8_t)v;
         }
@@ -889,12 +959,22 @@ private:
                 m_cart->dsp->write(sr, v);
                 return;
             }
+            if (m_cart->bsx) { m_cart->bsx->write(bank, a, v); return; }
+            if (m_cart->slotPack) {
+                const int32_t pg = m_cart->slotMap[(uint32_t)bank << 4 | a >> 12];
+                if (pg >= 0) { m_cart->slotPack->write((uint32_t)pg, a, v); return; }
+            }
             m_cart->write(bank, a, v);
         }
     }
 
     // The B bus ($21xx): the PPU, the APU ports, the WRAM port
     uint8_t bRead(uint8_t r, bool peek) {
+        if (m_cart && m_cart->bsx) {
+            // The Satellaview at $2188-$219A
+            const int v = m_cart->bsx->satRead(r, m_master, m_masterHz, peek);
+            if (v >= 0) return (uint8_t)v;
+        }
         if (r == 0x37) {
             // SLHV: latch the H/V counters (when WRIO bit 7 is set); open bus
             if (!peek && (m_wrio & 0x80)) m_ppu->latchCounters(dot(), m_line);
@@ -916,6 +996,7 @@ private:
         return m_openBus;
     }
     void bWrite(uint8_t r, uint8_t v) {
+        if (m_cart && m_cart->bsx && m_cart->bsx->satWrite(r, v, m_master, m_masterHz)) return;
         if (r < 0x40) {
             if (r < 0x34) m_ppu->sync(m_line, m_hClock >> 2);     // the pixels so far with the old value
             m_ppu->write(r, v);
@@ -1527,9 +1608,27 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, co
     auto* bus = busOf(m);
     if (!bus) { err = "Not a SNES."; return false; }
     auto cart = std::make_unique<Cart>();
-    if (!cart->load(image, err)) return false;
+    std::string save = savePath;
+    // A BS-X memory pack (.bs): it goes in the BS-X BIOS cartridge, roms/snes/bsx.bin (Mesen's BS-X.bin)
+    const auto dot = label.find_last_of('.');
+    std::string ext = dot == std::string::npos ? "" : label.substr(dot + 1);
+    for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    if (ext == "bs") {
+        const std::string path = firmwareDir() + "/bsx.bin";
+        std::vector<uint8_t> bios;
+        if (!readFile(path, bios) || bios.size() < 0x8000) {
+            err = "This is a BS-X memory pack: the BS-X BIOS cartridge is needed in " + path;
+            return false;
+        }
+        cart->bsPack = image;
+        if (!cart->load(std::move(bios), err)) return false;
+    } else if (!cart->load(image, err)) {
+        return false;
+    }
+    // The BS-X BIOS's RAM is one save for every pack (Mesen's BsxBios.srm)
+    if (cart->bsx) save = firmwareDir() + "/bsx.srm";
     if (bus->cart()) bus->cart()->flushSave();
-    cart->loadSave(savePath);
+    cart->loadSave(save);
     const std::string d = cart->describe();
     bus->setCart(std::move(cart), label + " (" + d + ")");
     m->clockHz = (double)bus->masterHz();                 // real time: 50 frames a second for PAL
@@ -1581,6 +1680,13 @@ uint64_t masterClock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->m
 int scanline(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->line() : 0; }
 int hclock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->hclock() : 0; }
 bool isPal(MachineDescriptor* m) { auto* b = busOf(m); return b && b->pal(); }
+
+bool setSatellaviewDate(MachineDescriptor* m, int64_t date) {
+    auto* bus = busOf(m);
+    if (!bus || !bus->cart() || !bus->cart()->bsx) return false;
+    bus->cart()->bsx->setDate(date);
+    return true;
+}
 
 bool insertSufamiSlotB(MachineDescriptor* m, const std::string& path, std::string& err) {
     auto* bus = busOf(m);
@@ -1762,6 +1868,8 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         // The ST018 isn't reset by the button (as Mesen): the SNES resets it through $3804
         if (bus->cart() && bus->cart()->sdd1) bus->cart()->sdd1->reset();
         if (bus->cart() && bus->cart()->spc7110) bus->cart()->spc7110->reset();
+        if (bus->cart() && bus->cart()->bsx) bus->cart()->bsx->reset();
+        if (bus->cart() && bus->cart()->slotPack) bus->cart()->slotPack->reset();
         cpu->setNmiLine(false);
         cpu->setIrqLine(false);
         cpu->reset();

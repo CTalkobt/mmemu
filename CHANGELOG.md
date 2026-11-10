@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES Satellaview (BS-X)
+
+- **The BS-X cartridge and the Satellaview**, after Mesen: the BIOS
+  cartridge (chipset `$E5`) or a `.bs` memory pack in it (the BIOS from
+  `roms/snes/bsx.bin`, not included); its registers at `$00-$0F:5000` laying
+  out the pack, the 512 KB PSRAM and the BIOS as Mesen's page table; the
+  flash pack's commands; the Satellaview's streams at `$2188-$219A`, with
+  the time channel (the host's clock or `snes::setSatellaviewDate`) and
+  channels played from `roms/snes/satellaview/BSX<channel>-<n>.bin`. The
+  BIOS's RAM is one save, `roms/snes/bsx.srm`.
+- **Cartridges with a pack slot** (game code `Zxxx`, maker `$33`): the pack
+  mapped as Mesen, saved beside the ROM as `<rom>.bs`.
+- Tests: `snes_bsx_map`, `snes_bsx_pack`, `snes_bsx_satellaview`,
+  `snes_bsx_pack_slot`.
+
 ### SNES Sufami Turbo
 
 - **Bandai's Sufami Turbo**, mapped as Mesen: slot A's cartridge (`.st`, or
