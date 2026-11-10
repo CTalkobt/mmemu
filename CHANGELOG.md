@@ -7,6 +7,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Spectrum DivMMC
+
+- **A DivMMC** on the 48K/128K/+2's new `edge` slot
+  (`expansion edge divmmc card.img`), after Fuse's `divmmc.c`/`divxxx.c`.
+  - **Hardware:** 8 KB EEPROM, 128 KB RAM, ports `$E3`/`$E7`/`$EB`, CONMEM
+    and MAPRAM.
+  - **Automapping** on the traps Fuse uses, through a new opcode-fetch hook
+    on the Z80 (`IZ80FetchHook`).
+- **An SDHC card in SPI mode** (`spectrum::SpiSdCard`, after libspectrum's
+  `mmc.c`) on a raw image file; writes go to the file.
+- **esxDOS** (`roms/spectrum/esxmmc.bin`) is local only: it has no
+  redistribution licence.
+- **Checks:** esxDOS 0.8.9 boots from a FAT16 card, and `.ls` and `.mkdir`
+  work. Tests: `spectrum_spi_sd_card`, `spectrum_divmmc_paging`,
+  `spectrum48_divmmc_esxdos`.
+
 ### Atari second POKEY
 
 - **A second POKEY** (the stereo upgrade, after atari800's `STEREO_SOUND`)

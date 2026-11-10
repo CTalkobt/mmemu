@@ -11,3 +11,7 @@ retain the copyright. You may not sell the ROMs or embed the ROMs in
 hardware, although it is allowed to sell a product which contains the
 ROMs, so long as the charge is being made for the product, not for the
 ROMs themselves (Fuse `roms/README.copyright`).
+
+`esxmmc.bin` (the DivMMC's esxDOS firmware, `ESXMMC.BIN` from esxdos.org)
+is not included: esxDOS carries no redistribution licence. Put it here
+yourself; `.gitignore` keeps it local.

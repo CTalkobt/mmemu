@@ -284,3 +284,154 @@ TEST_CASE(spectrum128_ay_tone) {
     EXPECT_TRUE(text.find("168") != std::string::npos);
     delete m;
 }
+
+// The SD card in SPI mode (libspectrum mmc.c): idle after CMD0; CMD8 echoes
+// the check pattern; ACMD41 with HCS (after CMD8) leaves idle; CMD58's OCR
+// says SDHC; CMD17 reads a block (data token $FE, 512 bytes, CRC); CMD24
+// writes one to the file; CMD9's CSD gives the size.
+#include "plugins/machines/spectrum/main/spi_sd_card.h"
+#include "plugins/machines/spectrum/main/divmmc.h"
+#include <filesystem>
+#include <fstream>
+TEST_CASE(spectrum_spi_sd_card) {
+    const std::string path = (std::filesystem::temp_directory_path() / "mmemu_sd_test.img").string();
+    {
+        std::ofstream f(path, std::ios::binary);
+        for (int i = 0; i < 1024 * 1024; ++i) f.put((char)((i >> 9) + i));   // 1 MB, a pattern per block
+    }
+    spectrum::SpiSdCard card;
+    std::string err;
+    ASSERT(card.insert(path, err));
+    EXPECT_EQ(card.sectors(), 2048u);
+    auto cmd = [&](uint8_t c, uint32_t arg) {
+        card.write((uint8_t)(0x40 | c));
+        for (int s = 24; s >= 0; s -= 8) card.write((uint8_t)(arg >> s));
+        card.write(0x95);
+        return card.read();                          // R1
+    };
+    EXPECT_EQ(card.read(), 0xFF);                    // nothing to say yet
+    EXPECT_EQ(cmd(0, 0), 0x01);                      // idle
+    EXPECT_EQ(cmd(17, 0), 0x05);                     // a read while idle: illegal
+    EXPECT_EQ(cmd(8, 0x1AA), 0x01);
+    EXPECT_EQ(card.read(), 0x00); EXPECT_EQ(card.read(), 0x00);
+    EXPECT_EQ(card.read(), 0x01); EXPECT_EQ(card.read(), 0xAA);
+    EXPECT_EQ(cmd(55, 0), 0x01);
+    EXPECT_EQ(cmd(41, 0x40000000), 0x00);            // ready
+    EXPECT_EQ(cmd(58, 0), 0x00);
+    EXPECT_EQ(card.read(), 0xC0);                    // powered up, SDHC
+    for (int i = 0; i < 3; ++i) card.read();
+    EXPECT_EQ(cmd(9, 0), 0x00);
+    uint8_t csd[18];
+    for (auto& b : csd) b = card.read();
+    EXPECT_EQ(csd[0], 0xFE);
+    EXPECT_EQ(csd[1], 0x40);                         // CSD 2.0
+    EXPECT_EQ((csd[9] << 8) | csd[10], 1);           // C_SIZE: (1 + 1) x 512 KB
+    EXPECT_EQ(cmd(17, 3), 0x00);
+    EXPECT_EQ(card.read(), 0xFE);
+    bool same = true;
+    for (int i = 0; i < 512; ++i) if (card.read() != (uint8_t)(3 + 3 * 512 + i)) same = false;
+    EXPECT_TRUE(same);
+    EXPECT_EQ(cmd(17, 4096), 0x40);                  // past the end: parameter error
+    // CMD24: a block to sector 5
+    EXPECT_EQ(cmd(24, 5), 0x00);
+    card.write(0xFF);                                // gap before the token
+    card.write(0xFE);
+    for (int i = 0; i < 512; ++i) card.write((uint8_t)(0xA5 ^ i));
+    card.write(0); card.write(0);
+    EXPECT_EQ(card.read() & 0x1F, 0x05);             // data accepted
+    EXPECT_EQ(card.blocksWritten(), 1u);
+    card.eject();
+    {
+        std::ifstream f(path, std::ios::binary);
+        f.seekg(5 * 512);
+        bool written = true;
+        for (int i = 0; i < 512; ++i) if ((uint8_t)f.get() != (uint8_t)(0xA5 ^ i)) written = false;
+        EXPECT_TRUE(written);
+    }
+    std::filesystem::remove(path);
+}
+
+// The DivMMC's paging (Fuse divxxx.c, z80_ops.c): automapped after a fetch at
+// $0000/$0008/$0038/$0066/$04C6/$0562, before one at $3Dxx, out after one at
+// $1FF8-$1FFF; CONMEM maps it whatever; MAPRAM puts bank 3 at $0000
+// read-only and can't be cleared but by power-off; the $2000 bank from $E3.
+TEST_CASE(spectrum_divmmc_paging) {
+    std::vector<uint8_t> eeprom(0x2000, 0xE5);
+    spectrum::DivMmc d(eeprom);
+    d.reset(true);
+    EXPECT_TRUE(!d.paged());
+    d.before(0x0038); EXPECT_TRUE(!d.paged());       // the late traps map after the fetch
+    d.after(0x0038);  EXPECT_TRUE(d.paged());
+    EXPECT_EQ(d.read(0x0100), 0xE5);
+    d.after(0x1FFB);  EXPECT_TRUE(!d.paged());       // out after a fetch at $1FF8-$1FFF
+    d.before(0x3D2F); EXPECT_TRUE(d.paged());        // $3Dxx maps before the fetch
+    d.after(0x1FF8);
+    d.after(0x0039);  EXPECT_TRUE(!d.paged());       // not a trap
+    for (uint16_t t : {0x0000, 0x0008, 0x0066, 0x04C6, 0x0562}) {
+        d.after(t); EXPECT_TRUE(d.paged()); d.after(0x1FFF);
+    }
+    // CONMEM: banks at $2000, writable; the EEPROM write-protected
+    d.portWrite(0xE3, 0x80 | 5);
+    EXPECT_TRUE(d.paged());
+    d.write(0x2000, 0x55);
+    d.write(0x0000, 0x00);
+    EXPECT_EQ(d.read(0x2000), 0x55);
+    EXPECT_EQ(d.read(0x0000), 0xE5);
+    d.portWrite(0xE3, 0x80 | 3);
+    d.write(0x2000, 0x33);                           // bank 3
+    EXPECT_EQ(d.read(0x2000), 0x33);
+    d.portWrite(0xE3, 0x80 | 5);
+    EXPECT_EQ(d.read(0x2000), 0x55);
+    // MAPRAM: bank 3 at $0000 (read-only) once automapped; it stays set
+    d.portWrite(0xE3, 0x40 | 3);
+    EXPECT_TRUE(!d.paged());
+    d.after(0x0000);
+    EXPECT_EQ(d.read(0x0000), 0x33);
+    d.write(0x0000, 0x77); d.write(0x2000, 0x77);    // bank 3 read-only both ways
+    EXPECT_EQ(d.read(0x0000), 0x33);
+    d.portWrite(0xE3, 0x00);
+    EXPECT_EQ(d.control() & 0x40, 0x40);             // MAPRAM can't be cleared
+    d.reset(false);
+    EXPECT_EQ(d.control(), 0x40);                    // nor by the reset line
+    d.reset(true);
+    EXPECT_EQ(d.control(), 0x00);                    // only by power-off
+    // No card selected: $EB reads $FF
+    uint8_t v = 0;
+    EXPECT_TRUE(d.portRead(0x00EB, v));
+    EXPECT_EQ(v, 0xFF);
+    EXPECT_TRUE(!d.portRead(0x00E3, v));
+}
+
+// esxDOS (roms/spectrum/esxmmc.bin, local only) on a 48K with a blank card:
+// it automaps at power-on, talks to the card over SPI and reads blocks,
+// then hands back to the ROM, which is at $0000 again.
+TEST_CASE(spectrum48_divmmc_esxdos) {
+    MachineDescriptor* m = make(spectrum::Model::S48);
+    if (!m) return;
+    auto* slot = m->expansionSlot("edge");
+    ASSERT(slot != nullptr);
+    std::string err;
+    EXPECT_TRUE(!slot->install("divmmc", "/no/such/card.img", err));
+    const std::string path = (std::filesystem::temp_directory_path() / "mmemu_esx_test.img").string();
+    {
+        std::ofstream f(path, std::ios::binary);
+        std::vector<char> z(1024 * 1024, 0);
+        f.write(z.data(), (std::streamsize)z.size());
+    }
+    if (!slot->install("divmmc", path, err)) { printf("  (skipped: %s)\n", err.c_str()); delete m; std::filesystem::remove(path); return; }
+    EXPECT_EQ(slot->info(), "divmmc (DivMMC, card " + path + ")");
+    m->onReset(*m);
+    spectrum::DivMmc* d = spectrum::divMmcOf(m);
+    ASSERT(d);
+    run(m, 20);
+    EXPECT_TRUE(d->paged());                         // the reset vector's fetch mapped it
+    run(m, 7000000);                                 // two seconds
+    EXPECT_TRUE(d->card().blocksRead() > 0);         // it read the card (the MBR)
+    run(m, 7000000);
+    EXPECT_TRUE(!d->paged());
+    EXPECT_EQ(m->buses[0].bus->peek8(0x0000), 0xF3); // the ROM's DI
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(spectrum::divMmcOf(m) == nullptr);
+    delete m;
+    std::filesystem::remove(path);
+}

@@ -114,6 +114,33 @@ CLI `load`, `--mount` and MCP take these:
 
 A 48K snapshot runs on the 128K in 48K mode: `$7FFD` = `$30` (ROM 1, locked). A 128K snapshot is refused on the 48K.
 
+## DivMMC
+
+A DivMMC on the edge connector, after Fuse's `divmmc.c`/`divxxx.c` and libspectrum's `mmc.c`. It works on the 48K, 128K and +2.
+
+```
+expansion edge divmmc card.img     # CLI; MCP expansion and the GUI's Control > Expansions... too
+expansion edge divmmc              # no card
+expansion edge remove
+```
+
+- **Firmware:** esxDOS's 8 KB `ESXMMC.BIN` from [esxdos.org](http://www.esxdos.org) (0.8.9 is tested), copied to `roms/spectrum/esxmmc.bin`. It isn't in the repository, because esxDOS has no redistribution licence, and `.gitignore` keeps it out.
+- **Memory:** 8 KB EEPROM (write-protected, as Fuse's jumper defaults) and 128 KB of RAM in sixteen 8 KB banks.
+- **Ports:**
+  - `$E3` control: b7 CONMEM, b6 MAPRAM (only set; a power cycle clears it), b0-b3 the bank at `$2000`.
+  - `$E7` card select (b0 low: the card).
+  - `$EB` the SPI byte.
+- **Automapping** happens on an instruction's first opcode fetch (the Z80's `IZ80FetchHook`):
+  - A fetch at `$3D00-$3DFF` maps it in before the fetch.
+  - A fetch at `$0000`, `$0008`, `$0038`, `$0066`, `$04C6` or `$0562` maps it in after the fetch.
+  - A fetch at `$1FF8-$1FFF` maps it out after the fetch.
+- **While mapped:** `$0000-$1FFF` is the EEPROM, or bank 3 read-only under MAPRAM, and `$2000-$3FFF` is the selected bank. The tape traps and typed text then don't fire, since that's not the ROM's code.
+- **The SD card** is an SDHC card in SPI mode: CMD0, 8, 9, 10, 17, 24, 55, 58 and ACMD41.
+  - The image is a raw card: an MBR and a FAT16/FAT32 partition, as esxDOS wants.
+  - Writes go straight to the file.
+  - To make one, use `mkfs.fat` and `mcopy` (mtools) on a partitioned image, then copy esxDOS's `SYS`, `BIN` and `TMP` folders onto it.
+- **Checked by hand:** with esxDOS 0.8.9 and a 32 MB FAT16 card holding those folders, it boots: `hd0: ESXDOS, FAT16`, the `.SYS` files load, `.ls` lists the card, and `.mkdir` writes a directory that `fsck.fat` finds clean.
+
 ## Tests
 
 `bin/mmemu-test "spectrum*"`:
@@ -129,6 +156,9 @@ A 48K snapshot runs on the 128K in 48K mode: `$7FFD` = `$30` (ROM 1, locked). A 
 - `spectrum48_sna_snapshot`
 - `spectrum_z80_snapshots` (version 1 compressed, version 3 128K)
 - `spectrum128_ay_tone` (tone A at 261 Hz from 128 BASIC; a register read back)
+- `spectrum_spi_sd_card` (the card's commands, a block read and written)
+- `spectrum_divmmc_paging` (automap traps, CONMEM, MAPRAM, the banks)
+- `spectrum48_divmmc_esxdos` (esxDOS automaps at power-on, reads the card, hands back to the ROM; skipped without `esxmmc.bin`)
 
 `z80_fuse_core_tests` checks the Z80's per-cycle timing against Fuse's core tests.
 
