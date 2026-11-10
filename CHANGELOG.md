@@ -54,7 +54,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - **VICE's debug cartridge** (`DebugCart`, a write to `$D7FF` is the exit
   code), and the test `c64_vice_testprogs`. It runs VICE's PAL "exitcode"
   programs from a local copy of VICE's `testprogs` (`MMEMU_VICE_TESTPROGS`).
-  The Lorenz 2.15 suite passes 263 of 294. `MMEMU_VICE_SCREEN=1` prints a
+  `MMEMU_VICE_SCREEN=1` prints a
   failing program's screen.
 - **The 6526 CIA is cycle-exact for the old 6526** (C64 breadbox), after
   VICE's `ciatimer`/`ciacore`: the timers run a per-cycle pipeline of start,
@@ -71,11 +71,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
   BRK/IRQ/NMI sequences without a poll at the end (an NMI by their fourth
   cycle takes over the vector; a later one waits for the handler's first
   instruction). Fetches below the I/O area skip the sync (the new
-  `IBus::isPlainMemory`). Lorenz 2.15 now passes 282 of 294 (only the `trap10`-`17`
-  page-crossing tests and `cpuport` fail). Tests `cia_timer_start_delay`,
+  `IBus::isPlainMemory`). Tests `cia_timer_start_delay`,
   `cia_timer_force_load_delay`, `cia_timer_one_shot_stops`,
   `cia_icr_read_clears`, `cia_irq_delay`, `cia_irq_on_mask_enable`,
   `cia_timer_b_counts_ta_exactly`, `cia_tick_bulk_matches_single`.
+- **The 6510's port at `$00`/`$01` reads as VICE's:** all 8 direction bits
+  read back; bit 5 reads 0 as an input and bit 3 what was last driven on it;
+  the unconnected bits 6 and 7 keep the charge last driven on them for
+  350000 cycles.
+- **Lorenz's 6510 suite (2.15) passes:** all 294 programs, before 263; and
+  VICE's `REU/reutiming`.
 
 ### C64 and C128: the VIC-II takes the bus (#266)
 

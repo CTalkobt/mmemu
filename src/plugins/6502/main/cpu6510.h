@@ -149,6 +149,15 @@ private:
     uint8_t     m_data    = 0x3F; // C64 pull-ups: bits 0-5 high
     uint8_t     m_pinMask = 0x3F; // port pins (0x7F on the 8502)
     ISignalLine* m_bit6   = nullptr;
+    // As VICE's pport: the last value driven on each pin (an input keeps it),
+    // and the charge on the unconnected pins (6 and 7; 7 on the 8502), which
+    // read back what was last driven on them until it falls off
+    uint8_t     m_dataOut = 0x3F;
+    uint8_t     m_cap     = 0x00;            // the charged bits
+    uint64_t    m_capFall[8] = {};           // the cycle each bit's charge is gone
+    static constexpr uint64_t FALL_OFF_CYCLES = 350000;   // VICE's C64 6510
+    uint8_t unconnected() const { return (uint8_t)(0xC0 & ~m_pinMask); }
+    void charge(uint8_t bits, uint8_t values);
 
     SignalLine  m_loram;
     SignalLine  m_hiram;
@@ -162,7 +171,7 @@ private:
 
 public:
     // Internal helpers (called from PortBus)
-    uint8_t portRead() const;
+    uint8_t portRead();
 
     void ddrWrite(uint8_t val);
     void dataWrite(uint8_t val);

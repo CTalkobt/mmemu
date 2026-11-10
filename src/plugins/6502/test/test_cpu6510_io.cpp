@@ -7,21 +7,34 @@ TEST_CASE(cpu6510_io_port_logic) {
     FlatMemoryBus bus("system", 16);
     cpu.setDataBus(&bus);
     
-    // Default state: DDR=0, DATA=0x3F. Effective level should be all 1s (pull-ups).
-    // Bits 6-7 are hardcoded to 1.
-    EXPECT_EQ(cpu.portRead(), 0xFF);
-    
+    // Default state: DDR=0, DATA=0x3F, as VICE: bits 0-2 and 4 pulled up,
+    // bit 3 what was last driven (1), bit 5 low as an input, bits 6-7
+    // (unconnected) uncharged
+    EXPECT_EQ(cpu.portRead(), 0x1F);
+    EXPECT_EQ(cpu.getPortBus()->read8(0x0000), 0x00);
+
     // Set all as outputs
     cpu.ddrWrite(0x3F);
     cpu.dataWrite(0x00);
-    // Port should read 0xC0 (bits 0-5 are 0, bits 6-7 are 1)
-    EXPECT_EQ(cpu.portRead(), 0xC0);
-    
+    EXPECT_EQ(cpu.portRead(), 0x00);
+
     cpu.dataWrite(0x15); // 010101
+    EXPECT_EQ(cpu.portRead(), 0x15);
+
+    // All 8 DDR bits read back; bits 6-7 as outputs charge their pins, and
+    // keep the charge as inputs (for a while: VICE's 350000 cycles)
+    cpu.ddrWrite(0xFF);
+    EXPECT_EQ(cpu.getPortBus()->read8(0x0000), 0xFF);
+    cpu.dataWrite(0xD5);
     EXPECT_EQ(cpu.portRead(), 0xD5);
+    cpu.ddrWrite(0x3F);
+    EXPECT_EQ(cpu.portRead() & 0xC0, 0xC0);
+    cpu.ddrWrite(0x00);                  // bit 3 keeps 0, bit 5 reads 0
+    EXPECT_EQ(cpu.portRead(), 0xD7);
     
     // Test signal mapping
     // Bit 0 = LORAM, Bit 1 = HIRAM, Bit 2 = CHAREN
+    cpu.ddrWrite(0x3F);
     cpu.dataWrite(0x00); // All signals low
     EXPECT_EQ(cpu.getSignalLine("loram")->get(), false);
     EXPECT_EQ(cpu.getSignalLine("hiram")->get(), false);
