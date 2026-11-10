@@ -114,7 +114,7 @@ one powers the console on; the machine's reset is the RESET button.
     (Mesen's and snes9x's format). The file is loaded when the cartridge goes
     in, written within a second of a change, and written again when the
     cartridge is removed.
-  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below), the Sufami Turbo adapter and the Satellaview.
+  - **Coprocessors:** the DSP-1, 1B, 2, 3 and 4, the ST010 and ST011, the Super FX, the SA-1, the Cx4, the S-DD1, the SPC7110, the OBC1 and the ST018 (see below), the Sufami Turbo adapter, the Satellaview and the MSU-1.
 
 ### DSP-1 to DSP-4
 
@@ -247,6 +247,28 @@ Mesen's `BsxCart`, `BsxMemoryPack`, `BsxSatellaview` and `BsxStream`):
   `$C0-$EF` (LoROM) or `$20-$3F`/`$60-$7D`/`$A0-$BF`/`$E0-$FF` (HiROM),
   an erased 1 MB pack at first, saved beside the ROM as `<rom>.bs`. As
   Mesen, not on SA-1 cartridges.
+
+### MSU-1
+
+byuu's add-on for homebrew and fan patches (`snes::Msu1`, after Mesen's
+`Msu1` and `PcmReader`): a data file read a byte at a time and CD-quality
+audio tracks, at `$2000-$2007` of banks `$00-$3F`/`$80-$BF`, on any
+cartridge.
+
+- **Found as Mesen does:** `<rom>.msu` beside the ROM (the data; tracks
+  `<rom>-<n>.pcm`), or `msu1.rom` in the ROM's folder (tracks
+  `track-<n>.pcm`). The cartridge's description then ends `, MSU-1`.
+- **Registers:** the status (revision 1, track missing, playing,
+  repeating; never busy, as Mesen), the data port, `S-MSU1` at
+  `$2002-$2007`; written, the data pointer (taking effect at `$2003`), the
+  track (loaded at `$2005`), the volume and play/repeat.
+- **Audio:** a track is `MSU1`, a 32-bit loop point in samples, then
+  44.1 kHz 16-bit stereo. It is resampled to the DSP's 32 kHz (Hermite, as
+  Mesen) and added to the DSP's output times volume / 255; at its end it
+  stops (playing clears) or goes back to the loop point.
+- **Unlike Mesen:** the audio follows the emulated time, not the host's
+  audio pulls; and a track ending just as a batch of samples does still
+  loops (Mesen's stalls). Power-on starts the MSU-1 afresh.
 
 ### Super FX
 
@@ -452,7 +474,8 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
   - **Voices:** BRR decoding with its filters, ADSR and the four GAIN
     modes, Gaussian interpolation, pitch modulation, and noise.
   - **Echo:** the echo buffer with its 8-tap FIR, plus KON/KOFF/ENDX timing.
-  - **Output:** mixed to mono and resampled to 44.1 kHz.
+  - **Output:** mixed to mono and resampled to 44.1 kHz (a DSP sample
+    that makes two output samples gives the same value to both).
 
 ## Input
 
@@ -519,6 +542,9 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
   they give (and the pages an earlier map leaves), the RAM's shared save, a
   `.bs` pack's flash commands, the time channel's packet for a given date,
   a channel played from a file, and a cartridge's pack slot and its save.
+- `test_snes_msu1.cpp`: hand-made data and tracks beside a ROM (and
+  `msu1.rom`): the ID, the status, the data port, a missing track, the
+  audio at full and half volume, pausing, a track's end and its loop.
 - `test_snes_sufami.cpp`: a hand-built BIOS and two cartridges: the map
   and its mirrors, both RAMs and their saves, slot B through the expansion
   slot, and the message when the BIOS is missing.
@@ -566,7 +592,7 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 ## Not yet
 
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
-  S-DD1, SPC7110, OBC1, ST010/011 and ST018, the Sufami Turbo and the
-  Satellaview (the Super Game Boy, which needs a Game Boy).
+  S-DD1, SPC7110, OBC1, ST010/011 and ST018, the Sufami Turbo, the
+  Satellaview and the MSU-1 (the Super Game Boy, which needs a Game Boy).
 - The Satellaview's Soundlink audio and serial I/O (fixed values, as Mesen).
 - Two Justifiers from the host (the second gun is there for the API only).

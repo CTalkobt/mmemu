@@ -10,6 +10,7 @@
 #include "snes_cx4.h"
 #include "snes_gsu.h"
 #include "snes_input.h"
+#include "snes_msu1.h"
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "snes_sa1.h"
@@ -120,6 +121,8 @@ struct Cart {
     std::vector<int32_t> slotMap;              // 4 KB pages: the pack's page, or -1
     std::string slotPackPath;
     std::vector<uint8_t> slotPackSaved;
+    // The MSU-1 (as Mesen: <rom>.msu or msu1.rom beside the ROM): $2000-$2007
+    std::unique_ptr<Msu1> msu1;
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -473,6 +476,7 @@ struct Cart {
         if (st018) s += ", ST018";
         if (bsx) s += bsx->pack()->data().empty() ? ", BS-X, no pack" : ", BS-X, " + std::to_string(bsx->pack()->data().size() / 1024) + "K pack";
         if (slotPack) s += ", BS-X pack slot";
+        if (msu1) s += ", MSU-1";
         if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
         return s;
     }
@@ -595,6 +599,7 @@ public:
 
     void setCart(std::unique_ptr<Cart> c, std::string label) {
         m_cart = std::move(c); m_label = std::move(label);
+        m_apu->setExtraAudio(m_cart && m_cart->msu1 ? m_cart->msu1.get() : nullptr);
         updateRegion();
     }
     /** The console's region: Auto follows the cartridge's header (no cartridge: NTSC), as Mesen. */
@@ -710,6 +715,7 @@ public:
         if (m_cart && m_cart->spc7110) m_cart->spc7110->reset();
         if (m_cart && m_cart->bsx) m_cart->bsx->powerOn();
         if (m_cart && m_cart->slotPack) m_cart->slotPack->reset();
+        if (m_cart && m_cart->msu1) m_cart->msu1->powerOn();
     }
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
@@ -853,6 +859,10 @@ private:
         if (!(bank & 0x40)) {
             if (a < 0x2000) return m_openBus = m_wram[a];
             if (a >= 0x2100 && a < 0x2200) return m_openBus = bRead((uint8_t)a, peek);
+            if (a >= 0x2000 && a < 0x2008 && m_cart && m_cart->msu1) {
+                if (!peek) syncApu();      // its audio so far with the old state
+                return m_openBus = m_cart->msu1->read(a, peek);
+            }
             if (a == 0x4016 || a == 0x4017) {
                 // The port's data lines; the rest open bus ($4017's bits 2-4 always set)
                 if (!peek) processAutoJoypad();
@@ -919,6 +929,7 @@ private:
         if (!(bank & 0x40)) {
             if (a < 0x2000) { m_wram[a] = v; return; }
             if (a >= 0x2100 && a < 0x2200) { bWrite((uint8_t)a, v); return; }
+            if (a >= 0x2000 && a < 0x2008 && m_cart && m_cart->msu1) { syncApu(); m_cart->msu1->write(a, v); return; }
             if (a == 0x4016) {
                 // OUT0 is the CPU's bit 0 or the auto read's strobe (Mesen)
                 if (m_out0 != v) {
@@ -1604,7 +1615,7 @@ uint16_t padBits(uint32_t b) {
 }  // namespace
 
 bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err,
-                     const std::string& savePath) {
+                     const std::string& savePath, const std::string& romPath) {
     auto* bus = busOf(m);
     if (!bus) { err = "Not a SNES."; return false; }
     auto cart = std::make_unique<Cart>();
@@ -1627,6 +1638,7 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, co
     }
     // The BS-X BIOS's RAM is one save for every pack (Mesen's BsxBios.srm)
     if (cart->bsx) save = firmwareDir() + "/bsx.srm";
+    cart->msu1 = Msu1::open(romPath);
     if (bus->cart()) bus->cart()->flushSave();
     cart->loadSave(save);
     const std::string d = cart->describe();

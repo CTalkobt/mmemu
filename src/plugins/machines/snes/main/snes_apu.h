@@ -26,6 +26,8 @@
 
 namespace snes {
 
+class AudioSource;
+
 class Apu : public IOHandler, public IAudioOutput {
 public:
     static constexpr uint32_t CLOCK_HZ = 1024000;
@@ -73,6 +75,8 @@ public:
     int nativeSampleRate() const override { return m_sampleRate; }
     int pullSamples(float* buffer, int maxSamples) override;
     void setSampleRate(int hz) { m_sampleRate = hz > 0 ? hz : DEFAULT_SAMPLE_RATE; }
+    /** Mixed into the DSP's output (the MSU-1); null for nothing. Not owned. */
+    void setExtraAudio(AudioSource* src) { m_extra = src; }
 
     // The SPC700's view of $0000-$FFFF (for its bus)
     uint8_t smpRead(uint16_t a);
@@ -141,9 +145,11 @@ private:
     uint64_t m_phase = 0;
     double m_acc = 0;
     int m_accCount = 0;
+    float m_lastOut = 0;
     static constexpr int AUDIO_BUF = 16384;
     std::vector<float> m_audioBuf;
     int m_audioRead = 0, m_audioWrite = 0, m_audioCount = 0;
+    AudioSource* m_extra = nullptr;
 };
 
 }  // namespace snes

@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES MSU-1
+
+- **The MSU-1**, after Mesen: with `<rom>.msu` beside the ROM (tracks
+  `<rom>-<n>.pcm`) or `msu1.rom` in its folder (tracks `track-<n>.pcm`),
+  `$2000-$2007` give the status, the data port and `S-MSU1`, and take the
+  data pointer, the track, the volume and play/repeat. Tracks (44.1 kHz
+  PCM with a loop point) are resampled into the DSP's output (Hermite, as
+  Mesen). Test: `snes_msu1`.
+- **Fix:** the APU's resampling to 44.1 kHz gave silence for about one
+  output sample in four (where a DSP sample makes two); it now repeats the
+  sample.
+
 ### SNES Satellaview (BS-X)
 
 - **The BS-X cartridge and the Satellaview**, after Mesen: the BIOS

@@ -38,9 +38,11 @@ MachineDescriptor* create(bool superFamicom = false, std::string* err = nullptr)
  * `savePath`: where a battery-backed cartridge keeps its RAM (Mesen's and
  * snes9x's `<rom>.srm`): loaded now, written back within a second of a
  * change and when the cartridge is removed. Empty: not saved.
+ * `romPath`: the ROM's file, for the MSU-1 (`<rom>.msu` or `msu1.rom` in its
+ * folder, as Mesen); empty: none.
  */
 bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label, std::string& err,
-                     const std::string& savePath = "");
+                     const std::string& savePath = "", const std::string& romPath = "");
 /** Unplug the cartridge (its battery RAM is saved first). */
 void removeCartridge(MachineDescriptor* m);
 /** Write the battery RAM out now if it changed (also done once a second). */

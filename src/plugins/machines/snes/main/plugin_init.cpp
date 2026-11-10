@@ -24,7 +24,7 @@ public:
     bool attach(IBus*, MachineDescriptor* m) override {
         std::vector<uint8_t> data;
         std::string err;
-        if (!readFile(m_path, data) || !snes::insertCartridge(m, data, displayName(), err, snes::savePathFor(m_path))) return false;
+        if (!readFile(m_path, data) || !snes::insertCartridge(m, data, displayName(), err, snes::savePathFor(m_path), m_path)) return false;
         m_machine = m;
         return true;
     }
