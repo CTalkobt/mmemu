@@ -55,6 +55,10 @@ public:
 
     explicit Acia6551(uint32_t base = 0xFD00);
     void setMode(Mode m) { m_mode = m; updateCharTime(); }
+    /** The command register after a hardware reset: $02 on MOS's 6551, $00
+     *  on Synertek's SY6551 (the Super Serial Card's: its firmware sets the
+     *  chip up only when it reads 0; AppleWin SerialComms.cpp). */
+    void setResetCommand(uint8_t v) { m_resetCmd = v; m_cmd = v; }
     Mode mode() const { return m_mode; }
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     ~Acia6551() override;
@@ -112,6 +116,7 @@ private:
 
     uint8_t m_cmd = 0x02, m_ctrl = 0, m_status = 0x10, m_ectrl = 0;
     Mode m_mode = Mode::Normal;
+    uint8_t m_resetCmd = 0x02;
     uint8_t m_txData = 0, m_rxData = 0;
     uint8_t m_dataMask = 0xFF;
     bool m_irq = false;

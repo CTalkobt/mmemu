@@ -33,7 +33,7 @@ Acia6551::~Acia6551() { closeTcp(); }
 void Acia6551::reset() {
     // Hardware reset: command 000000x0 (receive IRQ off), control 0, status
     // with transmit empty (and no carrier without a far end)
-    m_cmd = CMD_RX_IRQ_OFF;
+    m_cmd = m_resetCmd;
     m_ctrl = 0;
     m_ectrl = 0;
     m_status = SR_TDRE;
@@ -116,10 +116,10 @@ bool Acia6551::connected() const {
     return m_link == Link::Loopback || (m_link == Link::Tcp && m_clientFd >= 0) || m_txHook;
 }
 
-// A modem asserts DSR while it's there and DCD while it has a carrier; the
+// A modem asserts DSR while it's there and DCD as its &C says; the
 // other links assert both while connected
 uint8_t Acia6551::lineBits() const {
-    if (m_link == Link::Modem && m_modem) return (uint8_t)(m_modem->carrier() ? 0 : SR_DCD);
+    if (m_link == Link::Modem && m_modem) return (uint8_t)(m_modem->dcd() ? 0 : SR_DCD);
     return connected() ? 0 : (uint8_t)(SR_DCD | SR_DSR);
 }
 

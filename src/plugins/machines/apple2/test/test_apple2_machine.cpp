@@ -16,6 +16,7 @@
 #include <cstring>
 #include <algorithm>
 #include <set>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -1546,5 +1547,50 @@ TEST_CASE(apple2_mockingboard) {
     // Taken out: $C400 floats again and the IRQ count stops
     ASSERT(slot->install("", "", err));
     EXPECT_TRUE(m->ioRegistry->findHandler("Mockingboard (slot 4)") == nullptr);
+    delete m;
+}
+
+// A Super Serial Card in slot 2 with its own firmware (AppleWin's SSC.rom)
+// and the Hayes modem behind it: PR#2 sends "ATI" out of the 6551 (Apple
+// characters, bit 7 set); the firmware set the chip up from the DIP
+// switches (9600 8N1); the modem answers. The card's $C800 ROM came in when
+// its $C200 page was used.
+#include "plugins/machines/apple2/main/super_serial.h"
+#include "plugins/devices/acia6551/main/hayes_modem.h"
+TEST_CASE(apple2_super_serial_card) {
+    std::string err;
+    MachineDescriptor* m = apple2::create(apple2::Model::IIPlus, &err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("slot2");
+    ASSERT(slot != nullptr);
+    EXPECT_TRUE(!slot->install("ssc", "57600", err));
+    if (!slot->install("ssc", "", err)) { printf("  (skipped: %s)\n", err.c_str()); delete m; return; }
+    EXPECT_EQ(slot->info(), std::string("ssc (Super Serial Card, 9600 bps)"));
+    auto* ssc = find<apple2::SuperSerialCard>(m);
+    ASSERT(ssc);
+    EXPECT_EQ(ssc->dipSwitch1(), 0xE0);              // 9600, communications mode
+    std::vector<uint8_t> sent;
+    ssc->acia().onTransmit([&](uint8_t b) { sent.push_back(b); });
+    ASSERT(ssc->attachSerial("modem"));
+    m->onReset(*m);
+    run(m, 2000000);
+    m->onKey("reset", true); m->onKey("reset", false);
+    run(m, 1000000);
+    IBus* bus = m->buses[0].bus;
+    EXPECT_EQ(bus->peek8(0xC200), 0x2C);             // the firmware's slot page
+    find<IKeyboardMatrix>(m)->enqueueText("PR#2:PRINT \"ATI\":PR#0\n");
+    // Collect what the modem sends back (the firmware isn't reading it)
+    std::string got;
+    for (int i = 0; i < 3000000; i += 20) {
+        run(m, 20);
+        if (ssc->devicePeek(9) & 0x08) got += (char)HayesModem::petsciiToAscii((uint8_t)ssc->deviceIo(8, nullptr, 0));
+    }
+    EXPECT_TRUE(sent == std::vector<uint8_t>({0xC1, 0xD4, 0xC9, 0x8D}));
+    EXPECT_EQ(ssc->devicePeek(11), 0x1E);            // control: 9600 8N1, as SW1 says
+    EXPECT_TRUE(got.find("MMEMU HAYES MODEM") != std::string::npos);
+    EXPECT_TRUE(got.find("OK") != std::string::npos);
+    EXPECT_TRUE(screenHas(m, "]"));                  // back at the prompt
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(find<apple2::SuperSerialCard>(m) == nullptr);
     delete m;
 }

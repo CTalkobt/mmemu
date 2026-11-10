@@ -140,14 +140,40 @@ After MAME's `a2eramworks3.cpp` and AppleWin's `Memory.cpp`:
 - A power cycle selects bank 0 (AppleWin GH#1414); Control-RESET keeps the
   bank.
 
-## Mockingboard
+## Peripheral cards
 
-On the II, II+, IIe and enhanced IIe, slots 4 and 5 can each take a Sweet Micro Systems Mockingboard while the machine runs (`slot4` and `slot5` expansion slots):
+On the II, II+, IIe and enhanced IIe, slots 1, 2, 4, 5 and 7 can each take a card while the machine runs (`slot1` ... `slot7` expansion slots). Slot 6 is the Disk II's; slot 3 is the IIe's 80-column firmware's.
 
 ```
 expansion slot4 mockingboard     # CLI; MCP expansion and the GUI's Control > Expansions... too
+expansion slot2 ssc 9600         # a Super Serial Card; its DIP switches' rate
+serial modem                     # the SSC's far end: a Hayes modem (ATDT host:port)
 expansion slot4 remove
 ```
+
+How the bus serves a card:
+- `$C0n0-$C0nF` (n = slot + 8) are its registers, and `$Cn00-$CnFF` its page.
+- An access to that page selects its `$C800-$CFFF` expansion ROM, until `$CFFF` is touched (I/O STROBE). On a IIe this applies only with INTCXROM off.
+- Its /IRQ goes to the 6502.
+
+### Super Serial Card
+
+Apple's serial card, after AppleWin's `SerialComms.cpp`, with its firmware (`roms/apple2/SSC.rom`, 2 KB from AppleWin's resources):
+
+| Address | |
+|---------|--|
+| `$C0n1` | DIP switch 1: the baud rate in bits 4-7 (the 6551's rate code; 9600 = `$E`), the mode in bits 0-1 (0: communications) |
+| `$C0n2` | DIP switch 2: b7 two stop bits, b5 7 bits, b3/b2 parity, b1 no LF after CR, b0 CTS (0 while a far end is there) |
+| `$C0n8-$C0nB` | the 6551: data, status, command, control |
+| `$Cn00-$CnFF` | the firmware's last page; `$C800-$CFFF` its 2 KB |
+
+- **Defaults:** as AppleWin's, 9600 8N1, communications mode, no line feeds, interrupts on. The option sets the rate: 300, 1200, 2400, 9600 or 19200.
+- **The 6551 is a Synertek SY6551:** a hardware reset clears its command register, and the firmware sets the chip up from the switches only when it reads 0. MOS's 6551 resets it to `$02`, which the firmware takes as already set up.
+- **Sending:** the firmware sends only while DSR and DCD are on. The modem keeps DCD on by default (`&C0`), as a Hayes modem does.
+- **Characters:** an Apple's characters go out with bit 7 set (`ATI` is `C1 D4 C9 8D`). The modem's command mode ignores bit 7, so `PR#2` followed by `PRINT "ATDT host:port"` dials.
+- **Test:** `apple2_super_serial_card` runs `PR#2:PRINT "ATI":PR#0` in Applesoft on a II+ and gets the modem's ID and OK back.
+
+### Mockingboard
 
 It follows AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`:
 
@@ -157,7 +183,7 @@ It follows AppleWin's `Mockingboard.cpp` and MAME's `a2mockingbd.cpp`:
 - **IRQ:** both VIAs' IRQs go to the 6502's /IRQ, which also reaches the CPU on the II, II+ and IIe now. Their timers pace most music players.
 - **Sound:** the six voices (left chip and right chip) are mixed with the speaker into the machine's one mono output. One voice at full volume is about a quarter of the speaker's swing.
 - **Not emulated:** the speech chip (the SSI-263 on the "C" and Sound II), the Phasor's modes, and the IIc and IIgs (the IIc has no slots; the IIgs is a separate machine).
-- **IIe:** the slot's page answers only with INTCXROM off, as any card's does.
+
 
 ## IIc
 
