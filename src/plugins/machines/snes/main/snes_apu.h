@@ -47,7 +47,9 @@ public:
 
     /** The main CPU's side of the ports ($2140-$2143, `port` 0-3). */
     uint8_t cpuRead(int port) const { return m_toCpu[port & 3]; }
-    void cpuWrite(int port, uint8_t v) { m_fromCpu[port & 3] = v; }
+    /** `visibleFrom`: the APU cycle the SPC700 first sees it in (Mesen: a write in the second half of a
+     *  cycle is seen a cycle later); 0 for at once. */
+    void cpuWrite(int port, uint8_t v, uint64_t visibleFrom = 0);
     /** What the SPC700 has written for the main CPU / the main CPU for it. */
     uint8_t portToCpu(int port) const { return m_toCpu[port & 3]; }
     uint8_t portFromCpu(int port) const { return m_fromCpu[port & 3]; }
@@ -120,6 +122,9 @@ private:
     Dsp m_dsp;
     Timer m_timers[3];
     uint8_t m_fromCpu[4] = {}, m_toCpu[4] = {};
+    uint8_t m_fromCpuNew[4] = {};      // the CPU's last writes, which the SPC700 sees from m_portsAt
+    uint64_t m_portsAt = 0;
+    bool m_portsPending = false;
     uint8_t m_dspAddr = 0;
     uint8_t m_ramReg[2] = {};
     bool m_iplOn = true;

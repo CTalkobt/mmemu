@@ -721,7 +721,13 @@ private:
             m_ppu->write(r, v);
             return;
         }
-        if (r < 0x80) { syncApu(); m_apu->cpuWrite(r & 3, v); return; }
+        if (r < 0x80) {
+            syncApu();
+            // In half APU cycles: a write in a cycle's second half is seen from the next (Mesen)
+            const uint64_t half = m_master / MASTER_HZ * (2 * Apu::CLOCK_HZ) + (m_master % MASTER_HZ) * (2 * Apu::CLOCK_HZ) / MASTER_HZ;
+            m_apu->cpuWrite(r & 3, v, (half >> 1) + (half & 1));
+            return;
+        }
         switch (r) {
         case 0x80: m_wram[m_wramAddr & 0x1FFFF] = v; m_wramAddr = (m_wramAddr + 1) & 0x1FFFF; break;
         case 0x81: m_wramAddr = (m_wramAddr & 0x1FF00) | v; break;

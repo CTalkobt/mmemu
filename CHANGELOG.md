@@ -7,6 +7,13 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES APU port latch delay
+
+- **The SPC700 sees a port write a cycle late** when the main CPU writes
+  `$2140-$2143` in the second half of an SPC700 cycle, as Mesen (Kishin
+  Douji Zenki needs it). A write in the first half is seen at once. Test
+  `snes_apu_port_latch_delay`.
+
 ### Spectrum DivMMC
 
 - **A DivMMC** on the 48K/128K/+2's new `edge` slot
