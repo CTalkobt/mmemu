@@ -437,6 +437,8 @@ public:
         m_irqFired = false;
         m_dmaPending = m_hdmaPending = m_hdmaInitPending = m_dmaStartDelay = false;
         m_hdmaInitDue = false; m_hdmaInitAt = 12; m_refreshAt = REFRESH_AT; m_dmaClock = 0; m_cpuSpeed = 8;
+        m_dmaLockCycle = ~0ull; m_nmiFlagAt = ~1ull; m_irqSetAt = 0;
+        m_nmiEvent = 0; m_nmiArmed = false;
         m_nmitimen = 0; m_wrio = 0xFF;
         m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
         m_aluShift = 0; m_multCounter = m_divCounter = 0; m_aluPrev = m_cpu ? m_cpu->cycles() : 0;
@@ -461,7 +463,10 @@ public:
 
     /** After a CPU step: the interrupt lines, the APU brought up to time. */
     void endStep() {
-        m_cpu->setNmiLine(m_nmiFlag && (m_nmitimen & 0x80));
+        // DMA in the instruction's last cycle holds interrupts off for one more (Mesen's IrqLock); an NMI
+        // only if its flag rose in that cycle
+        if (m_dmaLockCycle == m_cpu->cycles()) m_cpu->holdInterrupts(m_nmiFlagAt == m_dmaLockCycle);
+        m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (m_nmitimen & 0x80));
         m_cpu->setIrqLine(m_irqFlag || (m_cart && ((m_cart->gsu && m_cart->gsu->irq()) || (m_cart->sa1 && m_cart->sa1->cpuIrq()) || (m_cart->cx4 && m_cart->cx4->irq()))));
         syncApu();
     }
@@ -476,7 +481,9 @@ public:
     void advance(int clocks) {
         while (clocks > 0) {
             int next = m_lineClocks;
-            if (m_hdmaInitDue) next = m_hdmaInitAt;
+            if (m_nmiEvent == 1) next = 2;
+            else if (m_nmiEvent == 2) next = 6;
+            else if (m_hdmaInitDue) next = m_hdmaInitAt;
             else if (!m_refreshDone) next = m_refreshAt;
             else if (!m_hdmaDone) next = HDMA_AT;
             const int step = std::min(clocks, std::max(0, next - m_hClock));
@@ -485,7 +492,16 @@ public:
             clocks -= step;
             checkIrq();
             if (m_hClock >= next) {
-                if (m_hdmaInitDue) {
+                if (m_nmiEvent == 1) {
+                    // Clock 2: the NMI flag ($4210) rises on the NMI line, and falls on line 0 (Mesen)
+                    if (m_line == 0) { m_nmiFlag = false; m_nmiArmed = false; m_nmiEvent = 0; }
+                    else { m_nmiFlag = true; m_nmiEvent = 2; }
+                } else if (m_nmiEvent == 2) {
+                    // Clock 6: the CPU sees it
+                    m_nmiArmed = true;
+                    m_nmiFlagAt = m_cpu->cycles();
+                    m_nmiEvent = 0;
+                } else if (m_hdmaInitDue) {
                     // Line 0: the HDMA channels are set up for the frame (run at the CPU's next cycle but one)
                     m_hdmaInitDue = false;
                     m_hdmaInitPending = true;
@@ -515,7 +531,7 @@ public:
     /** The start of a CPU cycle of `speed` clocks: pending DMA/HDMA runs here (Mesen's ProcessCpuCycle). */
     void cpuCycle(int speed) {
         m_cpuSpeed = speed;
-        if (m_dmaPending || m_hdmaPending || m_hdmaInitPending) processPendingDma();
+        if ((m_dmaPending || m_hdmaPending || m_hdmaInitPending) && processPendingDma()) m_dmaLockCycle = m_cpu->cycles();
     }
 
     // ------------------------------------------------------------------
@@ -685,6 +701,11 @@ private:
             if (!peek && (m_wrio & 0x80)) m_ppu->latchCounters(dot(), m_line);
             return m_openBus;
         }
+        if (r < 0x34) {
+            // Write-only: $21x4-6 and $21x8-A give PPU1's last value read, the rest the CPU's open bus (Mesen)
+            const uint8_t lo = r & 0x0F;
+            return ((lo >= 4 && lo <= 6) || (lo >= 8 && lo <= 0xA)) ? m_ppu->peek(r) : m_openBus;
+        }
         if (r < 0x40) return peek ? m_ppu->peek(r) : m_ppu->read(r);
         if (r < 0x80) { syncApu(); return m_apu->cpuRead(r & 3); }
         if (r == 0x80) {
@@ -714,17 +735,19 @@ private:
         switch (a) {
         case 0x4210: {
             const uint8_t v = (uint8_t)((m_nmiFlag << 7) | (m_openBus & 0x70) | 0x02);
-            if (!peek) m_nmiFlag = false;
+            // The flag stays set if read in the first clocks of the NMI line (Mesen; Terranigma needs it)
+            if (!peek && (m_hClock >= 6 || m_line != m_vblankLine)) m_nmiFlag = false;
             return v;
         }
         case 0x4211: {
             const uint8_t v = (uint8_t)((m_irqFlag << 7) | (m_openBus & 0x7F));
-            if (!peek) m_irqFlag = false;
+            // Nor can the IRQ flag be cleared in the 4 clocks after it's set (Mesen)
+            if (!peek && m_master - m_irqSetAt >= 4) m_irqFlag = false;
             return v;
         }
         case 0x4212: {
             const bool vblank = m_line >= m_vblankLine;
-            const bool hblank = m_hClock < 4 || m_hClock >= 274 * 4;
+            const bool hblank = m_hClock < 4 || m_hClock > 274 * 4;
             return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
         }
         case 0x4213: return m_wrio;
@@ -798,7 +821,7 @@ private:
         case 0x4200:
             m_nmitimen = v;
             if (!(v & 0x30)) m_irqFlag = false;
-            m_cpu->setNmiLine(m_nmiFlag && (v & 0x80));
+            m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (v & 0x80));
             break;
         case 0x4201:
             if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(dot(), m_line);
@@ -1053,7 +1076,7 @@ private:
         if ((!hEn && !vEn) || m_irqFired) return;
         if (vEn && m_line != m_vtime) return;
         const int at = hEn ? m_htime * 4 + 14 : 10;
-        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; }
+        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; m_irqSetAt = m_master - (uint64_t)(m_hClock - at); }
     }
 
     void endOfLine() {
@@ -1063,7 +1086,7 @@ private:
         if (m_joyBusy > 0) --m_joyBusy;
         if (++m_line == m_lines) {
             m_line = 0;
-            m_nmiFlag = false;
+            m_nmiEvent = 1;                               // the flag falls at clock 2
             // A frame is 262 lines; interlaced, the even field's is 263
             m_ppu->startFrame();
             m_vblankLine = m_ppu->vblankLine();
@@ -1077,7 +1100,7 @@ private:
         if (m_line == m_vblankLine) {
             m_ppu->startVblank();
             if (m_cart && m_cart->battery && ++m_saveFrames >= 60) { m_saveFrames = 0; m_cart->flushSave(); }
-            m_nmiFlag = true;
+            m_nmiEvent = 1;                               // the flag rises at clock 2, the CPU sees it at 6
             if (m_nmitimen & 0x01) {
                 // Auto joypad read: the pads' 16 bits into $4218-$421F (3 lines busy)
                 m_joy.fill(0);
@@ -1106,6 +1129,10 @@ private:
     bool m_dmaPending = false, m_hdmaPending = false, m_hdmaInitPending = false, m_dmaStartDelay = false;
     bool m_hdmaInitDue = false;
     int m_hdmaInitAt = 12, m_refreshAt = REFRESH_AT, m_dmaClock = 0, m_cpuSpeed = 8;
+    uint64_t m_irqSetAt = 0;
+    int m_nmiEvent = 0;            // 1: the NMI flag changes at clock 2 of this line; 2: the CPU sees it at 6
+    bool m_nmiArmed = false;
+    uint64_t m_dmaLockCycle = ~0ull, m_nmiFlagAt = ~1ull;   // the CPU cycles DMA last ran in and the NMI flag last rose in
 
     uint8_t m_nmitimen = 0, m_wrio = 0xFF, m_mpyA = 0xFF, m_mpyB = 0xFF, m_hdmaen = 0;
     uint16_t m_dividend = 0xFFFF, m_quotient = 0, m_product = 0, m_htime = 0x1FF, m_vtime = 0x1FF;

@@ -130,7 +130,8 @@ TEST_CASE(snes_krom_spc_music) {
 }
 
 // krom's PPU and Super FX demos, run for 3 seconds each and saved as PNGs into
-// MMEMU_SNES_SHOTS (a directory) to look at; skipped without it
+// MMEMU_SNES_SHOTS (a directory) to look at; skipped without it. MMEMU_SNES_SHOTS_ONLY=<text>
+// runs only those whose name contains it
 TEST_CASE(snes_krom_ppu_shots) {
     const char* out = std::getenv("MMEMU_SNES_SHOTS");
     const fs::path dir = fs::path(romDir()) / "PPU";
@@ -143,7 +144,9 @@ TEST_CASE(snes_krom_ppu_shots) {
             if (e.path().extension() == ".sfc" && e.path().string().find("GSUTest") == std::string::npos) roms.push_back(e.path());
     }
     std::sort(roms.begin(), roms.end());
+    const char* only = std::getenv("MMEMU_SNES_SHOTS_ONLY");     // a part of the name, to run fewer
     for (auto& rom : roms) {
+        if (only && rom.filename().string().find(only) == std::string::npos) continue;
         std::ifstream f(rom, std::ios::binary);
         std::vector<uint8_t> img((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         std::string err;
