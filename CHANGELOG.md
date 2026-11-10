@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES H/V IRQ counters
+
+- **The H/V timer IRQ follows Mesen's counters**: H and V tick every 4
+  clocks (also during DRAM refresh). The `$4211` flag is set a tick after
+  they match `$4207-$420A` and the CPU sees it the tick after. `VTIME` 0 now
+  fires at clock 6 of line 0, and `HTIME` 339 at the start of the next line
+  (it never fired before). Writing `$4207-$420A` to the current position
+  raises the IRQ; a `$4211` read before the CPU has seen it doesn't clear
+  it. Test `snes_hv_irq_timing`.
+
 ### SNES APU port latch delay
 
 - **The SPC700 sees a port write a cycle late** when the main CPU writes

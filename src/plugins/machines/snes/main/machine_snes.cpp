@@ -434,10 +434,10 @@ public:
         m_master = 0; m_hClock = 0; m_line = 0;
         m_lines = 262; m_vblankLine = 225; m_lineClocks = LINE_CLOCKS;
         m_refreshDone = m_hdmaDone = false;
-        m_irqFired = false;
+        m_hCounter = m_vCounter = 0; m_irqLevel = false; m_needIrq = 0; m_cpuIrq = m_irqSample = false;
         m_dmaPending = m_hdmaPending = m_hdmaInitPending = m_dmaStartDelay = false;
         m_hdmaInitDue = false; m_hdmaInitAt = 12; m_refreshAt = REFRESH_AT; m_dmaClock = 0; m_cpuSpeed = 8;
-        m_dmaLockCycle = ~0ull; m_nmiFlagAt = ~1ull; m_irqSetAt = 0;
+        m_dmaLockCycle = ~0ull; m_nmiFlagAt = ~1ull;
         m_nmiEvent = 0; m_nmiArmed = false;
         m_nmitimen = 0; m_wrio = 0xFF;
         m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
@@ -467,7 +467,7 @@ public:
         // only if its flag rose in that cycle
         if (m_dmaLockCycle == m_cpu->cycles()) m_cpu->holdInterrupts(m_nmiFlagAt == m_dmaLockCycle);
         m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (m_nmitimen & 0x80));
-        m_cpu->setIrqLine(m_irqFlag || (m_cart && ((m_cart->gsu && m_cart->gsu->irq()) || (m_cart->sa1 && m_cart->sa1->cpuIrq()) || (m_cart->cx4 && m_cart->cx4->irq()))));
+        m_cpu->setIrqLine(m_irqSample || (m_cart && ((m_cart->gsu && m_cart->gsu->irq()) || (m_cart->sa1 && m_cart->sa1->cpuIrq()) || (m_cart->cx4 && m_cart->cx4->irq()))));
         syncApu();
     }
     void syncApu() {
@@ -486,11 +486,14 @@ public:
             else if (m_hdmaInitDue) next = m_hdmaInitAt;
             else if (!m_refreshDone) next = m_refreshAt;
             else if (!m_hdmaDone) next = HDMA_AT;
+            const bool refresh = m_nmiEvent == 0 && !m_hdmaInitDue && !m_refreshDone;
             const int step = std::min(clocks, std::max(0, next - m_hClock));
+            const int from = m_hClock;
             m_hClock += step;
             m_master += (uint64_t)step;
             clocks -= step;
-            checkIrq();
+            // The H/V counters tick; one due as DRAM refresh starts waits for its end (Mesen)
+            irqTicks(from, m_hClock - (refresh && m_hClock >= next ? 1 : 0));
             if (m_hClock >= next) {
                 if (m_nmiEvent == 1) {
                     // Clock 2: the NMI flag ($4210) rises on the NMI line, and falls on line 0 (Mesen)
@@ -508,8 +511,11 @@ public:
                     m_dmaStartDelay = true;
                 } else if (!m_refreshDone) {
                     m_refreshDone = true;
+                    const int at = m_hClock;
                     m_hClock += 40;                       // DRAM refresh: the CPU waits
                     m_master += 40;
+                    irqTicks(at, m_hClock);
+                    if ((at & 3) == 2) irqTick(m_hClock);
                 } else if (!m_hdmaDone) {
                     m_hdmaDone = true;
                     if (m_line < m_vblankLine) {
@@ -532,6 +538,7 @@ public:
     void cpuCycle(int speed) {
         m_cpuSpeed = speed;
         if ((m_dmaPending || m_hdmaPending || m_hdmaInitPending) && processPendingDma()) m_dmaLockCycle = m_cpu->cycles();
+        m_irqSample = m_cpuIrq;                           // the CPU takes the IRQ line as its cycle starts
     }
 
     // ------------------------------------------------------------------
@@ -748,7 +755,7 @@ private:
         case 0x4211: {
             const uint8_t v = (uint8_t)((m_irqFlag << 7) | (m_openBus & 0x7F));
             // Nor can the IRQ flag be cleared in the 4 clocks after it's set (Mesen)
-            if (!peek && m_master - m_irqSetAt >= 4) m_irqFlag = false;
+            if (!peek && m_irqFlag && !m_needIrq) setIrqFlag(false);   // not in the 4 clocks after it's set
             return v;
         }
         case 0x4212: {
@@ -826,7 +833,7 @@ private:
         switch (a) {
         case 0x4200:
             m_nmitimen = v;
-            if (!(v & 0x30)) m_irqFlag = false;
+            if (!(v & 0x30)) setIrqFlag(false);
             m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (v & 0x80));
             break;
         case 0x4201:
@@ -834,10 +841,10 @@ private:
             m_wrio = v;
             break;
         case 0x4202: case 0x4203: case 0x4204: case 0x4205: case 0x4206: aluWrite(a, v); break;
-        case 0x4207: m_htime = (uint16_t)((m_htime & 0x100) | v); break;
-        case 0x4208: m_htime = (uint16_t)((m_htime & 0xFF) | (v & 1) << 8); break;
-        case 0x4209: m_vtime = (uint16_t)((m_vtime & 0x100) | v); break;
-        case 0x420A: m_vtime = (uint16_t)((m_vtime & 0xFF) | (v & 1) << 8); break;
+        case 0x4207: m_htime = (uint16_t)((m_htime & 0x100) | v); updateIrqLevel(m_hClock); break;
+        case 0x4208: m_htime = (uint16_t)((m_htime & 0xFF) | (v & 1) << 8); updateIrqLevel(m_hClock); break;
+        case 0x4209: m_vtime = (uint16_t)((m_vtime & 0x100) | v); updateIrqLevel(m_hClock); break;
+        case 0x420A: m_vtime = (uint16_t)((m_vtime & 0xFF) | (v & 1) << 8); updateIrqLevel(m_hClock); break;
         case 0x420B: generalDma(v); break;
         case 0x420C: m_hdmaen = v; break;
         case 0x420D: m_fastRom = v & 1; break;
@@ -1077,18 +1084,39 @@ private:
         return true;
     }
 
-    void checkIrq() {
+    // The H/V IRQ (Mesen's ProcessIrqCounters). The counters tick every 4 clocks, at clocks 2, 6, 10...
+    // of the line: H is reset at 6 and 10 and counts from 14; V counts at 6 (and is reset at 2 of line
+    // 0). When they come to match $4207-$420A the flag ($4211) is set a tick later and the CPU sees it
+    // the tick after (a tick later still for H=0).
+    void irqTicks(int from, int to) {
+        for (int h = (from & ~3) + 2 + (((from & 3) >= 2) ? 4 : 0); h <= to; h += 4) irqTick(h);
+    }
+    void irqTick(int h) {
+        if (m_needIrq) {
+            if (--m_needIrq == 1) setIrqFlag(true);
+            else if (m_needIrq == 0) m_cpuIrq = m_irqFlag;
+        }
+        if (h > 10) ++m_hCounter;
+        else if (h == 10) m_hCounter = 0;
+        else if (h == 6) { m_hCounter = 0; if (m_line > 0) ++m_vCounter; }
+        else if (h == 2) { ++m_hCounter; if (m_line == 0) m_vCounter = 0; }
+        updateIrqLevel(h);
+    }
+    void updateIrqLevel(int h) {
         const bool hEn = m_nmitimen & 0x10, vEn = m_nmitimen & 0x20;
-        if ((!hEn && !vEn) || m_irqFired) return;
-        if (vEn && m_line != m_vtime) return;
-        const int at = hEn ? m_htime * 4 + 14 : 10;
-        if (m_hClock >= at) { m_irqFlag = true; m_irqFired = true; m_irqSetAt = m_master - (uint64_t)(m_hClock - at); }
+        if (!hEn && !vEn) { m_irqLevel = false; return; }
+        const bool level = (!hEn || m_htime == m_hCounter) && (!vEn || m_vtime == m_vCounter);
+        if (!m_irqLevel && level) m_needIrq = (hEn && h == 6) ? 3 : 2;
+        m_irqLevel = level;
+    }
+    void setIrqFlag(bool on) {
+        m_irqFlag = on && (m_nmitimen & 0x30);
+        if (!m_irqFlag) m_cpuIrq = false;
     }
 
     void endOfLine() {
         m_hClock -= m_lineClocks;
         m_refreshDone = m_hdmaDone = false;
-        m_irqFired = false;
         if (m_joyBusy > 0) --m_joyBusy;
         if (++m_line == m_lines) {
             m_line = 0;
@@ -1115,7 +1143,6 @@ private:
                 m_joyBusy = 3;
             }
         }
-        checkIrq();
     }
 
     BusConfig m_cfg;
@@ -1130,12 +1157,15 @@ private:
     int m_hClock = 0, m_line = 0;
     int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
     int m_saveFrames = 0;
-    bool m_refreshDone = false, m_hdmaDone = false, m_irqFired = false;
+    bool m_refreshDone = false, m_hdmaDone = false;
     // DMA/HDMA requests waiting for the CPU's next cycle
     bool m_dmaPending = false, m_hdmaPending = false, m_hdmaInitPending = false, m_dmaStartDelay = false;
     bool m_hdmaInitDue = false;
     int m_hdmaInitAt = 12, m_refreshAt = REFRESH_AT, m_dmaClock = 0, m_cpuSpeed = 8;
-    uint64_t m_irqSetAt = 0;
+    // The H/V IRQ: the counters, the match, ticks until the flag/CPU see it, the CPU's line and its sample
+    uint16_t m_hCounter = 0, m_vCounter = 0;
+    bool m_irqLevel = false, m_cpuIrq = false, m_irqSample = false;
+    uint8_t m_needIrq = 0;
     int m_nmiEvent = 0;            // 1: the NMI flag changes at clock 2 of this line; 2: the CPU sees it at 6
     bool m_nmiArmed = false;
     uint64_t m_dmaLockCycle = ~0ull, m_nmiFlagAt = ~1ull;   // the CPU cycles DMA last ran in and the NMI flag last rose in
