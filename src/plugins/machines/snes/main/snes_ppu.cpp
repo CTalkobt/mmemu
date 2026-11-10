@@ -219,7 +219,7 @@ uint8_t Ppu::peek(uint8_t reg) const {
     case 0x3A: return (uint8_t)(m_vramPrefetch >> 8);
     case 0x3B: return m_cgHigh ? (uint8_t)((m_cgram[m_cgAddr] >> 8) | (m_ppu2Bus & 0x80)) : (uint8_t)m_cgram[m_cgAddr];
     case 0x3E: return (uint8_t)((m_timeOver << 7) | (m_rangeOver << 6) | (m_ppu1Bus & 0x10) | 0x01);
-    case 0x3F: return (uint8_t)((m_interlaceField << 7) | (m_latched << 6) | (m_ppu2Bus & 0x20) | 0x03);
+    case 0x3F: return (uint8_t)((m_interlaceField << 7) | (m_latched << 6) | (m_ppu2Bus & 0x20) | (m_pal << 4) | 0x03);
     default: return m_ppu1Bus;
     }
 }

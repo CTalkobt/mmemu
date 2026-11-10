@@ -7,6 +7,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES PAL
+
+- **PAL cartridges run on a PAL console**, chosen by the header's
+  destination code as Mesen's Auto region: a 21.281 MHz master clock, 312
+  lines a frame (313 for the even interlaced field), `$213F` bit 4, and real
+  time at 50 frames a second. The cartridge line shows `PAL`. Test
+  `snes_pal_region`.
+
 ### SNES H/V IRQ counters
 
 - **The H/V timer IRQ follows Mesen's counters**: H and V tick every 4

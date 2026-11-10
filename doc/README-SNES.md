@@ -12,7 +12,7 @@ contributors) and the fullsnes / Anomie documentation:
 
 | Profile | Machine |
 |---------|---------|
-| `snes` | NTSC SNES: master clock 21.477 MHz, 262 lines of 1364 clocks |
+| `snes` | The SNES: master clock 21.477 MHz, 262 lines of 1364 clocks (NTSC); a PAL cartridge makes it PAL |
 | `superfamicom` | The Super Famicom: the same machine here |
 
 There is no ROM in the console: plug a cartridge in (`cart game.sfc` in the
@@ -41,6 +41,11 @@ one powers the console on; the machine's reset is the RESET button.
   Banks `$7E-$7F` hold all 128 KB of work RAM. Banks `$40-$7D` and
   `$C0-$FF` are the cartridge's.
 
+- **PAL** (as Mesen): a cartridge whose header destination code (`$FFD9`)
+  is `$02-$0C`, `$11` or `$12` runs on a PAL console: a 21.281 MHz master
+  clock, 312 lines a frame (313 for the even interlaced field), 50 frames
+  a second at real time, and `$213F` bit 4 set. Vertical blank still
+  starts at line 225 (240 with overscan).
 - **Timing**: a line is 1364 master clocks (341 dots; dots 323 and 327
   take 6 clocks) and a frame 262 lines. Interlaced, every other frame has
   263 lines; otherwise line 240 of every other frame is 4 clocks short. The
@@ -465,4 +470,4 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- PAL timing, the mouse, Super Scope and multitap.
+- The mouse, Super Scope and multitap; choosing the region by hand.

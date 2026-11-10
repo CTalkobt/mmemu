@@ -569,3 +569,33 @@ TEST_CASE(snes_hv_irq_timing) {
     EXPECT_TRUE(snes::scanline(m) == 30 && snes::masterClock(m) - w <= 14);
     delete m;
 }
+
+// PAL (as Mesen): by the header's destination code, 312 lines at 21.281 MHz, $213F bit 4
+TEST_CASE(snes_pal_region) {
+    auto check = [](uint8_t dest, bool pal) {
+        std::vector<uint8_t> img(0x8000, 0);
+        const char* title = "MMSIM PAL            ";
+        for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+        img[0x7FD5] = 0x20; img[0x7FD7] = 0x05; img[0x7FD9] = dest;
+        img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+        img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+        img[0] = 0x80; img[1] = 0xFE;
+        std::string err;
+        MachineDescriptor* m = snes::create(false, &err);
+        if (!snes::insertCartridge(m, img, "pal.sfc", err)) { delete m; return false; }
+        bool ok = snes::isPal(m) == pal;
+        ok = ok && m->clockHz == (pal ? 21281370.0 : 21477272.0);
+        ok = ok && ((m->buses[0].bus->peek8(0x00213F) & 0x10) != 0) == pal;
+        int maxLine = 0;
+        const uint64_t start = snes::masterClock(m);
+        while (snes::masterClock(m) - start < 1364ull * 330) { m->schedulerStep(*m); maxLine = std::max(maxLine, snes::scanline(m)); }
+        ok = ok && maxLine == (pal ? 311 : 261);
+        if (!ok) std::printf("  dest %02X: pal %d, %.0f Hz, last line %d\n", dest, snes::isPal(m), m->clockHz, maxLine);
+        delete m;
+        return ok;
+    };
+    EXPECT_TRUE(check(0x01, false));     // North America
+    EXPECT_TRUE(check(0x00, false));     // Japan
+    EXPECT_TRUE(check(0x02, true));      // Europe
+    EXPECT_TRUE(check(0x11, true));      // Australia
+}
