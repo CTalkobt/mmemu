@@ -90,6 +90,13 @@
             { "id": "georam", "type": "georam", "name": "GeoRAM",
               "description": "GeoRAM / NeoRAM: 512K-4M, a 256-byte page at $DE00 ($DFFE page, $DFFF block); or an image file",
               "options": ["512K", "1M", "2M", "4M"], "default": "512K", "optionKey": "size" } ] },
+        { "name": "sid2",
+          "description": "A second SID (a stereo-SID cartridge or mod), mixed with the first; its address is the option",
+          "devices": [
+            { "id": "sid", "type": "6581", "name": "SID2",
+              "description": "A second 6581 SID: $D420 (the common mod), $D500, $DE00 or $DF00 (cartridges)",
+              "options": ["D420", "D500", "DE00", "DF00"], "default": "D420", "optionKey": "base",
+              "linkTo": { "device": "SID", "as": "mix" } } ] },
         { "name": "rs232",
           "description": "An RS-232 cartridge on the expansion port (through a port expander, beside a RAM expansion); its far end: CLI serial",
           "devices": [

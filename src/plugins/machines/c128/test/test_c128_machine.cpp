@@ -639,3 +639,43 @@ TEST_CASE(c128_swiftlink_modem) {
     EXPECT_TRUE(m->ioRegistry->findHandler("SwiftLink") == nullptr);
     delete m;
 }
+
+// A second SID on the C128 at $D420 (the first SID is mirrored through
+// $D4xx, so the second answers its 32 bytes first): its tone is heard
+// through the first's output; $D500 is refused (the MMU)
+#include "plugins/devices/sid6581/main/sid6581.h"
+#include <algorithm>
+TEST_CASE(c128_second_sid) {
+    std::string err;
+    MachineDescriptor* m = boot(err);
+    if (!m) { printf("  (skipped: %s)\n", err.c_str()); return; }
+    auto* slot = m->expansionSlot("sid2");
+    ASSERT(slot != nullptr);
+    EXPECT_TRUE(!slot->install("sid", "D500", err));
+    ASSERT(slot->install("sid", "D420", err));
+    EXPECT_EQ(slot->info(), std::string("sid (SID2, D420)"));
+    IBus* bus = m->buses[0].bus;
+    auto* sid = dynamic_cast<SID6581*>(m->ioRegistry->findHandler("SID"));
+    ASSERT(sid != nullptr);
+    auto level = [&](uint64_t ticks) {
+        std::vector<float> drain(65536);
+        while (sid->pullSamples(drain.data(), (int)drain.size()) > 0) {}
+        run(m, ticks);
+        std::vector<float> buf(16384);
+        const int n = sid->pullSamples(buf.data(), (int)buf.size());
+        float lo = 1, hi = -1;
+        for (int i = 0; i < n; ++i) { lo = std::min(lo, buf[i]); hi = std::max(hi, buf[i]); }
+        return n > 0 ? hi - lo : 0.0f;
+    };
+    const float quiet = level(50000);
+    bus->write8(0xD420, 0x00); bus->write8(0xD421, 0x1D);
+    bus->write8(0xD425, 0x00); bus->write8(0xD426, 0xF0);
+    bus->write8(0xD438, 0x0F);
+    bus->write8(0xD424, 0x21);
+    const float loud = level(100000);
+    if (!(loud > quiet + 0.05f)) printf("  quiet %.3f loud %.3f\n", quiet, loud);
+    EXPECT_TRUE(loud > quiet + 0.05f);
+    ASSERT(slot->install("", "", err));
+    EXPECT_TRUE(m->ioRegistry->findHandler("SID2") == nullptr);
+    delete m;
+}

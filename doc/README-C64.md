@@ -234,6 +234,17 @@ ATDT 192.168.1.10:23
 
 The C128 and MEGA65 have the same `rs232` slot. `serial modem` also works on the Plus/4's built-in ACIA and the IIc's serial ports, since they are 6551s too.
 
+### 2.13 A second SID
+The `sid2` expansion slot takes a second 6581, as fitted by stereo-SID cartridges and mods. The option is its address: `$D420` (the usual mod), `$D500`, `$DE00` or `$DF00`. The SID accepts any 32-byte boundary in `$D420-$D7E0` or `$DE00-$DFE0`.
+
+```
+expansion sid2 sid D420
+expansion sid2 sid DE00
+expansion sid2 remove
+```
+
+The front ends play one sound device, so the second SID's output is mixed into the first's, half of each (the JSON's `"linkTo": {"device": "SID", "as": "mix"}`, `SID6581::setLinkedDevice`). The C128 has the same slot at `$D420`, `$D700`, `$DE00` or `$DF00`; its second SID answers before the first, which is mirrored through `$D4xx`. Stereo output is not done yet.
+
 The slot is declared in `machines/c64.json` (`"expansions"`). Any JSON machine can offer devices this way: a device type, its options, an IRQ line and whether it can take the bus.
 
 ---
