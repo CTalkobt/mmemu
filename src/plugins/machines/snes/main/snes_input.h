@@ -6,7 +6,8 @@
 // by reads of $4016/$4017 (or the auto joypad read), latched when OUT0
 // ($4016 bit 0, or the auto read's strobe) falls; while OUT0 is high it
 // keeps reloading. Bits come out first-to-last from bit 15 (bit 31 for the
-// mouse), so a pad's 16 bits are in $4218/$4219's layout.
+// mouse), so a pad's 16 bits are in $4218/$4219's layout. Mesen has no
+// Justifier; it follows bsnes (sfc/controller/justifier, GPL-3.0, byuu).
 
 #include <algorithm>
 #include <array>
@@ -129,6 +130,53 @@ private:
     uint16_t m_buf = 0;
     uint8_t m_prev = 0;
     bool m_turbo = false;
+};
+
+/**
+ * Konami's Justifier, after bsnes: one gun (or two, the second chained to the
+ * first). Each latch makes the other gun the active one, and the active gun
+ * latches the PPU's counters every frame it points at the picture, with or
+ * without the trigger. 32 bits: 12 zeros, the signature 1110 0101 0101, the
+ * triggers, the starts, which gun is active, 000, then 1s.
+ */
+class Justifier : public InputDevice {
+public:
+    struct Gun {
+        int x = 128, y = 112;
+        bool trigger = false, start = false;
+        bool onScreen() const { return x >= 0 && y >= 0 && x < 256 && y < 240; }
+    };
+    Gun guns[2];
+    Justifier() { guns[1].x = guns[1].y = -1; }       // no second gun plugged in
+    int active() const { return m_active; }
+
+    void strobe(bool on) override {
+        const bool was = m_strobe;
+        m_strobe = on;
+        if (was && !on) { m_active ^= 1; latch(); }   // bsnes toggles even with one gun
+    }
+    uint8_t read(uint8_t) override {
+        if (m_strobe) latch();
+        const uint8_t v = (uint8_t)(m_buf >> 31);
+        m_buf = m_buf << 1 | 1;
+        return v;
+    }
+    void latch() override {
+        m_buf = 0x000E5500u | (uint32_t)guns[0].trigger << 7 | (uint32_t)guns[1].trigger << 6 |
+                (uint32_t)guns[0].start << 5 | (uint32_t)guns[1].start << 4 | (uint32_t)m_active << 3;
+    }
+    /** Where the active gun has the PPU latch its counters (as the Super Scope); false for nowhere. */
+    bool latchAt(int& dot, int& line) const {
+        const Gun& g = guns[m_active];
+        if (!g.onScreen()) return false;
+        dot = g.x + 10;
+        line = std::max(0, g.y - 3);
+        return true;
+    }
+
+private:
+    uint32_t m_buf = 0;
+    int m_active = 0;
 };
 
 /** The multitap: four pads, two at a time by $4201's bit 6 (port 1) or 7 (port 2), on D0 and D1. */

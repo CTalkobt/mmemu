@@ -45,7 +45,10 @@ one powers the console on; the machine's reset is the RESET button.
   is `$02-$0C`, `$11` or `$12` runs on a PAL console: a 21.281 MHz master
   clock, 312 lines a frame (313 for the even interlaced field), 50 frames
   a second at real time, and `$213F` bit 4 set. Vertical blank still
-  starts at line 225 (240 with overscan).
+  starts at line 225 (240 with overscan). The region can be chosen by
+  hand, as Mesen's setting: CLI/MCP `expansion region auto|ntsc|pal`, the
+  GUI's Control > Expansions, `snes::setRegion`. A change powers the
+  console on again.
 - **Timing**: a line is 1364 master clocks (341 dots; dots 323 and 327
   take 6 clocks) and a frame 262 lines. Interlaced, every other frame has
   263 lines; otherwise line 240 of every other frame is 4 clocks short. The
@@ -396,9 +399,11 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
 ## Input
 
 - **Controller ports**: each takes a pad (the default), the SNES Mouse,
-  the Super Scope or a multitap: CLI/MCP `expansion port1|port2 <device>`
-  (`pad`, `mouse`, `superscope`, `multitap`, or empty for nothing), the
-  GUI's Control > Expansions, `snes::setPortDevice`. After Mesen's devices:
+  the Super Scope, a multitap or the Justifier: CLI/MCP `expansion
+  port1|port2 <device>` (`pad`, `mouse`, `superscope`, `multitap`,
+  `justifier`, or empty for nothing), the GUI's Control > Expansions,
+  `snes::setPortDevice`. After Mesen's devices (the Justifier after
+  bsnes's, as Mesen has none):
   - **Pad:** 12 buttons, then `0000`, then 1s.
   - **Mouse** (the host mouse, left and right buttons): 32 bits, buttons
     and speed then Y and X (sign and 7 bits; the sign keeps the last way
@@ -411,6 +416,13 @@ VRAM, OAM and CGRAM writes are allowed during the picture.
     picture gets there, so `$213C/$213D` say where.
   - **Multitap:** four pads, two at a time on D0 and D1, by `$4201` bit 7
     (port 2) or bit 6 (port 1); strobed it answers D1 high, D0 low.
+  - **Justifier** (Konami's gun, for port 2; gun 1 aimed with the host
+    mouse, left is the trigger, right START): 32 bits, 12 zeros, the
+    signature `1110 0101 0101`, both triggers, both STARTs, the active gun,
+    then `000` and 1s. Every latch makes the other gun active, and the
+    active gun latches the PPU's counters every frame it points at the
+    picture, trigger or not, at the Super Scope's offset. The second gun is
+    not plugged in (offscreen, buttons up) unless set through the API.
 - **Gamepad** (`onGamepad`, the CLI/MCP `joy`, host controllers): all
   twelve buttons, players 1-5: the pads in port 1, then port 2 (a
   multitap's four in turn).
@@ -491,4 +503,4 @@ the six interlace pictures, mode 5 mosaic) and Tecmo's Monster Farm Jump
 - Cartridge coprocessors other than the DSP-1..4, Super FX, SA-1, Cx4,
   S-DD1, SPC7110, OBC1, ST010/011 and ST018 (the Satellaview and the
   Super Game Boy).
-- Choosing the region by hand; the Justifier.
+- Two Justifiers from the host (the second gun is there for the API only).

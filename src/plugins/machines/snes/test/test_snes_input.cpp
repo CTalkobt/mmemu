@@ -1,5 +1,5 @@
 // The SNES controller ports (as Mesen): the auto joypad read's timing, the mouse, the multitap and the
-// Super Scope.
+// Super Scope and the Justifier.
 
 #include "test_harness.h"
 #include "plugins/machines/snes/main/machine_snes.h"
@@ -140,5 +140,43 @@ TEST_CASE(snes_super_scope) {
     const uint8_t vl = bus->read8(0x00213D), vh = bus->read8(0x00213D);
     EXPECT_EQ((hl | (hh & 1) << 8), 110);
     EXPECT_EQ((vl | (vh & 1) << 8), 57);
+    delete m;
+}
+
+// The Justifier in port 2 (as bsnes): 32 bits with its signature, the triggers and STARTs and which gun
+// is active; each latch swaps the active gun, and only the active one, on the picture, latches H/V
+// (as the Super Scope: 10 dots right, 3 lines up), trigger or not
+TEST_CASE(snes_justifier) {
+    MachineDescriptor* m = idle();
+    ASSERT(m);
+    ASSERT(snes::setPortDevice(m, 1, "justifier"));
+    EXPECT_EQ(snes::portDevice(m, 1), std::string("justifier"));
+    IBus* bus = m->buses[0].bus;
+    auto read32 = [bus]() {
+        bus->write8(0x004016, 1); bus->write8(0x004016, 0);
+        uint32_t v = 0;
+        for (int i = 0; i < 32; ++i) v = v << 1 | (bus->read8(0x004017) & 1);
+        return v;
+    };
+    toLine(m, 10);
+    m->onMouse(100 - 128, 60 - 112, 1, 0);                       // gun 1 to (100, 60), trigger held
+    EXPECT_EQ(read32(), 0x000E5588u);                            // gun 2 active
+    m->onMouse(0, 0, 2, 0);                                      // START
+    EXPECT_EQ(read32(), 0x000E5520u);                            // gun 1 active
+    EXPECT_EQ(bus->read8(0x004017) & 1, 1);                      // then 1s
+    toLine(m, 230);                                              // aimed at vblank
+    toLine(m, 40);                                               // the next frame, before (110, 57)
+    bus->read8(0x00213F);
+    EXPECT_EQ(bus->read8(0x00213F) & 0x40, 0);
+    toLine(m, 58);
+    EXPECT_EQ(bus->read8(0x00213F) & 0x40, 0x40);                // no trigger needed
+    const uint8_t hl = bus->read8(0x00213C), hh = bus->read8(0x00213C);
+    const uint8_t vl = bus->read8(0x00213D), vh = bus->read8(0x00213D);
+    EXPECT_EQ((hl | (hh & 1) << 8), 110);
+    EXPECT_EQ((vl | (vh & 1) << 8), 57);
+    read32();                                                    // gun 2 active: it's not plugged in
+    toLine(m, 230);
+    toLine(m, 100);
+    EXPECT_EQ(bus->read8(0x00213F) & 0x40, 0);
     delete m;
 }

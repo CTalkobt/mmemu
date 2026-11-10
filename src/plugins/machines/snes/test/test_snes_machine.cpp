@@ -599,3 +599,59 @@ TEST_CASE(snes_pal_region) {
     EXPECT_TRUE(check(0x02, true));      // Europe
     EXPECT_TRUE(check(0x11, true));      // Australia
 }
+
+// The region by hand (Mesen's setting): PAL or NTSC whatever the header says, auto back to the header;
+// a change powers the console on again
+TEST_CASE(snes_region_override) {
+    auto make = [](uint8_t dest) {
+        std::vector<uint8_t> img(0x8000, 0);
+        const char* title = "MMSIM REGION         ";
+        for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+        img[0x7FD5] = 0x20; img[0x7FD7] = 0x05; img[0x7FD9] = dest;
+        img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+        img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+        img[0] = 0x80; img[1] = 0xFE;
+        std::string err;
+        MachineDescriptor* m = snes::create(false, &err);
+        if (!snes::insertCartridge(m, img, "region.sfc", err)) { delete m; return (MachineDescriptor*)nullptr; }
+        return m;
+    };
+    auto lastLine = [](MachineDescriptor* m) {
+        int maxLine = 0;
+        const uint64_t start = snes::masterClock(m);
+        while (snes::masterClock(m) - start < 1364ull * 330) { m->schedulerStep(*m); maxLine = std::max(maxLine, snes::scanline(m)); }
+        return maxLine;
+    };
+    MachineDescriptor* m = make(0x01);                          // North America
+    ASSERT(m);
+    EXPECT_EQ(snes::region(m), std::string("auto"));
+    EXPECT_TRUE(!(snes::isPal(m)));
+    lastLine(m);
+    ASSERT(snes::setRegion(m, "pal"));
+    EXPECT_TRUE(snes::isPal(m));
+    EXPECT_TRUE(snes::masterClock(m) < 1364);                   // powered on again
+    EXPECT_TRUE(m->clockHz == 21281370.0);
+    EXPECT_EQ(m->buses[0].bus->peek8(0x00213F) & 0x10, 0x10);
+    EXPECT_EQ(lastLine(m), 311);
+    EXPECT_TRUE(!(snes::setRegion(m, "secam")));
+    EXPECT_TRUE(snes::isPal(m));
+    ASSERT(snes::setRegion(m, "auto"));
+    EXPECT_TRUE(!(snes::isPal(m)));
+    EXPECT_EQ(lastLine(m), 261);
+    // The CLI/GUI's way in
+    MachineDescriptor::ExpansionSlot* slot = nullptr;
+    for (auto& sl : m->expansionSlots) if (sl.name == "region") slot = &sl;
+    ASSERT(slot);
+    std::string err;
+    ASSERT(slot->install("pal", "", err));
+    EXPECT_EQ(slot->info(), std::string("pal (PAL)"));
+    delete m;
+    m = make(0x02);                                             // Europe, run as NTSC
+    ASSERT(m);
+    EXPECT_TRUE(snes::isPal(m));
+    ASSERT(snes::setRegion(m, "ntsc"));
+    EXPECT_TRUE(!(snes::isPal(m)));
+    EXPECT_TRUE(m->clockHz == 21477272.0);
+    EXPECT_EQ(lastLine(m), 261);
+    delete m;
+}
