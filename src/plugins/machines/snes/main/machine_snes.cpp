@@ -14,6 +14,7 @@
 #include "snes_obc1.h"
 #include "snes_sdd1.h"
 #include "snes_spc7110.h"
+#include "snes_st018.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -79,6 +80,9 @@ struct Cart {
     std::unique_ptr<NecDsp> dsp;
     std::string dspName;
     uint16_t dspSrMask = 0;
+    // The ST010/ST011 (a uPD96050): registers at $60:0000-$0FFF, its RAM at $68-$6F:0000-$0FFF, saved as the battery
+    bool st01x = false;
+    std::vector<uint8_t> dspSave;               // its RAM as bytes, little-endian words
     // The Super FX: it owns the map ($3000 registers, its RAM, ROM in two layouts)
     std::unique_ptr<Gsu> gsu;
     // The SA-1: it owns the map too (I-RAM, BW-RAM = sram, the MMC's ROM banks)
@@ -91,6 +95,8 @@ struct Cart {
     std::unique_ptr<Spc7110> spc7110;
     // The OBC1: its ports over the battery RAM at $6000-$7FFF; the rest is the plain map
     std::unique_ptr<Obc1> obc1;
+    // The ST018 (an ARM): its link registers at $3000-$3FFF; the rest is the plain map
+    std::unique_ptr<St018> st018;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
     std::string savePath;
@@ -106,6 +112,12 @@ struct Cart {
 
     std::vector<uint8_t>* batteryRam() {
         if (!battery) return nullptr;
+        if (st01x) {
+            const auto& r = dsp->dataRam();
+            dspSave.resize(r.size() * 2);
+            for (size_t i = 0; i < r.size(); ++i) { dspSave[i * 2] = (uint8_t)r[i]; dspSave[i * 2 + 1] = (uint8_t)(r[i] >> 8); }
+            return &dspSave;
+        }
         if (gsu) return &gsu->ram();
         return sram.empty() ? nullptr : &sram;
     }
@@ -121,6 +133,10 @@ struct Cart {
         std::vector<uint8_t> data;
         if (readFile(path, data) && !data.empty())
             for (size_t i = 0; i < ram->size(); ++i) (*ram)[i] = data[i % data.size()];
+        if (st01x) {
+            auto& r = dsp->dataRam();
+            for (size_t i = 0; i < r.size(); ++i) r[i] = (uint16_t)(dspSave[i * 2] | dspSave[i * 2 + 1] << 8);
+        }
         saved = *ram;
     }
     /** Write the battery RAM if it changed since the last write. */
@@ -141,15 +157,19 @@ struct Cart {
     }
 
     /** DSP-1/2/3/4 by the header's chipset byte and the title (as Mesen). */
-    bool loadDsp(const std::string& rawTitle, std::string& err) {
-        if (rawTitle == "DUNGEON MASTER") dspName = "dsp2";
+    bool loadDsp(const std::string& rawTitle, std::string& err, bool st = false) {
+        if (st) dspName = rawTitle == "2DAN MORITA SHOUGI" ? "st011" : "st010";
+        else if (rawTitle == "DUNGEON MASTER") dspName = "dsp2";
         else if (rawTitle == "PILOTWINGS") dspName = "dsp1";
         else if (rawTitle == "SD\xB6\xDE\xDD\xC0\xDE\xD1GX") dspName = "dsp3";
         else if (rawTitle == "PLANETS CHAMP TG3000" || rawTitle == "TOP GEAR 3000") dspName = "dsp4";
         else dspName = "dsp1b";
+        dsp = std::make_unique<NecDsp>();
+        if (st) dsp->setModel(true, dspName == "st011" ? 22000000.0 : 11000000.0);
+        const uint32_t progSize = dsp->programSize(), dataSize = dsp->dataSize();
         std::vector<uint8_t> fw;
-        const uint32_t size = NecDsp::PROGRAM_SIZE + NecDsp::DATA_SIZE;
-        if ((rom.size() & 0x7FFF) == size) {
+        const uint32_t size = progSize + dataSize;
+        if ((rom.size() & (st ? 0xFFFF : 0x7FFF)) == size) {
             // The firmware appended to the ROM image
             fw.assign(rom.end() - size, rom.end());
             rom.resize(rom.size() - size);
@@ -159,7 +179,7 @@ struct Cart {
             if (!readFile(dir + "/" + dspName + ".rom", fw) || fw.size() != size) {
                 fw.clear();
                 if (readFile(dir + "/" + dspName + ".program.rom", prog) && readFile(dir + "/" + dspName + ".data.rom", data) &&
-                    prog.size() == NecDsp::PROGRAM_SIZE && data.size() == NecDsp::DATA_SIZE) {
+                    prog.size() == progSize && data.size() == dataSize) {
                     fw = prog;
                     fw.insert(fw.end(), data.begin(), data.end());
                 }
@@ -169,12 +189,13 @@ struct Cart {
                 for (auto& c : upper) c = (char)std::toupper((unsigned char)c);
                 err = "This cartridge has a " + upper + " chip: its firmware is needed in " + dir + "/" + dspName +
                       ".rom (" + std::to_string(size) + " bytes; or " + dspName + ".program.rom and " + dspName + ".data.rom)";
+                dsp.reset();
                 return false;
             }
         }
-        dsp = std::make_unique<NecDsp>();
         if (!dsp->load(fw, err)) return false;
-        dspSrMask = map == Map::LoRom ? 0x4000 : 0x1000;
+        st01x = st;
+        dspSrMask = st ? 0x0001 : map == Map::LoRom ? 0x4000 : 0x1000;
         return true;
     }
 
@@ -183,7 +204,8 @@ struct Cart {
         if (!dsp) return false;
         const uint8_t b = bank & 0x7F;
         bool hit;
-        if (map == Map::LoRom) hit = (b >= 0x30 && b < 0x40 && a >= 0x8000) || (b >= 0x60 && b < 0x70 && a < 0x8000);
+        if (st01x) hit = b == 0x60 && a < 0x1000;
+        else if (map == Map::LoRom) hit = (b >= 0x30 && b < 0x40 && a >= 0x8000) || (b >= 0x60 && b < 0x70 && a < 0x8000);
         else hit = b < 0x20 && a >= 0x6000 && a < 0x8000;
         sr = (a & dspSrMask) != 0;
         return hit;
@@ -252,6 +274,23 @@ struct Cart {
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x4) sdd1 = std::make_unique<Sdd1>(&rom, &sram);
         // The OBC1: chipset $2x, given cartridge RAM (as Mesen)
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0x2 && !sram.empty()) obc1 = std::make_unique<Obc1>(&sram);
+        // The ST010/ST011: chipset $Fx with cartridge type $01; battery-backed DSP RAM (as Mesen)
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x01) {
+            if (!loadDsp(raw, err, true)) return false;
+            battery = true;
+        }
+        // The ST018: chipset $Fx with cartridge type $02; battery-backed (as Mesen). Its firmware: st018.rom
+        if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x02) {
+            const std::string path = firmwareDir() + "/st018.rom";
+            std::vector<uint8_t> fw;
+            if (!readFile(path, fw) || fw.size() != St018::PRG_SIZE + St018::DATA_SIZE) {
+                err = "This cartridge has an ST018 chip: its firmware is needed in " + path + " (" +
+                      std::to_string(St018::PRG_SIZE + St018::DATA_SIZE) + " bytes)";
+                return false;
+            }
+            st018 = std::make_unique<St018>(fw);
+            battery = true;
+        }
         // The SPC7110: chipset $Fx with cartridge type $00; $F9 has the RTC. Always battery-backed (as Mesen)
         if ((chips & 0x0F) >= 0x03 && (chips >> 4) == 0xF && headerAt >= 1 && rom[headerAt - 1] == 0x00) {
             spc7110 = std::make_unique<Spc7110>(&rom, &sram, chipLow == 0x09);
@@ -271,6 +310,7 @@ struct Cart {
         if (cx4) s += ", Cx4";
         if (sdd1) s += ", S-DD1";
         if (obc1) s += ", OBC1";
+        if (st018) s += ", ST018";
         if (spc7110) s += spc7110->hasRtc() ? ", SPC7110, RTC" : ", SPC7110";
         return s;
     }
@@ -411,6 +451,7 @@ public:
         if (m_cart && m_cart->gsu) m_cart->gsu->reset();
         if (m_cart && m_cart->sa1) m_cart->sa1->reset();
         if (m_cart && m_cart->cx4) m_cart->cx4->reset();
+        if (m_cart && m_cart->st018) m_cart->st018->powerOn();
         if (m_cart && m_cart->sdd1) m_cart->sdd1->reset();
         if (m_cart && m_cart->spc7110) m_cart->spc7110->reset();
     }
@@ -454,7 +495,8 @@ public:
         }
         if (m_cart && m_cart->gsu) m_cart->gsu->runTo(m_master);    // the Super FX keeps pace
         if (m_cart && m_cart->sa1) m_cart->sa1->runTo(m_master);    // and the SA-1
-        if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);    // and the Cx4
+        if (m_cart && m_cart->cx4) m_cart->cx4->runTo(m_master);
+        if (m_cart && m_cart->st018) m_cart->st018->runTo(m_master);    // and the ST018's ARM    // and the Cx4
     }
     void idle(uint32_t) override { advance(6); }
 
@@ -543,6 +585,16 @@ private:
                 return m_openBus = peek ? m_cart->gsu->peekReg(a) : m_cart->gsu->readReg(a);
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->cx4->read(a);
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) return m_openBus = m_cart->obc1->read(a);
+            if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
+                if (!peek) m_cart->st018->runTo(m_master);
+                const int v = m_cart->st018->read(a, peek);
+                return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
+            }
+            if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
+                if (!peek) m_cart->dsp->runTo(m_master, MASTER_HZ);
+                const uint16_t w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
+                return m_openBus = (a & 1) ? (uint8_t)(w >> 8) : (uint8_t)w;
+            }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 if (peek) { const auto& st = m_cart->dsp->state(); return sr ? (uint8_t)(st.sr >> 8) : (uint8_t)st.dr; }
@@ -583,6 +635,17 @@ private:
             if (m_cart->gsu && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) { m_cart->gsu->writeReg(a, v); return; }
             if (m_cart->cx4 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->cx4->write(a, v); return; }
             if (m_cart->obc1 && !(bank & 0x40) && a >= 0x6000 && a < 0x8000) { m_cart->obc1->write(a, v); return; }
+            if (m_cart->st018 && !(bank & 0x40) && a >= 0x3000 && a < 0x4000) {
+                m_cart->st018->runTo(m_master);
+                m_cart->st018->write(a, v);
+                return;
+            }
+            if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
+                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                uint16_t& w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
+                w = (a & 1) ? (uint16_t)((w & 0x00FF) | v << 8) : (uint16_t)((w & 0xFF00) | v);
+                return;
+            }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 m_cart->dsp->runTo(m_master, MASTER_HZ);
@@ -1045,6 +1108,7 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         if (bus->cart() && bus->cart()->gsu) bus->cart()->gsu->reset();
         if (bus->cart() && bus->cart()->sa1) bus->cart()->sa1->reset();
         if (bus->cart() && bus->cart()->cx4) bus->cart()->cx4->reset();
+        // The ST018 isn't reset by the button (as Mesen): the SNES resets it through $3804
         if (bus->cart() && bus->cart()->sdd1) bus->cart()->sdd1->reset();
         if (bus->cart() && bus->cart()->spc7110) bus->cart()->spc7110->reset();
         cpu->setNmiLine(false);

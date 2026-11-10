@@ -5,17 +5,30 @@
 
 namespace snes {
 
+void NecDsp::setModel(bool upd96050, double hz) {
+    m_96050 = upd96050;
+    m_hz = hz;
+    m_progMask = upd96050 ? 0x3FFF : 0x7FF;
+    m_dataMask = upd96050 ? 0x7FF : 0x3FF;
+    m_ramMask = upd96050 ? 0x7FF : 0xFF;
+    m_stackMask = upd96050 ? 7 : 3;
+    m_ram.assign(m_ramMask + 1u, 0);
+    m_prog.clear();
+    m_data.clear();
+}
+
 bool NecDsp::load(const std::vector<uint8_t>& fw, std::string& err) {
-    if (fw.size() != PROGRAM_SIZE + DATA_SIZE) {
-        err = "DSP firmware must be " + std::to_string(PROGRAM_SIZE + DATA_SIZE) + " bytes (got " + std::to_string(fw.size()) + ")";
+    const uint32_t prog = programSize(), data = dataSize();
+    if (fw.size() != prog + data) {
+        err = "DSP firmware must be " + std::to_string(prog + data) + " bytes (got " + std::to_string(fw.size()) + ")";
         return false;
     }
-    m_prog.resize(PROGRAM_SIZE / 3);
+    m_prog.resize(prog / 3);
     for (size_t i = 0; i < m_prog.size(); ++i)
         m_prog[i] = (uint32_t)fw[i * 3] | (uint32_t)fw[i * 3 + 1] << 8 | (uint32_t)fw[i * 3 + 2] << 16;
-    m_data.resize(DATA_SIZE / 2);
+    m_data.resize(data / 2);
     for (size_t i = 0; i < m_data.size(); ++i)
-        m_data[i] = (uint16_t)(fw[PROGRAM_SIZE + i * 2] | fw[PROGRAM_SIZE + i * 2 + 1] << 8);
+        m_data[i] = (uint16_t)(fw[prog + i * 2] | fw[prog + i * 2 + 1] << 8);
     reset();
     return true;
 }
@@ -27,18 +40,18 @@ void NecDsp::reset() {
 }
 
 void NecDsp::runTo(uint64_t master, uint64_t masterHz) {
-    const uint64_t target = (uint64_t)((double)master * (CLOCK_HZ / (double)masterHz));
+    const uint64_t target = (uint64_t)((double)master * (m_hz / (double)masterHz));
     if (m_prog.empty()) { m_cycles = target; return; }
     if (m_rqmWait) { m_cycles = target; return; }
     while (m_cycles < target && !m_rqmWait) {
-        exec(m_prog[m_s.pc++ & 0x7FF]);
+        exec(m_prog[m_s.pc++ & m_progMask]);
         ++m_cycles;
     }
     if (m_rqmWait) m_cycles = target;
 }
 
 void NecDsp::step(int n) {
-    while (n-- > 0 && !m_prog.empty()) { exec(m_prog[m_s.pc++ & 0x7FF]); ++m_cycles; }
+    while (n-- > 0 && !m_prog.empty()) { exec(m_prog[m_s.pc++ & m_progMask]); ++m_cycles; }
 }
 
 void NecDsp::exec(uint32_t op) {
@@ -52,7 +65,7 @@ void NecDsp::exec(uint32_t op) {
         load(dest, src);
         if (dest != 0x04) updateDp(op);
         if (((op >> 8) & 1) && dest != 0x05) --m_s.rp;
-        if (op & 0x400000) { m_s.sp = (m_s.sp - 1) & 3; m_s.pc = m_stack[m_s.sp]; }
+        if (op & 0x400000) { m_s.sp = (m_s.sp - 1) & m_stackMask; m_s.pc = m_stack[m_s.sp]; }
         break;
     }
     case 0x800000: jump(op); break;
@@ -153,8 +166,8 @@ void NecDsp::jump(uint32_t op) {
     case 0xBC: cond = !(s.sr & SR_RQM); break;  case 0xBE: cond = (s.sr & SR_RQM) != 0; break;
     case 0x100: m_s.pc = target & ~0x2000; break;
     case 0x101: m_s.pc = target | 0x2000; break;
-    case 0x140: m_stack[m_s.sp] = m_s.pc; m_s.sp = (m_s.sp + 1) & 3; m_s.pc = target & ~0x2000; break;
-    case 0x141: m_stack[m_s.sp] = m_s.pc; m_s.sp = (m_s.sp + 1) & 3; m_s.pc = target | 0x2000; break;
+    case 0x140: m_stack[m_s.sp] = m_s.pc; m_s.sp = (m_s.sp + 1) & m_stackMask; m_s.pc = target & ~0x2000; break;
+    case 0x141: m_stack[m_s.sp] = m_s.pc; m_s.sp = (m_s.sp + 1) & m_stackMask; m_s.pc = target | 0x2000; break;
     default: break;
     }
     if (cond) {
@@ -175,11 +188,11 @@ void NecDsp::load(uint8_t dest, uint16_t v) {
     case 0x7: m_s.sr = (uint16_t)((m_s.sr & 0x907C) | (v & ~0x907C)); break;
     case 0x8: case 0x9: m_s.so = v; break;
     case 0xA: m_s.k = v; break;
-    case 0xB: m_s.k = v; m_s.l = m_data[m_s.rp & 0x3FF]; break;
+    case 0xB: m_s.k = v; m_s.l = m_data[m_s.rp & m_dataMask]; break;
     case 0xC: m_s.l = v; m_s.k = ram((uint16_t)(m_s.dp | 0x40)); break;
     case 0xD: m_s.l = v; break;
     case 0xE: m_s.trb = v; break;
-    case 0xF: m_ram[m_s.dp & 0xFF] = v; break;
+    case 0xF: m_ram[m_s.dp & m_ramMask] = v; break;
     default: break;                                  // 0: none
     }
 }
@@ -192,7 +205,7 @@ uint16_t NecDsp::source(uint8_t src) {
     case 0x3: return m_s.tr;
     case 0x4: return m_s.dp;
     case 0x5: return m_s.rp;
-    case 0x6: return m_data[m_s.rp & 0x3FF];
+    case 0x6: return m_data[m_s.rp & m_dataMask];
     case 0x7: return (uint16_t)(0x8000 - (m_s.fa.s1 ? 1 : 0));
     case 0x8: m_s.sr |= SR_RQM; return m_s.dr;
     case 0x9: return m_s.dr;

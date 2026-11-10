@@ -6,6 +6,7 @@
 #include "plugins/machines/snes/main/snes_necdsp.h"
 #include "libcore/main/machine_desc.h"
 #include "libmem/main/ibus.h"
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -149,4 +150,69 @@ TEST_CASE(snes_necdsp_missing_firmware) {
     EXPECT_TRUE(err.find("/nonexistent/dsp1b.rom") != std::string::npos);
     unsetenv("MMEMU_SNES_FIRMWARE");
     delete m;
+}
+
+// The uPD96050 (ST010/ST011): a hand-built firmware using what the uPD7725 lacks
+// (RAM past 256 words, a program past 2048 words), on a LoROM cartridge with the
+// firmware appended, its RAM seen at $68:0000 and saved as the battery.
+namespace {
+std::vector<uint8_t> stFirmware() {
+    std::vector<uint8_t> fw(snes::NecDsp::PROGRAM_SIZE_96050 + snes::NecDsp::DATA_SIZE_96050, 0);
+    auto put = [&fw](uint32_t at, uint32_t o) { fw[at * 3] = (uint8_t)o; fw[at * 3 + 1] = (uint8_t)(o >> 8); fw[at * 3 + 2] = (uint8_t)(o >> 16); };
+    put(0, ld(0x0345, 4));                       // DP = $345
+    put(1, ld(0xBEEF, D_A));
+    put(2, op(S_A, 0xF));                        // RAM[DP] = A
+    put(3, jp(0x101, 0));                        // to $2000
+    put(0x2000, ld(0x1234, D_A));
+    put(0x2001, jp(0x101, 1));                   // loop at $2001
+    return fw;
+}
+std::vector<uint8_t> stCart() {
+    std::vector<uint8_t> img(0x10000, 0);
+    const char* title = "MMSIM ST010          ";
+    for (int i = 0; i < 21; ++i) img[0x7FC0 + i] = (uint8_t)title[i];
+    img[0x7FBF] = 0x01;                          // cartridge type: ST010/ST011
+    img[0x7FD5] = 0x20; img[0x7FD6] = 0xF6; img[0x7FD7] = 0x06;
+    img[0x7FDC] = 0xFF; img[0x7FDD] = 0xFF;
+    img[0x7FFC] = 0x00; img[0x7FFD] = 0x80;
+    img[0] = 0x80; img[1] = 0xFE;                // BRA *
+    const auto fw = stFirmware();
+    img.insert(img.end(), fw.begin(), fw.end());
+    return img;
+}
+}  // namespace
+
+TEST_CASE(snes_necdsp_upd96050_core) {
+    snes::NecDsp d;
+    d.setModel(true, 11000000.0);
+    std::string err;
+    EXPECT_TRUE(!d.load(firmware(), err));       // a uPD7725 image is the wrong size
+    ASSERT(d.load(stFirmware(), err));
+    d.step(6);
+    EXPECT_EQ(d.dataRam()[0x345], 0xBEEF);
+    EXPECT_EQ(d.state().a, 0x1234);
+    EXPECT_EQ(d.state().pc, 0x2001);
+}
+
+TEST_CASE(snes_st010_cartridge) {
+    const std::string save = "/tmp/mmemu_st010_test.srm";
+    std::remove(save.c_str());
+    std::string err;
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, stCart(), "st.sfc", err, save));
+    EXPECT_EQ(snes::cartridgeInfo(m), std::string("st.sfc (MMSIM ST010, LoROM, 64K ROM, battery, ST010)"));
+    uint64_t t = 0;
+    while (t < 100000) t += (uint64_t)m->schedulerStep(*m);
+    IBus* bus = m->buses[0].bus;
+    bus->read8(0x600001);                        // SR: brings the DSP up to time
+    EXPECT_EQ(bus->read8(0x68068A), 0xEF);       // RAM word $345
+    EXPECT_EQ(bus->read8(0xE8068B), 0xBE);
+    bus->write8(0x680010, 0x34);                 // RAM word 8
+    bus->write8(0x680011, 0x12);
+    snes::removeCartridge(m);                    // saved
+    ASSERT(snes::insertCartridge(m, stCart(), "st.sfc", err, save));
+    EXPECT_EQ(bus->peek8(0x680010), 0x34);
+    EXPECT_EQ(bus->peek8(0x680011), 0x12);
+    delete m;
+    std::remove(save.c_str());
 }
