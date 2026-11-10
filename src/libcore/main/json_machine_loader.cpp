@@ -19,6 +19,7 @@
 #include "libdevices/main/shared_irq_manager.h"
 #include "libdevices/main/simple_signal_line.h"
 #include "libdevices/main/ipointer.h"
+#include "libdevices/main/iba_source.h"
 #include "util/logging.h"
 #include <fstream>
 #include <sstream>
@@ -1012,7 +1013,40 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         }
     }
 
-    if (hasFrameAccum && vsyncLine) {
+    // A device pulling BA (the C64's VIC-II, #266): "scheduler": {"baSource": "<device>"}
+    IBaSource* baSource = nullptr;
+    if (spec.contains("scheduler") && spec["scheduler"].contains("baSource")) {
+        const std::string n = spec["scheduler"]["baSource"].get<std::string>();
+        if (devPtrs.count(n)) baSource = dynamic_cast<IBaSource*>(devPtrs[n]);
+        if (!baSource) log->error("JsonMachineLoader: scheduler.baSource: no device '{}' that pulls BA", n);
+    }
+
+    if (baSource) {
+        // The CPU's read cycles wait while BA is low (RDY); its writes go on.
+        // A DMA master (an REU) is given the source and waits itself.
+        desc->schedulerStep = [baSource](MachineDescriptor& d) {
+            int total = 0;
+            if (d.busMasterStep && (total = d.busMasterStep()) > 0) {
+                if (d.ioRegistry) d.ioRegistry->tickAll(total);
+                return total;
+            }
+            for (auto& s : d.cpus) {
+                if (s.active && s.cpu) {
+                    const int n = s.cpu->step();
+                    const uint32_t writes = s.cpu->lastStepWrites();
+                    int t = 0;
+                    for (int i = 0; i < n; ++i) {
+                        if (!(i < 32 && ((writes >> i) & 1)))
+                            while (baSource->baLow(t)) ++t;
+                        ++t;
+                    }
+                    total += t;
+                    if (d.ioRegistry) d.ioRegistry->tickAll(t);
+                }
+            }
+            return total;
+        };
+    } else if (hasFrameAccum && vsyncLine) {
         auto* frameAccum = new uint64_t(0);
         desc->deleters.push_back([frameAccum]() { delete frameAccum; });
         SimpleSignalLine* vsync = vsyncLine;
@@ -1120,7 +1154,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             }
             const std::string slotName = slot.name;
             auto savedMouse = std::make_shared<std::function<void(int, int, uint8_t, int)>>();
-            slot.install = [desc, io, dmaBus, specs, fitted, slotName, savedMouse](const std::string& device, const std::string& option,
+            slot.install = [desc, io, dmaBus, specs, fitted, slotName, savedMouse, baSource](const std::string& device, const std::string& option,
                                                                        std::string& err) {
                 auto remove = [&]() {
                     if (!fitted->dev) return;
@@ -1160,7 +1194,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 remove();
                 if (ds->irq) dev->setIrqLine(ds->irq);
                 io->registerHandler(dev);
-                if (ds->busMaster) desc->busMasterStep = [dev]() { return dev->busMasterCycle(); };
+                if (ds->busMaster) { dev->setBaSource(baSource); desc->busMasterStep = [dev]() { return dev->busMasterCycle(); }; }
                 if (ds->linkTo) ds->linkTo->setLinkedDevice(ds->linkAs.c_str(), dev);
                 if (auto* p = dynamic_cast<IPointerDevice*>(dev); p && ds->pointerJoystick >= 0) {
                     // The host mouse moves it; its buttons are that joystick port's switches

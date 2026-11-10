@@ -17,8 +17,9 @@ Both boot to BASIC 7.0 READY ("122365 BYTES FREE").
 
 - **CPUs**: Zilog Z80 (boot BIOS, CP/M; see below) and MOS 8502, a 6510 with a seventh port pin: bit 6 reads the CAPS
   LOCK (ASCII/DIN) key. 1 MHz, or 2 MHz while VIC-IIe `$D030` bit 0 is set
-  (BASIC `FAST`); time is counted at the 1 MHz clock. At 1 MHz each badline
-  stops the 8502 for about 40 cycles while the VIC-II fetches; in FAST mode
+  (BASIC `FAST`); time is counted at the 1 MHz clock. At 1 MHz the VIC-IIe's
+  badlines (40-43 cycles) and sprite fetches (up to 19 cycles a line) stop the
+  8502's read cycles, with BA as on the C64 (`doc/README-C64.md` §2.9); in FAST mode
   the VIC-IIe steals no cycles and the 40-column screen is still drawn (as in
   VICE; a real C128 shows garbage there, which is why BASIC's `FAST` blanks
   it).
@@ -317,7 +318,7 @@ The expansion port takes a Commodore REU at run time, as the C64's does (see `do
 - Its `$FF00` trigger sits beside the MMU's configuration register: any write there updates CR and starts an armed transfer.
 - Its IRQ goes to both the 8502 and the Z80.
 - The DMA goes through the 8502's view of memory, so the MMU picks the bank.
-- The VIC-II's badlines delay the DMA as they delay the 8502. A DMA doesn't start while the Z80 is running.
+- The VIC-II's badlines and sprite fetches delay the DMA as they delay the 8502. A DMA doesn't start while the Z80 is running.
 - BASIC 7.0's `STASH`, `FETCH` and `SWAP` work through the KERNAL's DMA call at `$FF50`.
 
 A GeoRAM fits the same slot (`expansion port georam 1M`; see `doc/README-C64.md` §2.11), paged through `$DE00` in either mode.
@@ -333,4 +334,3 @@ An RS-232 cartridge (SwiftLink, Turbo232) fits the `rs232` slot, beside the RAM 
 - MFM disks in other image formats (raw `.img`, `.dsk`); ImageDisk tracks
   with mixed sector sizes; cartridges in C64 mode; saving a GMod2's flash
   and EEPROM
-- Sprite DMA cycle stealing (only badlines stop the 8502)

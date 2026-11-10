@@ -361,6 +361,14 @@ TEST_CASE(c128_badlines_and_fast_mode) {
     printf("  passes: display on %d, off %d, FAST %d\n", on, off, fast);
     EXPECT_TRUE(off - on > 1100 && off - on < 1500);
     EXPECT_NEAR(fast, 2 * off, 50);
+    // Sprite DMA (#266): eight sprites at Y=100 take up to 19 cycles of each
+    // of 21 lines, about 10 x 21 x 18 / 8 = 470 passes over 10 frames
+    for (int i = 0; i < 8; ++i) bus->write8(0xD001 + 2 * (uint32_t)i, 100);
+    bus->write8(0xD015, 0xFF);
+    const int sprites = passes(0x0B, 0xFC);
+    printf("  passes: eight sprites %d\n", sprites);
+    EXPECT_TRUE(off - sprites > 400 && off - sprites < 530);
+    EXPECT_NEAR(passes(0x0B, 0xFD), 2 * off, 50);  // FAST: none taken
     delete m;
 }
 

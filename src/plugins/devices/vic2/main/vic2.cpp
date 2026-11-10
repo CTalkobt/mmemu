@@ -23,6 +23,7 @@ void VIC2::reset() {
 
     m_cycleAccum = 0;
     m_rasterLine = 0;
+    m_denOnLine30 = false;
     m_sprSprColl = 0;
     m_sprBgColl  = 0;
 
@@ -220,9 +221,75 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             break;
         default:
             m_regs[reg] = val;
+            if (reg == SCR1 && m_rasterLine == 0x30 && (val & SCR1_DEN)) m_denOnLine30 = true;
             break;
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// BA (#266): VICE viciisc vicii-chip-model.c, the BaSpr columns of
+// cycle_tab_pal and cycle_tab_ntsc (6567R8): per cycle (from 0), the sprites
+// whose fetches hold BA low; cycles 12-54 (11-53 here) are the badline's
+// ---------------------------------------------------------------------------
+namespace {
+constexpr uint8_t S(int a) { return (uint8_t)(1 << a); }
+constexpr uint8_t S(int a, int b) { return (uint8_t)(S(a) | S(b)); }
+constexpr uint8_t S(int a, int b, int c) { return (uint8_t)(S(a, b) | S(c)); }
+const uint8_t BA_PAL[63] = {
+    S(3, 4), S(3, 4, 5), S(4, 5), S(4, 5, 6), S(5, 6), S(5, 6, 7), S(6, 7), S(6, 7), S(7), S(7), 0,   // 1-11
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                // 12-54
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    S(0), S(0), S(0, 1), S(0, 1), S(0, 1, 2), S(1, 2), S(1, 2, 3), S(2, 3), S(2, 3, 4)};          // 55-63
+const uint8_t BA_NTSC[65] = {
+    S(3, 4, 5), S(4, 5), S(4, 5, 6), S(5, 6), S(5, 6, 7), S(6, 7), S(6, 7), S(7), S(7), 0, 0,        // 1-11
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                                // 12-54
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, S(0), S(0), S(0, 1), S(0, 1), S(0, 1, 2), S(1, 2), S(1, 2, 3), S(2, 3), S(2, 3, 4), S(3, 4)}; // 55-65
+}  // namespace
+
+bool VIC2::isBadline(int line) const {
+    if (!m_badlineEnable || line < 0x30 || line > 0xF7) return false;
+    const bool allowed = m_denOnLine30 || (line == 0x30 && (m_regs[SCR1] & SCR1_DEN));
+    return allowed && (line & 7) == (m_regs[SCR1] & SCR1_YSCROLL);
+}
+
+// Sprite n's DMA is on for the fetches of `row` (the line its DMA check
+// matched Y, through 21 lines, 42 expanded); Y matches the raster's low 8
+// bits, so a sprite high enough comes round again below line 255
+bool VIC2::spriteDma(int n, int row) const {
+    const int y = m_regs[SP0Y + 2 * n];
+    const int h = (m_regs[YXPAND] >> n) & 1 ? 42 : 21;
+    for (int start = y; start < m_linesPerFrame; start += 256) {
+        int d = row - start;
+        if (d < 0) d += m_linesPerFrame;              // a sprite started late in the last frame
+        if (d < h) return true;
+    }
+    return false;
+}
+
+bool VIC2::baAt(int line, int cycle) const {
+    if (cycle >= 11 && cycle <= 53) return isBadline(line);
+    const uint8_t* tab = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? BA_NTSC : BA_PAL;
+    const uint8_t mask = (uint8_t)(tab[cycle % m_cyclesPerLine] & m_regs[SPENA]);
+    if (!mask) return false;
+    // Fetches at the start of a line belong to the previous line's DMA
+    int row = cycle < 11 ? line - 1 : line;
+    if (row < 0) row += m_linesPerFrame;
+    for (int n = 0; n < 8; ++n)
+        if ((mask >> n) & 1 && spriteDma(n, row)) return true;
+    return false;
+}
+
+bool VIC2::baLow(int ahead) const {
+    if (fastMode()) return false;                     // the VIC-IIe at 2 MHz takes nothing
+    int line = m_rasterLine;
+    int64_t c = (int64_t)(m_cycleAccum % (uint64_t)m_cyclesPerLine) + ahead;
+    while (c >= m_cyclesPerLine) {
+        c -= m_cyclesPerLine;
+        if (++line >= m_linesPerFrame) line = 0;
+    }
+    return baAt(line, (int)c);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,21 +307,15 @@ void VIC2::tick(uint64_t cycles) {
         if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
             m_rasterLine = 0;
         }
+        if (m_rasterLine == 0x30) m_denOnLine30 = (m_regs[SCR1] & SCR1_DEN) != 0;
+        else if (m_rasterLine == 0xF8) m_denOnLine30 = false;
 
         // Badline detection (#20): a badline occurs when the raster is in the
         // display area, DEN is set, and the lower 3 bits of the raster line
         // match the Y-scroll value.  On a badline the VIC steals ~40 bus
         // cycles from the CPU to fetch character pointers.
-        if (m_stallBacklog && m_badlineEnable && (m_regs[SCR1] & SCR1_DEN)) {
-            uint16_t firstDisplayLine = DISPLAY_Y;
-            uint16_t lastDisplayLine  = DISPLAY_Y + DISPLAY_H - 1;
-            if (m_rasterLine >= firstDisplayLine && m_rasterLine <= lastDisplayLine) {
-                uint8_t yscroll = m_regs[SCR1] & SCR1_YSCROLL;
-                if ((m_rasterLine & 7) == yscroll) {
-                    *m_stallBacklog += 40 + m_badlineExtra;
-                }
-            }
-        }
+        if (m_stallBacklog && isBadline(m_rasterLine))
+            *m_stallBacklog += 40 + m_badlineExtra;
 
         // Check for raster IRQ
         uint16_t rasterCmp = ((m_regs[SCR1] & SCR1_RASTER8) << 1) | m_regs[RASTER];

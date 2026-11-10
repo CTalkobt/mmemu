@@ -109,6 +109,10 @@ public:
 
     // Execution
     virtual int  step()  = 0;   // Returns cycle count
+    /** The write cycles of the last step(): bit i set when its cycle i (from
+     *  0) wrote to the bus. 0 when the core doesn't say (all reads). For
+     *  RDY/BA: a read cycle waits while BA is low, a write doesn't. */
+    virtual uint32_t lastStepWrites() const { return 0; }
     virtual void reset() = 0;
 
     // Interrupts

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "libdevices/main/iba_source.h"
+
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/isignal_line.h"
 #include <cstdint>
@@ -63,6 +65,7 @@ public:
     void reset() override;
     void tick(uint64_t) override {}
     int busMasterCycle() override;
+    void setBaSource(IBaSource* ba) override { m_ba = ba; }
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     bool saveDeviceImage(const std::string& path, std::string& err) override { return saveImage(path, err); }
     void getDeviceInfo(DeviceInfo& out) const override;
@@ -88,6 +91,8 @@ private:
     std::string m_name = "REU";
     std::vector<uint8_t> m_ram;
     IBus* m_bus = nullptr;
+    IBaSource* m_ba = nullptr;          // the VIC-II: DMA waits while BA is low
+    int m_baWrites = 0;                 // writes let through since BA fell
     ISignalLine* m_irq = nullptr;
 
     // How the size wires the REC to the DRAM (VICE rec_options)

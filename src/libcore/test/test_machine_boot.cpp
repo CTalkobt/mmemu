@@ -617,13 +617,16 @@ TEST_CASE(c64_reu_expansion) {
         bus->write8(0xDF06, (uint8_t)(reuAddr >> 16));
         bus->write8(0xDF07, (uint8_t)len); bus->write8(0xDF08, (uint8_t)(len >> 8));
     };
-    // The screen to bank 3: 1000 cycles with the CPU stopped
+    // The screen to bank 3: 1000 cycles with the CPU stopped, more when the
+    // VIC-II's badlines take the bus from the REU too (#266)
     regs(0x0400, 0x030000, 1000);
     bus->write8(0xDF01, 0x90);
     const uint32_t pc = cpu->pc();
     bool held = true;
-    for (int i = 0; i < 1000; ++i) held = held && desc->schedulerStep(*desc) == 1 && cpu->pc() == pc;
+    int steps = 0;
+    for (; steps < 3000 && reu->dmaActive(); ++steps) held = held && desc->schedulerStep(*desc) == 1 && cpu->pc() == pc;
     EXPECT_TRUE(held);
+    EXPECT_TRUE(steps >= 1000);
     EXPECT_TRUE(!reu->dmaActive());
     bool same = true;
     for (int i = 0; i < 1000; ++i) same = same && reu->ram()[0x30000 + (size_t)i] == bus->peek8(0x0400 + (uint32_t)i);
@@ -891,5 +894,146 @@ TEST_CASE(c64_1351_mouse) {
     EXPECT_TRUE(!desc->onMouse);
     EXPECT_EQ(bus->read8(0xD419), 0xFF);
     EXPECT_EQ(bus->read8(0xDC01) & 0x11, 0x11);     // buttons let go
+    delete desc;
+}
+
+// ---------------------------------------------------------------------------
+// The VIC-II takes the bus (#266): BA after VICE's viciisc cycle tables; the
+// 6510's reads wait while it's low, its writes don't
+// ---------------------------------------------------------------------------
+
+// BA by cycle: a badline's cycles 12-54; each sprite's from 3 cycles before
+// its fetches; eight sprites on a line, 19 cycles (Bauer's article, §3.8)
+TEST_CASE(vic2_ba_cycles) {
+    VIC2 v;
+    v.ioWrite(nullptr, 0xD011, 0x1B);               // DEN, YSCROLL 3
+    v.tick((uint64_t)0x31 * 63);                    // past line $30: badlines allowed
+    EXPECT_TRUE(v.isBadline(0x33));
+    EXPECT_TRUE(!v.isBadline(0x34));
+    EXPECT_TRUE(!v.isBadline(0xFB));
+    int n = 0;
+    for (int c = 0; c < 63; ++c) n += v.baAt(0x33, c);
+    EXPECT_EQ(n, 43);
+    EXPECT_TRUE(!v.baAt(0x33, 10) && v.baAt(0x33, 11) && v.baAt(0x33, 53) && !v.baAt(0x33, 54));
+    // Sprite 0 at Y=100 alone: cycles 55-59 of lines 100-120
+    v.ioWrite(nullptr, 0xD001, 100);
+    v.ioWrite(nullptr, 0xD015, 0x01);
+    EXPECT_TRUE(!v.baAt(99, 54));
+    EXPECT_TRUE(v.baAt(100, 54) && v.baAt(100, 58) && !v.baAt(100, 59));
+    EXPECT_TRUE(v.baAt(120, 54) && !v.baAt(121, 54));
+    v.ioWrite(nullptr, 0xD017, 0x01);               // expanded: 42 lines
+    EXPECT_TRUE(v.baAt(141, 54) && !v.baAt(142, 54));
+    // All eight on one line: cycles 55-63 and 1-10 of the next
+    for (int i = 0; i < 8; ++i) v.ioWrite(nullptr, 0xD001 + 2 * (uint32_t)i, 100);
+    v.ioWrite(nullptr, 0xD015, 0xFF);
+    v.ioWrite(nullptr, 0xD017, 0x00);
+    n = 0;
+    for (int c = 54; c < 63; ++c) n += v.baAt(101, c);
+    for (int c = 0; c < 11; ++c) n += v.baAt(102, c);
+    EXPECT_EQ(n, 19);
+    // NTSC: sprite 0's BA on cycles 56-60 of 65
+    v.setPal(false);
+    EXPECT_TRUE(!v.baAt(101, 54) && v.baAt(101, 55) && v.baAt(101, 59));
+}
+
+namespace {
+// A C64 running `loop` at $C000 with interrupts off; the cycles the VIC-II
+// takes from it over one frame: the scheduler's cycles less the CPU's own
+int stolenPerFrame(MachineDescriptor* desc, const std::vector<uint8_t>& loop, uint8_t d011, uint8_t sprites, int spriteY) {
+    IBus* bus = desc->buses[0].bus;
+    ICore* cpu = desc->cpus[0].cpu;
+    auto* vic = dynamic_cast<VIC2*>(desc->ioRegistry->findHandler("VIC-II"));
+    if (!vic) return -1;
+    static const uint8_t SETUP[] = {0x78, 0xA9, 0x7F, 0x8D, 0x0D, 0xDC, 0x8D, 0x0D, 0xDD, 0xAD, 0x0D, 0xDC,
+                                    0xA9, 0x00, 0x8D, 0x1A, 0xD0};    // SEI; CIAs' and the VIC's IRQs off
+    uint16_t a = 0xC000;
+    for (uint8_t b : SETUP) bus->write8(a++, b);
+    const uint16_t loopAt = a;
+    for (uint8_t b : loop) bus->write8(a++, b);
+    bus->write8(a++, 0x4C); bus->write8(a++, (uint8_t)loopAt); bus->write8(a++, (uint8_t)(loopAt >> 8));
+    for (int i = 0; i < 8; ++i) bus->write8(0xD001 + 2 * (uint32_t)i, (uint8_t)spriteY);
+    bus->write8(0xD015, sprites);
+    bus->write8(0xD017, 0);
+    bus->write8(0xD011, d011);
+    cpu->setPc(0xC000);
+    // A frame to settle, then from line 0 to line 0
+    auto toLine0 = [&]() {
+        while (vic->rasterLine() == 0) desc->schedulerStep(*desc);
+        while (vic->rasterLine() != 0) desc->schedulerStep(*desc);
+    };
+    toLine0();
+    toLine0();
+    const uint64_t cpu0 = cpu->cycles();
+    uint64_t total = 0;
+    while (vic->rasterLine() == 0) total += (uint64_t)desc->schedulerStep(*desc);
+    while (vic->rasterLine() != 0) total += (uint64_t)desc->schedulerStep(*desc);
+    return (int)(total - (cpu->cycles() - cpu0));
+}
+}  // namespace
+
+// Badlines on the C64: 25 a frame with the screen on, none with it off; a
+// loop of reads loses all 43 BA cycles of each, one that writes at the end
+// (INC) between 40 and 43
+TEST_CASE(c64_badlines_steal_cycles) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    const std::vector<uint8_t> nops = {0xEA, 0xEA};
+    EXPECT_EQ(stolenPerFrame(desc, nops, 0x1B, 0, 0), 25 * 43);
+    EXPECT_EQ(stolenPerFrame(desc, nops, 0x0B, 0, 0), 0);          // DEN off
+    const int inc = stolenPerFrame(desc, {0xEE, 0x00, 0x03}, 0x1B, 0, 0);   // INC $0300
+    EXPECT_TRUE(inc >= 25 * 40 && inc <= 25 * 43);
+    EXPECT_TRUE(inc < 25 * 43);
+    delete desc;
+}
+
+// Sprite DMA on the C64: eight sprites on a line take 19 cycles of each of
+// their 21 lines; one alone, 5
+TEST_CASE(c64_sprite_dma_steals_cycles) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    const std::vector<uint8_t> nops = {0xEA, 0xEA};
+    EXPECT_EQ(stolenPerFrame(desc, nops, 0x0B, 0xFF, 100), 21 * 19);
+    EXPECT_EQ(stolenPerFrame(desc, nops, 0x0B, 0x01, 100), 21 * 5);
+    delete desc;
+}
+
+// An REU transfer across badlines waits for them: the same copy takes 1000
+// cycles with the screen off and about 40 more for each badline it meets
+TEST_CASE(c64_reu_waits_for_badlines) {
+    ensureRegistriesAndLoad();
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    std::string err;
+    ASSERT(desc->expansionSlot("port")->install("reu", "512K", err));
+    desc->onReset(*desc);
+    for (uint64_t c = 0; c < 2500000;) c += desc->schedulerStep(*desc);
+    IBus* bus = desc->buses[0].bus;
+    auto* reu = dynamic_cast<Reu*>(desc->ioRegistry->findHandler("REU"));
+    auto* vic = dynamic_cast<VIC2*>(desc->ioRegistry->findHandler("VIC-II"));
+    ASSERT(reu && vic);
+    auto copy = [&](uint8_t d011) {
+        bus->write8(0xD011, d011);
+        // (DEN counts on line $30: a frame for it to take effect) then from
+        // line $40, badlines ahead
+        while (vic->rasterLine() != 0) desc->schedulerStep(*desc);
+        while (vic->rasterLine() != 0x40) desc->schedulerStep(*desc);
+        bus->write8(0xDF02, 0x00); bus->write8(0xDF03, 0x04);
+        bus->write8(0xDF04, 0); bus->write8(0xDF05, 0); bus->write8(0xDF06, 0);
+        bus->write8(0xDF07, 0xE8); bus->write8(0xDF08, 0x03);   // 1000 bytes
+        bus->write8(0xDF01, 0x90);
+        int cycles = 0;
+        while (reu->dmaActive()) cycles += desc->schedulerStep(*desc);
+        return cycles;
+    };
+    EXPECT_EQ(copy(0x0B), 1000);
+    // 1000 cycles span about 16 lines: two badlines, 43 cycles each
+    const int on = copy(0x1B);
+    EXPECT_TRUE(on >= 1000 + 2 * 40 && on <= 1000 + 3 * 43);
     delete desc;
 }

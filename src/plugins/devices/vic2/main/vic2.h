@@ -6,6 +6,7 @@
 #include "libdevices/main/ivideo_output.h"
 #include "libdevices/main/ivideo_inspect.h"
 #include "libdevices/main/isignal_line.h"
+#include "libdevices/main/iba_source.h"
 #include <cstdint>
 #include <string>
 
@@ -45,7 +46,7 @@
  *   vic2->setBankBase(0x0000);   // default; updated by CIA2 port-A change
  *   ioRegistry->registerHandler(vic2);
  */
-class VIC2 : public IOHandler, public IVideoOutput, public IVideoInspect {
+class VIC2 : public IOHandler, public IVideoOutput, public IVideoInspect, public IBaSource {
 public:
     // Total rendered frame dimensions (includes border).
     static constexpr int FRAME_W    = 384;
@@ -124,6 +125,17 @@ public:
     uint16_t rasterCycle() const { return (uint16_t)(m_cycleAccum % m_cyclesPerLine); }
     int cyclesPerLine() const { return m_cyclesPerLine; }
     int linesPerFrame() const { return m_linesPerFrame; }
+
+    /** BA (#266), after VICE's viciisc cycle tables (vicii-chip-model.c):
+     *  low on cycles 12-54 of a badline, and from 3 cycles before each
+     *  sprite's fetches through them while its DMA is on (sprite 0's on
+     *  cycles 55-59 of a PAL line, sprite 7's on 6-10 of the next). */
+    bool baLow(int ahead) const override;
+    /** BA on raster line `line`, cycle `cycle` (from 0: the line's first). */
+    bool baAt(int line, int cycle) const;
+    /** A badline: lines $30-$F7 whose low 3 bits are YSCROLL, once DEN was
+     *  set on line $30 (VICE vicii-badline.c). */
+    bool isBadline(int line) const;
 
     /** Set shared stall backlog counter for bus contention (#20).
      *  When a badline occurs, the VIC adds ~40 cycles to this counter.
@@ -274,6 +286,8 @@ protected:
 
     // Bus contention (#20)
     int*     m_stallBacklog = nullptr;   // shared counter with scheduler
+    bool     m_denOnLine30 = false;      // DEN seen on line $30 this frame: badlines allowed
+    bool     spriteDma(int n, int row) const;
     int      m_badlineExtra = 0;         // extra cycles per badline (0-3)
     bool     m_badlineEnable = true;     // badline emulation enabled
 

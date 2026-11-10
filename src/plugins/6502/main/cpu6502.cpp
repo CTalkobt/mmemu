@@ -914,6 +914,7 @@ const MOS6502::Opcode MOS6502::s_opcodes[256] = {
 };
 
 int MOS6502::step() {
+    m_lastWrites = 0;
     // If CPU is halted (e.g. by ANTIC DMA or WSYNC), it consumes 1 cycle and does nothing.
     if (m_state.haltLine) {
         m_state.cycles++;
@@ -949,6 +950,7 @@ int MOS6502::step() {
         uint8_t hi = read(0xFFFB);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
         m_state.cycles += 7;
+        m_lastWrites = 0x1C;                     // pushes on cycles 2-4
         return 7;
     }
     m_state.nmiPrev = m_state.nmiLine;
@@ -970,6 +972,7 @@ int MOS6502::step() {
         uint8_t hi = read(0xFFFF);
         m_state.pc = (uint16_t)lo | ((uint16_t)hi << 8);
         m_state.cycles += 7;
+        m_lastWrites = 0x1C;                     // pushes on cycles 2-4
         return 7;
     }
 
@@ -1042,5 +1045,36 @@ int MOS6502::step() {
 
     int total = info.cycles + extraCycles;
     m_state.cycles += total;
+    if (m_writeKindFor != m_ops) buildWriteKinds();
+    switch (m_writeKind[op]) {
+        case W_LAST:  m_lastWrites = 1u << (total - 1); break;
+        case W_LAST2: m_lastWrites = 3u << (total - 2); break;
+        case W_JSR:   m_lastWrites = 0x18; break;    // PCH, PCL pushed on cycles 3-4
+        case W_BRK:   m_lastWrites = 0x1C; break;    // PCH, PCL, P on cycles 2-4
+        default: break;
+    }
     return total;
+}
+
+// Write cycles by opcode (the 6502's cycle-by-cycle bus use): stores write
+// last; read-modify-write instructions write twice at the end on the NMOS
+// 6502 (the unmodified value, then the result) and once on the 65C02;
+// PHA/PHP push last; JSR and BRK push in the middle
+void MOS6502::buildWriteKinds() {
+    static const char* const stores[] = {"STA", "STX", "STY", "STZ", "SAX", "AHX", "SHX", "SHY", "TAS", "PHA", "PHP",
+                                         "PHX", "PHY", "RMB", "SMB", "TSB", "TRB"};
+    static const char* const rmw[] = {"ASL", "LSR", "ROL", "ROR", "INC", "DEC", "SLO", "RLA", "SRE", "RRA", "DCP", "ISC"};
+    for (int i = 0; i < 256; ++i) {
+        const Opcode& o = m_ops[i];
+        uint8_t k = W_NONE;
+        const char* m = o.mnemonic ? o.mnemonic : "";
+        auto is = [m](const char* n) { return std::strncmp(m, n, 3) == 0; };
+        for (const char* n : stores) if (is(n)) k = W_LAST;
+        if (o.mode != Mode::ACC && o.mode != Mode::IMP)
+            for (const char* n : rmw) if (is(n)) k = m_cmos ? W_LAST : W_LAST2;
+        if (is("JSR")) k = W_JSR;
+        if (is("BRK")) k = W_BRK;
+        m_writeKind[i] = k;
+    }
+    m_writeKindFor = m_ops;
 }

@@ -7,6 +7,7 @@
 
 class IBus;
 class ISignalLine;
+class IBaSource;
 class IPortDevice;
 
 /**
@@ -98,6 +99,9 @@ public:
      *  doesn't. Machines with a device that can take the bus call it before
      *  each CPU step (MachineDescriptor::busMasterStep). */
     virtual int busMasterCycle()                             { return 0; }
+    /** The device pulling BA (the C64's VIC-II, #266): a bus master waits
+     *  while it has the bus. */
+    virtual void setBaSource(IBaSource* /*ba*/)              {}
     /** A setting for a device fitted at run time (an expansion's option:
      *  e.g. "size" = "512K", "image" = a path); false with `err` set if the
      *  device has no such option or the value doesn't fit. */
