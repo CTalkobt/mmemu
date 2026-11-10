@@ -247,6 +247,17 @@ public:
             }
         return false;
     }
+    /**
+     * Slot 0 of a II/II+: Apple's 16 KB language card (0), or a Saturn card
+     * of `banks` 16 KB banks (4: 64K, 8: 128K). Power-on paging.
+     */
+    void setSaturn(int banks) {
+        m_saturnBanks = banks;
+        m_lc.assign((size_t)std::max(banks, 1) * 0x4000, 0);
+        resetPaging();
+    }
+    int saturnBanks() const { return m_saturnBanks; }
+    int saturnBank() const { return m_saturnBank; }
     /** A No-Slot Clock under the ROM (null takes it out). */
     void setNoSlotClock(NoSlotClock* nsc) { m_nsc = nsc; }
     NoSlotClock* noSlotClock() const { return m_nsc; }
@@ -339,6 +350,8 @@ private:
         // LanguageCardUnit::kMemModeInitialState: ROM read, bank 2, write
         // enabled; every other switch off
         m_lcReadRam = false; m_lcBank2 = true; m_lcWriteRam = true; m_lcPrewrite = false;
+        if (m_saturnBanks) m_lcWriteRam = false;    // AppleWin: a Saturn is write-protected at power-on
+        m_saturnBank = 0;
         m_80store = m_auxRead = m_auxWrite = m_intCxRom = m_altZp = m_slotC3Rom = m_intC8Rom = false;
         m_altChar = false;
         // IIc IOU (MAME machine_reset): IOUDIS on, interrupts off, ROM bank 0
@@ -395,8 +408,9 @@ private:
     uint32_t romBank() const { return (m_romSwitch && m_rom.size() >= 0x8000) ? 0x4000u : 0u; }
     // $D000-$DFFF: bank 1 at 0, bank 2 at $1000; $E000-$FFFF at $2000
     uint32_t lcIndex(uint16_t a) const {
-        if (a >= 0xE000) return 0x2000u + (a - 0xE000u);
-        return (m_lcBank2 ? 0x1000u : 0u) + (a - 0xD000u);
+        const uint32_t bank = (uint32_t)m_saturnBank * 0x4000u;
+        if (a >= 0xE000) return bank + 0x2000u + (a - 0xE000u);
+        return bank + (m_lcBank2 ? 0x1000u : 0u) + (a - 0xD000u);
     }
     // Aux: bank 2 at $D000, bank 1 at $C000 (AppleWin memaux)
     uint32_t auxLcIndex(uint16_t a) const {
@@ -599,6 +613,18 @@ private:
                     return (uint8_t)((floating(at) & 0x7F) | ((m_vf & Apple2Video::VF_DHIRES) ? 0x80 : 0));
                 return floating(at);
             case 0x8: {                                 // the language card (LanguageCard.cpp IO)
+                if (m_saturnBanks) {                    // a Saturn card (Saturn128K::IO)
+                    if (a & 4) {                        // $C0x4-7, $C0xC-F: a 16 KB bank
+                        m_saturnBank = std::min(((a >> 1) & 4) | (a & 3), m_saturnBanks - 1);
+                    } else {
+                        m_lcBank2 = !(a & 8);
+                        m_lcReadRam = ((a & 2) >> 1) == (a & 1);
+                        // two odd accesses in a row, reads or writes (the card is read-only to the bus)
+                        m_lcWriteRam = (a & 1) && m_lcPrewrite;
+                        m_lcPrewrite = a & 1;
+                    }
+                    return wr ? 0 : floating(at);
+                }
                 m_lcBank2 = !(a & 8);
                 m_lcReadRam = ((a & 2) >> 1) == (a & 1);
                 if (a & 1) {
@@ -794,6 +820,7 @@ private:
     uint64_t m_cycles = 0, m_videoCycle = 0, m_instr = 0, m_ptrig = 0;
     int m_access = 0;
     bool m_lcReadRam = false, m_lcBank2 = true, m_lcWriteRam = true, m_lcPrewrite = false;
+    int m_saturnBanks = 0, m_saturnBank = 0;
     bool m_80store = false, m_auxRead = false, m_auxWrite = false, m_intCxRom = false;
     bool m_altZp = false, m_slotC3Rom = false, m_intC8Rom = false, m_altChar = false;
     uint16_t m_lcLastRead = 0;
@@ -1025,6 +1052,35 @@ MachineDescriptor* create(Model model, std::string* err) {
             fy -= iy;
             bus->cardMouse(ix, iy, buttons);
         };
+    }
+
+    if (!iie) {
+        // Slot 0: the language card, or a Saturn 64K/128K card in its place
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = "slot0";
+        sl.description = "Slot 0 ($C080-$C08F, $D000-$FFFF): Apple's 16K language card or a Saturn RAM card";
+        sl.canEmpty = false;
+        sl.devices = {{"lc", "Apple Language Card: 16 KB at $D000-$FFFF", {}, ""},
+                      {"saturn", "Saturn Systems RAM card: 16 KB banks at $D000-$FFFF, chosen at $C084-$C087/$C08C-$C08F",
+                       {"64K", "128K"}, "128K"}};
+        sl.install = [bus](const std::string& device, const std::string& option, std::string& err) {
+            if (device.empty()) { err = "slot 0 can't be left empty (a 48K machine isn't emulated)"; return false; }
+            if (device == "lc") {
+                if (!option.empty()) { err = "the language card takes no option"; return false; }
+                bus->setSaturn(0);
+                return true;
+            }
+            if (device != "saturn") { err = "no device '" + device + "' for slot 0 (lc, saturn)"; return false; }
+            const uint64_t bytes = MachineDescriptor::parseMemorySize(option.empty() ? "128K" : option);
+            if (bytes != 0x10000 && bytes != 0x20000) { err = "a Saturn card is 64K or 128K"; return false; }
+            bus->setSaturn((int)(bytes / 0x4000));
+            return true;
+        };
+        sl.info = [bus]() {
+            const int b = bus->saturnBanks();
+            return b ? "saturn (Saturn " + std::to_string(b * 16) + "K)" : std::string("lc (Language Card, 16K)");
+        };
+        desc->expansionSlots.push_back(std::move(sl));
     }
 
     {
