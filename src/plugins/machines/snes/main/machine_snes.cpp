@@ -34,7 +34,7 @@
 namespace snes {
 namespace {
 
-constexpr uint64_t MASTER_HZ = 21477272;
+constexpr uint64_t MASTER_HZ = 21477272, MASTER_HZ_PAL = 21281370;   // NTSC, PAL (Mesen's)
 constexpr int LINE_CLOCKS = 1364;
 constexpr int REFRESH_AT = 538;
 constexpr int HDMA_AT = 276 * 4;
@@ -99,6 +99,7 @@ struct Cart {
     std::unique_ptr<St018> st018;
     // Battery RAM (chipset low nibble 2, 5, 6, 9 or A, as Mesen): the cartridge RAM, or the Super FX's
     bool battery = false;
+    bool pal = false;                  // a PAL cartridge, by the header's destination code (as Mesen)
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -255,6 +256,8 @@ struct Cart {
         while (!title.empty() && title.back() == ' ') title.pop_back();
         while (!raw.empty() && raw.back() == ' ') raw.pop_back();
         const uint8_t ramSize = rom[headerAt + 0x18];
+        const uint8_t dest = rom[headerAt + 0x19];
+        pal = (dest >= 0x02 && dest <= 0x0C) || dest == 0x11 || dest == 0x12;
         sram.assign(ramSize && ramSize <= 0x0C ? (1024u << ramSize) : 0, 0);
         // The chipset byte: a coprocessor when the low nibble is 3 or more; 0x in the high nibble is a NEC DSP
         const uint8_t chips = rom[headerAt + 0x16];
@@ -304,6 +307,7 @@ struct Cart {
         std::string s = title + ", " + names[(int)map] + ", " + std::to_string(rom.size() / 1024) + "K ROM";
         if (!sram.empty()) s += ", " + std::to_string(sram.size() / 1024) + "K RAM";
         if (battery) s += ", battery";
+        if (pal) s += ", PAL";
         if (dsp) { std::string n = dspName; for (auto& c : n) c = (char)std::toupper((unsigned char)c); s += ", " + n; }
         if (gsu) s += ", Super FX, " + std::to_string(gsu->ram().size() / 1024) + "K RAM";
         if (sa1) s += ", SA-1";
@@ -418,7 +422,14 @@ public:
         m_wram.assign(0x20000, 0);
     }
 
-    void setCart(std::unique_ptr<Cart> c, std::string label) { m_cart = std::move(c); m_label = std::move(label); }
+    void setCart(std::unique_ptr<Cart> c, std::string label) {
+        m_cart = std::move(c); m_label = std::move(label);
+        m_pal = m_cart && m_cart->pal;
+        m_masterHz = m_pal ? MASTER_HZ_PAL : MASTER_HZ;
+        m_ppu->setPal(m_pal);
+    }
+    bool pal() const { return m_pal; }
+    uint64_t masterHz() const { return m_masterHz; }
     Cart* cart() const { return m_cart.get(); }
     const std::string& label() const { return m_label; }
     void setCpu(W65C816* cpu) { m_cpu = cpu; }
@@ -432,7 +443,7 @@ public:
     void powerOn() {
         std::fill(m_wram.begin(), m_wram.end(), 0);
         m_master = 0; m_hClock = 0; m_line = 0;
-        m_lines = 262; m_vblankLine = 225; m_lineClocks = LINE_CLOCKS;
+        m_lines = m_pal ? 312 : 262; m_vblankLine = 225; m_lineClocks = LINE_CLOCKS;
         m_refreshDone = m_hdmaDone = false;
         m_hCounter = m_vCounter = 0; m_irqLevel = false; m_needIrq = 0; m_cpuIrq = m_irqSample = false;
         m_dmaPending = m_hdmaPending = m_hdmaInitPending = m_dmaStartDelay = false;
@@ -471,7 +482,7 @@ public:
         syncApu();
     }
     void syncApu() {
-        const uint64_t target = m_master / MASTER_HZ * Apu::CLOCK_HZ + (m_master % MASTER_HZ) * Apu::CLOCK_HZ / MASTER_HZ;
+        const uint64_t target = m_master / m_masterHz * Apu::CLOCK_HZ + (m_master % m_masterHz) * Apu::CLOCK_HZ / m_masterHz;
         if (target > m_apuSynced) { m_apu->runTo(target); m_apuSynced = target; }
     }
 
@@ -636,14 +647,14 @@ private:
                 return v >= 0 ? (m_openBus = (uint8_t)v) : m_openBus;
             }
             if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
-                if (!peek) m_cart->dsp->runTo(m_master, MASTER_HZ);
+                if (!peek) m_cart->dsp->runTo(m_master, m_masterHz);
                 const uint16_t w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
                 return m_openBus = (a & 1) ? (uint8_t)(w >> 8) : (uint8_t)w;
             }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
                 if (peek) { const auto& st = m_cart->dsp->state(); return sr ? (uint8_t)(st.sr >> 8) : (uint8_t)st.dr; }
-                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                m_cart->dsp->runTo(m_master, m_masterHz);
                 return m_openBus = m_cart->dsp->read(sr);
             }
             const int v = m_cart->read(bank, a);
@@ -686,14 +697,14 @@ private:
                 return;
             }
             if (m_cart->st01x && (bank & 0x78) == 0x68 && a < 0x1000) {
-                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                m_cart->dsp->runTo(m_master, m_masterHz);
                 uint16_t& w = m_cart->dsp->dataRam()[(a >> 1) & 0x7FF];
                 w = (a & 1) ? (uint16_t)((w & 0x00FF) | v << 8) : (uint16_t)((w & 0xFF00) | v);
                 return;
             }
             bool sr;
             if (m_cart->dspAt(bank, a, sr)) {
-                m_cart->dsp->runTo(m_master, MASTER_HZ);
+                m_cart->dsp->runTo(m_master, m_masterHz);
                 m_cart->dsp->write(sr, v);
                 return;
             }
@@ -731,7 +742,7 @@ private:
         if (r < 0x80) {
             syncApu();
             // In half APU cycles: a write in a cycle's second half is seen from the next (Mesen)
-            const uint64_t half = m_master / MASTER_HZ * (2 * Apu::CLOCK_HZ) + (m_master % MASTER_HZ) * (2 * Apu::CLOCK_HZ) / MASTER_HZ;
+            const uint64_t half = m_master / m_masterHz * (2 * Apu::CLOCK_HZ) + (m_master % m_masterHz) * (2 * Apu::CLOCK_HZ) / m_masterHz;
             m_apu->cpuWrite(r & 3, v, (half >> 1) + (half & 1));
             return;
         }
@@ -1121,10 +1132,10 @@ private:
         if (++m_line == m_lines) {
             m_line = 0;
             m_nmiEvent = 1;                               // the flag falls at clock 2
-            // A frame is 262 lines; interlaced, the even field's is 263
+            // A frame is 262 lines (PAL 312); interlaced, the even field's is one more
             m_ppu->startFrame();
             m_vblankLine = m_ppu->vblankLine();
-            m_lines = (m_ppu->interlace() && !m_ppu->oddField()) ? 263 : 262;
+            m_lines = (m_pal ? 312 : 262) + ((m_ppu->interlace() && !m_ppu->oddField()) ? 1 : 0);
             m_hdmaInitDue = true;
             m_hdmaInitAt = 12 + (int)(m_master & 7);
         }
@@ -1156,6 +1167,8 @@ private:
     uint64_t m_master = 0, m_apuSynced = 0;
     int m_hClock = 0, m_line = 0;
     int m_lines = 262, m_vblankLine = 225, m_lineClocks = LINE_CLOCKS;
+    bool m_pal = false;
+    uint64_t m_masterHz = MASTER_HZ;
     int m_saveFrames = 0;
     bool m_refreshDone = false, m_hdmaDone = false;
     // DMA/HDMA requests waiting for the CPU's next cycle
@@ -1233,6 +1246,7 @@ bool insertCartridge(MachineDescriptor* m, const std::vector<uint8_t>& image, co
     cart->loadSave(savePath);
     const std::string d = cart->describe();
     bus->setCart(std::move(cart), label + " (" + d + ")");
+    m->clockHz = (double)bus->masterHz();                 // real time: 50 frames a second for PAL
     powerOn(m);
     return true;
 }
@@ -1242,6 +1256,7 @@ void removeCartridge(MachineDescriptor* m) {
     if (!bus) return;
     if (bus->cart()) bus->cart()->flushSave();
     bus->setCart(nullptr, "");
+    m->clockHz = (double)bus->masterHz();
     powerOn(m);
 }
 
@@ -1269,6 +1284,7 @@ void setButtons(MachineDescriptor* m, int port, uint16_t buttons) {
 uint64_t masterClock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->master() : 0; }
 int scanline(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->line() : 0; }
 int hclock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->hclock() : 0; }
+bool isPal(MachineDescriptor* m) { auto* b = busOf(m); return b && b->pal(); }
 
 MachineDescriptor* create(bool sfc, std::string* /*err*/) {
     auto* desc = new MachineDescriptor();

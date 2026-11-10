@@ -14,9 +14,10 @@ struct MachineDescriptor;
  * (LoROM, HiROM, ExHiROM; battery RAM saved to `.srm`; DSP-1..4, ST010/011, Super FX,
  * SA-1, Cx4, S-DD1, SPC7110, OBC1, ST018).
  *
- * Time is the 21.477 MHz master clock: each CPU bus cycle takes 6, 8 or 12
- * clocks by region (FastROM through MEMSEL), internal cycles 6. A line is
- * 1364 clocks (341 dots), 262 lines: DRAM refresh steals 40 clocks a line,
+ * Time is the 21.477 MHz master clock (21.281 MHz PAL): each CPU bus cycle
+ * takes 6, 8 or 12 clocks by region (FastROM through MEMSEL), internal
+ * cycles 6. A line is 1364 clocks (341 dots), 262 lines (312 PAL; the
+ * region is the cartridge header's destination code, as Mesen): DRAM refresh steals 40 clocks a line,
  * each visible line is drawn at the start of horizontal blank followed by
  * HDMA, vertical blank (NMI, auto joypad read) starts at line 225.
  *
@@ -26,7 +27,7 @@ struct MachineDescriptor;
  */
 namespace snes {
 
-/** A new SNES (NTSC) or Super Famicom (the same machine here). */
+/** A new SNES or Super Famicom (the same machine here); NTSC or PAL by the cartridge. */
 MachineDescriptor* create(bool superFamicom = false, std::string* err = nullptr);
 
 /**
@@ -59,5 +60,7 @@ uint64_t masterClock(MachineDescriptor* m);
 /** Current scanline (0-261) and H clock (0-1363). */
 int scanline(MachineDescriptor* m);
 int hclock(MachineDescriptor* m);
+/** True when the cartridge in it is a PAL one (the console runs as PAL). */
+bool isPal(MachineDescriptor* m);
 
 }  // namespace snes

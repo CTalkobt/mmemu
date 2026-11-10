@@ -60,6 +60,8 @@ public:
     /** $2133 bit 0, and the field ($213F bit 7). */
     bool interlace() const { return m_setini & 1; }
     bool oddField() const { return m_interlaceField; }
+    /** A PAL console: $213F bit 4. */
+    void setPal(bool pal) { m_pal = pal; }
     /** Latch the H/V counters ($2137 read or WRIO bit 7). */
     void latchCounters(int dot, int line) { m_hLatch = (uint16_t)dot; m_vLatch = (uint16_t)line; m_latched = true; }
     bool forcedBlank() const { return m_forcedBlank; }
@@ -167,6 +169,7 @@ private:
     int16_t m_mpy = 0;
     uint32_t m_mpyResult = 0;
     bool m_interlaceField = false;
+    bool m_pal = false;
 
     // The line being drawn
     int m_drawLine = -1, m_drawX = 0;
