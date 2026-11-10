@@ -8,6 +8,7 @@
 #include "snes_apu.h"
 #include "snes_cx4.h"
 #include "snes_gsu.h"
+#include "snes_input.h"
 #include "snes_necdsp.h"
 #include "snes_ppu.h"
 #include "snes_sa1.h"
@@ -420,6 +421,8 @@ public:
     SnesBus(Ppu* ppu, Apu* apu) : m_ppu(ppu), m_apu(apu) {
         m_cfg = {24, 8, BusRole::DATA, true, 0xFFFFFF};
         m_wram.assign(0x20000, 0);
+        setPort(0, PortKind::Pad);
+        setPort(1, PortKind::Pad);
     }
 
     void setCart(std::unique_ptr<Cart> c, std::string label) {
@@ -434,7 +437,54 @@ public:
     const std::string& label() const { return m_label; }
     void setCpu(W65C816* cpu) { m_cpu = cpu; }
 
-    uint16_t pads[2] = {0, 0};
+    // ------------------------------------------------------------------
+    // The controller ports
+    // ------------------------------------------------------------------
+    enum class PortKind { None, Pad, Mouse, SuperScope, Multitap };
+    static const char* portKindName(PortKind k) {
+        switch (k) {
+        case PortKind::Pad: return "pad";
+        case PortKind::Mouse: return "mouse";
+        case PortKind::SuperScope: return "superscope";
+        case PortKind::Multitap: return "multitap";
+        default: return "";
+        }
+    }
+    void setPort(int port, PortKind kind) {
+        port &= 1;
+        m_portKind[port] = kind;
+        switch (kind) {
+        case PortKind::Pad: m_port[port] = std::make_unique<Pad>(); break;
+        case PortKind::Mouse: m_port[port] = std::make_unique<Mouse>(); break;
+        case PortKind::SuperScope: m_port[port] = std::make_unique<SuperScope>(); break;
+        case PortKind::Multitap: m_port[port] = std::make_unique<Multitap>(port); break;
+        default: m_port[port].reset(); break;
+        }
+        if (m_port[port]) m_port[port]->strobe(out0());
+        applyPlayers();
+    }
+    PortKind portKind(int port) const { return m_portKind[port & 1]; }
+    InputDevice* portDevice(int port) const { return m_port[port & 1].get(); }
+    /** Player `p`'s pad (0-4): port 1's pad or multitap pads first, then port 2's. */
+    void setPlayer(int p, uint16_t buttons) {
+        if (p < 0 || p >= 5) return;
+        m_players[p] = buttons;
+        applyPlayers();
+    }
+    /** The host mouse to the mouse or the Super Scope (the first port with one). */
+    void mouseInput(int dx, int dy, uint8_t buttons, int wheel) {
+        for (int i = 0; i < 2; ++i) {
+            if (auto* m = dynamic_cast<Mouse*>(m_port[i].get())) { m->move(dx, dy); m->buttons = buttons & 3; return; }
+            if (auto* sc = dynamic_cast<SuperScope*>(m_port[i].get())) {
+                // Left fires, right is the cursor button, middle pause; the wheel flips turbo
+                sc->x = std::max(-8, std::min(263, sc->x + dx));
+                sc->y = std::max(-8, std::min(247, sc->y + dy));
+                sc->buttons = (uint8_t)(((buttons & 1) ? SuperScope::FIRE : 0) | ((buttons & 2) ? SuperScope::CURSOR : 0) |
+                                        ((buttons & 4) ? SuperScope::PAUSE : 0) | (wheel ? SuperScope::TURBO : 0));
+                return;
+            }
+        }
+    }
 
     uint64_t master() const { return m_master; }
     int line() const { return m_line; }
@@ -450,17 +500,20 @@ public:
         m_hdmaInitDue = false; m_hdmaInitAt = 12; m_refreshAt = REFRESH_AT; m_dmaClock = 0; m_cpuSpeed = 8;
         m_dmaLockCycle = ~0ull; m_nmiFlagAt = ~1ull;
         m_nmiEvent = 0; m_nmiArmed = false;
-        m_nmitimen = 0; m_wrio = 0xFF;
+        m_nmitimen = 0; m_wrio = 0xFF; m_ppu->setIoBit(true);
         m_mpyA = 0xFF; m_mpyB = 0xFF; m_dividend = 0xFFFF; m_quotient = 0; m_product = 0;
         m_aluShift = 0; m_multCounter = m_divCounter = 0; m_aluPrev = m_cpu ? m_cpu->cycles() : 0;
         m_htime = m_vtime = 0x1FF;
         m_hdmaen = 0; m_fastRom = false;
         m_nmiFlag = false; m_irqFlag = false;
-        m_joyBusy = 0;
-        m_joy.fill(0);
+        m_joyData.fill(0);
+        m_autoReadStart = m_autoReadNext = 0; m_autoReadDisabled = true; m_autoReadActive = false;
+        m_autoReadPort[0] = m_autoReadPort[1] = 0;
+        m_scopeLatch = false;
         m_wramAddr = 0;
         m_openBus = 0;
-        m_strobe = false; m_serial[0] = m_serial[1] = 0;
+        m_out0 = 0; m_autoStrobe = false;
+        for (auto& d : m_port) if (d) d->strobe(false);
         for (auto& c : m_dma) c = DmaChannel{};
         m_apuSynced = 0;
         if (m_cart && m_cart->dsp) m_cart->dsp->reset();
@@ -614,11 +667,11 @@ private:
             if (a < 0x2000) return m_openBus = m_wram[a];
             if (a >= 0x2100 && a < 0x2200) return m_openBus = bRead((uint8_t)a, peek);
             if (a == 0x4016 || a == 0x4017) {
-                uint8_t v = (uint8_t)(m_openBus & 0xFC);
+                // The port's data lines; the rest open bus ($4017's bits 2-4 always set)
+                if (!peek) processAutoJoypad();
+                uint8_t v = (uint8_t)(m_openBus & (a == 0x4016 ? 0xFC : 0xE0));
+                if (!peek && m_port[a & 1]) v |= (uint8_t)(m_port[a & 1]->read(m_wrio) & 3);
                 if (a == 0x4017) v |= 0x1C;
-                const int p = a & 1;
-                v |= m_strobe ? (uint8_t)(pads[p] >> 15) : (uint8_t)(m_serial[p] >> 15);
-                if (!peek && !m_strobe) m_serial[p] = (uint16_t)(m_serial[p] << 1 | 1);
                 return m_openBus = v;
             }
             if (a >= 0x4200 && a < 0x4220) return internalRead(a, peek);   // internal: open bus kept
@@ -672,9 +725,12 @@ private:
             if (a < 0x2000) { m_wram[a] = v; return; }
             if (a >= 0x2100 && a < 0x2200) { bWrite((uint8_t)a, v); return; }
             if (a == 0x4016) {
-                const bool s = v & 1;
-                if (m_strobe && !s) { m_serial[0] = pads[0]; m_serial[1] = pads[1]; }
-                m_strobe = s;
+                // OUT0 is the CPU's bit 0 or the auto read's strobe (Mesen)
+                if (m_out0 != v) {
+                    processAutoJoypad();
+                    m_out0 = v;
+                    for (auto& d : m_port) if (d) d->strobe(out0());
+                }
                 return;
             }
             if (a >= 0x4200 && a < 0x4220) { internalWrite(a, v); return; }
@@ -724,6 +780,7 @@ private:
             const uint8_t lo = r & 0x0F;
             return ((lo >= 4 && lo <= 6) || (lo >= 8 && lo <= 0xA)) ? m_ppu->peek(r) : m_openBus;
         }
+        if (r == 0x3F && !peek) processScopeLatch();
         if (r < 0x40) return peek ? m_ppu->peek(r) : m_ppu->read(r);
         if (r < 0x80) { syncApu(); return m_apu->cpuRead(r & 3); }
         if (r == 0x80) {
@@ -772,7 +829,8 @@ private:
         case 0x4212: {
             const bool vblank = m_line >= m_vblankLine;
             const bool hblank = m_hClock < 4 || m_hClock > 274 * 4;
-            return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_joyBusy > 0 ? 1 : 0));
+            if (!peek) processAutoJoypad();
+            return (uint8_t)((vblank << 7) | (hblank << 6) | (m_openBus & 0x3E) | (m_autoReadActive ? 1 : 0));
         }
         case 0x4213: return m_wrio;
         case 0x4214: if (!peek) runAlu(true); return (uint8_t)m_quotient;
@@ -780,7 +838,11 @@ private:
         case 0x4216: if (!peek) runAlu(true); return (uint8_t)m_product;
         case 0x4217: if (!peek) runAlu(true); return (uint8_t)(m_product >> 8);
         default:
-            if (a >= 0x4218) return m_joy[a - 0x4218];
+            if (a >= 0x4218) {
+                if (!peek) processAutoJoypad();
+                const uint16_t d = m_joyData[(a - 0x4218) >> 1];
+                return (uint8_t)((a & 1) ? d >> 8 : d);
+            }
             return m_openBus;
         }
     }
@@ -843,11 +905,18 @@ private:
     void internalWrite(uint16_t a, uint8_t v) {
         switch (a) {
         case 0x4200:
+            if ((m_nmitimen ^ v) & 1) {
+                // Catch the auto read up; a change in its first 256 clocks moves the strobe (Mesen)
+                processAutoJoypad();
+                if (m_autoReadStart <= m_master && m_master - m_autoReadStart < 256) setAutoStrobe(v & 1);
+            }
             m_nmitimen = v;
             if (!(v & 0x30)) setIrqFlag(false);
             m_cpu->setNmiLine(m_nmiFlag && m_nmiArmed && (v & 0x80));
             break;
         case 0x4201:
+            processAutoJoypad();                          // the multitap's select
+            m_ppu->setIoBit(v & 0x80);
             if ((m_wrio & 0x80) && !(v & 0x80)) m_ppu->latchCounters(dot(), m_line);
             m_wrio = v;
             break;
@@ -1125,10 +1194,79 @@ private:
         if (!m_irqFlag) m_cpuIrq = false;
     }
 
+    // ------------------------------------------------------------------
+    // The controller ports
+    // ------------------------------------------------------------------
+    uint8_t out0() const { return (uint8_t)((m_out0 & 1) | (m_autoStrobe ? 1 : 0)); }
+    void setAutoStrobe(bool on) {
+        if (m_autoStrobe == on) return;
+        m_autoStrobe = on;
+        for (auto& d : m_port) if (d) d->strobe(out0());
+    }
+    void applyPlayers() {
+        int p = 0;
+        auto next = [&]() -> uint16_t { return p < 5 ? m_players[p++] : 0; };
+        for (auto& d : m_port) {
+            if (auto* pad = dynamic_cast<Pad*>(d.get())) pad->buttons = next();
+            else if (auto* tap = dynamic_cast<Multitap*>(d.get())) for (auto& tp : tap->pads) tp.buttons = next();
+        }
+    }
+    /** The auto joypad read (Mesen's ProcessAutoJoypad), caught up to now: 128 clocks a step; the strobe for
+     *  steps 0-1, then 16 bits, each read in one step and shifted in the next, D0 to $4218/$421A and D1 to
+     *  $421C/$421E. */
+    void processAutoJoypad() {
+        if (m_master < m_autoReadStart) return;
+        if (m_autoReadDisabled) {
+            if (m_master - m_autoReadStart >= 256) setAutoStrobe(false);
+            return;
+        }
+        const bool en = m_nmitimen & 1;
+        for (uint64_t clock = m_autoReadNext; clock <= m_master; clock += 128) {
+            m_autoReadNext = clock + 128;
+            int step = (int)((clock - m_autoReadStart) / 128);
+            switch (step) {
+            case 0: setAutoStrobe(en); break;
+            case 1:
+                if (!en) { m_autoReadDisabled = true; m_autoReadActive = false; }
+                else { m_autoReadActive = true; m_joyData.fill(0); }
+                break;
+            case 2: setAutoStrobe(false); break;
+            default:
+                if (!en) step = 34;
+                else if (step & 1) {
+                    for (int i = 0; i < 2; ++i) m_autoReadPort[i] = m_port[i] ? m_port[i]->read(m_wrio) : 0;
+                } else {
+                    for (int i = 0; i < 4; ++i) m_joyData[i] = (uint16_t)(m_joyData[i] << 1);
+                    m_joyData[0] |= m_autoReadPort[0] & 1;
+                    m_joyData[1] |= m_autoReadPort[1] & 1;
+                    m_joyData[2] |= (m_autoReadPort[0] >> 1) & 1;
+                    m_joyData[3] |= (m_autoReadPort[1] >> 1) & 1;
+                }
+                break;
+            }
+            if (step >= 34) {
+                m_autoReadDisabled = true; m_autoReadActive = false;
+                setAutoStrobe(false);
+                return;
+            }
+        }
+        if (!en && m_master - m_autoReadStart >= 128 * 3) {
+            m_autoReadDisabled = true; m_autoReadActive = false;
+            setAutoStrobe(false);
+        }
+    }
+    /** The Super Scope's latch, once the picture has reached where it points (Mesen's ProcessLocationLatchRequest). */
+    void processScopeLatch() {
+        if (m_scopeLatch && (m_line > m_scopeLine || (m_line == m_scopeLine && dot() >= m_scopeDot))) {
+            m_scopeLatch = false;
+            m_ppu->latchCounters(m_scopeDot, m_scopeLine);
+        }
+    }
+
     void endOfLine() {
+        processAutoJoypad();
         m_hClock -= m_lineClocks;
         m_refreshDone = m_hdmaDone = false;
-        if (m_joyBusy > 0) --m_joyBusy;
         if (++m_line == m_lines) {
             m_line = 0;
             m_nmiEvent = 1;                               // the flag falls at clock 2
@@ -1146,13 +1284,16 @@ private:
             m_ppu->startVblank();
             if (m_cart && m_cart->battery && ++m_saveFrames >= 60) { m_saveFrames = 0; m_cart->flushSave(); }
             m_nmiEvent = 1;                               // the flag rises at clock 2, the CPU sees it at 6
-            if (m_nmitimen & 0x01) {
-                // Auto joypad read: the pads' 16 bits into $4218-$421F (3 lines busy)
-                m_joy.fill(0);
-                for (int p = 0; p < 2; ++p) { m_joy[p * 2] = (uint8_t)pads[p]; m_joy[p * 2 + 1] = (uint8_t)(pads[p] >> 8); }
-                m_serial[0] = 0xFFFF; m_serial[1] = 0xFFFF;
-                m_joyBusy = 3;
-            }
+            // The Super Scope: last frame's latch if it's not been taken, then this frame's aim (Mesen)
+            processScopeLatch();
+            m_scopeLatch = false;
+            for (auto& d : m_port)
+                if (auto* sc = dynamic_cast<SuperScope*>(d.get())) m_scopeLatch = sc->latchAt(m_scopeDot, m_scopeLine);
+            // The auto joypad read: from the first multiple of 256 clocks after clock 130, less 128 (Mesen)
+            const uint64_t from = m_master + 130;
+            m_autoReadStart = from + ((from & 0xFF) ? 256 - (from & 0xFF) : 0) - 128;
+            m_autoReadNext = m_autoReadStart;
+            m_autoReadDisabled = false;
         }
     }
 
@@ -1189,12 +1330,20 @@ private:
     uint8_t m_multCounter = 0, m_divCounter = 0;
     uint64_t m_aluPrev = 0;
     bool m_fastRom = false, m_nmiFlag = false, m_irqFlag = false;
-    int m_joyBusy = 0;
-    std::array<uint8_t, 8> m_joy{};
+    // The controller ports, the players' pads, OUT0 (the CPU's $4016 and the auto read's strobe), the auto read
+    std::unique_ptr<InputDevice> m_port[2];
+    PortKind m_portKind[2] = {PortKind::None, PortKind::None};
+    uint16_t m_players[5] = {};
+    uint8_t m_out0 = 0;
+    bool m_autoStrobe = false;
+    std::array<uint16_t, 4> m_joyData{};
+    uint64_t m_autoReadStart = 0, m_autoReadNext = 0;
+    bool m_autoReadDisabled = true, m_autoReadActive = false;
+    uint8_t m_autoReadPort[2] = {};
+    bool m_scopeLatch = false;
+    int m_scopeDot = 0, m_scopeLine = 0;
     uint32_t m_wramAddr = 0;
     uint8_t m_openBus = 0;
-    bool m_strobe = false;
-    uint16_t m_serial[2] = {};
     DmaChannel m_dma[8];
 };
 
@@ -1203,6 +1352,15 @@ SnesBus* busOf(MachineDescriptor* m) {
     for (auto& b : m->buses)
         if (auto* p = dynamic_cast<SnesBus*>(b.bus)) return p;
     return nullptr;
+}
+
+bool setPortDevice(SnesBus* bus, int port, const std::string& device) {
+    static const std::pair<const char*, SnesBus::PortKind> kinds[] = {
+        {"", SnesBus::PortKind::None}, {"none", SnesBus::PortKind::None}, {"pad", SnesBus::PortKind::Pad},
+        {"mouse", SnesBus::PortKind::Mouse}, {"superscope", SnesBus::PortKind::SuperScope},
+        {"multitap", SnesBus::PortKind::Multitap}};
+    for (auto& k : kinds) if (device == k.first) { bus->setPort(port, k.second); return true; }
+    return false;
 }
 
 void powerOn(MachineDescriptor* m) {
@@ -1278,7 +1436,17 @@ std::string cartridgeInfo(MachineDescriptor* m) {
 }
 
 void setButtons(MachineDescriptor* m, int port, uint16_t buttons) {
-    if (auto* bus = busOf(m)) bus->pads[port & 1] = buttons;
+    if (auto* bus = busOf(m)) bus->setPlayer(port, buttons);
+}
+
+bool setPortDevice(MachineDescriptor* m, int port, const std::string& device) {
+    auto* bus = busOf(m);
+    return bus && setPortDevice(bus, port, device);
+}
+
+std::string portDevice(MachineDescriptor* m, int port) {
+    auto* bus = busOf(m);
+    return bus ? SnesBus::portKindName(bus->portKind(port)) : "";
 }
 
 uint64_t masterClock(MachineDescriptor* m) { auto* b = busOf(m); return b ? b->master() : 0; }
@@ -1316,14 +1484,15 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
 
     // Controllers: keyboard and joystick into pad 1, gamepads into either
     auto* held = new uint16_t[4]{0, 0, 0, 0};   // keys, joystick 0, joystick 1, -
-    auto* pads = new uint16_t[2]{0, 0};
+    auto* pads = new uint16_t[5]{0, 0, 0, 0, 0};
     desc->deleters.push_back([held, pads]() { delete[] held; delete[] pads; });
     auto apply = [bus, held, pads]() {
-        bus->pads[0] = (uint16_t)(held[0] | held[1] | pads[0]);
-        bus->pads[1] = (uint16_t)(held[2] | pads[1]);
+        bus->setPlayer(0, (uint16_t)(held[0] | held[1] | pads[0]));
+        bus->setPlayer(1, (uint16_t)(held[2] | pads[1]));
+        for (int p = 2; p < 5; ++p) bus->setPlayer(p, pads[p]);
     };
     desc->onGamepad = [pads, apply](int port, uint32_t b) {
-        if (port < 0 || port > 1) return false;
+        if (port < 0 || port > 4) return false;      // players 3-5 on a multitap
         pads[port] = padBits(b);
         apply();
         return true;
@@ -1362,6 +1531,24 @@ MachineDescriptor* create(bool sfc, std::string* /*err*/) {
         apply();
         return true;
     };
+    // The mouse and the Super Scope take the host mouse
+    desc->onMouse = [bus](int dx, int dy, uint8_t buttons, int wheel) { bus->mouseInput(dx, dy, buttons, wheel); };
+    // What's in each controller port: CLI/MCP `expansion port2 multitap`, the GUI's Control > Expansions
+    for (int port = 0; port < 2; ++port) {
+        MachineDescriptor::ExpansionSlot sl;
+        sl.name = port ? "port2" : "port1";
+        sl.description = port ? "Controller port 2" : "Controller port 1";
+        sl.devices = {{"pad", "SNES controller", {}, ""},
+                      {"mouse", "SNES Mouse (the host mouse: left and right buttons)", {}, ""},
+                      {"superscope", "Super Scope (the host mouse aims; left fires, right cursor, middle pause, wheel turbo)", {}, ""},
+                      {"multitap", "Multitap: four pads (players " + std::string(port ? "2-5" : "1-4") + ")", {}, ""}};
+        sl.install = [bus, port](const std::string& dev, const std::string&, std::string& err) {
+            if (!setPortDevice(bus, port, dev)) { err = "No such controller: " + dev; return false; }
+            return true;
+        };
+        sl.info = [bus, port]() { return std::string(SnesBus::portKindName(bus->portKind(port))); };
+        desc->expansionSlots.push_back(std::move(sl));
+    }
     desc->screenButtons = {
         {"START", {"start"}, "Controller 1's START button (Return)."},
         {"SELECT", {"select"}, "Controller 1's SELECT button (Tab)."}};

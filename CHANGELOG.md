@@ -7,6 +7,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES mouse, Super Scope and multitap
+
+- **The controller ports take a pad, the SNES Mouse, the Super Scope or a
+  multitap** (after Mesen's devices): CLI/MCP `expansion port1|port2
+  <device>`, the GUI's Control > Expansions. The mouse and the Super Scope
+  follow the host mouse. The Super Scope makes the PPU latch its counters
+  where it points. The multitap's pads are players 2-5 (`onGamepad` ports
+  1-4).
+- **The auto joypad read follows Mesen's timing**: it starts at a 256-clock
+  boundary after clock 130 of the vblank line and clocks the devices
+  themselves through a 256-clock strobe and 16 read/shift steps of 128
+  clocks, with `$4212` bit 0 set while it runs.
+- A `$213F` read clears the counter latch flag only while `$4201` bit 7 is
+  set (Mesen).
+- Tests: `snes_auto_joypad_timing`, `snes_multitap`, `snes_mouse`,
+  `snes_super_scope`.
+
 ### SNES PAL
 
 - **PAL cartridges run on a PAL console**, chosen by the header's
