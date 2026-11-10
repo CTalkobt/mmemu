@@ -146,3 +146,95 @@ TEST_CASE(electron_tape_save_and_chain) {
     delete m;
     if (ok) std::remove(path.c_str());
 }
+
+// ---------------------------------------------------------------------------
+// The Plus 1
+// ---------------------------------------------------------------------------
+namespace {
+MachineDescriptor* makePlus1(const std::string& printer) {
+    MachineDescriptor* m = make();
+    if (!m) return nullptr;
+    auto* slot = m->expansionSlot("edge");
+    std::string err;
+    if (!slot || !slot->install("plus1", printer, err)) {
+        printf("  (skipped: %s)\n", err.c_str());
+        delete m;
+        return nullptr;
+    }
+    m->onReset(*m);
+    return m;
+}
+}  // namespace
+
+// The Plus 1's ROM answers ADVAL: joystick 0 held left and fire, ADVAL(1)
+// near the top, ADVAL(2) centred, ADVAL(0)'s fire bit set
+TEST_CASE(electron_plus1_joystick_adval) {
+    MachineDescriptor* m = makePlus1("");
+    if (!m) return;
+    EXPECT_EQ(m->joystickPorts, 2);
+    run(m, 4000000);
+    m->onJoystick(0, 0x1F & ~0x04 & ~0x10);         // left, fire
+    run(m, 2000000);
+    auto* kbd = find<IKeyboardMatrix>(m);
+    kbd->enqueueText("A%=ADVAL(1):B%=ADVAL(2):?&70=A% DIV 256:?&71=B% DIV 256:?&72=ADVAL(0) AND 3\n");
+    run(m, 20000000);
+    IBus* bus = m->buses[0].bus;
+    EXPECT_TRUE(bus->peek8(0x70) >= 0xF0);
+    EXPECT_TRUE(bus->peek8(0x71) >= 0x70 && bus->peek8(0x71) <= 0x90);
+    EXPECT_EQ(bus->peek8(0x72), 1);
+    delete m;
+}
+
+// VDU 2 sends text to the Plus 1's printer port, here a file
+TEST_CASE(electron_plus1_printer) {
+    const std::string path = "/tmp/mmemu_test_electron_printer.txt";
+    std::remove(path.c_str());
+    MachineDescriptor* m = makePlus1(path);
+    if (!m) return;
+    run(m, 4000000);
+    find<IKeyboardMatrix>(m)->enqueueText("VDU2:PRINT \"PLUS ONE\":VDU3\n");
+    run(m, 20000000);
+    delete m;
+    std::string out;
+    if (FILE* f = std::fopen(path.c_str(), "rb")) {
+        char buf[256];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+        std::fclose(f);
+    }
+    EXPECT_TRUE(out.find("PLUS ONE") != std::string::npos);
+    std::remove(path.c_str());
+}
+
+// A cartridge in slot 1: a service ROM (page 0) the OS finds at power-on and
+// calls; its service entry counts the calls at &70
+TEST_CASE(electron_plus1_cartridge) {
+    MachineDescriptor* m = make();
+    if (!m) return;
+    std::string err;
+    EXPECT_TRUE(!m->expansionSlot("cart1")->install("rom", "x", err));     // no Plus 1 yet
+    delete m;
+    m = makePlus1("");
+    if (!m) return;
+    std::vector<uint8_t> rom(0x4000, 0xFF);
+    const uint8_t head[] = {0x00, 0x00, 0x00,           // no language
+                            0x4C, 0x20, 0x80,           // JMP &8020: service
+                            0x82, 0x0E, 0x01,           // service ROM; copyright at &800E; version
+                            'T', 'E', 'S', 'T', 0x00,
+                            0x00, '(', 'C', ')', 0x00};
+    std::copy(std::begin(head), std::end(head), rom.begin());
+    const uint8_t svc[] = {0xE6, 0x70, 0x60};           // INC &70: RTS
+    std::copy(std::begin(svc), std::end(svc), rom.begin() + 0x20);
+    const std::string path = "/tmp/mmemu_test_electron_cart.rom";
+    if (FILE* f = std::fopen(path.c_str(), "wb")) { std::fwrite(rom.data(), 1, rom.size(), f); std::fclose(f); }
+    ASSERT(m->expansionSlot("cart1")->install("rom", path, err));
+    EXPECT_EQ(m->expansionSlot("cart1")->info(), "rom (" + path + ")");
+    m->buses[0].bus->write8(0x70, 0);
+    m->onReset(*m);
+    run(m, 6000000);
+    EXPECT_TRUE(m->buses[0].bus->peek8(0x70) > 0);
+    // BASIC still starts (PAGE &E00)
+    EXPECT_EQ(m->buses[0].bus->peek8(0x18), 0x0E);
+    delete m;
+    std::remove(path.c_str());
+}
