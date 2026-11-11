@@ -145,7 +145,7 @@ void MOS6502::write(uint16_t addr, uint8_t val) {
 // interrupt lines on the way if that cycle is past the poll
 void MOS6502::syncTo(int cycle) {
     if (!m_sync) return;
-    if (!m_polled && cycle > m_pollCycle) pollInterrupts();
+    if (!m_polled && cycle >= m_pollCycle) pollInterrupts();
     m_sync(cycle);
 }
 

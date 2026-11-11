@@ -56,8 +56,8 @@ public:
     void setName(const std::string& name) override { m_name = name; }
     void setBaseAddr(uint32_t addr) override       { m_baseAddr = addr; }
     void setClockHz(uint32_t hz) override {
-        m_clockHz = hz;
-        m_todTenth = hz / 10 ? hz / 10 : 100000;
+        m_clockHz = hz ? hz : 1022727;
+        m_powerHz = m_clockHz < 1000000 ? 50 : 60;      // PAL machines: 50 Hz mains
     }
 
     void setPortADevice(IPortDevice* d) override { m_portADevice = d; }
@@ -65,6 +65,11 @@ public:
     IPortDevice* portADevice() const override { return m_portADevice; }
     IPortDevice* portBDevice() const override { return m_portBDevice; }
     void setOutputsReadPins(bool on) override { m_outputsReadPins = on; }
+    /** "model": "6526" (old, the default; breadbin C64s), "6526A" (new;
+     *  C64C, C128) or "mega65". The 6526 and 6526A differ in the interrupt
+     *  flags' timing; the MEGA65's finishes a serial port byte at once. */
+    bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    bool newModel() const { return m_newModel; }
     void setIrqLine(ISignalLine* line)  override { m_irqLine = line; }
     ISignalLine* signalFlag() { return &m_flagLine; }
     ISignalLine* getSignalLine(const char* name) override { if (std::string(name) == "flag") return &m_flagLine; return nullptr; }
@@ -80,6 +85,8 @@ public:
         m_sdr = b;
         setIrqFlag(ICR_SP);
     }
+    /** The CNT pin as the serial port drives it (high when idle). */
+    bool cntOut() const { return m_cntOut; }
     void setPortAWriteCallback(std::function<void(uint8_t pra, uint8_t ddra)> cb) override {
         m_portAWriteCallback = std::move(cb);
     }
@@ -189,15 +196,13 @@ private:
     void setIrqFlag(uint32_t bits);
     void setInt(bool on);
     uint8_t pb67(uint8_t byte) const;
-    void tickTOD(uint64_t cycles);
 
-    static uint8_t bcdInc(uint8_t bcd, uint8_t maxBcd);
     static bool    bcdEqual(uint8_t a, uint8_t b);
 
     std::string  m_name;
     uint32_t     m_baseAddr;
     uint32_t     m_clockHz = 1022727; // NTSC default
-    uint64_t     m_todTenth = 102272; // cycles per TOD tenth
+    uint32_t     m_powerHz = 60;      // the mains frequency the TOD counts
 
     // Port registers
     uint8_t m_pra  = 0xFF; // output latch A
@@ -213,6 +218,8 @@ private:
     uint8_t  m_icrMask  = 0x00;
     uint32_t m_irqFlags = 0;
     uint32_t m_newFlags = 0;
+    uint32_t m_ackFlags = 0;   // 6526A: the flags an ICR read clears next cycle
+    bool     m_newModel = false;   // the 6526A ("new" CIA, C64C) instead of the 6526
     uint32_t m_ifrDelay = 0;
     bool     m_irqOut   = false;    // the IRQ output as driven
     uint64_t m_clk      = 0;        // cycles run
@@ -225,6 +232,25 @@ private:
     uint8_t m_cra = 0x00;
     uint8_t m_sdr = 0x00;
     std::function<void(uint8_t)> m_serialOut;
+    // The serial port shifting out, after VICE's ciacore (sdr_delay): timer A
+    // underflows toggle CNT, a bit goes out on each falling edge
+    bool     m_instantSdr = false; // the MEGA65: a byte written goes out at once
+    uint32_t m_sdrDelay  = 0;      // the pipeline of shift register events
+    uint16_t m_shifter   = 0;
+    uint8_t  m_srBits    = 0;      // CNT half-periods left in this byte
+    bool     m_sdrValid  = false;  // a byte written waits behind the one going out
+    bool     m_sdrForceFinish = false;
+    bool     m_cntOut    = true;
+    bool     m_sdrActive = false;  // the pipeline runs this cycle
+    bool     m_sdrRerun  = false;  // ...and again for this cycle, after a write
+    uint32_t m_sdrDelayBefore = 0; // ...as it was before this cycle's step
+    uint8_t  m_srBitsBefore = 0;
+    uint64_t m_sdrStepClk = ~0ull; // the cycle of the last step
+    uint64_t m_spClk     = ~0ull;  // the cycle the pipeline last set the SP flag
+    uint32_t m_spPrior   = 0;      // ...and the flags before it
+    void runSdrCycle();
+    void scheduleSdr(uint32_t feed);
+    void sdrModeChange(uint8_t cra);
     uint8_t m_crb = 0x00;
 
     // TOD clock (BCD)
@@ -246,8 +272,18 @@ private:
     uint8_t m_latchMin = 0x00;
     uint8_t m_latchHr  = 0x01;
 
-    bool    m_todRunning = true;
-    uint64_t m_todAccum  = 0; // accumulated cycles for TOD
+    // The TOD's clock (VICE ciacore_inttod): a mains tick every
+    // clockHz / powerHz cycles, kept to powerHz a second; a 3-bit ring
+    // counter divides it to tenths (CRA bit 7: 50 or 60 Hz)
+    bool     m_todStopped = true;   // writing hours stops it, tenths restarts it
+    uint8_t  m_todTickCounter = 0;
+    uint32_t m_powerTickCounter = 0;
+    uint64_t m_powerTicks = 0;
+    uint64_t m_todTicks = 0;        // cycles from the last mains tick to the next
+    uint64_t m_todCountdown = 1;    // cycles to the next mains tick
+    void powerTick();
+    void checkTodAlarm();
+    void runCycles(uint64_t cycles);
 
     IPortDevice* m_portADevice = nullptr;
     struct SignalLine : public ISignalLine {

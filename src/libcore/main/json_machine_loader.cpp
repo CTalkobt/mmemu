@@ -1,3 +1,4 @@
+#include <cstdio>
 #include <memory>
 #include <algorithm>
 #include "json_machine_loader.h"
@@ -312,6 +313,15 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 dev->setBaseAddr(hexStrToU32(devSpec["baseAddr"].get<std::string>()));
             if (devSpec.contains("clockHz") && !devSpec["clockHz"].is_null())
                 dev->setClockHz(devSpec["clockHz"].get<uint32_t>());
+            // Device settings: "options": { "model": "6526A" }
+            if (devSpec.contains("options") && devSpec["options"].is_object()) {
+                for (const auto& [key, value] : devSpec["options"].items()) {
+                    std::string err;
+                    if (!value.is_string() || !dev->setOption(key, value.get<std::string>(), err))
+                        fprintf(stderr, "machine JSON: device %s: option %s: %s\n", devName.c_str(), key.c_str(),
+                                err.empty() ? "not a string" : err.c_str());
+                }
+            }
 
             devPtrs[devName] = dev;
             io->registerOwnedHandler(dev);

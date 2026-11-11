@@ -18,9 +18,33 @@ static constexpr uint32_t IFR_RAISE1 = 0x0100;  // countdown to raising the IRQ 
 static constexpr uint32_t IFR_RAISE0 = 0x0200;
 static constexpr uint32_t IFR_RAISE_1 = 0x0400;
 static constexpr uint32_t IFR_READ0  = 0x1000;  // cycles since an ICR read
+static constexpr uint32_t IFR_READ1  = 0x2000;
 static constexpr uint32_t IFR_READ2  = 0x4000;
 static constexpr uint32_t IFR_CLEAR  = IFR_ACK_2 | IFR_D7SET_1 | IFR_RAISE_1 | IFR_READ2;
 static constexpr uint32_t IRQ_TBB    = 0x100;   // the timer B bug: drop TB on the next read
+
+// The serial port's pipeline (VICE ciacore.c sdr_delay): ..0 is "this cycle";
+// each cycle the bits move one place left
+static constexpr uint32_t SDR_TOGGLE_CNT1 = 0x0002;   // CNT toggles
+static constexpr uint32_t SDR_TOGGLE_CNT0 = 0x0004;
+static constexpr uint32_t SDR_TOGGLE_CNT_1 = 0x0008;
+static constexpr uint32_t SDR_NOGGLE_CNT1 = 0x0020;   // a timer A underflow too close to toggle
+static constexpr uint32_t SDR_NOGGLE_CNT0 = 0x0040;
+static constexpr uint32_t SDR_NOGGLE_CNT_1 = 0x0080;
+static constexpr uint32_t SDR_SET_IRQ2  = 0x0200;     // the SP interrupt flag
+static constexpr uint32_t SDR_SET_IRQ0  = 0x0800;
+static constexpr uint32_t SDR_CNT0      = 0x1000;     // CNT's history
+static constexpr uint32_t SDR_CNT1      = 0x2000;
+static constexpr uint32_t SDR_CNT2      = 0x4000;
+static constexpr uint32_t SDR_CNT3      = 0x8000;
+static constexpr uint32_t SDR_SET1      = 0x00040000; // the shifter loads from SDR
+static constexpr uint32_t SDR_SET0      = 0x00080000;
+static constexpr uint32_t SDR_CLEAR     = 0x0010 | 0x0100 | SDR_CNT0 | 0x00010000 | 0x00100000;
+static constexpr uint32_t SDR_ACTIVE    = 0x000F00FF | 0x0F00;
+static constexpr uint32_t SDR_ALL_CNT   = SDR_CNT0 | SDR_CNT1 | SDR_CNT2 | SDR_CNT3;
+static constexpr uint32_t SDR_ALL_TOGGLE = 0x000F;
+static constexpr uint32_t SDR_ALL_NOGGLE = 0x00F0;
+static constexpr uint8_t  CRA_SPMODE_OUT = 0x40;
 #include <iomanip>
 
 /** "cia" logger: timer starts at debug; ICR access and underflows at trace. */
@@ -48,6 +72,17 @@ CIA6526::CIA6526(const std::string& name, uint32_t baseAddr)
     CIA6526::reset();
 }
 
+bool CIA6526::setOption(const std::string& key, const std::string& value, std::string& err) {
+    std::string v;
+    for (char c : value) v += (char)toupper((unsigned char)c);
+    if (key != "model") { err = "the CIA's option is its model (6526, 6526A)"; return false; }
+    if (v == "6526" || v == "OLD")                        m_newModel = false, m_instantSdr = false;
+    else if (v == "6526A" || v == "8521" || v == "NEW")   m_newModel = true, m_instantSdr = false;
+    else if (v == "MEGA65")                               m_newModel = true, m_instantSdr = true;
+    else { err = "a CIA is a 6526 (old), a 6526A (new) or mega65"; return false; }
+    return true;
+}
+
 void CIA6526::reset() {
     m_pra  = 0xFF;
     m_prb  = 0xFF;
@@ -61,6 +96,12 @@ void CIA6526::reset() {
     m_icrMask  = 0x00;
     m_irqFlags = 0;
     m_newFlags = 0;
+    m_ackFlags = 0;
+    m_sdrDelay = SDR_ALL_CNT;
+    m_shifter = 0;
+    m_srBits = 0;
+    m_sdrValid = m_sdrForceFinish = m_sdrActive = false;
+    m_cntOut = true;
     m_ifrDelay = 0;
     m_irqOut   = false;
     m_clk      = 0;
@@ -78,7 +119,7 @@ void CIA6526::reset() {
     m_alarmTen = 0x00;
     m_alarmSec = 0x00;
     m_alarmMin = 0x00;
-    m_alarmHr  = 0x01;
+    m_alarmHr  = 0x00;
 
     m_todLatched = false;
     m_latchTen   = 0x00;
@@ -86,8 +127,9 @@ void CIA6526::reset() {
     m_latchMin   = 0x00;
     m_latchHr    = 0x01;
 
-    m_todRunning = true;
-    m_todAccum   = 0;
+    m_todStopped = true;
+    m_todTickCounter = 0;
+    m_todCountdown = m_todTicks ? m_todTicks : 1;
 
     if (m_irqLine) m_irqLine->set(false);
     if (m_portADevice) m_portADevice->setDdr(0x00);
@@ -143,23 +185,19 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
         case TBHI: *val = (m_tb.cnt >> 8) & 0xFF; break;
 
         // TOD reads: reading TODHR latches all TOD registers; reading TODTEN
-        // releases the latch.
-        case TODTEN:
-            *val = m_todLatched ? m_latchTen : m_todTen;
-            if (!peek) m_todLatched = false; // latch released
+        // releases the latch (the clock keeps running)
+        case TODTEN: case TODSEC: case TODMIN: case TODHR: {
+            if (!m_todLatched) {
+                m_latchTen = m_todTen; m_latchSec = m_todSec;
+                m_latchMin = m_todMin; m_latchHr = m_todHr;
+            }
+            const uint8_t latch[4] = { m_latchTen, m_latchSec, m_latchMin, m_latchHr };
+            const uint8_t live[4]  = { m_todTen, m_todSec, m_todMin, m_todHr };
+            *val = (m_todLatched || !peek ? latch : live)[reg - TODTEN];
+            if (!peek && reg == TODTEN) m_todLatched = false;
+            if (!peek && reg == TODHR)  m_todLatched = true;
             break;
-        case TODSEC: *val = m_todLatched ? m_latchSec : m_todSec; break;
-        case TODMIN: *val = m_todLatched ? m_latchMin : m_todMin; break;
-        case TODHR:
-            if (peek) { *val = m_todHr; break; }   // a read latches the live time
-            // Freeze latch at this moment.
-            m_latchTen = m_todTen;
-            m_latchSec = m_todSec;
-            m_latchMin = m_todMin;
-            m_latchHr  = m_todHr;
-            m_todLatched = true;
-            *val = m_latchHr;
-            break;
+        }
 
         case SDR: *val = m_sdr; break;
 
@@ -169,16 +207,48 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
             // The old 6526 (VICE's cia_read_ for CIA_MODEL_6526): the flags
             // clear at once, bit 7 two cycles on; a raise one cycle away is
             // cancelled; the timer B bug drops a flag set just after a read
+            // The serial port sets its flag after a read in the same cycle
+            // (VICE runs ciacore_intsdr after the access): the read neither
+            // sees nor clears it
+            const bool spAfter = m_spClk == m_clk && !(m_spPrior & ICR_SP);
+            uint32_t spIntBefore = 0;
+            if (spAfter) {
+                spIntBefore = m_spPrior & ICR_INT;
+                m_irqFlags &= ~ICR_SP;
+                if (!spIntBefore && !(m_irqFlags & m_icrMask & 0x1F)) m_irqFlags &= ~ICR_INT;
+            }
             m_rdi = m_clk;
             m_quiet = 0;
             if (m_irqFlags & IRQ_TBB) m_irqFlags &= ~(IRQ_TBB | ICR_TB);
-            m_ifrDelay |= IFR_ACK1;
-            m_ifrDelay &= ~IFR_RAISE0;
-            *val = (uint8_t)m_irqFlags;
-            m_irqFlags &= ICR_INT;
-            m_newFlags = 0;
+            if (m_newModel) {
+                // The 6526A: bit 7 of a raise due this cycle reads set; the
+                // flags read clear a cycle later (VICE's ack_irqflags)
+                if ((m_ifrDelay & IFR_RAISE0) && (m_irqFlags & 0x1F)) m_irqFlags |= ICR_INT;
+                if (m_irqFlags & 0x9F) m_ackFlags |= (m_irqFlags & 0x9F) | ICR_INT;
+                m_ifrDelay |= IFR_ACK1;
+                m_ifrDelay &= ~(IFR_RAISE0 | IFR_D7SET0);
+                *val = (uint8_t)m_irqFlags;
+            } else {
+                m_ifrDelay |= IFR_ACK1;
+                m_ifrDelay &= ~IFR_RAISE0;
+                *val = (uint8_t)m_irqFlags;
+                m_irqFlags &= ICR_INT;
+                m_newFlags = 0;
+            }
             m_ifrDelay |= IFR_READ0;
             setInt(false);
+            if (spAfter) {
+                m_irqFlags |= ICR_SP;
+                m_ackFlags &= ~ICR_SP;
+                if (m_icrMask & ICR_SP) {
+                    if (m_newModel) {                   // raised this cycle
+                        m_irqFlags |= ICR_INT;
+                        setInt(true);
+                    } else {                            // next cycle
+                        m_ifrDelay |= IFR_RAISE0 | IFR_D7SET0;
+                    }
+                }
+            }
             ciaLog()->trace("{} ICR read -> ${:02X}", m_name, *val);
             break;
         }
@@ -236,27 +306,33 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             if ((m_tb.state & T_LOAD) || !(m_tb.state & T_START)) m_tb.cnt = m_tb.latch;
             break;
 
-        // TOD / Alarm writes: CRB bit 7 (ALARM) determines target.
-        case TODTEN:
-            if (m_crb & CRB_ALARM) m_alarmTen = val & 0x0F;
-            else                   { m_todTen  = val & 0x0F; m_todRunning = true; }
-            break;
-        case TODSEC:
-            if (m_crb & CRB_ALARM) m_alarmSec = val & 0x7F;
-            else                   m_todSec    = val & 0x7F;
-            break;
-        case TODMIN:
-            if (m_crb & CRB_ALARM) m_alarmMin = val & 0x7F;
-            else                   m_todMin    = val & 0x7F;
-            break;
-        case TODHR:
-            if (m_crb & CRB_ALARM) m_alarmHr  = val & 0x9F;
-            else {
-                // Writing hours halts TOD until tenths are written.
-                m_todHr      = val & 0x9F;
-                m_todRunning = false;
+        // TOD / alarm writes (CRB bit 7 picks the alarm). VICE cia_store
+        case TODTEN: case TODSEC: case TODMIN: case TODHR: {
+            if (reg == TODHR) {
+                val &= 0x9F;
+                // Writing hour 12 to the clock flips AM/PM
+                if ((val & 0x1F) == 0x12 && !(m_crb & CRB_ALARM)) val ^= 0x80;
+            } else if (reg == TODTEN) {
+                val &= 0x0F;
+            } else {
+                val &= 0x7F;
+            }
+            uint8_t* alarm[4] = { &m_alarmTen, &m_alarmSec, &m_alarmMin, &m_alarmHr };
+            uint8_t* tod[4]   = { &m_todTen, &m_todSec, &m_todMin, &m_todHr };
+            uint8_t* r = (m_crb & CRB_ALARM ? alarm : tod)[reg - TODTEN];
+            if (!(m_crb & CRB_ALARM)) {
+                if (reg == TODTEN && m_todStopped) {   // tenths restarts it
+                    m_todTickCounter = 0;
+                    m_todStopped = false;
+                }
+                if (reg == TODHR) m_todStopped = true;  // hours stops it
+            }
+            if (*r != val) {
+                *r = val;
+                checkTodAlarm();
             }
             break;
+        }
 
         case SDR:
             // Serial data register.  When CRA bit 6 is set (output mode),
@@ -268,9 +344,12 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // The ROM polls $DC0D for completion; an enabled SP interrupt
             // is raised as for any other source.
             m_sdr = val;
-            if (m_cra & 0x40) {
+            if (!(m_cra & CRA_SPMODE_OUT)) break;
+            if (m_instantSdr) {
                 setIrqFlag(ICR_SP);
-                if (m_serialOut) m_serialOut(val);      // the byte goes out (C128 fast serial)
+                if (m_serialOut) m_serialOut(val);
+            } else {
+                scheduleSdr(SDR_SET1);                  // into the shifter two cycles on
             }
             break;
 
@@ -278,11 +357,16 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             // Bit 7 = 1: set bits in mask; bit 7 = 0: clear bits from mask.
             if (val & 0x80) m_icrMask |=  (val & 0x7F);
             else            m_icrMask &= ~(val & 0x7F);
-            // Old 6526: a pending flag now enabled raises IRQ two cycles on;
-            // one being raised is never cancelled, except right after a read
+            // A pending flag now enabled raises IRQ two cycles on (the
+            // 6526A: next cycle, unless the ICR was read last cycle); one
+            // being raised is never cancelled, except on the old 6526 right
+            // after a read
             if (m_irqFlags & m_icrMask & 0x7F) {
-                if (!m_irqOut) m_ifrDelay |= IFR_RAISE1 | IFR_D7SET1;
-            } else if (m_ifrDelay & IFR_ACK_1) {
+                if (!m_irqOut) {
+                    if (!m_newModel) m_ifrDelay |= IFR_RAISE1 | IFR_D7SET1;
+                    else if (!(m_ifrDelay & IFR_READ1)) m_ifrDelay |= IFR_RAISE0 | IFR_D7SET0;
+                }
+            } else if (!m_newModel && (m_ifrDelay & IFR_ACK_1)) {
                 m_ifrDelay &= ~(IFR_RAISE0 | IFR_D7SET0);
             }
             ciaLog()->trace("{} ICR write: val=${:02X} mask=${:02X} flags=${:02X}",
@@ -291,6 +375,7 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
 
         case CRA: {
             if ((val & CR_START) && !(m_cra & CR_START)) m_tat = 1;
+            if (((val ^ m_cra) & CRA_SPMODE_OUT) && !m_instantSdr) sdrModeChange(val);
             if ((val & CR_START) && !(m_ta.state & T_START))
                 ciaLog()->debug("{} Timer A started: latch=${:04X} {} (mask=${:02X})",
                                 m_name, m_ta.latch, (val & CR_ONESHOT) ? "one-shot" : "continuous", m_icrMask);
@@ -310,6 +395,10 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         }
 
         default: break;
+    }
+    if (m_sdrRerun) {                           // the serial port acts on the write
+        m_sdrRerun = false;
+        runSdrCycle();                          // (a flag set now is seen next cycle)
     }
     return true;
 }
@@ -395,6 +484,11 @@ void CIA6526::runCycle() {
     if (ua) {
         setIrqFlag(ICR_TA);
         m_tat ^= 1;
+        // Shifting out: CNT toggles about 1.5 cycles on (VICE ciacore_intta)
+        if ((m_cra & CRA_SPMODE_OUT) && !m_instantSdr && (m_srBits || m_sdrValid)) {
+            m_sdrDelay |= (m_sdrDelay & (SDR_TOGGLE_CNT0 | SDR_NOGGLE_CNT0)) ? SDR_NOGGLE_CNT1 : SDR_TOGGLE_CNT1;
+            m_sdrActive = true;
+        }
         // Timer B counting timer A: one count, taken next cycle
         if ((m_crb & (CRB_INMODE_TA | CR_START)) == (CRB_INMODE_TA | CR_START)
             && (m_tb.state & T_START))
@@ -403,10 +497,11 @@ void CIA6526::runCycle() {
     if (ub) {
         setIrqFlag(ICR_TB);
         // The old 6526's timer B bug: an ICR read the cycle before
-        if (m_rdi == m_clk - 1) m_irqFlags |= IRQ_TBB;
+        if (!m_newModel && m_rdi == m_clk - 1) m_irqFlags |= IRQ_TBB;
         else                    m_irqFlags &= ~IRQ_TBB;
         m_tbt ^= 1;
     }
+    if (m_sdrActive) runSdrCycle();
     if (m_ifrDelay || m_newFlags) runIfrCycle();
 }
 
@@ -415,7 +510,7 @@ void CIA6526::runTimers(uint64_t cycles) {
     const uint8_t* steady = steadyTable();
     while (cycles > 0) {
         const uint8_t ka = steady[m_ta.state & 0x1FFF], kb = steady[m_tb.state & 0x1FFF];
-        if (ka && kb && !m_ifrDelay && !m_newFlags) {
+        if (ka && kb && !m_ifrDelay && !m_newFlags && !m_sdrActive) {
             uint64_t k = cycles;
             if (ka == 2) k = std::min<uint64_t>(k, m_ta.cnt ? m_ta.cnt - 1u : 0u);
             if (kb == 2) k = std::min<uint64_t>(k, m_tb.cnt ? m_tb.cnt - 1u : 0u);
@@ -433,7 +528,7 @@ void CIA6526::runTimers(uint64_t cycles) {
     // How long nothing but steady counting goes on (for tick()'s shortcut)
     const uint8_t ka = steady[m_ta.state & 0x1FFF], kb = steady[m_tb.state & 0x1FFF];
     m_quiet = 0;
-    if (ka && kb && !m_ifrDelay && !m_newFlags) {
+    if (ka && kb && !m_ifrDelay && !m_newFlags && !m_sdrActive) {
         uint64_t k = ~0ull;
         if (ka == 2) k = std::min<uint64_t>(k, m_ta.cnt ? m_ta.cnt - 1u : 0u);
         if (kb == 2) k = std::min<uint64_t>(k, m_tb.cnt ? m_tb.cnt - 1u : 0u);
@@ -443,11 +538,108 @@ void CIA6526::runTimers(uint64_t cycles) {
     }
 }
 
-// One cycle of the old 6526's interrupt flag pipeline (VICE cia_run_ifr_cycle)
+// A shift register event from a register write: the pipeline runs for this
+// cycle again (VICE's schedule_sdr_alarm for the current cycle)
+void CIA6526::scheduleSdr(uint32_t feed) {
+    m_sdrDelay |= feed;
+    m_quiet = 0;
+    m_sdrRerun = true;
+}
+
+// CRA's serial port direction changes (VICE strange_extra_sdr_flags and
+// cia_store CRA). It sees the shift register as it was before this cycle's
+// step, as VICE's references show (cia-sdr-icr)
+void CIA6526::sdrModeChange(uint8_t cra) {
+    const bool stepped = m_sdrStepClk == m_clk;
+    const uint32_t D = stepped ? m_sdrDelayBefore : m_sdrDelay;
+    const uint8_t B = stepped ? m_srBitsBefore : m_srBits;
+    if ((B > 1 && B < 15) || (B == 15 && !(D & SDR_CNT2)))
+        scheduleSdr(SDR_SET_IRQ2);
+    if (!(cra & CRA_SPMODE_OUT)) {
+        // To input: a byte half out may still finish
+        const uint32_t want = SDR_CNT1 | SDR_CNT2;
+        bool force = (D & want) != want;
+        if (!force && B != 2 && !(D & (SDR_TOGGLE_CNT1 | 0x0001)) && (D & SDR_TOGGLE_CNT0))
+            force = true;
+        m_sdrForceFinish = force;
+    } else {
+        if (!m_cntOut && m_srBits) m_shifter <<= 1;
+        if (m_sdrForceFinish) {
+            scheduleSdr(SDR_SET_IRQ2);
+            m_sdrForceFinish = false;
+        }
+    }
+    m_srBits = 0;
+    m_sdrValid = false;
+    m_sdrDelay &= ~(SDR_ALL_TOGGLE | SDR_ALL_NOGGLE);
+    m_cntOut = true;
+}
+
+// One cycle of the serial port (VICE ciacore_intsdr)
+void CIA6526::runSdrCycle() {
+    uint32_t feed = 0;
+    if (m_sdrStepClk != m_clk) {               // (not a second step this cycle)
+        m_sdrStepClk = m_clk;
+        m_sdrDelayBefore = m_sdrDelay;
+        m_srBitsBefore = m_srBits;
+    }
+    if (m_sdrDelay & SDR_SET0) {
+        if (m_srBits == 0) {
+            m_srBits = 16;
+            m_shifter = (uint16_t)(m_sdr << 1);
+        } else if (m_srBits == 1) {
+            m_shifter |= m_sdr;
+            m_srBits = 17;
+        } else {
+            m_sdrValid = true;
+        }
+    }
+    if (m_sdrDelay & SDR_TOGGLE_CNT0) {
+        if (m_srBits && (--m_srBits & 1)) {
+            m_cntOut = false;                           // a bit goes out
+            if (m_srBits == 1) {
+                if (m_serialOut) m_serialOut((uint8_t)(m_shifter >> 8));
+                feed |= SDR_SET_IRQ2;                   // the flag two cycles on
+                if (m_sdrValid) {                       // the next byte follows on
+                    m_shifter |= m_sdr;
+                    m_sdrValid = false;
+                    m_srBits = 17;
+                }
+            }
+        } else {
+            m_shifter <<= 1;
+            m_cntOut = true;
+        }
+    }
+    if (m_sdrDelay & SDR_SET_IRQ0) {
+        m_spClk = m_clk;
+        m_spPrior = m_irqFlags;
+        setIrqFlag(ICR_SP);
+    }
+    m_sdrDelay |= feed;
+    m_sdrDelay = (m_sdrDelay << 1) & ~SDR_CLEAR;
+    if (m_cntOut) m_sdrDelay |= SDR_CNT0;
+    bool active = (m_sdrDelay & SDR_ACTIVE) != 0;
+    if (!active) {
+        const uint32_t cnt = m_sdrDelay & SDR_ALL_CNT;
+        active = cnt != 0 && cnt != SDR_ALL_CNT;
+    }
+    m_sdrActive = active;
+}
+
+// One cycle of the interrupt flag pipeline (VICE cia_run_ifr_cycle)
 void CIA6526::runIfrCycle() {
     uint32_t delay = m_ifrDelay;
-    if (delay & IFR_ACK0) m_irqFlags &= ~ICR_INT;        // bit 7 clears after a read
-    if (m_newFlags & m_icrMask & 0x1F) delay |= IFR_RAISE1 | IFR_D7SET1;
+    if (delay & IFR_ACK0) {
+        if (m_newModel) m_irqFlags &= ~m_ackFlags;       // the flags read clear now
+        else            m_irqFlags &= ~ICR_INT;          // bit 7 clears after a read
+        m_ackFlags = 0;
+    }
+    if (m_newFlags & m_icrMask & 0x1F) {
+        // The 6526A raises IRQ this cycle, unless the ICR was read last cycle
+        if (m_newModel && m_rdi + 1 != m_clk) delay |= IFR_RAISE0 | IFR_D7SET0;
+        else                                  delay |= IFR_RAISE1 | IFR_D7SET1;
+    }
     if (delay & IFR_D7SET0) m_irqFlags |= ICR_INT;
     if (delay & IFR_RAISE0) setInt(true);
     m_newFlags = 0;
@@ -458,6 +650,7 @@ void CIA6526::runIfrCycle() {
 void CIA6526::setIrqFlag(uint32_t bits) {
     m_irqFlags |= bits;
     m_newFlags |= bits;
+    m_ackFlags &= ~bits;               // a flag set again isn't cleared by a read before
     m_quiet = 0;
 }
 
@@ -484,6 +677,19 @@ uint8_t CIA6526::pb67(uint8_t byte) const {
 }
 
 void CIA6526::tick(uint64_t cycles) {
+    // Up to each mains tick, then the tick (the TOD's flag lands in its cycle)
+    while (cycles >= m_todCountdown) {
+        const uint64_t n = m_todCountdown;
+        runCycles(n);
+        cycles -= n;
+        powerTick();
+    }
+    m_todCountdown -= cycles;
+    runCycles(cycles);
+}
+
+void CIA6526::runCycles(uint64_t cycles) {
+    if (!cycles) return;
     if (cycles <= m_quiet) {                    // nothing but steady counting
         m_quiet -= cycles;
         if (m_quietA) m_ta.cnt = (uint16_t)(m_ta.cnt - cycles);
@@ -492,55 +698,77 @@ void CIA6526::tick(uint64_t cycles) {
     } else {
         runTimers(cycles);
     }
-    if (m_todRunning) {
-        if (m_todAccum + cycles >= m_todTenth) tickTOD(cycles);
-        else m_todAccum += cycles;
-    }
 }
 
-void CIA6526::tickTOD(uint64_t cycles) {
-    if (!m_todRunning) return;
+// The alarm matches the clock: the TOD flag
+void CIA6526::checkTodAlarm() {
+    if (m_todTen == m_alarmTen && m_todSec == m_alarmSec &&
+        m_todMin == m_alarmMin && m_todHr == m_alarmHr)
+        setIrqFlag(ICR_TOD);
+}
 
-    m_todAccum += cycles;
+// A mains tick (VICE ciacore_inttod, without its random jitter)
+void CIA6526::powerTick() {
+    const uint64_t perSec = m_clockHz;
+    m_todTicks = perSec / m_powerHz;
+    const uint64_t due = (uint64_t)m_powerTickCounter * perSec / m_powerHz;
+    if (m_powerTicks < due) ++m_todTicks;
+    else if (m_powerTicks > due) --m_todTicks;
+    if (++m_powerTickCounter >= m_powerHz) {
+        m_todTicks = perSec > m_powerTicks ? perSec - m_powerTicks : 1;
+        m_powerTickCounter = 0;
+        m_powerTicks = 0;
+    } else {
+        m_powerTicks += m_todTicks;
+    }
+    m_todCountdown = m_todTicks ? m_todTicks : 1;
 
-    // Determine tenths-of-second period in CPU cycles.
-    // TOD increments tenths at 10 Hz; external reference is 50 or 60 Hz.
-    // We approximate: 1 tenth = clockHz / 10 cycles.
-    if (m_todAccum < m_todTenth) return;
-    uint64_t tenthPeriod = m_todTenth;
-
-    while (m_todAccum >= tenthPeriod) {
-        m_todAccum -= tenthPeriod;
-
-        // Increment BCD tenths (0–9).
-        m_todTen++;
-        if (m_todTen > 9) {
-            m_todTen = 0;
-            m_todSec = bcdInc(m_todSec, 59);
-            if (m_todSec == 0) {
-                m_todMin = bcdInc(m_todMin, 59);
-                if (m_todMin == 0) {
-                    // Increment hours (BCD 1–12 + bit7 AM/PM).
-                    uint8_t hr  = m_todHr & 0x1F;
-                    uint8_t pm  = m_todHr & 0x80;
-                    hr = bcdInc(hr, 12);
-                    if (hr == 0) hr = 0x01; // wrap: 12 → 01 (BCD)
-                    // Flip AM/PM when rolling from 11 → 12.
-                    uint8_t prev = m_todHr & 0x1F;
-                    if (prev == 0x11) pm ^= 0x80; // BCD 11 flips the flag
-                    m_todHr = pm | hr;
+    if (m_todStopped) return;
+    // The divider: a 3-bit ring counter (000 001 011 111 110 100), matching
+    // at 110 for 50 Hz and 100 for 60 Hz; the tenths count a tick later
+    if (m_todTickCounter != ((m_cra & CRA_TODIN) ? 4 : 5)) {
+        if (++m_todTickCounter > 5) m_todTickCounter = 0;
+        return;
+    }
+    m_todTickCounter = 0;
+    // Each digit is a 4-bit counter (3 bits for the tens of seconds and
+    // minutes), so set values outside BCD count on as the chip does
+    int ts = m_todTen & 0x0F, sl = m_todSec & 0x0F, sh = (m_todSec >> 4) & 7;
+    int ml = m_todMin & 0x0F, mh = (m_todMin >> 4) & 7;
+    int hl = m_todHr & 0x0F, hh = (m_todHr >> 4) & 1, pm = m_todHr & 0x80;
+    ts = (ts + 1) & 0x0F;
+    if (ts == 10) {
+        ts = 0;
+        sl = (sl + 1) & 0x0F;
+        if (sl == 10) {
+            sl = 0;
+            sh = (sh + 1) & 7;
+            if (sh == 6) {
+                sh = 0;
+                ml = (ml + 1) & 0x0F;
+                if (ml == 10) {
+                    ml = 0;
+                    mh = (mh + 1) & 7;
+                    if (mh == 6) {
+                        mh = 0;
+                        // 09:59:59 -> 10:00:00, 12:59:59 -> 01:00:00
+                        if ((hh == 1 && hl == 2) || (hh == 0 && hl == 9)) {
+                            hl = hh;
+                            hh ^= 1;
+                        } else {
+                            hl = (hl + 1) & 0x0F;
+                            if (hh == 1 && hl == 2) pm ^= 0x80;   // 11 -> 12 flips AM/PM
+                        }
+                    }
                 }
             }
         }
-
-        // Check alarm.
-        if (m_todTen == m_alarmTen &&
-            m_todSec == m_alarmSec &&
-            m_todMin == m_alarmMin &&
-            m_todHr  == m_alarmHr) {
-            setIrqFlag(ICR_TOD);
-        }
     }
+    m_todTen = (uint8_t)ts;
+    m_todSec = (uint8_t)(sl | (sh << 4));
+    m_todMin = (uint8_t)(ml | (mh << 4));
+    m_todHr  = (uint8_t)(hl | (hh << 4) | pm);
+    checkTodAlarm();
 }
 
 // ---------------------------------------------------------------------------
@@ -549,16 +777,6 @@ void CIA6526::tickTOD(uint64_t cycles) {
 
 void CIA6526::flagTrigger() {
     setIrqFlag(0x10);
-}
-
-uint8_t CIA6526::bcdInc(uint8_t bcd, uint8_t maxBcd) {
-    uint8_t lo = (bcd & 0x0F) + 1;
-    uint8_t hi = (bcd >> 4);
-    if (lo > 9) { lo = 0; hi++; }
-    // Convert to decimal to check overflow.
-    uint8_t decimal = hi * 10 + lo;
-    if (decimal > maxBcd) return 0x00; // wrap to zero
-    return (hi << 4) | lo;
 }
 
 void CIA6526::getDeviceInfo(DeviceInfo& out) const {

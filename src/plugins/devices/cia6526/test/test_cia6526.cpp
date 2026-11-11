@@ -2,6 +2,8 @@
 #include "plugins/devices/cia6526/main/cia6526.h"
 #include "libmem/main/memory_bus.h"
 #include <cstring>
+#include <string>
+#include <vector>
 
 struct CiaFixture {
     FlatMemoryBus bus{"system", 16};
@@ -644,4 +646,110 @@ TEST_CASE(cia_tick_bulk_matches_single) {
     a.cia.ioRead(&a.bus, 0xDC0D, &va);
     b.cia.ioRead(&b.bus, 0xDC0D, &vb);
     ASSERT_EQ((int)va, (int)vb);
+}
+
+// The 6526A raises IR and IRQ in the underflow's own cycle (the 6526: one
+// cycle later, cia_irq_delay)
+TEST_CASE(cia_6526a_irq_delay) {
+    CiaFixture f;
+    std::string err;
+    ASSERT(f.cia.setOption("model", "6526A", err));
+    LineProbe irq;
+    f.cia.setIrqLine(&irq);
+    uint8_t v;
+    f.cia.ioWrite(&f.bus, 0xDC0D, 0x81);
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x02);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x09);
+    f.cia.tick(3);
+    ASSERT(!irq.level);
+    f.cia.tick(1);                             // the underflow
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ((int)v, 0x81);
+    ASSERT(irq.level);
+    ASSERT(!f.cia.setOption("model", "6527", err));
+}
+
+// The serial port shifts a byte out on timer A's underflows: 16 of them,
+// then SP; it doesn't finish at once
+TEST_CASE(cia_sdr_shifts_out) {
+    CiaFixture f;
+    std::vector<uint8_t> out;
+    f.cia.setSerialOut([&](uint8_t b) { out.push_back(b); });
+    f.cia.ioWrite(&f.bus, 0xDC04, 0x03);
+    f.cia.ioWrite(&f.bus, 0xDC05, 0x00);       // underflow every 4 cycles
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x51);       // start, force load, SP output
+    f.cia.ioWrite(&f.bus, 0xDC0C, 0xA5);
+    uint8_t v;
+    f.cia.tick(16 * 4 - 8);
+    f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    ASSERT_EQ(v & 0x08, 0);
+    ASSERT(out.empty());
+    bool cntLow = false;
+    for (int i = 0; i < 40 && !(v & 0x08); ++i) {
+        f.cia.tick(1);
+        cntLow |= !f.cia.cntOut();
+        f.cia.ioPeek(&f.bus, 0xDC0D, &v);
+    }
+    ASSERT(v & 0x08);
+    ASSERT(cntLow);
+    ASSERT_EQ(out.size(), 1u);
+    ASSERT_EQ((int)out[0], 0xA5);
+}
+
+// The MEGA65's CIA finishes a byte at once
+TEST_CASE(cia_sdr_mega65_instant) {
+    CiaFixture f;
+    std::string err;
+    ASSERT(f.cia.setOption("model", "mega65", err));
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x40);
+    f.cia.ioWrite(&f.bus, 0xDC0C, 0x12);
+    f.cia.tick(2);
+    uint8_t v;
+    f.cia.ioRead(&f.bus, 0xDC0D, &v);
+    ASSERT(v & 0x08);
+}
+
+// TOD: stopped after reset; started by writing the tenths; 50 Hz mains on a
+// PAL machine, divided by 5 (CRA bit 7 set) or by 6, which runs it slow
+TEST_CASE(cia_tod_counts_mains_ticks) {
+    for (int cra : {0x80, 0x00}) {
+        CIA6526 cia("CIA1", 0xDC00);
+        FlatMemoryBus bus("system", 16);
+        cia.setClockHz(985248);
+        uint8_t sec, ten;
+        cia.tick(985248 * 2);
+        cia.ioRead(&bus, 0xDC09, &sec);
+        cia.ioRead(&bus, 0xDC08, &ten);
+        ASSERT_EQ((int)sec, 0);                // stopped
+        ASSERT_EQ((int)ten, 0);
+        cia.ioWrite(&bus, 0xDC0E, (uint8_t)cra);
+        cia.ioWrite(&bus, 0xDC0B, 0x01);
+        cia.ioWrite(&bus, 0xDC0A, 0x00);
+        cia.ioWrite(&bus, 0xDC09, 0x00);
+        cia.ioWrite(&bus, 0xDC08, 0x00);       // starts it
+        cia.tick(985248 * 3);                  // 3 seconds
+        cia.ioRead(&bus, 0xDC09, &sec);
+        cia.ioRead(&bus, 0xDC08, &ten);
+        const int tenths = (sec >> 4) * 100 + (sec & 15) * 10 + ten;
+        const int lo = cra ? 29 : 24, hi = cra ? 30 : 25;   // 50 Hz / 5, / 6
+        ASSERT(tenths >= lo && tenths <= hi);
+    }
+}
+
+// The hours: 11 -> 12 flips AM/PM, 12 -> 01, and writing 12 flips it too
+TEST_CASE(cia_tod_hours_roll) {
+    CiaFixture f;
+    uint8_t hr;
+    f.cia.ioWrite(&f.bus, 0xDC0E, 0x00);       // 60 Hz on this NTSC clock
+    f.cia.ioWrite(&f.bus, 0xDC0B, 0x11);
+    f.cia.ioWrite(&f.bus, 0xDC0A, 0x59);
+    f.cia.ioWrite(&f.bus, 0xDC09, 0x59);
+    f.cia.ioWrite(&f.bus, 0xDC08, 0x09);
+    f.cia.tick(1022727 / 10 + 20000);
+    f.cia.ioPeek(&f.bus, 0xDC0B, &hr);
+    ASSERT_EQ((int)hr, 0x92);                  // 12 PM
+    f.cia.ioWrite(&f.bus, 0xDC0B, 0x12);       // AM 12 written: becomes PM
+    f.cia.ioPeek(&f.bus, 0xDC0B, &hr);
+    ASSERT_EQ((int)hr, 0x92);
 }
