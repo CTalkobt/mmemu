@@ -94,7 +94,10 @@ void Cpu::exec() {
     if (m_s.stopped) {
         if (stoppedStep()) return;
     } else if (m_prevIrq && !m_s.haltBug) {
-        if (m_s.haltCounter > 0) m_s.haltCounter = 0;
+        if (m_s.haltCounter > 0) {
+            m_s.haltCounter = 0;
+            m_gb->processHdma();                             // the CGB's HDMA waits out HALT
+        }
         if (m_s.ime) {
             cycle();
             cycle();
@@ -119,6 +122,7 @@ void Cpu::exec() {
 
     if (m_s.haltCounter) {
         if (m_s.haltBug) haltBugStep();
+        else if (m_s.haltCounter > 1) cgbSpeedSwitch();
     } else {
         if (m_s.eiPending) { m_s.eiPending = false; m_s.ime = true; }
         execOp(readOp());
@@ -128,12 +132,19 @@ void Cpu::exec() {
 
 void Cpu::nextCycleStart() {
     if (m_s.haltCounter) {
-        // The DMG halted checks the interrupts a clock into the cycle
-        masterCycle();
-        m_prevIrq = m_gb->pendingIrq();
-        masterCycle();
-        masterCycle();
-        masterCycle();
+        if (m_gb->isCgb()) {
+            // The CGB halted checks the interrupts at the cycle's start (none while the
+            // speed switches: Conker's Pocket Tales, as Mesen)
+            m_prevIrq = m_gb->speedSwitchRequested() ? 0 : m_gb->pendingIrq();
+            cycle();
+        } else {
+            // The DMG halted checks the interrupts a clock into the cycle
+            masterCycle();
+            m_prevIrq = m_gb->pendingIrq();
+            masterCycle();
+            masterCycle();
+            masterCycle();
+        }
     } else {
         cycle();
         m_prevIrq = m_gb->pendingIrq();
@@ -158,9 +169,24 @@ void Cpu::halt() {
 
 void Cpu::stop() {
     readCode();                     // the unused operand
+    if (m_gb->isCgb() && m_gb->speedSwitchRequested()) {
+        // The CGB's speed switch: halted ~33941 machine cycles (Mesen's, after speed_switch_timing_stat)
+        m_s.haltCounter = 33942;
+        return;
+    }
     m_s.stopped = true;
     m_s.haltCounter = 1;
     m_ppu->setCpuStopState(true);
+}
+
+void Cpu::cgbSpeedSwitch() {
+    --m_s.haltCounter;
+    m_gb->resetDivider();           // DIV doesn't count while the speed switches
+    if (m_s.haltCounter == 1 && m_gb->speedSwitchRequested()) {
+        m_gb->toggleSpeed();
+        m_s.haltCounter = 0;
+        m_gb->processHdma();
+    }
 }
 
 void Cpu::invalidOp() {

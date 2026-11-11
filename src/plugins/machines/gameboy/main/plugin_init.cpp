@@ -64,7 +64,7 @@ ToolchainPluginInfo s_toolchains[] = { {"sm83", nullptr, createDisasmSm83, nullp
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
     "gameboy",
-    "Nintendo Game Boy (DMG)",
+    "Nintendo Game Boy (DMG) and Game Boy Color",
     "1.0.0",
     nullptr,
     nullptr,
@@ -80,5 +80,8 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     auto& reg = MachineRegistry::instance();
     reg.registerMachine("gameboy", []() { return gb::createMachine(); }, "Nintendo Game Boy (DMG)");
     reg.registerMachine("dmg", []() { return gb::createMachine(); }, "Nintendo Game Boy (DMG), as gameboy");
+    reg.registerMachine("gameboycolor", []() { return gb::createMachine(nullptr, true); }, "Nintendo Game Boy Color (CGB)");
+    reg.registerMachine("gbc", []() { return gb::createMachine(nullptr, true); }, "Nintendo Game Boy Color, as gameboycolor");
+    reg.registerMachine("cgb", []() { return gb::createMachine(nullptr, true); }, "Nintendo Game Boy Color, as gameboycolor");
     return &s_manifest;
 }

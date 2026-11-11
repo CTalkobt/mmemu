@@ -1,9 +1,9 @@
 #pragma once
 
-// The Game Boy (DMG), and the Game Boy inside the Super Game Boy, after Mesen2
-// (Core/Gameboy/: Gameboy.cpp, GbMemoryManager.cpp, GbTimer.cpp,
-// GbDmaController.cpp, GbControlManager.cpp; GPL-3.0, Sour and the Mesen
-// contributors).
+// The Game Boy (DMG), the Game Boy Color (CGB), and the Game Boy inside the
+// Super Game Boy, after Mesen2 (Core/Gameboy/: Gameboy.cpp, GbMemoryManager.cpp,
+// GbTimer.cpp, GbDmaController.cpp, GbControlManager.cpp; GPL-3.0, Sour and the
+// Mesen contributors).
 //
 // Time is the 4.194304 MHz clock (T-cycles; on the Super Game Boy the SNES
 // master clock divided by 5). As in Mesen the CPU (gb_cpu.h) drives
@@ -15,11 +15,19 @@
 // RAM, cartridge RAM, the boot ROM) or registers (VRAM, OAM, $FF00-$FFFF and
 // whatever the cartridge's mapper claims, gb_cart.h).
 //
-// Only the monochrome Game Boy is emulated (the Super Game Boy has one): no
-// Game Boy Color. Without a boot ROM the machine starts in the state the DMG
-// boot ROM leaves (Pan Docs' table); the Super Game Boy runs SameBoy's open
-// source SGB boot ROM (LIJI32, MIT licence, as Mesen embeds it), which sends
-// the cartridge's header to the SNES as the real one does.
+// Without a boot ROM the DMG starts in the state its boot ROM leaves (Pan
+// Docs' table); the Super Game Boy and the Game Boy Color run SameBoy's open
+// source SGB and CGB boot ROMs (LIJI32, MIT licence, as Mesen embeds them).
+// The SGB's sends the cartridge's header to the SNES as the real one does; the
+// CGB's turns the colour features off for a DMG cartridge (header $0143 bit 7
+// clear: KEY0 $FF4C) and gives it palettes by its title, as Nintendo's does.
+//
+// The CGB adds (as Mesen): double speed (KEY1 and STOP: everything but the
+// PPU and the APU's clock runs twice as fast), VRAM bank 1 (VBK $FF4F) with
+// the background's attribute map, work RAM banks 1-7 (SVBK $FF70), the colour
+// palettes (BCPS/BCPD/OCPS/OCPD $FF68-$FF6B), HDMA ($FF51-$FF55, at once or a
+// block each HBlank), PCM12/PCM34 ($FF76/$FF77), the undocumented $FF72-$FF75
+// and the infrared port's register (RP $FF56, nothing connected).
 
 #include "gb_apu.h"
 #include "gb_cart.h"
@@ -71,7 +79,7 @@ public:
 
 class Gameboy {
 public:
-    enum class Model { Dmg, Sgb, Sgb2 };
+    enum class Model { Dmg, Sgb, Sgb2, Cgb };
     enum class Mem { None, Rom, WorkRam, CartRam, BootRom };
     enum Access : uint8_t { ACC_NONE = 0, ACC_READ = 1, ACC_WRITE = 2, ACC_RW = 3 };
 
@@ -80,18 +88,21 @@ public:
     Gameboy();
     ~Gameboy();
 
-    /** Load a cartridge image (.gb); false and `err` if its mapper isn't supported. */
+    /** Load a cartridge image (.gb, .gbc); false and `err` if its mapper isn't supported. */
     bool load(std::vector<uint8_t> rom, std::string& err);
     bool loaded() const { return (bool)m_cart; }
     const Header& header() const { return m_header; }
     const char* mapperName() const { return m_cart ? m_cart->name() : ""; }
 
-    /** The model; Sgb/Sgb2 run the SGB boot ROM unless one is given. */
+    /** The model; Sgb/Sgb2 and Cgb run their built-in boot ROM unless one is given. */
     void setModel(Model m) { m_model = m; }
     Model model() const { return m_model; }
-    bool isSgb() const { return m_model != Model::Dmg; }
-    /** A boot ROM (256 bytes) to run from $0000; empty: the built-in choice (none for the DMG). */
+    bool isSgb() const { return m_model == Model::Sgb || m_model == Model::Sgb2; }
+    bool isCgb() const { return m_model == Model::Cgb; }
+    /** A boot ROM (256 bytes; the CGB's 2304, $0000-$00FF and $0200-$08FF) to run; empty: the built-in choice (none for the DMG). */
     void setBootRom(std::vector<uint8_t> rom) { m_bootRomOverride = std::move(rom); }
+    /** The CGB without a boot ROM: it starts where the boot ROM leaves off (the DMG never has a built-in one). */
+    void setSkipBootRom(bool skip) { m_skipBootRom = skip; }
 
     /** Power on (the cartridge's RAM is kept). `sgb`: the ICD2, for the Super Game Boy. */
     void powerOn(SgbLink* sgb = nullptr);
@@ -103,6 +114,8 @@ public:
 
     // The screen: 160x144 shades (0 white - 3 black), the last frame
     const uint8_t* screen() const { return m_ppu.frame(); }
+    /** The CGB's screen: 160x144 colours, 15-bit BGR (bits 0-4 red, 5-9 green, 10-14 blue). */
+    const uint16_t* colorScreen() const { return m_ppu.colorFrame(); }
     uint32_t frameCount() const { return m_ppu.frameCount(); }
 
     /** The joypad (Button bits) for the plain Game Boy. */
@@ -121,6 +134,12 @@ public:
 
     // For tests and the debugger
     Cpu& cpu() { return m_cpu; }
+    /** The work RAM: 8 KB, the CGB's 32 KB (bank n at n * $1000). */
+    std::vector<uint8_t>& workRam() { return m_wram; }
+    /** The work RAM bank at $D000 (1 but on a CGB in CGB mode). */
+    uint8_t wramBank() const;
+    /** In the CGB's double speed. */
+    bool isHighSpeed() const { return m_highSpeed; }
     Ppu& ppu() { return m_ppu; }
     uint8_t peek(uint16_t addr);
     /** A write with no side effect on registers (only memory pages). */
@@ -128,6 +147,7 @@ public:
     /** Told of the CPU's data accesses (null: none; the debugger's watchpoints). */
     void setAccessHook(AccessHook* h) { m_accessHook = h; }
     AccessHook* accessHook() const { return m_accessHook; }
+    bool bootRomDisabled() const { return m_bootRomOff; }
 
     // ---------------------------------------------------------------
     // What the parts use (Mesen's GbMemoryManager)
@@ -163,14 +183,22 @@ public:
     bool oamDmaRunning() const { return m_dmaRunning; }
     uint8_t dmaLastWriteAddress() const { return m_dmaCounter <= 160 ? (uint8_t)(160 - m_dmaCounter) : 0; }
 
+    // The CGB's HDMA and speed switch (Mesen's GbDmaController::ProcessHdma, GbMemoryManager::ToggleSpeed)
+    /** A PPU mode change or the CPU leaving HALT: the HBlank block of HDMA, if one is due. */
+    void processHdma();
+    bool speedSwitchRequested() const { return m_speedSwitchRequest; }
+    void toggleSpeed() { m_speedSwitchRequest = false; m_highSpeed = !m_highSpeed; }
+    /** DIV held at 0 (while the speed switches). */
+    void resetDivider() { timerWrite(0xFF04, 0); }
+
     // The map, for the mappers
     void map(uint16_t start, uint16_t end, Mem type, uint32_t offset, bool readOnly);
     void unmap(uint16_t start, uint16_t end);
     void mapRegisters(uint16_t start, uint16_t end, uint8_t access);
     std::vector<uint8_t>& rom() { return m_rom; }
 
-    // The timer (Mesen's GbTimer)
-    bool frameSequencerBit() const { return (m_div & 0x1000) != 0; }
+    // The timer (Mesen's GbTimer): the frame sequencer runs off DIV bit 12 (13 in double speed)
+    bool frameSequencerBit() const { return (m_div & (m_highSpeed ? 0x2000 : 0x1000)) != 0; }
 
 private:
     void refreshMappings();
@@ -187,7 +215,10 @@ private:
     uint16_t dmaReadAddress() const { return (uint16_t)((m_dmaDest << 8) + (160 - m_dmaCounter)); }
     uint8_t dmaRead(uint16_t addr);
     void timerDmaSerial();
+    void hdmaWrite(uint16_t addr, uint8_t v);
+    void hdmaBlock();
     void postBootState();
+    void cgbPostBootState();
     void sgbBootDuration();
 
     Model m_model = Model::Dmg;
@@ -209,6 +240,7 @@ private:
     uint8_t m_ie = 0, m_if = 0;
     bool m_bootRomOff = false;
     bool m_sgbBootRom = false;                           // the built-in SGB boot ROM is running
+    bool m_skipBootRom = false;
     uint64_t m_apuCycles = 0;
     uint8_t m_serialData = 0, m_serialControl = 0, m_serialBits = 0;
     std::string m_serialOut;
@@ -223,6 +255,14 @@ private:
     // OAM DMA
     uint8_t m_dmaSource = 0xFF, m_dmaStartDelay = 0, m_dmaDest = 0, m_dmaCounter = 0, m_dmaBuffer = 0;
     bool m_dmaRunning = false;
+
+    // The CGB's: speed, work RAM bank, HDMA, the undocumented and infrared registers
+    bool m_highSpeed = false, m_speedSwitchRequest = false;
+    uint8_t m_wramBank = 1;
+    uint16_t m_hdmaSource = 0, m_hdmaDest = 0;
+    uint8_t m_hdmaLength = 0;
+    bool m_hdmaRunning = false, m_hdmaPending = false, m_hdmaTrigger = false;
+    uint8_t m_ff72 = 0, m_ff73 = 0, m_ff74 = 0, m_ff75 = 0, m_rp = 0;
 };
 
 }  // namespace gb

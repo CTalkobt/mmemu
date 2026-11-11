@@ -1,7 +1,8 @@
-# Game Boy (`gameboy`) and its core (`gb::Gameboy`)
+# Game Boy (`gameboy`), Game Boy Color (`gameboycolor`) and their core (`gb::Gameboy`)
 
 A monochrome Game Boy (DMG), written for the SNES's Super Game Boy (#15)
-after Mesen2's `Core/Gameboy` (GPL-3.0, Sour and the Mesen contributors).
+after Mesen2's `Core/Gameboy` (GPL-3.0, Sour and the Mesen contributors),
+and the Game Boy Color (CGB) on the same core, as Mesen has it.
 It lives in `src/plugins/machines/gameboy/main/`; its objects are linked
 into both the Game Boy plugin (`lib/mmemu-plugin-gameboy.so`, the
 standalone machine) and the SNES plugin (the Super Game Boy).
@@ -13,14 +14,21 @@ bin/mmemu-cli -m gameboy            # or -m dmg
 > cart path/to/game.gb              # also the GUI's Attach Cartridge, MCP attach_cartridge
 > run
 bin/mmemu-gui -m gameboy
+bin/mmemu-gui -m gameboycolor       # or -m gbc, -m cgb
 ```
 
-`.gb` and `.gbc` files attach (a Game Boy Color cartridge runs only if it
-also works on the DMG). On a SNES the same files go into the Super Game Boy
+`.gb` and `.gbc` files attach to either. On the `gameboy` (a DMG) a Game
+Boy Color cartridge runs only if it also works on the DMG; on the
+`gameboycolor` a CGB cartridge (header `$0143` bit 7 set) runs in CGB mode
+and a DMG one in the CGB's DMG compatibility mode, coloured by the boot ROM
+as on the real machine. On a SNES the same files go into the Super Game Boy
 instead. With no cartridge the bus reads `$FF` and the CPU runs `RST $38`,
 as on the real machine.
 
-- **Screen**: 160x144, the four shades in the DMG's greens.
+- **Screen**: 160x144, the four shades in the DMG's greens; the Game Boy
+  Color's 15-bit colours, each 5-bit channel X as `(X << 3) | (X >> 2)`
+  (the conversion c-sp's test pictures use), with no LCD colour
+  correction.
 - **Sound**: the APU's stereo output mixed to mono, 44.1 kHz.
 - **Joypad**: keys arrows, **X** (A), **Z** (B), **Return** (Start),
   **Tab** or **Shift** (Select); a host gamepad's d-pad, A/X (A), B/Y (B),
@@ -31,9 +39,12 @@ as on the real machine.
   there is no `.sav`), written within a second of a change, on eject and
   on exit. The MBC3's clock goes in `<rom>.rtc` (Mesen's format: its
   registers and the host time, so the time away passes).
-- **Boot ROM**: none is needed (the machine starts in the state the DMG's
-  leaves). Your own `roms/gameboy/dmg_boot.bin` (256 bytes; not included,
-  `MMEMU_GB_FIRMWARE` names another directory) is run if present.
+- **Boot ROM**: none is needed on the DMG (the machine starts in the state
+  the DMG's leaves). Your own `roms/gameboy/dmg_boot.bin` (256 bytes; not
+  included, `MMEMU_GB_FIRMWARE` names another directory) is run if present.
+  The Game Boy Color runs SameBoy's open source CGB boot ROM (built in, as
+  Mesen; about 0.23 s to `$0100`), or your own `roms/gameboy/cgb_boot.bin`
+  (2304 bytes, `$0000-$08FF` with the header's gap) if present.
 - **Reset**: the Game Boy has no reset button; `reset` powers it off and on
   (the cartridge's RAM stays).
 
@@ -55,7 +66,11 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
   pops; not opcode fetches); the trace keeps each instruction's registers.
 - **Memory**: the 64 KB map as the CPU sees it. Reads have no side effects
   (VRAM and OAM are shown whatever the PPU is doing); writes go to memory
-  or the register (`$0000-$7FFF` switches banks as a CPU write would).
+  or the register (`$0000-$7FFF` switches banks as a CPU write would). On
+  the Game Boy Color VRAM and the work RAM at `$D000` are the banks VBK
+  (`$FF4F`) and SVBK (`$FF70`) select: write those to see another bank
+  (the debugger has no separate bank views; `gb::Gameboy::workRam()` and
+  `Ppu::vram()` hold all of them).
 - **Disassembly** (`sm83_disasm.h`, also the `sm83` toolchain
   disassembler): every opcode and the CB-prefixed ones, `LD (HL+),A`,
   `LDH ($FF44),A`, `LD ($FF00+C),A`, `ADD SP,-$02`, `LD HL,SP+$05`, JR's
@@ -101,7 +116,68 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
 - **Cartridges** (`gb_cart.cpp`): ROM only, MBC1 (and the MBC1M multicart
   wiring), MBC2 (512 nibbles), MBC3 (with the clock, `.rtc` as Mesen; and
   MBC30's 8 RAM banks) and MBC5 (with rumble's RAM bank bits). Battery RAM
-  is the caller's to save (`cartRam()`).
+  is the caller's to save (`cartRam()`). The MBC3's clock runs in real time
+  (the APU's clock, which double speed doesn't change).
+
+## The Game Boy Color
+
+`Gameboy::setModel(Model::Cgb)`, the `gameboycolor` machine. Each part
+follows Mesen's CGB handling:
+
+- **Double speed**: KEY1 (`$FF4D`) arms it, STOP switches: the CPU halts
+  33942 machine cycles (Mesen's, after `speed_switch_timing_stat`) with DIV
+  held at 0 and no interrupts taken, then runs twice as fast. The timer,
+  OAM DMA and the serial port run with the CPU; the PPU takes a dot per
+  CPU half-cycle and the APU keeps its clock (its frame sequencer then off
+  DIV bit 13). `cycles()` counts the CPU's clocks, `apuCycles()` real time
+  (the machine paces on the latter).
+- **VRAM bank 1** (VBK `$FF4F`), and the background's attribute map in it:
+  each tile's palette (0-7), VRAM bank, horizontal and vertical flips and
+  priority over objects.
+- **Work RAM banks 1-7** at `$D000` (SVBK `$FF70`; 0 selects 1).
+- **Colour palettes**: BCPS/BCPD and OCPS/OCPD (`$FF68-$FF6B`), 8 of 4
+  colours each for the background and objects, with auto-increment; the
+  data registers read `$FF` and ignore writes during mode 3 (the index still
+  moves on).
+- **Objects**: their palette (attribute bits 0-2) and VRAM bank (bit 3);
+  where objects overlap the one earlier in OAM wins (not the lower X);
+  LCDC bit 0 cleared puts every object over the background (the master
+  priority) instead of blanking it. Objects are fetched even with LCDC
+  bit 1 clear (and dropped), as Mesen.
+- **HDMA** (`$FF51-$FF55`): general DMA (4 clocks, then 16 bytes per block
+  at 2 clocks a byte, 4 in double speed, with the CPU stopped) and HBlank
+  DMA (a block on entering each HBlank, one at once if started in HBlank or
+  with the LCD off; none while the CPU is halted; stopped by writing bit 7
+  clear). Source and destination keep counting; a source in VRAM or at
+  `$E000` up reads `$FF`.
+- **The PPU's CGB timings and quirks**: no OAM corruption bug, no STAT
+  write bug, no DMG window glitch, line 0 not starting in mode 0, BGP's
+  mid-line change taking the new value only, the tile fetch glitch when
+  LCDC bit 4 is cleared as the fetcher reads tile data (`cgb-acid-hell`),
+  the first frame after the LCD is turned on blanked only if it was off
+  for a while, and STOP freezing what the LCD can read (Mesen's).
+- **OAM DMA**: the CGB's bus conflicts (work RAM has its own bus).
+- **The APU**: wave RAM reached any time while the wave channel plays (the
+  byte being played) and no retrigger corruption; powering the APU on
+  clears the length counters; PCM12/PCM34 (`$FF76/$FF77`) read the
+  channels' digital outputs.
+- **Other registers**: the undocumented `$FF72-$FF75`, RP (`$FF56`, the
+  infrared port: a stub as Mesen's, nothing ever received), SC's fast
+  clock bit (kept but not run faster, as Mesen), KEY0 (`$FF4C`, the boot
+  ROM's only). OPRI (`$FF6C`) is not implemented, as in Mesen: it reads
+  `$FF`, and CGB mode always orders objects by OAM index.
+- **DMG compatibility mode**: a DMG cartridge's header makes the boot ROM
+  write KEY0 `$04`: the CGB's registers then read `$FF` and ignore writes,
+  and the DMG palettes (BGP, OBP0/1) pick colours from colour palettes 0
+  (background) and 0/1 (objects), which the boot ROM fills by the title as
+  Nintendo's does.
+- **Without a boot ROM** (`setSkipBootRom(true)`, used by the unit tests;
+  Mesen always runs one) the CPU starts at `$0100` with Pan Docs' CGB
+  registers (`A=$11`; `DE=$FF56 HL=$000D` for a CGB cartridge, `DE=$0008
+  HL=$007C` for a DMG one), white background palettes for a CGB cartridge,
+  and for a DMG one the compatibility mode with the colours Nintendo's boot
+  ROM gives a title it has no palette for (c-sp's: background `#FFFFFF
+  #7BFF31 #0063C6 #000000`, objects `#FFFFFF #FF8484 #943939 #000000`).
 
 ## Boot
 
@@ -117,7 +193,9 @@ SNES in joypad packets as Nintendo's does. Nintendo's takes a machine cycle
 less for each 1 bit of that header, SameBoy's the same time for either, so
 when it hands over DIV is moved by the difference (`boot_div-S`,
 `boot_div2-S`). `setBootRom()` takes another.
-Nintendo's boot ROMs are not included.
+On the Game Boy Color it runs SameBoy's CGB boot ROM (the one Mesen
+embeds): the logo, then for a DMG cartridge KEY0 and the palettes by its
+title. Nintendo's boot ROMs are not included.
 
 ## Tests
 
@@ -144,16 +222,42 @@ Nintendo's boot ROMs are not included.
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
   tests for the DMG, plus the SGB ones with the SGB boot ROM, and the
   combined `oam_bug.gb` against its picture: 109 PASS, 0 FAIL.
+  `gb_blargg_tests` also runs `cgb-acid2` on the Game Boy Color (0 pixels
+  differ).
   `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its
   20 corrupted-OAM dumps come to 10,525 bytes of text, which it copies to
   cartridge RAM from `$A004` with no end check, so past `$BFFF` the text
   overwrites its own code in work RAM and it crashes. The survey runs it
   with those writes undone (`TextSpill`), so it reaches its CRC check over
   all of the text, and passes. `MMEMU_GB_SHOW=1` lists the passes too.
+  The survey's second half runs the Game Boy Color (CPU CGB E) through
+  SameBoy's boot ROM: Blargg's whole suites against their CGB pictures
+  (`cpu_instrs`, `instr_timing`, `mem_timing`, `mem_timing-2`, `halt_bug`,
+  `interrupt_time`, `cgb_sound`, `oam_bug`) and their singles
+  (`cpu_instrs`, `mem_timing`, `mem_timing-2`, `cgb_sound`), `cgb-acid2`,
+  `cgb-acid-hell` and Mooneye's `sprite_priority` against their pictures,
+  and the register-checked tests for the CGB E by their names' model
+  suffixes: Mooneye's acceptance and misc tests, SameSuite's and AGE's.
+  `MMEMU_GB_SURVEY=dmg` or `=cgb` runs one half. The CGB result is
+  157 PASS, 38 FAIL. Mesen2 (built from its source and run on the same
+  list) fails the same 38, and Mooneye's `timer/div_write` (which passes
+  here): `oam_bug`'s picture, Mooneye's `boot_div-cgbABCDE`,
+  `boot_hwio-C` and `unused_hwio-C` (SameBoy's boot ROM reaches `$0100`
+  far sooner than Nintendo's, so DIV and the boot chime's square 1 are
+  elsewhere when they look), SameSuite's `ei_delay_halt`, `channel_1_freq_change_timing-cgbDE`,
+  `channel_1/2_nrx2_speed_change`, `channel_1_sweep_restart(_2)` and
+  `channel_4_freq_change`, and 27 of AGE's (its LY, STAT, OAM/VRAM access,
+  HALT and speed switch timings).
+- `test_gameboy.cpp`'s `gb_cgb_*` tests: the CGB's post-boot state, its
+  registers (VBK, SVBK, the palettes, `$FF72-$FF75`, RP, KEY0), the
+  compatibility mode, general and HBlank DMA, the speed switch, rendering
+  (attributes, banks, palettes, object order and priority) and PCM12 and
+  wave RAM; `gameboy_color_machine` the machine through its boot ROM.
 
 ## Not yet
 
-- The Game Boy Color (and so CGB-only cartridges), the MBC6/MBC7, HuC1/HuC3,
-  MMM01 and the other rare mappers, the infrared port.
+- The MBC6/MBC7, HuC1/HuC3, MMM01 and the other rare mappers, the infrared
+  port (RP is a stub), OPRI, the CGB's fast serial clock, the CGB's LCD
+  colour correction, separate VRAM/work RAM bank views in the debugger.
 - An SM83 assembler; reverse stepping and snapshots keep only the CPU's
   registers (not memory or the PPU); the GDB server does not know the SM83.

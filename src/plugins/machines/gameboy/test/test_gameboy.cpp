@@ -200,3 +200,247 @@ TEST_CASE(gb_joypad_serial_apu) {
     EXPECT_TRUE(g.apu().samples().size() >= 2 * 500);   // ~16.7 ms at 32 kHz
     EXPECT_EQ(g.peek(0xFF26) & 0x80, 0x80);
 }
+
+// ---------------------------------------------------------------------------
+// The Game Boy Color
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/** A CGB cartridge (header $0143: `cgbFlag`, $80 for CGB mode, $00 for a DMG one). */
+std::vector<uint8_t> cgbCart(const std::vector<uint8_t>& prog, uint8_t cgbFlag = 0x80) {
+    auto r = cart(prog);
+    r[0x143] = cgbFlag;
+    return r;
+}
+
+/** A Game Boy Color with `rom` in it, started without the boot ROM (in the state it leaves). */
+bool bootCgb(gb::Gameboy& g, const std::vector<uint8_t>& rom) {
+    g.setModel(gb::Gameboy::Model::Cgb);
+    g.setSkipBootRom(true);
+    return boot(g, rom);
+}
+
+}  // namespace
+
+TEST_CASE(gb_cgb_post_boot_and_registers) {
+    gb::Gameboy g;
+    ASSERT(bootCgb(g, cgbCart({0x18, 0xFE})));
+    EXPECT_TRUE(g.isCgb());
+    EXPECT_TRUE(!g.isSgb());
+    auto& s = g.cpu().state();
+    EXPECT_EQ(s.pc, 0x0100);
+    EXPECT_EQ(s.a, 0x11);                              // the CGB's
+    EXPECT_EQ(s.f, 0x80);
+    EXPECT_EQ(s.d, 0xFF);
+    EXPECT_EQ(s.e, 0x56);
+    EXPECT_EQ(s.l, 0x0D);
+    EXPECT_EQ(g.peek(0xFF4D), 0x7E);                   // KEY1: normal speed, no switch armed
+    EXPECT_EQ(g.peek(0xFF4F), 0xFE);                   // VBK: bank 0
+    EXPECT_EQ(g.peek(0xFF70), 0xF9);                   // SVBK: bank 1
+    EXPECT_EQ(g.peek(0xFF55), 0x80);                   // HDMA5: none running (Mesen's $80 | length)
+    EXPECT_EQ(g.peek(0xFF02), 0x7C);                   // SC: the fast clock bit readable
+    g.write(0xFF40, 0x11);                             // the LCD off: VRAM and the palettes free
+    // VRAM banks
+    g.write(0xFF4F, 0x01);
+    EXPECT_EQ(g.peek(0xFF4F), 0xFF);
+    g.write(0x8000, 0xAA);
+    g.write(0xFF4F, 0x00);
+    g.write(0x8000, 0x55);
+    EXPECT_EQ(g.ppu().vram()[0x0000], 0x55);
+    EXPECT_EQ(g.ppu().vram()[0x2000], 0xAA);
+    EXPECT_EQ(g.peek(0x8000), 0x55);
+    // Work RAM banks: 0 selects 1; $C000-$CFFF is always bank 0
+    g.write(0xFF70, 0x02);
+    g.write(0xD000, 0x22);
+    g.write(0xFF70, 0x00);
+    EXPECT_EQ(g.peek(0xFF70), 0xF8);
+    EXPECT_EQ(g.wramBank(), 1);
+    g.write(0xD000, 0x11);
+    g.write(0xFF70, 0x07);
+    EXPECT_EQ(g.peek(0xD000), 0x00);
+    EXPECT_EQ(g.peek(0xF000), 0x00);                   // the echo follows
+    g.write(0xFF70, 0x02);
+    EXPECT_EQ(g.peek(0xD000), 0x22);
+    EXPECT_EQ(g.workRam()[0x2000], 0x22);
+    EXPECT_EQ(g.workRam()[0x1000], 0x11);
+    EXPECT_EQ(g.workRam().size(), 0x8000u);
+    // Palettes: BCPS with auto-increment, BCPD little-endian colours
+    g.write(0xFF68, 0x80 | 0x02);
+    g.write(0xFF69, 0x1F);
+    g.write(0xFF69, 0x7C);
+    EXPECT_EQ(g.peek(0xFF68), 0xC4);                   // index 4, auto-increment, bit 6 set
+    EXPECT_EQ(g.ppu().bgPalettes()[1], 0x7C1F);
+    g.write(0xFF68, 0x03);
+    EXPECT_EQ(g.peek(0xFF69), 0x7C);
+    g.write(0xFF6A, 0x80 | 0x3F);
+    g.write(0xFF6B, 0x12);
+    EXPECT_EQ(g.peek(0xFF6A), 0xC0);                   // wraps to 0
+    EXPECT_EQ(g.ppu().objPalettes()[31] >> 8, 0x12);
+    // The undocumented registers and RP
+    g.write(0xFF72, 0x5A); g.write(0xFF73, 0xA5); g.write(0xFF74, 0x3C); g.write(0xFF75, 0xFF);
+    EXPECT_EQ(g.peek(0xFF72), 0x5A);
+    EXPECT_EQ(g.peek(0xFF73), 0xA5);
+    EXPECT_EQ(g.peek(0xFF74), 0x3C);
+    EXPECT_EQ(g.peek(0xFF75), 0xFF);
+    g.write(0xFF75, 0x00);
+    EXPECT_EQ(g.peek(0xFF75), 0x8F);                   // bits 4-6 only
+    g.write(0xFF56, 0xFF);
+    EXPECT_EQ(g.peek(0xFF56), 0xFF);
+    g.write(0xFF56, 0x00);
+    EXPECT_EQ(g.peek(0xFF56), 0x3E);
+    // KEY0 is the boot ROM's: ignored after it
+    g.write(0xFF4C, 0x04);
+    EXPECT_TRUE(g.ppu().cgbEnabled());
+}
+
+TEST_CASE(gb_cgb_dmg_compatibility_mode) {
+    // A DMG cartridge on the CGB: the colour features off, the boot ROM's default colours
+    gb::Gameboy g;
+    ASSERT(bootCgb(g, cgbCart({0x18, 0xFE}, 0x00)));
+    EXPECT_TRUE(!g.ppu().cgbEnabled());
+    EXPECT_EQ(g.cpu().state().e, 0x08);
+    EXPECT_EQ(g.peek(0xFF4D), 0xFF);
+    EXPECT_EQ(g.peek(0xFF4F), 0xFF);
+    EXPECT_EQ(g.peek(0xFF70), 0xFF);
+    EXPECT_EQ(g.peek(0xFF68), 0xFF);
+    EXPECT_EQ(g.peek(0xFF02), 0x7E);
+    EXPECT_EQ(g.ppu().bgPalettes()[1], 0x1BEF);
+    EXPECT_EQ(g.ppu().objPalettes()[5], 0x421F);
+    g.write(0xFF40, 0x11);
+    g.write(0xFF4F, 0x01);                             // ignored
+    g.write(0x8000, 0x77);
+    EXPECT_EQ(g.ppu().vram()[0x0000], 0x77);
+    g.write(0xFF70, 0x03);                             // ignored: $D000 stays bank 1
+    EXPECT_EQ(g.wramBank(), 1);
+    // The DMG has none of the CGB's registers
+    gb::Gameboy d;
+    ASSERT(boot(d, cart({0x18, 0xFE})));
+    EXPECT_EQ(d.peek(0xFF4F), 0xFF);
+    EXPECT_EQ(d.peek(0xFF70), 0xFF);
+    EXPECT_EQ(d.peek(0xFF76), 0xFF);
+    EXPECT_EQ(d.peek(0xFF72), 0xFF);
+}
+
+TEST_CASE(gb_cgb_hdma) {
+    gb::Gameboy g;
+    ASSERT(bootCgb(g, cgbCart({0x18, 0xFE})));
+    g.write(0xFF40, 0x11);                             // the LCD off
+    for (int i = 0; i < 0x40; ++i) g.write((uint16_t)(0xC000 + i), (uint8_t)(i + 1));
+    // General DMA: 2 blocks of 16 bytes at once, $C000 to $8000 (the low 4 bits of each address dropped)
+    g.write(0xFF51, 0xC0); g.write(0xFF52, 0x0F);
+    g.write(0xFF53, 0x80); g.write(0xFF54, 0x0F);
+    const uint64_t c0 = g.cycles();
+    g.write(0xFF55, 0x01);
+    EXPECT_EQ(g.cycles() - c0, 4u + 2 * 16 * 2);      // 4 clocks, then 2 per byte
+    EXPECT_EQ(g.ppu().vram()[0x00], 1);
+    EXPECT_EQ(g.ppu().vram()[0x1F], 0x20);
+    EXPECT_EQ(g.ppu().vram()[0x20], 0);
+    EXPECT_EQ(g.peek(0xFF55), 0xFF);                   // done
+    // HBlank DMA to VRAM bank 1: one block now (the LCD off), then one each HBlank
+    g.write(0xFF4F, 0x01);
+    g.write(0xFF51, 0xC0); g.write(0xFF52, 0x00);
+    g.write(0xFF53, 0x81); g.write(0xFF54, 0x00);
+    g.write(0xFF55, 0x82);                             // 3 blocks
+    EXPECT_EQ(g.ppu().vram()[0x2100], 1);
+    EXPECT_EQ(g.ppu().vram()[0x2110], 0);
+    EXPECT_EQ(g.peek(0xFF55), 0x01);                   // running, 2 blocks left
+    g.write(0xFF40, 0x91);                             // the LCD on: a block each line's HBlank
+    for (int i = 0; i < 3000 && g.peek(0xFF55) != 0xFF; ++i) g.cpu().exec();
+    EXPECT_EQ(g.peek(0xFF55), 0xFF);
+    EXPECT_EQ(g.ppu().vram()[0x2110], 0x11);
+    EXPECT_EQ(g.ppu().vram()[0x212F], 0x30);
+    EXPECT_EQ(g.ppu().vram()[0x2130], 0);
+    // Stopped with bit 7 clear: HDMA5 reads $80 | the blocks left
+    g.write(0xFF55, 0x85);
+    g.write(0xFF55, 0x00);
+    EXPECT_EQ(g.peek(0xFF55) & 0x80, 0x80);
+}
+
+TEST_CASE(gb_cgb_speed_switch) {
+    gb::Gameboy g;
+    // LD A,1; LDH ($4D),A; STOP; then LDH A,($4D); LD ($C000),A; loop
+    ASSERT(bootCgb(g, cgbCart({0x3E, 0x01, 0xE0, 0x4D, 0x10, 0x00, 0xF0, 0x4D, 0xEA, 0x00, 0xC0, 0x18, 0xFE})));
+    EXPECT_TRUE(!g.isHighSpeed());
+    while (g.cpu().state().pc < 0x0154) g.cpu().exec();
+    EXPECT_EQ(g.peek(0xFF4D), 0x7F);                   // armed
+    while (g.cpu().state().pc != 0x015B) g.cpu().exec();
+    EXPECT_TRUE(g.isHighSpeed());
+    EXPECT_EQ(g.peek(0xC000), 0xFE);                   // double speed, the request cleared
+    // Twice the CPU's clocks in a frame; the LCD and the APU keep their time
+    g.runFrame();
+    const uint64_t c0 = g.cycles(), a0 = g.apuCycles();
+    g.runFrame();
+    EXPECT_NEAR((double)(g.apuCycles() - a0), 70224.0, 24.0);
+    EXPECT_NEAR((double)(g.cycles() - c0), 2 * 70224.0, 48.0);
+}
+
+TEST_CASE(gb_cgb_rendering) {
+    gb::Gameboy g;
+    ASSERT(bootCgb(g, cgbCart({0x18, 0xFE})));
+    g.write(0xFF40, 0x00);
+    // Tile 1 in bank 0: colour 1 everywhere; tile 1 in bank 1: colour 2 everywhere
+    for (int i = 0; i < 16; i += 2) { g.ppu().vram()[0x10 + i] = 0xFF; g.ppu().vram()[0x2010 + i + 1] = 0xFF; }
+    // The map: tile 1; its attributes: palette 2 (bank 0) for column 0, palette 3 and bank 1 for column 1
+    for (int i = 0; i < 32 * 32; ++i) g.ppu().vram()[0x1800 + i] = 1;
+    g.ppu().vram()[0x3800] = 0x02;
+    g.ppu().vram()[0x3801] = 0x0B;
+    g.ppu().bgPalettes()[2 * 4 + 1] = 0x001F;          // red
+    g.ppu().bgPalettes()[3 * 4 + 2] = 0x03E0;          // green
+    // Two objects overlapping at x 4-7: OAM 0 at X=12 (palette 1, blue), OAM 1 at X=8 (palette 2, white)
+    auto* oam = g.ppu().oam();
+    const uint8_t objs[8] = {16 + 40, 12, 1, 0x01, 16 + 40, 8, 1, 0x02};
+    std::memcpy(oam, objs, 8);
+    g.ppu().objPalettes()[1 * 4 + 1] = 0x7C00;         // blue
+    g.ppu().objPalettes()[2 * 4 + 1] = 0x7FFF;
+    g.write(0xFF40, 0x93);                             // LCD, BG and objects on
+    g.runFrame();
+    g.runFrame();
+    EXPECT_EQ(g.colorScreen()[0], 0x001F);
+    EXPECT_EQ(g.colorScreen()[8], 0x03E0);
+    EXPECT_EQ(g.colorScreen()[40 * 160 + 2], 0x7FFF);  // OAM 1 alone
+    EXPECT_EQ(g.colorScreen()[40 * 160 + 5], 0x7C00);  // OAM 0 wins where they overlap (not the lower X)
+    // The tile's priority bit puts it over objects, unless LCDC bit 0 is clear
+    g.ppu().vram()[0x3800 + 5 * 32] = 0x82;
+    g.runFrame();
+    g.runFrame();
+    EXPECT_EQ(g.colorScreen()[40 * 160 + 5], 0x001F);
+    g.write(0xFF40, 0x92);
+    g.runFrame();
+    g.runFrame();
+    EXPECT_EQ(g.colorScreen()[40 * 160 + 5], 0x7C00);
+}
+
+TEST_CASE(gb_cgb_pcm_and_wave_ram) {
+    gb::Gameboy g;
+    ASSERT(bootCgb(g, cgbCart({0x18, 0xFE})));
+    // Square 2 at full volume, 50% duty: PCM12's high nibble 0 or 15
+    g.write(0xFF26, 0x80);
+    g.write(0xFF16, 0x80);
+    g.write(0xFF17, 0xF0);
+    g.write(0xFF18, 0x00);
+    g.write(0xFF19, 0x87);
+    int seen = 0;
+    bool only0or15 = true;
+    for (int i = 0; i < 2000; ++i) {
+        g.cpu().exec();
+        const uint8_t v = g.read<gb::OamCorruption::Read>(0xFF76);
+        seen |= 1 << (v >> 4);
+        if ((v >> 4) != 0 && (v >> 4) != 0x0F) only0or15 = false;
+    }
+    EXPECT_TRUE(only0or15);
+    EXPECT_EQ(seen, (1 << 0) | (1 << 15));
+    // Wave RAM while the wave channel plays: on the CGB the byte being played, any time (not $FF)
+    for (int i = 0; i < 16; ++i) g.write((uint16_t)(0xFF30 + i), (uint8_t)(0x11 * i));
+    g.write(0xFF1A, 0x80);
+    g.write(0xFF1C, 0x20);
+    g.write(0xFF1D, 0x00);
+    g.write(0xFF1E, 0x87);
+    bool sane = true;
+    for (int i = 0; i < 100; ++i) {
+        g.cpu().exec();
+        const uint8_t w = g.read<gb::OamCorruption::Read>(0xFF30);
+        if (w % 0x11 != 0 || w == 0xFF) sane = false;
+    }
+    EXPECT_TRUE(sane);
+}

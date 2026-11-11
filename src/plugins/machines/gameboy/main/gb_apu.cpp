@@ -8,8 +8,9 @@
 namespace gb {
 
 namespace {
+// The duty waveforms in the phase Mesen's GbSquareChannel has them (SameSuite's channel_1/2 tests)
 const uint8_t DUTY[4][8] = {
-    {0, 0, 0, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 0}};
+    {0, 0, 0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 0, 0, 1, 1}, {0, 0, 0, 0, 1, 1, 1, 1}, {1, 1, 1, 1, 1, 1, 0, 0}};
 // The DMG's wave RAM at power on (Mesen's preset, so R-Type is audible)
 const uint8_t WAVE_DEFAULT[16] = {0x84, 0x40, 0x43, 0xAA, 0x2D, 0x78, 0x92, 0x3C, 0x60, 0x59, 0x59, 0xB0, 0x34, 0xB8, 0x2E, 0xDA};
 }  // namespace
@@ -340,6 +341,7 @@ void Apu::waveExec(uint32_t clocks) {
 }
 
 void Apu::waveCorruption() {
+    if (m_gb->isCgb()) return;                    // the DMG's only
     const uint8_t pos = (uint8_t)(((m_wave.position + 1) & 0x1F) >> 1);
     if (pos < 4) m_wave.ram[0] = m_wave.ram[pos];
     else std::memmove(m_wave.ram, m_wave.ram + (pos & 0x0C), 4);
@@ -377,13 +379,13 @@ void Apu::waveWrite(int reg, uint8_t v) {
 
 uint8_t Apu::waveReadRam(uint16_t addr) const {
     if (!m_wave.enabled) return m_wave.ram[addr & 0x0F];
-    // The DMG: only on the clock the channel reads it
-    return m_wave.allowRamAccess ? m_wave.ram[m_wave.position >> 1] : 0xFF;
+    // Playing, the byte being played: the DMG only on the clock the channel reads it, the CGB any time
+    return (m_wave.allowRamAccess || m_gb->isCgb()) ? m_wave.ram[m_wave.position >> 1] : 0xFF;
 }
 
 void Apu::waveWriteRam(uint16_t addr, uint8_t v) {
     if (!m_wave.enabled) m_wave.ram[addr & 0x0F] = v;
-    else if (m_wave.allowRamAccess) m_wave.ram[m_wave.position >> 1] = v;
+    else if (m_wave.allowRamAccess || m_gb->isCgb()) m_wave.ram[m_wave.position >> 1] = v;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +498,13 @@ uint8_t Apu::peek(uint16_t addr) const {
     return 0xFF;
 }
 
+uint8_t Apu::pcm(uint16_t addr) const {
+    // A square's or the noise's output is 0 with its DAC off (Mesen's GetRawOutput); the wave's with the channel off
+    auto env = [](const Envelope& c, uint8_t out) { return (!c.envRaise && c.envVolume == 0) ? 0 : out; };
+    if (addr == 0xFF76) return (uint8_t)(env(m_sq1, m_sq1.output) | (env(m_sq2, m_sq2.output) << 4));
+    return (uint8_t)((m_wave.enabled ? m_wave.output : 0) | (env(m_noise, m_noise.output) << 4));
+}
+
 void Apu::write(uint16_t addr, uint8_t v) {
     run();
     if (!m_enabled) {
@@ -529,6 +538,7 @@ void Apu::write(uint16_t addr, uint8_t v) {
                 m_frameStep = 0;
                 m_powerOnCycle = m_gb->apuCycles();
                 sqDisable(m_sq1); sqDisable(m_sq2); noiseDisable(); waveDisable();
+                if (m_gb->isCgb()) m_sq1.length = m_sq2.length = m_noise.length = m_wave.length = 0;   // the CGB clears them
             }
             m_enabled = on;
         }

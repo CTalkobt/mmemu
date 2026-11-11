@@ -4,7 +4,8 @@
 // GPL-3.0, Sour and the Mesen contributors): every opcode, timed per machine
 // cycle as Mesen (the machine cycle runs before the access in it), with the
 // HALT bug, the interrupt dispatch that re-reads IE/IF part way (ie_push),
-// EI's delay, STOP until a button, and the illegal opcodes locking up.
+// EI's delay, STOP until a button (on the CGB with KEY1 armed, the speed
+// switch instead), and the illegal opcodes locking up.
 
 #include "gb_ppu.h"
 #include <cstdint>
@@ -52,6 +53,7 @@ private:
     void nextCycleStart();
     void haltBugStep();
     bool stoppedStep();
+    void cgbSpeedSwitch();
 
     void cycle();
     void masterCycle();

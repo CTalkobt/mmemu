@@ -236,6 +236,40 @@ TEST_CASE(gameboy_machine_screen_sound_joypad) {
     EXPECT_TRUE(!g.m->onKey("q", true));
 }
 
+TEST_CASE(gameboy_color_machine) {
+    std::unique_ptr<MachineDescriptor> m(gb::createMachine(nullptr, true));
+    EXPECT_EQ(m->machineId, std::string("gameboycolor"));
+    ASSERT(gb::gameboyOf(m.get()) && gb::gameboyOf(m.get())->isCgb());
+    // A CGB cartridge: the LCD off, background colour 0 of palette 0 red ($001F), the LCD on; JR *
+    auto rom = cart({0xAF, 0xE0, 0x40, 0x3E, 0x80, 0xE0, 0x68, 0x3E, 0x1F, 0xE0, 0x69, 0xAF, 0xE0, 0x69,
+                     0x3E, 0x91, 0xE0, 0x40, 0x18, 0xFE});
+    rom[0x143] = 0x80;
+    std::string err;
+    ASSERT(gb::insertCartridge(m.get(), rom, "test.gbc", err));
+    ICore* c = m->cpus[0].cpu;
+    EXPECT_EQ(c->pc(), 0x0000u);                   // SameBoy's CGB boot ROM first
+    uint64_t t = 0;
+    while (t < 70224 * 20) t += (uint64_t)m->schedulerStep(*m);
+    EXPECT_EQ(c->pc(), 0x0162u);
+    EXPECT_EQ(c->regReadByName("A"), 0x91u);
+    EXPECT_TRUE(m->deviceCycles() > 70224u * 19);  // real time: the APU's clock
+    IVideoOutput* video = nullptr;
+    std::vector<IOHandler*> hs;
+    m->ioRegistry->enumerate(hs);
+    for (auto* h : hs) if (auto* v = dynamic_cast<IVideoOutput*>(h)) video = v;
+    ASSERT(video);
+    std::vector<uint32_t> px(160 * 144);
+    video->renderFrame(px.data());
+    int red = 0;
+    for (auto p : px) red += p == 0xFFFF0000;      // 31 to 255: (X << 3) | (X >> 2)
+    EXPECT_TRUE(red > 160 * 144 * 9 / 10);
+    // The debugger's bus: VRAM through the selected bank
+    m->buses[0].bus->write8(0xFF4F, 0x01);
+    m->buses[0].bus->write8(0x8000, 0x5A);
+    EXPECT_EQ(gb::gameboyOf(m.get())->ppu().vram()[0x2000], 0x5A);
+    EXPECT_EQ(m->buses[0].bus->peek8(0x8000), 0x5A);
+}
+
 TEST_CASE(gameboy_machine_battery_save) {
     namespace fs = std::filesystem;
     const fs::path dir = fs::temp_directory_path() / ("mmemu_gb_save_" + std::to_string(std::rand()));
