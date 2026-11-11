@@ -118,8 +118,11 @@ public:
      *  before its access in cycle k (from 0) of the instruction in step(),
      *  so the machine can bring its devices up to that cycle first; and
      *  polls its interrupt lines in the instruction's second-to-last cycle
-     *  (after a sync to it), as the 6502 does. A core without it ignores it. */
-    virtual void setAccessSync(std::function<void(int)> sync) { (void)sync; }
+     *  (after a sync to it), as the 6502 does. `sync` returns the cycles of
+     *  the instruction so far (bit k: cycle k) that waited for BA, for the
+     *  NMOS opcodes whose result depends on RDY (SHA/SHX/SHY/SHS, ANE). A
+     *  core without it ignores it. */
+    virtual void setAccessSync(std::function<uint32_t(int)> sync) { (void)sync; }
     virtual void reset() = 0;
 
     // Interrupts

@@ -140,6 +140,8 @@ The 6510 stops on RDY only when it reads. After each instruction the scheduler w
 - a read-modify-write instruction's last two;
 - the pushes of PHA, PHP, JSR, BRK and interrupts.
 
+The scheduler's answer to each access sync is the mask of the instruction's cycles that waited, for the opcodes whose result depends on RDY: SHA/SHX/SHY/SHS and ANE (README-6502).
+
 So a badline costs 40-43 cycles depending on the instruction under it. The instruction's own memory accesses still happen when it starts; only the time it takes changes.
 
 The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and its writes to the C64 continue for two cycles after BA falls, then wait. Where sprite 0's DMA starts, the VIC-II pulls BA a cycle late, and the REU still gets that cycle (VICE `vicii_cycle_reu`; `IBaSource::baLowForDma`). A swap follows Denise instead (§2.10).
@@ -292,7 +294,7 @@ MMEMU_VICE_TESTPROGS=../refs/vice-testprogs MMEMU_VICE_FILTER=Lorenz bin/mmemu-t
 
 Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. The runner fits what a program's list entry asks for: an REU or GeoRAM of the size given (`reu512k`, `geo512k`), the new CIA (`cia-new`: both CIAs set to the 6526A). Programs for NTSC, the 8580 SID (`sid-new`), drives, cartridges or other expansions are skipped, as are those VICE expects to fail or time out. `MMEMU_VICE_SHARD=k/n` runs every n-th program from the k-th, to split the list over n processes.
 
-What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, all 28 `REU/reutiming2` exitcode programs, the CIA shift register (`CIA/shiftregister`, 77 runs on both CIA models), TOD (`CIA/tod`, 29) and interrupt (`interrupts/cia-int`) programs. The `reutiming2` references without `-m2` come from a C64C, so the runner sets the REU's `glue` to `c64c` for those, as Denise's runner does; the `-m2` ones come from a breadbin. `MMEMU_VICE_SCREEN=1` prints a failing program's screen, and `MMEMU_VICE_DUMP=<file>` saves its 64K.
+What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, all 28 `REU/reutiming2` exitcode programs, the CIA shift register (`CIA/shiftregister`, 77 runs on both CIA models), TOD (`CIA/tod`, 29) and interrupt (`interrupts/cia-int`) programs, and every `CPU/` program in the list (97), the unstable SHA/SHX/SHY/SHS and ANE included. The `reutiming2` references without `-m2` come from a C64C, so the runner sets the REU's `glue` to `c64c` for those, as Denise's runner does; the `-m2` ones come from a breadbin. `MMEMU_VICE_SCREEN=1` prints a failing program's screen, and `MMEMU_VICE_DUMP=<file>` saves its 64K.
 
 ### 2.16 Cycle timing
 On the C64 every CPU access happens on its own cycle: the 6502 core calls back before each access (`ICore::setAccessSync`), and the scheduler ticks the devices through that cycle first, waiting on BA for reads. So a CPU access in a cycle sees the devices as they are in that cycle. Interrupts are polled in an instruction's second-to-last cycle, before that cycle's access: an ICR read there (an operand fetched from the CIA) releases IRQ too late to stop the interrupt (VICE `interrupts/cia-int`). An REU transfer gets the same treatment (`IOHandler::setBusMasterSync`).

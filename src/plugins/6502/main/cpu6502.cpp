@@ -146,14 +146,14 @@ void MOS6502::write(uint16_t addr, uint8_t val) {
 void MOS6502::syncTo(int cycle) {
     if (!m_sync) return;
     if (!m_polled && cycle >= m_pollCycle) pollInterrupts();
-    m_sync(cycle);
+    m_baWaits = m_sync(cycle);
 }
 
 // The 6502 samples IRQ (level, against I) and NMI (edge) in an instruction's
 // second-to-last cycle; what it saw is taken before the next instruction
 void MOS6502::pollInterrupts() {
     m_polled = true;
-    if (m_sync) m_sync(m_pollCycle);
+    if (m_sync) m_baWaits = m_sync(m_pollCycle);
     m_irqPending = m_state.irqLine && !(m_state.p & FLAG_I);
     if ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge) m_nmiPending = true;
     m_nmiEdge = false;
@@ -694,11 +694,19 @@ int MOS6502::opJMP(uint16_t addr) {
     return 0;
 }
 
+// JSR reads its address's low byte, pushes the return address (the address
+// of its high byte) on cycles 3 and 4, and only then reads the high byte: a
+// JSR whose high byte is on the stack page reads what it just pushed
+// (CPU/jsrselfmod). `addr` is the low byte.
 int MOS6502::opJSR(uint16_t addr) {
-    uint16_t ret = m_state.pc - 1;
+    const uint16_t ret = m_state.pc;
+    if (m_sync) m_writeCycle = 3;
     push((uint8_t)(ret >> 8));
+    if (m_sync) m_writeCycle = 4;
     push((uint8_t)(ret & 0xFF));
-    m_state.pc = addr;
+    if (m_sync) m_writeCycle = 5;
+    const uint8_t hi = read(ret);
+    m_state.pc = (uint16_t)((hi << 8) | (addr & 0xFF));
     return 0;
 }
 
@@ -882,17 +890,30 @@ int MOS6502::opARR(uint16_t addr) {
     return 0;
 }
 // XAA/ANE and LXA depend on the chip ("magic" constant); $EE is the common
-// value (SingleStepTests 6502)
-int MOS6502::opXAA(uint16_t addr) { m_state.a = (uint8_t)((m_state.a | m_magic) & m_state.x & read(addr)); updateNZ(m_state.a); return 0; }
+// value (SingleStepTests 6502). ANE whose operand fetch waited for BA (RDY)
+// loses bits 0 and 4 of it (VICE: $EF, $EE in the RDY cycle; CPU/ane)
+int MOS6502::opXAA(uint16_t addr) {
+    const uint8_t imm = read(addr);
+    const uint8_t magic = (m_baWaits & 2) ? (uint8_t)(m_aneMagic & 0xEE) : m_aneMagic;
+    m_state.a = (uint8_t)((m_state.a | magic) & m_state.x & imm);
+    updateNZ(m_state.a);
+    return 0;
+}
 int MOS6502::opLXA(uint16_t addr) { m_state.a = m_state.x = (uint8_t)((m_state.a | m_magic) & read(addr)); updateNZ(m_state.a); return 0; }
 int MOS6502::opAXS(uint16_t addr) { uint8_t m = read(addr); uint8_t res = (m_state.a & m_state.x) - m; m_state.p &= ~FLAG_C; if ((m_state.a & m_state.x) >= m) m_state.p |= FLAG_C; m_state.x = res; updateNZ(m_state.x); return 0; }
 // SHA/AHX, TAS, SHY, SHX store register & (high byte of the base address + 1);
 // when the index crosses a page, that value also becomes the high byte of the
-// address written (common NMOS behaviour, as SingleStepTests records it)
+// address written (common NMOS behaviour, as SingleStepTests records it). If
+// the cycle before the write waited for BA (sprite or character DMA), the
+// value stored drops the & (H+1); the address doesn't (VICE, CPU/sha, shxy)
 void MOS6502::storeAndHigh(uint16_t addr, uint8_t index, uint8_t value) {
     uint16_t base = (uint16_t)(addr - index);
     uint8_t v = (uint8_t)(value & ((base >> 8) + 1));
     if ((base ^ addr) & 0xFF00) addr = (uint16_t)((v << 8) | (addr & 0xFF));
+    if (m_writeCycle > 0) {
+        syncTo(m_writeCycle);           // through the dummy read before the write
+        if ((m_baWaits >> (m_writeCycle - 1)) & 1) v = value;
+    }
     write(addr, v);
 }
 int MOS6502::opAHX(uint16_t addr) { storeAndHigh(addr, m_state.y, m_state.a & m_state.x); return 0; }
@@ -1065,7 +1086,7 @@ int MOS6502::step() {
     uint16_t pc = m_state.pc;
     // With access sync the opcode and operand fetches (and pointer reads)
     // come on their own cycles, in order: code can run from a timer
-    if (m_sync) m_fetchCycle = 0;
+    if (m_sync) { m_fetchCycle = 0; m_baWaits = 0; }
     uint8_t op = read(m_state.pc++);
     const Opcode& info = m_ops[op];
     m_curOp = op;
@@ -1084,7 +1105,7 @@ int MOS6502::step() {
         case Mode::BP:     addr = addrBP(); break;
         case Mode::BPX:    addr = addrBPX(); break;
         case Mode::BPY:    addr = addrBPY(); break;
-        case Mode::ABS:    addr = addrABS(); break;
+        case Mode::ABS:    addr = info.fn == &MOS6502::opJSR ? read(m_state.pc++) : addrABS(); break;
         case Mode::ABSX:   addr = addrABSX(pageCrossed); if (pageCrossed && pagePenalty(op)) extraCycles++; break;
         case Mode::ABSY:   addr = addrABSY(pageCrossed); if (pageCrossed && pagePenalty(op)) extraCycles++; break;
         case Mode::IND:    addr = addrIND(); break;

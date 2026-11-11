@@ -402,3 +402,58 @@ TEST_CASE(cpu6502_rmw_writes_twice) {
         }
     }
 }
+
+// SHX $nnnn,Y stores X & (H+1); if the cycle before its write waited for BA
+// (the VIC-II's DMA), the & (H+1) drops off (VICE CPU/shxy, sha)
+TEST_CASE(cpu6502_shx_ba_wait_drops_and) {
+    for (int wait = 0; wait < 2; ++wait) {
+        FlatMemoryBus bus("system", 16);
+        MOS6502 cpu;
+        cpu.setDataBus(&bus);
+        const uint8_t prog[] = { 0x9E, 0x10, 0x12 };            // SHX $1210,Y
+        for (size_t i = 0; i < sizeof(prog); ++i) bus.write8(0xC000 + i, prog[i]);
+        cpu.setPc(0xC000);
+        cpu.regWrite(1, 0xFF);                                  // X
+        cpu.regWrite(2, 0x01);                                  // Y
+        // The access sync answers which cycles waited: cycle 3 (the dummy read)
+        cpu.setAccessSync([wait](int k) -> uint32_t { return (wait && k >= 3) ? 0x08u : 0u; });
+        ASSERT(cpu.step() == 5);
+        ASSERT(bus.read8(0x1211) == (wait ? 0xFF : 0x13));
+    }
+}
+
+// ANE #imm: A = (A | magic) & X & imm; the 6510's constant is $EF, ANDed with
+// $EE when its operand fetch waited for BA (VICE CPU/ane)
+TEST_CASE(cpu6502_ane_magic_rdy) {
+    for (int wait = 0; wait < 2; ++wait) {
+        FlatMemoryBus bus("system", 16);
+        MOS6502 cpu;
+        cpu.setDataBus(&bus);
+        cpu.setAneMagic(0xEF);
+        bus.write8(0xC000, 0x8B);                               // ANE #$FF
+        bus.write8(0xC001, 0xFF);
+        cpu.setPc(0xC000);
+        cpu.regWrite(0, 0x00);
+        cpu.regWrite(1, 0xFF);
+        cpu.setAccessSync([wait](int k) -> uint32_t { return (wait && k >= 1) ? 0x02u : 0u; });
+        cpu.step();
+        ASSERT(cpu.regRead(0) == (wait ? 0xEE : 0xEF));
+    }
+}
+
+// JSR reads its high address byte after pushing the return address: with the
+// high byte at $0100 and S = $00, it reads the PCH it just pushed (CPU/jsrselfmod)
+TEST_CASE(cpu6502_jsr_reads_high_byte_after_push) {
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    bus.write8(0x00FE, 0x20);                                   // JSR $4321
+    bus.write8(0x00FF, 0x21);
+    bus.write8(0x0100, 0x43);
+    cpu.setPc(0x00FE);
+    cpu.regWrite(3, 0x00);                                      // S
+    cpu.step();
+    ASSERT(cpu.pc() == 0x0121);                                 // PCH $01 pushed over $43
+    ASSERT(bus.read8(0x0100) == 0x01);
+    ASSERT(bus.read8(0x01FF) == 0x00);
+}
