@@ -112,6 +112,7 @@ void Gameboy::powerOn(SgbLink* sgb) {
     else if (m_model == Model::Sgb2) m_bootRom.assign(SGB2_BOOT, SGB2_BOOT + 256);
     else m_bootRom.clear();
     m_bootRomOff = m_bootRom.empty();
+    m_sgbBootRom = m_bootRomOverride.empty() && !m_bootRomOff;
     mapRegisters(0x8000, 0x9FFF, ACC_RW);
     mapRegisters(0xFE00, 0xFFFF, ACC_RW);
     if (m_cart) m_cart->initCart();
@@ -143,9 +144,29 @@ void Gameboy::postBootState() {
     write(0xFF47, 0xFC);
     write(0xFF40, 0x91);
     m_serialControl = 0;                                 // SC reads $7E
-    m_div = 0xABCC;
+    m_joySelect = 0x00;                                  // P1 reads $CF
+    // The internal counter as the DMG boot ROM hands over: DIV $AB with its phase
+    // that of boot_div-dmgABCmgb (DIV reads $AC 6 NOPs in), and the serial clock
+    // (which Mesen runs off the clock counter, where it starts in step with the
+    // counter) aligned with it as boot_sclk_align-dmgABCmgb measures
+    m_div = 0xABCA;
+    m_cpu.cycleRef() = m_div & 0x1FF;
     m_tac = 0;                                           // TAC reads $F8
     m_if = 0x01;
+}
+
+/**
+ * The SGB boot ROM's hand-off. Nintendo's takes one machine cycle less for each 1
+ * bit of the cartridge header it sends ($0104-$014F), so DIV's value and phase at
+ * $0100 depend on the header (Mooneye's boot_div-S and boot_div2-S differ only in
+ * the global checksum, by 4 bits and 4 NOPs); SameBoy's takes the same time for
+ * either bit. It ends in step with Nintendo's for a header of 270 1 bits
+ * (boot_div2-S's), and DIV is moved by the difference.
+ */
+void Gameboy::sgbBootDuration() {
+    int ones = 0;
+    for (int a = 0x104; a < 0x150 && a < (int)m_rom.size(); ++a) ones += __builtin_popcount(m_rom[a]);
+    m_div = (uint16_t)(m_div + 4 * (270 - ones));
 }
 
 void Gameboy::runTo(uint64_t cycle) {
@@ -333,7 +354,11 @@ void Gameboy::writeRegister(uint16_t addr, uint8_t v) {
         if (addr == 0xFF46) { m_dmaStartDelay = 1; m_dmaSource = v; return; }
         if (addr >= 0xFF80) { m_hram[addr & 0x7F] = v; return; }
         if (addr >= 0xFF4C) {
-            if (addr == 0xFF50 && (v & 1) && !m_bootRomOff) { m_bootRomOff = true; refreshMappings(); }
+            if (addr == 0xFF50 && (v & 1) && !m_bootRomOff) {
+                m_bootRomOff = true;
+                refreshMappings();
+                if (m_sgbBootRom) sgbBootDuration();
+            }
             return;
         }
         if (addr >= 0xFF40) { m_ppu.write(addr, v); return; }

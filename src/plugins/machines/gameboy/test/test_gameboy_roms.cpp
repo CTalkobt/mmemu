@@ -144,7 +144,7 @@ int compareScreen(gb::Gameboy& g, const std::string& pngPath) {
     static const uint8_t shade[4] = {0xFF, 0xAA, 0x55, 0x00};
     int diff = 0;
     for (int i = 0; i < 160 * 144; ++i)
-        if (shade[g.screen()[i] & 3] != rgb[i * 3]) ++diff;
+        if (std::abs(shade[g.screen()[i] & 3] - rgb[i * 3]) > 8) ++diff;      // oam_bug-dmg.png has a row of $FE/$01
     return diff;
 }
 
@@ -248,6 +248,16 @@ TEST_CASE(gb_rom_survey) {
         start(g, dir + "/blargg/" + t);
         runBlargg(g, 5);
         report(t, compareScreen(g, dir + "/blargg/halt_bug-dmg-cgb.png") == 0);
+    }
+    {
+        // oam_bug's eight tests in one, judged by its screen as c-sp's collection does. Its
+        // test 7 passes here though rom_singles/7-timing_effect can't: that one's 20
+        // corrupted-OAM dumps overflow the text it keeps in the cartridge's 8 KB of RAM
+        // ($A004 on) into its own code in work RAM, and it crashes before its CRC check.
+        gb::Gameboy g;
+        start(g, dir + "/blargg/oam_bug/oam_bug.gb");
+        runBlargg(g, 25);
+        report("oam_bug.gb", compareScreen(g, dir + "/blargg/oam_bug/oam_bug-dmg.png") == 0);
     }
     // Mooneye's acceptance tests for the DMG (the boot_ ones check what the boot ROM leaves: the post-boot state here)
     for (const char* sub : {"", "/bits", "/instr", "/interrupts", "/oam_dma", "/ppu", "/serial", "/timer"}) {

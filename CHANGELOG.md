@@ -7,6 +7,28 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: the boot ROM's hand-off, exact
+
+- **Without a boot ROM (DMG):** the divider's internal counter starts at
+  `$ABCA` (Mooneye's `boot_div-dmgABCmgb`: DIV's value and phase) with the
+  clock counter that Mesen's serial port runs off in step with it
+  (`boot_sclk_align-dmgABCmgb`), and P1 reads `$CF` (both select lines
+  low, `boot_hwio-dmgABCmgb`).
+- **The SGB:** Nintendo's SGB boot ROM takes a machine cycle less for each
+  1 bit of the header it sends, SameBoy's (the one run here) the same time
+  for either; at its hand-off DIV is moved by the difference, from the
+  270 bits of `boot_div2-S`'s header, where the two agree (`boot_div-S`).
+- **The joypad interrupt** comes when one of P10-P13 falls (Pan Docs), not
+  on any change to `$FF00`'s reading: a select line written with nothing
+  pressed no longer raises it (Mesen did; the SGB boot ROM's packets left
+  IF's bit 4 set, `boot_hwio-S`).
+- The survey (`MMEMU_GB_SURVEY=1 gb_rom_survey`) also runs the combined
+  `oam_bug.gb` against its picture: 108 PASS, 1 FAIL (was 102 PASS, 6
+  FAIL). The one left, `oam_bug` 7-timing_effect, corrupts OAM as
+  hardware does (its CRC matches, and test 7 passes in the combined ROM)
+  but its 20 OAM dumps overflow the 8 KB of cartridge RAM it copies its
+  text to, into its own code in work RAM.
+
 ### Game Boy: a standalone machine with the SM83 debugger
 
 - **`gameboy` (also `dmg`)**: the DMG core the Super Game Boy uses

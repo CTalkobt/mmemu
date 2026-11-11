@@ -145,11 +145,15 @@ public:
     uint8_t pendingIrq() const;
     uint64_t apuCycles() const { return m_apuCycles; }
     SgbLink* sgb() const { return m_sgb; }
-    /** Run `f` (a change to what $FF00 reads) and raise the joypad interrupt if the reading changed. */
+    /**
+     * Run `f` (a change to what $FF00 reads) and raise the joypad interrupt if one of
+     * P10-P13 fell (Pan Docs: high to low; Mesen raises it on any change to the
+     * reading, select bits included, which the SGB's boot leaves no trace of: boot_hwio-S).
+     */
     template <class F> void inputChange(F f) {
         const uint8_t before = readJoypad();
         f();
-        if (readJoypad() != before) requestIrq(IRQ_JOYPAD);
+        if (before & ~readJoypad() & 0x0F) requestIrq(IRQ_JOYPAD);
     }
     uint8_t readJoypad() const;
     bool cpuHalted() const { return m_cpu.halted(); }
@@ -184,6 +188,7 @@ private:
     uint8_t dmaRead(uint16_t addr);
     void timerDmaSerial();
     void postBootState();
+    void sgbBootDuration();
 
     Model m_model = Model::Dmg;
     Cpu m_cpu;
@@ -203,6 +208,7 @@ private:
 
     uint8_t m_ie = 0, m_if = 0;
     bool m_bootRomOff = false;
+    bool m_sgbBootRom = false;                           // the built-in SGB boot ROM is running
     uint64_t m_apuCycles = 0;
     uint8_t m_serialData = 0, m_serialControl = 0, m_serialBits = 0;
     std::string m_serialOut;
