@@ -81,7 +81,9 @@ BCD real-time clock with alarm:
 
 **Latch behavior:** Reading TODHR freezes all TOD registers into a shadow latch. Subsequent reads return latch values until TODTEN is read, which releases the latch. This prevents tearing on multi-byte reads.
 
-**Alarm:** When CRB bit 7 is set, TOD writes go to the alarm registers instead of the clock. The TOD ICR bit fires when the running clock matches the alarm.
+**Alarm:** When CRB bit 7 is set, TOD writes go to the alarm registers instead of the clock. The TOD ICR bit fires when the clock matches the alarm: when the clock counts to it, and when a write changes the clock or the alarm to match.
+
+**Counting (after VICE's `ciacore_inttod`):** the TOD counts mains ticks, one every `clockHz / 50` cycles on a PAL machine (`clockHz` under 1 MHz) and `clockHz / 60` otherwise, kept to exactly 50 or 60 a second (VICE's jitter left out). A 3-bit ring counter divides them to tenths: CRA bit 7 picks 5 (50 Hz) or 6 (60 Hz) ticks, so the wrong setting runs the clock fast or slow. Each digit is a 4-bit counter (3 bits for the tens of seconds and minutes), so values set outside BCD count on as the chip's do; the hours go 09 → 10 and 12 → 01, and 11 → 12 flips AM/PM. Writing hour 12 to the clock flips AM/PM too. The clock is stopped after reset; writing the hours stops it and writing the tenths starts it.
 
 ### 2.4 Interrupt Control Register (ICR)
 
@@ -110,6 +112,12 @@ clears the flags and releases IRQ at once, and IR two cycles later. Timer B
 bug: if ICR was read the cycle before a timer B underflow, the next read drops
 the TB flag. FLAG (bit 4), SP (bit 3) and the TOD alarm (bit 2) go through the
 same pipeline.
+
+**The 6526A** (`setOption("model", "6526A")`; machine JSON `"options": { "model": "6526A" }`), the C64C's and C128's "new" CIA, differs only in this pipeline (VICE's `CIA_MODEL_6526A`): a flag raises IR and IRQ in the cycle it is set (a cycle later if the ICR was read the cycle before); enabling the mask of a pending flag raises IRQ in the next cycle, unless the ICR was read last cycle; a read leaves the flags it returned set for one more cycle; and there is no timer B bug. The old 6526 is the default.
+
+### 2.4.1 Serial port (SDR)
+
+After VICE's `ciacore` (`sdr_delay`). In output mode (CRA bit 6), a byte written to SDR goes into the shift register two cycles later. Timer A's underflows toggle CNT about 1.5 cycles on, and a bit goes out on each falling edge, so a byte takes 16 underflows. The SP flag follows the last bit by two cycles, and a byte written while one is going out follows it straight on. Switching CRA's direction mid-byte can still raise SP, as on the real chip ([VICE bug 1219](https://sourceforge.net/p/vice-emu/bugs/1219/)). A read of the ICR in the cycle the shift register sets SP doesn't see the flag yet. In input mode a byte from outside (`receiveSerialByte()`, the C128's fast serial) lands in SDR and raises SP at once. Each byte shifted out goes to `setSerialOut()`. The MEGA65's CIAs (model `mega65`) finish an output byte at once instead, as the MEGA65 ROM expects.
 
 ### 2.5 Peripheral Injection
 
@@ -141,7 +149,7 @@ By default an output bit reads back the output latch. `setOutputsReadPins(true)`
 | $9 | TODSEC | TOD seconds | TOD/alarm seconds |
 | $A | TODMIN | TOD minutes | TOD/alarm minutes |
 | $B | TODHR | TOD hours (freezes latch) | TOD/alarm hours |
-| $C | SDR | Serial Data Register (stub) | Serial Data Register (stub) |
+| $C | SDR | Serial Data Register | Serial Data Register (output: shifted out) |
 | $D | ICR | Pending bits + $80 if any; clears on read | Set/clear mask (bit 7 selects mode) |
 | $E | CRA | Control A | Control A |
 | $F | CRB | Control B | Control B |
@@ -163,3 +171,4 @@ By default an output bit reads back the output latch. `setOutputsReadPins(true)`
 - **Registration Name**: `"6526"`
 - **Address Mask**: `0x000F` (16 registers mirrored across the $DC00/$DD00 window)
 - **Clock Default**: 1 022 727 Hz (NTSC C64); call `setClockHz(985248)` for PAL
+- **Options** (`setOption`, or `"options"` in a machine JSON device): `model` = `6526` (default), `6526A` or `mega65`

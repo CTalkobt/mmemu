@@ -1047,7 +1047,10 @@ namespace {
 // runs it: power on, autostart the PRG (injected, then RUN), and wait for the
 // debug cart at $D7FF. The exit code, or -1 if none came within `limit`
 // cycles of power on.
-int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
+// `expansion` is "" or an expansion port device and its size ("reu", "512K").
+int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
+                        const std::string& expansion = "", const std::string& size = "",
+                        bool newCia = false) {
     std::ifstream f(prgPath, std::ios::binary);
     if (!f) return -2;
     std::vector<uint8_t> prg((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -1055,12 +1058,19 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit, bool reu) {
     auto* desc = MachineRegistry::instance().createMachine("c64");
     if (!desc) return -3;
     std::string err;
-    if (reu && !desc->expansionSlot("port")->install("reu", "512K", err)) { delete desc; return -3; }
+    const bool reu = expansion == "reu";
+    if (!expansion.empty() && !desc->expansionSlot("port")->install(expansion, size, err)) { delete desc; return -3; }
     // REU/reutiming2's references come from a C64C, but for the -m2 programs'
     // (a breadbin); Denise's test runner picks the board the same way
     if (reu && prgPath.find("reutiming2") != std::string::npos && prgPath.find("m2.") == std::string::npos) {
         IOHandler* r = desc->ioRegistry->findHandler("REU");
         if (!r || !r->setOption("glue", "c64c", err)) { delete desc; return -3; }
+    }
+    if (newCia) {                          // the 6526A (C64C)
+        for (const char* n : {"CIA1", "CIA2"}) {
+            IOHandler* c = desc->ioRegistry->findHandler(n);
+            if (!c || !c->setOption("model", "6526A", err)) { delete desc; return -3; }
+        }
     }
     DebugCart cart;
     desc->ioRegistry->registerHandler(&cart);
@@ -1110,6 +1120,12 @@ TEST_CASE(c64_vice_testprogs) {
     const char* root = std::getenv("MMEMU_VICE_TESTPROGS");
     if (!root) return;
     const char* filter = std::getenv("MMEMU_VICE_FILTER");
+    // MMEMU_VICE_SHARD=k/n: only every n-th program from the k-th (0..n-1), to
+    // run the list in n processes
+    int shard = 0, shards = 1, index = -1;
+    if (const char* sh = std::getenv("MMEMU_VICE_SHARD")) {
+        if (sscanf(sh, "%d/%d", &shard, &shards) != 2 || shards < 1) shard = 0, shards = 1;
+    }
     ensureRegistriesAndLoad();
     std::ifstream list(std::string(root) + "/testbench/c64-testlist.in");
     ASSERT(list.good());
@@ -1121,15 +1137,25 @@ TEST_CASE(c64_vice_testprogs) {
         std::stringstream ss(line);
         for (std::string s; std::getline(ss, s, ',');) f.push_back(s);
         if (f.size() < 4 || f[2] != "exitcode") continue;
-        bool ok = true, reu = false;
+        bool ok = true, newCia = false;
+        std::string expansion, size;
         for (size_t i = 4; i < f.size(); ++i) {
-            if (f[i] == "reu512k") reu = true;
-            else if (f[i] == "vicii-pal" || f[i] == "cia-old" || f[i].rfind("warn:", 0) == 0 || f[i].rfind("comment:", 0) == 0) {}
+            // "reu512k", "reu16m", "geo512k": the expansion and its size
+            const bool isReu = f[i].rfind("reu", 0) == 0, isGeo = f[i].rfind("geo", 0) == 0;
+            if ((isReu || isGeo) && f[i].size() > 4 && isdigit((unsigned char)f[i][3])) {
+                expansion = isReu ? "reu" : "georam";
+                size = f[i].substr(3);
+                for (char& c : size) c = (char)toupper((unsigned char)c);
+            }
+            else if (f[i] == "cia-new") newCia = true;
+            else if (f[i] == "vicii-pal" || f[i] == "cia-old" || f[i] == "sid-old" ||
+                     f[i].rfind("warn:", 0) == 0 || f[i].rfind("comment:", 0) == 0) {}
             else ok = false;               // NTSC, other carts, drives, CIA models...
         }
         const std::string path = std::string(root) + "/testbench/" + f[0] + f[1];
         if (!ok || (filter && path.find(filter) == std::string::npos)) continue;
-        const int code = runViceExitcodeTest(path, std::stoull(f[3]), reu);
+        if (++index % shards != shard) continue;
+        const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia);
         if (code == 0) ++passed; else ++failed;
         printf("  vice %-60s %s (%d)\n", (f[0] + f[1]).c_str(), code == 0 ? "pass" : "FAIL", code);
     }

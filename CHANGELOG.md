@@ -114,6 +114,32 @@ The canonical version is defined in the `VERSION` file at the repository root.
   forced blank on vertical blank's first line reloads the OAM address.
   Test: `snes_ppu_access_during_picture`.
 
+### VICE's test programs: the CIA's serial port, TOD and new model
+
+- **More of VICE's test list runs:** the runner fits an REU or GeoRAM of the
+  size a program asks for, the new CIA (`cia-new`) and the default 6581, and
+  `MMEMU_VICE_SHARD=k/n` splits the list over processes. About 1000 of the
+  list's programs come prebuilt in VICE's `testprogs` tree.
+- **The 6526A** (CIA `model` option: `6526`, `6526A`, `mega65`): its interrupt
+  flag pipeline after VICE's `CIA_MODEL_6526A` (IRQ a cycle sooner, flags
+  cleared a cycle after a read, no timer B bug).
+- **The serial port shifts** (after VICE's `sdr_delay`): a byte written to SDR
+  goes out on timer A's underflows, 16 for a byte, SP two cycles after the
+  last bit, with VICE's edge cases on a direction change. It was a stub that
+  finished at once; the MEGA65's CIAs keep that (model `mega65`). The C128's
+  fast serial now sends a byte when it has shifted out.
+- **TOD after VICE:** counts mains ticks (50 Hz on PAL machines) through the
+  3-bit ring counter CRA bit 7 sets, BCD digits as 4-bit counters, hour 12
+  flips AM/PM, stopped after reset, the alarm checked on writes too. It was
+  `clockHz / 10` cycles a tenth.
+- **Fix:** the 6502 polls interrupts before its second-to-last cycle's access:
+  an ICR read there (an operand fetched from a CIA register) no longer stops
+  the interrupt.
+- **Machine JSON:** a device takes `"options": { "key": "value" }`, given to
+  its `setOption` (rawMega65's CIAs: `"model": "mega65"`).
+- VICE programs now passing: `CIA/shiftregister` (77 runs, both CIA models),
+  `CIA/tod` (29), `interrupts/cia-int` (4).
+
 ### SNES MSU-1
 
 - **The MSU-1**, after Mesen: with `<rom>.msu` beside the ROM (tracks

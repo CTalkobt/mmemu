@@ -483,6 +483,12 @@ MachineDescriptor* Mega65MachineFactory::create() {
     auto* cia1     = new CIA6526("CIA1", 0xDC00);
     auto* cia2     = new CIA6526("CIA2", 0xDD00);
     auto* vic4     = new VIC4();
+    {
+        // The MEGA65's CIAs (in the FPGA) finish a serial port byte at once
+        std::string err;
+        cia1->setOption("model", "mega65", err);
+        cia2->setOption("model", "mega65", err);
+    }
     auto* sidPair  = new SidPair();
     auto* joy1     = new Joystick();
     auto* joy2     = new Joystick();
