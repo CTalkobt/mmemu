@@ -7,6 +7,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE's test programs: the 6510's unstable opcodes and JSR
+
+- **SHA, SHX, SHY, SHS:** if the read cycle before the store waits for the
+  VIC-II's DMA (BA), the value stored drops the `& (H+1)`; a page crossing
+  still puts the ANDed value in the address's high byte (VICE `6510dtvcore.c`
+  `SET_ABS_SH_I`). The scheduler's access sync now answers with the cycles of
+  the instruction that waited (`ICore::setAccessSync`).
+- **ANE ($8B):** the 6510's constant is `$EF`, as VICE; ANDed with `$EE` when
+  the operand fetch waits for BA. Other 6502s keep `$EE` (`setAneMagic`).
+- **JSR:** reads its address's high byte after pushing the return address, so
+  a JSR whose high byte is on the stack page jumps to what it pushed.
+- VICE programs now passing: `CPU/sha` (10), `CPU/shxy` (11), `CPU/shs` (5),
+  `CPU/ane` (3), `CPU/jsrselfmod`; every `CPU/` program in the list passes.
+  Tests: `cpu6502_shx_ba_wait_drops_and`, `cpu6502_ane_magic_rdy`,
+  `cpu6502_jsr_reads_high_byte_after_push`.
+
 ### Game Boy: the boot ROM's hand-off, exact
 
 - **Without a boot ROM (DMG):** the divider's internal counter starts at

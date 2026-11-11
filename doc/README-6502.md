@@ -104,7 +104,7 @@ The implementation supports the full NMOS 6502 instruction set, including both d
 
 #### Control Flow
 - **JMP**: Jump to a new location.
-- **JSR**: Jump to a new location, saving the return address on the stack.
+- **JSR**: Jump to a new location, saving the return address on the stack. As on the chip, the high byte of the address is read after the pushes, so a JSR whose high byte is on the stack page reads the PCH it just pushed (VICE `CPU/jsrselfmod`).
 - **RTS**: Return from subroutine.
 - **RTI**: Return from interrupt.
 - **BCC/BCS**: Branch if Carry Clear/Set.
@@ -139,10 +139,10 @@ These instructions are not part of the official specification but exist due to t
 - **ANC**: ANDs Accumulator with immediate value, then copies N flag into Carry.
 - **ALR**: ANDs Accumulator with immediate value, then performs LSR on the result.
 - **ARR**: ANDs Accumulator with immediate value, then performs ROR on the result; C is bit 6, V is bit 6 XOR bit 5, and decimal mode adjusts each nibble.
-- **XAA/ANE**, **LXA** (`$8B`, `$AB`): A (and X for LXA) = (A | $EE) & ... ; the "magic" constant varies between chips, $EE is the common one.
+- **XAA/ANE**, **LXA** (`$8B`, `$AB`): A (and X for LXA) = (A | magic) & ... ; the "magic" constant varies between chips, $EE is the common one. ANE has its own (`setAneMagic`): the 6510 uses VICE's `$EF`, which the tape loaders it was chosen for need. If ANE's operand fetch waits for BA (RDY), its constant is ANDed with `$EE` (VICE `CPU/ane`).
 - **AXS**: ANDs A and X, then subtracts immediate value from the result and stores it in X.
 - **LAS**: ANDs memory with stack pointer, then stores result in A, X, and SP.
-- **SHA/AHX, TAS, SHY, SHX**: store the register (A&X, A&X into SP for TAS, Y, X) ANDed with the base address's high byte + 1; when the index crosses a page, that value also becomes the high byte of the address written.
+- **SHA/AHX, TAS, SHY, SHX**: store the register (A&X, A&X into SP for TAS, Y, X) ANDed with the base address's high byte + 1; when the index crosses a page, that value also becomes the high byte of the address written. If the read cycle just before the write waits for BA (the VIC-II's sprite or character DMA), the value stored drops the & (H+1); the address doesn't (VICE `CPU/sha`, `shxy`, `shs`). The core learns which of its cycles waited from the access sync's answer (`ICore::setAccessSync`).
 - **KIL**: Crashes the CPU (Jam).
 
 ---

@@ -62,7 +62,7 @@ public:
     // Execution
     int  step()  override;
     uint32_t lastStepWrites() const override { return m_lastWrites; }
-    void setAccessSync(std::function<void(int)> sync) override { m_sync = std::move(sync); }
+    void setAccessSync(std::function<uint32_t(int)> sync) override { m_sync = std::move(sync); }
     void reset() override;
 
     // Interrupts
@@ -153,7 +153,8 @@ private:
     void interruptSequence(uint8_t p, uint16_t vector);
     // Access sync (setAccessSync): the cycle of this instruction's data
     // reads and writes (-1 outside step), and the interrupt poll
-    std::function<void(int)> m_sync;
+    std::function<uint32_t(int)> m_sync;
+    uint32_t m_baWaits = 0;             // the cycles of this instruction that waited for BA (the sync's answer)
     int  m_readCycle = -1;
     int  m_writeCycle = -1;
     int  m_fetchCycle = -1;             // decoding: the cycle of the next fetch (opcode 0, operands on)
@@ -183,7 +184,10 @@ public:
     bool decimalDisabled() const { return m_noDecimal; }
 
     /** The "magic" constant of the unstable LXA/XAA ($AB/$8B): $EE by default, $FF on the 2A03. */
-    void setUnstableMagic(uint8_t m) { m_magic = m; }
+    void setUnstableMagic(uint8_t m) { m_magic = m_aneMagic = m; }
+    /** ANE/XAA's own constant ($EF on the C64's 6510, after VICE); with BA
+     *  low on its operand fetch it is ANDed with $EE. */
+    void setAneMagic(uint8_t m) { m_aneMagic = m; }
 
     /**
      * The 6502 polls IRQ in an instruction's last cycle, before CLI, SEI and
@@ -201,7 +205,8 @@ public:
 private:
     std::function<void()> m_onVectorPull;
     bool m_noDecimal = false;           // 2A03: ADC/SBC ignore D
-    uint8_t m_magic = 0xEE;             // LXA/XAA
+    uint8_t m_magic = 0xEE;             // LXA, and XAA/ANE outside a BA wait
+    uint8_t m_aneMagic = 0xEE;          // XAA/ANE when its operand fetch didn't wait
     bool m_pollLatency = false;
     int m_polledI = -1;                 // I as polled before CLI/SEI/PLP (-1: use P)
 

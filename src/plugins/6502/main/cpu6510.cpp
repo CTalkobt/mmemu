@@ -9,6 +9,8 @@ MOS6510::MOS6510() {
     m_data = m_pinMask;
     m_dataOut = 0x3F;
     m_cap = 0;
+    // ANE ($8B): $EF, as VICE (its tape loaders need bit 0 and the high nybble set)
+    setAneMagic(0xEF);
     updateSignals();
 }
 

@@ -1044,12 +1044,17 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             int i = 0;          // next CPU cycle of this instruction
             int t = 0;          // bus cycles so far, BA waits included
             int ticked = 0;     // bus cycles the devices have run
-            // Through CPU cycle k: a read cycle waits while BA is low
-            void advance(int k) {
+            uint32_t waited = 0; // CPU cycles that waited for BA (bit i: cycle i)
+            // Through CPU cycle k: a read cycle waits while BA is low.
+            // Returns the cycles so far that waited (SHA, ANE use it).
+            uint32_t advance(int k) {
                 const uint32_t writes = cpu->lastStepWrites();
                 while (i <= k) {
                     if (!(i < 32 && ((writes >> i) & 1)))
-                        while (ba->baLow(t - ticked)) ++t;
+                        while (ba->baLow(t - ticked)) {
+                            ++t;
+                            if (i < 32) waited |= 1u << i;
+                        }
                     ++t;
                     ++i;
                 }
@@ -1057,6 +1062,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                     if (d->ioRegistry) d->ioRegistry->tickAll(t - ticked);
                     ticked = t;
                 }
+                return waited;
             }
         };
         auto clock = std::make_shared<StepClock>();
@@ -1065,7 +1071,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         for (auto& s : desc->cpus)
             if (s.cpu) {
                 clock->cpu = s.cpu;
-                s.cpu->setAccessSync([clock](int k) { clock->advance(k); });
+                s.cpu->setAccessSync([clock](int k) { return clock->advance(k); });
                 break;
             }
         desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {
@@ -1078,6 +1084,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 if (s.active && s.cpu) {
                     if (s.cpu == clock->cpu) {
                         clock->i = clock->t = clock->ticked = 0;
+                        clock->waited = 0;
                         const int n = s.cpu->step();
                         clock->advance(n - 1);
                         total += clock->t;
