@@ -361,6 +361,63 @@ TEST_CASE(snes_ppu_bg_fetch_midline) {
     EXPECT_EQ(f[256 + 8], r);
 }
 
+// The mosaic's rows as Mesen: a line counter from line 0, started again when the mosaic is turned on, so the
+// block begins at the line it's turned on (not at (line - 1) % size); in hi-res, a mosaic of any size gives
+// both half-pixels the even one
+TEST_CASE(snes_ppu_mosaic_as_mesen) {
+    snes::Ppu p;
+    auto vramWrite = [&](uint16_t a, uint16_t v) { p.write(0x16, (uint8_t)a); p.write(0x17, (uint8_t)(a >> 8)); p.write(0x18, (uint8_t)v); p.write(0x19, (uint8_t)(v >> 8)); };
+    p.write(0x15, 0x80);
+    p.write(0x05, 0x00);                    // mode 0
+    p.write(0x07, 0x04);                    // BG1 map at $0400
+    p.write(0x0B, 0x01);                    // BG1 characters at $1000
+    p.write(0x2C, 0x01);
+    vramWrite(0x1008 + 2, 0x00FF);          // tile 1: colour 1 on its row 2 only
+    for (int i = 0; i < 32 * 32; ++i) vramWrite((uint16_t)(0x400 + i), 1);
+    const uint16_t red = 0x001F;
+    p.write(0x21, 1); p.write(0x22, (uint8_t)red); p.write(0x22, (uint8_t)(red >> 8));
+    p.write(0x00, 0x0F);
+    p.startFrame();
+    for (int l = 0; l < 10; ++l) p.endLine(l);
+    p.write(0x06, 0x31);                    // mosaic 4 on BG1, from line 10
+    finishFrame(p, 10);
+    std::vector<uint32_t> f(256 * 224);
+    p.renderFrame(f.data());
+    const uint32_t r = snes::Ppu::argb(red);
+    auto lineRed = [&](int line) { return f[(line - 1) * 256 + 3] == r; };
+    EXPECT_TRUE(lineRed(2));                // BG row 2
+    EXPECT_TRUE(!lineRed(9));
+    for (int l = 10; l <= 13; ++l) EXPECT_TRUE(lineRed(l));     // rows 10 held for 4 lines (was rows 9 and 13)
+    EXPECT_TRUE(!lineRed(14));
+    for (int l = 18; l <= 21; ++l) EXPECT_TRUE(lineRed(l));     // row 18
+
+    // Mode 5 (hi-res): tile half-pixels alternate colour 1 and clear; mosaic size 1 copies the even half
+    snes::Ppu h;
+    auto vramWrite2 = [&](uint16_t a, uint16_t v) { h.write(0x16, (uint8_t)a); h.write(0x17, (uint8_t)(a >> 8)); h.write(0x18, (uint8_t)v); h.write(0x19, (uint8_t)(v >> 8)); };
+    h.write(0x15, 0x80);
+    h.write(0x05, 0x05);
+    h.write(0x07, 0x04);
+    h.write(0x0B, 0x01);
+    h.write(0x2C, 0x01); h.write(0x2D, 0x01);   // BG1 on both screens
+    for (int t = 1; t <= 2; ++t)
+        for (int row = 0; row < 8; ++row) vramWrite2((uint16_t)(0x1000 + t * 16 + row), 0x00AA);
+    for (int i = 0; i < 32 * 32; ++i) vramWrite2((uint16_t)(0x400 + i), 1);
+    h.write(0x21, 1); h.write(0x22, (uint8_t)red); h.write(0x22, (uint8_t)(red >> 8));
+    h.write(0x00, 0x0F);
+    std::vector<uint32_t> g(512 * 448);
+    for (int pass = 0; pass < 2; ++pass) {
+        h.write(0x06, pass ? 0x01 : 0x00);  // mosaic size 1 on BG1 in the second frame
+        h.startFrame();
+        finishFrame(h, 0);
+        h.renderFrame(g.data());
+        const int w = h.getDimensions().width;
+        EXPECT_EQ(w, 512);
+        const uint32_t a = g[(4 * w) + 20], b = g[(4 * w) + 21];
+        if (pass) { EXPECT_EQ(a, r); EXPECT_EQ(b, r); }
+        else EXPECT_TRUE(a != b);
+    }
+}
+
 // Pseudo-hires gives 512-pixel lines; interlace draws one field's rows a frame
 TEST_CASE(snes_ppu_hires_interlace) {
     snes::Ppu p;

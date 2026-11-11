@@ -57,7 +57,7 @@ void Ppu::reset() {
     m_oamAddr = m_oamReload = 0; m_oamPriority = false; m_oamLatch = 0;
     m_beamLine = 0; m_beamHClock = 0; m_evalLine = -1; m_evalStart = m_timeIndex = m_cgInternal = 0;
     m_bgMode = 0; m_bg3Priority = false; m_tile16 = 0;
-    m_mosaicSize = 1; m_mosaicMask = 0;
+    m_mosaicSize = 1; m_mosaicMask = 0; m_mosaicCounter = 0; m_mosaicDue = 0;
     for (int i = 0; i < 4; ++i) { m_mapBase[i] = m_charBase[i] = 0; m_mapSize[i] = 0; m_hofs[i] = m_vofs[i] = 0; }
     m_ofsLatch = m_hofsLatch = 0;
     m_m7hofs = m_m7vofs = 0;
@@ -151,6 +151,8 @@ void Ppu::write(uint8_t reg, uint8_t v) {
         break;
     case 0x06:
         m_mosaicSize = (uint8_t)((v >> 4) + 1);
+        // Turned on from off, the block starts again (Mesen)
+        if (!m_mosaicMask && (v & 0x0F)) m_mosaicCounter = (uint8_t)(m_mosaicSize + 1);
         m_mosaicMask = v & 0x0F;
         break;
     case 0x07: case 0x08: case 0x09: case 0x0A:
@@ -311,8 +313,18 @@ void Ppu::startVblank() {
     ++m_frames;
 }
 
+void Ppu::mosaicLineEnd() {
+    if (m_mosaicDue == 2) m_mosaicCounter = m_mosaicMask ? (uint8_t)(m_mosaicSize + 1) : 0;
+    if (m_mosaicDue && m_mosaicCounter) {
+        --m_mosaicCounter;
+        if (m_mosaicMask && !m_mosaicCounter) m_mosaicCounter = m_mosaicSize;
+    }
+    m_mosaicDue = 0;
+}
+
 void Ppu::sync(int line, int dot) {
     if (line != m_drawLine) return;
+    mosaicLineEnd();
     fetchTo(line, dot);
     if (m_drawX > 255) return;
     const int end = std::min(dot - 22, 255);
@@ -322,6 +334,10 @@ void Ppu::sync(int line, int dot) {
 }
 
 void Ppu::endLine(int line) {
+    mosaicLineEnd();
+    // Mesen steps the mosaic's counter at the end of the line (line 0 reloads it): here when the next line
+    // starts, so that a $2106 write later in this line comes first, as there
+    m_mosaicDue = line == 0 ? 2 : 1;
     if (line == m_drawLine) {
         fetchTo(line, 263);
         if (m_drawX <= 255) drawPixels(line, m_drawX, 255);
@@ -417,15 +433,16 @@ uint16_t Ppu::mapEntry(int bg, int tileX, int tileY) const {
     return m_vram[a & 0x7FFF];
 }
 
-int Ppu::bgRow(int bg, int line) const {
-    const bool hires = m_bgMode == 5 || m_bgMode == 6;
-    const bool mosaic = (m_mosaicMask >> bg) & 1;
-    const int msz = mosaic ? m_mosaicSize : 1;
-    // The line counter (the first visible line is 1), held for the mosaic's height;
-    // interlaced modes 5/6 draw the field's rows of a 448-row picture
-    int y = line - ((line - 1) % msz);
-    if (hires && (m_setini & 1)) y = y * 2 + (mosaic ? 0 : (int)m_interlaceField);
-    return y;
+int Ppu::bgRow(int bg, int line, bool chr) const {
+    // Mesen's realY: interlaced modes 5/6 draw the field's rows of a 448-row picture; the mosaic holds the
+    // row from the start of its block (twice over when interlaced, and the character fetch drops the field)
+    const bool dh = (m_setini & 1) && (m_bgMode == 5 || m_bgMode == 6);
+    int y = dh ? line * 2 + (int)m_interlaceField : line;
+    if ((m_mosaicMask >> bg) & 1) {
+        y -= mosaicRows();
+        if (dh) y -= mosaicRows() + (chr ? (int)m_interlaceField : 0);
+    }
+    return y & 0xFFFF;
 }
 
 void Ppu::fetchTo(int line, int dot) {
@@ -445,10 +462,14 @@ void Ppu::fetchBg(int line, int x0, int x1) {
         case F_MAP: fetchMap(s.bg, line, col); break;
         case F_CHR: fetchChr(s.bg, BG_BPP[m_bgMode][s.bg], line, col, s.plane, s.second); break;
         case F_OPTH: case F_OPTV: {
-            // BG3's entries for this column (the next column's offsets): its row, and the row below for VOFS
-            const int tx = ((col << 3) + (m_hofs[2] & ~7)) >> 3, ty = m_vofs[2] >> 3;
-            if (s.op == F_OPTH) m_optH = mapEntry(2, tx, ty);
-            else m_optV = mapEntry(2, tx, ty + 1);
+            // BG3's entries for this column (the next column's offsets), addressed as Mesen: the column and row
+            // straight into the map (a 64-wide map's right half is not its second screen), and VOFS's entry
+            // 32 words on, wrapping within the map
+            const int colOff = (col + (m_hofs[2] >> 3)) & ((m_mapSize[2] & 1) ? 0x3F : 0x1F);
+            const int rowOff = (m_vofs[2] >> 3) & ((m_mapSize[2] & 2) ? 0x3F : 0x1F);
+            const int off = colOff + (rowOff << 5);
+            if (s.op == F_OPTH) m_optH = m_vram[(m_mapBase[2] + off) & 0x7FFF];
+            else m_optV = m_vram[(m_mapBase[2] + ((off + 0x20) & ((m_mapSize[2] & 2) ? 0x7FF : 0x3FF))) & 0x7FFF];
             break;
         }
         default: break;
@@ -459,7 +480,8 @@ void Ppu::fetchBg(int line, int x0, int x1) {
 void Ppu::fetchMap(int bg, int line, int col) {
     const bool hires = m_bgMode == 5 || m_bgMode == 6;
     const bool t16 = (m_tile16 >> bg) & 1;
-    int hofs = m_hofs[bg], vofs = m_vofs[bg];
+    // In hi-res the scroll is taken in half-pixels for the offsets (Mesen)
+    int hofs = hires ? m_hofs[bg] << 1 : m_hofs[bg], vofs = m_vofs[bg];
     if (bg < 2 && (m_optH || m_optV)) {
         // Offset-per-tile: the entries fetched for the previous column (Mesen's GetTilemapData)
         const uint16_t enable = (uint16_t)(0x2000 << bg);
@@ -473,12 +495,13 @@ void Ppu::fetchMap(int bg, int line, int col) {
             if (m_optV & enable) vofs = m_optV & 0x3FF;
         }
     }
+    if (hires) hofs >>= 1;
     BgTile& t = m_bgTiles[bg][col];
     // The BG's 8-pixel column (in hi-res, a 16-half-pixel tile)
     t.tileX = (uint16_t)(col + (hofs >> 3));
     t.vofs = (uint16_t)vofs;
     const int tileX = (t16 && !hires) ? t.tileX >> 1 : t.tileX;
-    t.entry = mapEntry(bg, tileX, (bgRow(bg, line) + vofs) / (t16 ? 16 : 8));
+    t.entry = mapEntry(bg, tileX, ((bgRow(bg, line, false) + vofs) & 0xFFFF) >> (t16 ? 4 : 3));
 }
 
 void Ppu::fetchChr(int bg, int bpp, int line, int col, int plane, bool second) {
@@ -488,12 +511,13 @@ void Ppu::fetchChr(int bg, int bpp, int line, int col, int plane, bool second) {
     BgTile& t = m_bgTiles[bg][col];
     const uint16_t e = t.entry;
     int tile = e & 0x3FF;
-    int fy = (bgRow(bg, line) + t.vofs) % th;
+    int fy = (bgRow(bg, line, true) + t.vofs) & (th - 1);
     if (e & 0x8000) fy = th - 1 - fy;
     if (fy >= 8) tile += 16;
     if (t16 || hires) {
-        // A 16-wide tile: the half this column (in hi-res, this fetch) shows, mirrored
-        const int half = hires ? (int)second : (t.tileX & 1);
+        // A 16-wide tile: the half this column (in hi-res, this fetch) shows, mirrored; as Mesen, by the
+        // BG's scroll register, not the offset-per-tile one
+        const int half = hires ? (int)second : (((col << 3) + m_hofs[bg]) >> 3) & 1;
         tile += (e & 0x4000) ? 1 - half : half;
     }
     tile &= 0x3FF;
@@ -514,7 +538,8 @@ void Ppu::renderBg(int bg, int bpp, Layer& out, int x0, int x1, bool even) {
         const BgTile& t = m_bgTiles[bg][(xm + (hofs & 7)) >> 3];
         int fx, base = 0;
         if (hires) {
-            const int px = xm * 2 + (even ? 0 : 1) + hofs * 2;
+            // With the mosaic on (any size), both halves take the even one (Mesen)
+            const int px = xm * 2 + ((even || mosaic) ? 0 : 1) + hofs * 2;
             fx = px & 7;
             if (px & 8) base = planes;
         } else {
@@ -539,9 +564,9 @@ void Ppu::renderBg(int bg, int bpp, Layer& out, int x0, int x1, bool even) {
 void Ppu::renderMode7(int bg, int line, Layer& out, int x0, int x1) {
     const bool mosaic = (m_mosaicMask >> bg) & 1;
     const int msz = mosaic ? m_mosaicSize : 1;
-    int y = line;
-    y = y - ((y - 1) % msz);
-    if (m_m7sel & 0x02) y = 255 - y;
+    // Mesen: mirrored first, then held for the mosaic's block (only when it's larger than 1)
+    int y = (m_m7sel & 0x02) ? 255 - line : line;
+    if (msz > 1) y = (uint16_t)(y - mosaicRows());
     const int a = m_m7[0], b = m_m7[1], c = m_m7[2], d = m_m7[3];
     const int cx = m_m7x, cy = m_m7y;
     auto clip = [](int v) { return (v & 0x2000) ? (v | ~0x3FF) : (v & 0x3FF); };

@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SNES PPU: mosaic and offset-per-tile as Mesen
+
+- **Mosaic:** the rows come from Mesen's line counter (reloaded on line 0
+  and when the mosaic is turned on from off; stepped at the end of each
+  line) instead of `(line - 1) % size`, so a mosaic turned on mid-frame
+  starts its block there. Interlaced hi-res holds the row twice over and
+  the character fetch drops the odd field; mode 7 holds the row after its
+  vertical flip. In modes 5 and 6 a mosaic (any size) gives both
+  half-pixels the even one.
+- **Offset-per-tile:** BG3's entries are addressed as Mesen (column and
+  row straight into the map, the vertical entry 32 words on and wrapping
+  in the map); mode 6 applies the offset to the half-pixel scroll; a
+  16x16 tile's half comes from the BG's scroll register.
+- Test: `snes_ppu_mosaic_as_mesen`.
+
 ### SNES Super Game Boy, and a Game Boy core
 
 - **A Game Boy (DMG) core**, `gb::Gameboy` in
