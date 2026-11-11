@@ -106,10 +106,17 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
 ## Boot
 
 Without a boot ROM the CPU starts at `$0100` with the registers and I/O the
-DMG boot ROM leaves (Pan Docs' table, the chime playing). As the Super Game
+DMG boot ROM leaves (Pan Docs' table, the chime playing), down to the
+unused bits Mooneye's `boot_hwio-dmgABCmgb` reads (P1 `$CF` with both
+select lines low, IF `$E1`), the divider's internal counter at `$ABCA`
+(`boot_div-dmgABCmgb`'s value and phase) and the serial clock in step with
+it (`boot_sclk_align`). As the Super Game
 Boy's Game Boy it runs SameBoy's open source SGB/SGB2 boot ROM (LIJI32's,
 MIT licence, the one Mesen embeds), which sends the cartridge header to the
-SNES in joypad packets as Nintendo's does. `setBootRom()` takes another.
+SNES in joypad packets as Nintendo's does. Nintendo's takes a machine cycle
+less for each 1 bit of that header, SameBoy's the same time for either, so
+when it hands over DIV is moved by the difference (`boot_div-S`,
+`boot_div2-S`). `setBootRom()` takes another.
 Nintendo's boot ROMs are not included.
 
 ## Tests
@@ -124,7 +131,8 @@ Nintendo's boot ROMs are not included.
 - `src/plugins/machines/gameboy/test/test_gameboy.cpp`: hand-assembled
   cartridges: the post-boot state, instruction timing and the ALU, the
   timer interrupt with HALT, OAM DMA from HRAM, LY and the modes, MBC1 and
-  MBC5 banking with RAM, the joypad and its interrupt, the serial port,
+  MBC5 banking with RAM, the joypad and its interrupt (on a falling
+  P10-P13 only, as Pan Docs: not on a select line's change), the serial port,
   the APU's samples.
 - `test_gameboy_roms.cpp`, with c-sp's
   [gameboy-test-roms](https://github.com/c-sp/gameboy-test-roms) release
@@ -134,11 +142,13 @@ Nintendo's boot ROMs are not included.
   picture, all passing. `MMEMU_GB_SURVEY=1` runs `gb_rom_survey`: the rest
   of Blargg's DMG tests (`cpu_instrs`, `mem_timing`, `mem_timing-2`,
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
-  tests for the DMG, plus the SGB ones with the SGB boot ROM: 102 PASS,
-  6 FAIL. The failures: `boot_div` and `boot_hwio` (DMG and SGB) and
-  `boot_sclk_align`, which check the exact state and timing Nintendo's boot
-  ROM leaves (the post-boot state here, SameBoy's boot ROM on the SGB),
-  and `oam_bug` 7-timing_effect. `MMEMU_GB_SHOW=1` lists the passes too.
+  tests for the DMG, plus the SGB ones with the SGB boot ROM, and the
+  combined `oam_bug.gb` against its picture: 108 PASS, 1 FAIL. The failure,
+  `oam_bug` 7-timing_effect, corrupts OAM as hardware does (its CRC
+  matches when its output is kept out of work RAM, and the combined ROM's
+  test 7 passes) but prints 20 OAM dumps, more than the 8 KB of
+  cartridge RAM it copies its text to from `$A004`: the text runs on
+  into its own code at `$C000` and it crashes. `MMEMU_GB_SHOW=1` lists the passes too.
 
 ## Not yet
 

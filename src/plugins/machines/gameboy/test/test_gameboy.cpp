@@ -49,6 +49,9 @@ TEST_CASE(gb_post_boot_state) {
     EXPECT_EQ(g.peek(0xFF47), 0xFC);
     EXPECT_EQ(g.peek(0xFF26), 0xF1);           // sound on, square 1 playing
     EXPECT_EQ(g.peek(0xFF04), 0xAB);
+    EXPECT_EQ(g.peek(0xFF00), 0xCF);           // both select lines low (boot_hwio-dmgABCmgb)
+    EXPECT_EQ(g.peek(0xFF02), 0x7E);
+    EXPECT_EQ(g.peek(0xFF0F), 0xE1);
     EXPECT_TRUE(!g.isSgb());
     EXPECT_EQ(std::string(g.mapperName()), std::string("ROM"));
     EXPECT_EQ(g.header().title, std::string("GBTEST"));
@@ -180,6 +183,7 @@ TEST_CASE(gb_joypad_serial_apu) {
                          0x3E, 0x10, 0xE0, 0x00, 0xF0, 0x00, 0xEA, 0x00, 0xC0, 0x18, 0xF5})));
     g.runTo(g.cycles() + 400);
     EXPECT_EQ(g.peek(0xC000), 0xDF);
+    EXPECT_EQ(g.peek(0xFF0F) & gb::IRQ_JOYPAD, 0);      // a select line changing with nothing pressed: no interrupt
     g.setButtons(gb::BTN_START | gb::BTN_A);
     g.runTo(g.cycles() + 400);
     EXPECT_EQ(g.peek(0xC000), 0xD6);

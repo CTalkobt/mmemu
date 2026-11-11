@@ -9,7 +9,7 @@ void Cpu::init() {
     m_s = State{};
     m_s.pc = 0;
     m_s.sp = 0xFFFF;
-    m_s.cycles = 6;            // Mesen's: boot_sclk_align passes
+    m_s.cycles = 6;            // Mesen's, with a boot ROM (a start without one sets it: Gameboy::postBootState)
     m_prevIrq = 0;
 }
 
