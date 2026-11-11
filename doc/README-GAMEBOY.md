@@ -143,12 +143,13 @@ Nintendo's boot ROMs are not included.
   of Blargg's DMG tests (`cpu_instrs`, `mem_timing`, `mem_timing-2`,
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
   tests for the DMG, plus the SGB ones with the SGB boot ROM, and the
-  combined `oam_bug.gb` against its picture: 108 PASS, 1 FAIL. The failure,
-  `oam_bug` 7-timing_effect, corrupts OAM as hardware does (its CRC
-  matches when its output is kept out of work RAM, and the combined ROM's
-  test 7 passes) but prints 20 OAM dumps, more than the 8 KB of
-  cartridge RAM it copies its text to from `$A004`: the text runs on
-  into its own code at `$C000` and it crashes. `MMEMU_GB_SHOW=1` lists the passes too.
+  combined `oam_bug.gb` against its picture: 109 PASS, 0 FAIL.
+  `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its
+  20 corrupted-OAM dumps come to 10,525 bytes of text, which it copies to
+  cartridge RAM from `$A004` with no end check, so past `$BFFF` the text
+  overwrites its own code in work RAM and it crashes. The survey runs it
+  with those writes undone (`TextSpill`), so it reaches its CRC check over
+  all of the text, and passes. `MMEMU_GB_SHOW=1` lists the passes too.
 
 ## Not yet
 

@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: oam_bug's 7-timing_effect, run as built
+
+- That test prints 20 corrupted-OAM dumps, 10,525 bytes, to cartridge RAM
+  from `$A004` with no end check; past `$BFFF` the text overwrites its own
+  code in work RAM, on a DMG as here. The survey now undoes those writes
+  (`TextSpill` in `test_gameboy_roms.cpp`) and the test passes its CRC check
+  over all of the text: 109 PASS, 0 FAIL (was 108 PASS, 1 FAIL). No emulator
+  change.
+
 ### VICE's test programs: the 6510's unstable opcodes and JSR
 
 - **SHA, SHX, SHY, SHS:** if the read cycle before the store waits for the
