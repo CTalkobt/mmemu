@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: a standalone machine with the SM83 debugger
+
+- **`gameboy` (also `dmg`)**: the DMG core the Super Game Boy uses
+  (`gb::Gameboy`, after Mesen2) as a machine of its own, from
+  `lib/mmemu-plugin-gameboy.so` (the core's objects are linked into both
+  it and the SNES plugin). `.gb`/`.gbc` cartridges attach through the CLI
+  `cart`, the GUI and MCP; the screen (160x144, DMG greens), the sound
+  (mono, 44.1 kHz) and the joypad (keys, host gamepad, joystick) are
+  wired up; battery RAM is saved to `<rom>.sav` (or read from `.srm`) and
+  the MBC3's clock to `<rom>.rtc`. An optional `roms/gameboy/dmg_boot.bin`
+  is run if present.
+- **SM83 as an `ICore`**: registers `A F B C D E H L SP PC` (flags
+  `ZNHC`; `AF BC DE HL IME` by name), stepping, breakpoints (an interrupt's
+  dispatch is its own step, so a breakpoint on a handler stops at its
+  first instruction), read/write watchpoints on the CPU's data accesses,
+  the trace and memory views.
+- **SM83 disassembler** with the CB-prefixed opcodes (registered as the
+  `sm83` toolchain), and the hardware registers' symbols
+  (`roms/gameboy/hardware.sym`).
+
 ### SNES PPU: mosaic and offset-per-tile as Mesen
 
 - **Mosaic:** the rows come from Mesen's line counter (reloaded on line 0

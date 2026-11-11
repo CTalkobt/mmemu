@@ -32,9 +32,14 @@ uint16_t Cpu::readCodeWord() {
 }
 template <OamCorruption C> uint8_t Cpu::read(uint16_t addr) {
     cycle();
-    return m_gb->read<C>(addr);
+    const uint8_t v = m_gb->read<C>(addr);
+    if (auto* h = m_gb->accessHook()) h->cpuRead(addr, v);
+    return v;
 }
-void Cpu::write(uint16_t addr, uint8_t v) { m_gb->cpuWrite(addr, v); }
+void Cpu::write(uint16_t addr, uint8_t v) {
+    if (auto* h = m_gb->accessHook()) h->cpuWrite(addr, m_gb->peek(addr), v);
+    m_gb->cpuWrite(addr, v);
+}
 
 void Cpu::pushByte(uint8_t v) {
     m_ppu->oamCorruption<OamCorruption::Write>(m_s.sp);
@@ -108,6 +113,7 @@ void Cpu::exec() {
             if (vector) m_gb->clearIrq(vector);
             m_s.eiPending = false;                           // EI twice just before (Batman, as Mesen)
             m_s.ime = false;
+            if (m_splitDispatch) return;                     // the debugger's step: the handler next
         }
     }
 

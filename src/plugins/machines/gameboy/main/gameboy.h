@@ -61,6 +61,14 @@ public:
     virtual uint8_t joypadButtons() = 0;
 };
 
+/** The debugger's view of the CPU's data reads and writes (not opcode or operand fetches). */
+class AccessHook {
+public:
+    virtual ~AccessHook() = default;
+    virtual void cpuRead(uint16_t addr, uint8_t v) = 0;
+    virtual void cpuWrite(uint16_t addr, uint8_t before, uint8_t v) = 0;
+};
+
 class Gameboy {
 public:
     enum class Model { Dmg, Sgb, Sgb2 };
@@ -117,6 +125,9 @@ public:
     uint8_t peek(uint16_t addr);
     /** A write with no side effect on registers (only memory pages). */
     void poke(uint16_t addr, uint8_t v);
+    /** Told of the CPU's data accesses (null: none; the debugger's watchpoints). */
+    void setAccessHook(AccessHook* h) { m_accessHook = h; }
+    AccessHook* accessHook() const { return m_accessHook; }
 
     // ---------------------------------------------------------------
     // What the parts use (Mesen's GbMemoryManager)
@@ -181,6 +192,7 @@ private:
     std::unique_ptr<Cart> m_cart;
     Header m_header;
     SgbLink* m_sgb = nullptr;
+    AccessHook* m_accessHook = nullptr;
 
     std::vector<uint8_t> m_rom, m_cartRam, m_wram, m_bootRom, m_bootRomOverride;
     uint8_t m_hram[0x7F] = {};

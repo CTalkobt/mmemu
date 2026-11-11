@@ -152,6 +152,16 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 	src/plugins/machines/gameboy/main/gb_cart.cpp \
 	src/plugins/machines/snes/main/plugin_init.cpp
 
+PLUGIN_GAMEBOY_SRCS = src/plugins/machines/gameboy/main/machine_gameboy.cpp \
+	src/plugins/machines/gameboy/main/sm83_core.cpp \
+	src/plugins/machines/gameboy/main/sm83_disasm.cpp \
+	src/plugins/machines/gameboy/main/gameboy.cpp \
+	src/plugins/machines/gameboy/main/gb_cpu.cpp \
+	src/plugins/machines/gameboy/main/gb_ppu.cpp \
+	src/plugins/machines/gameboy/main/gb_apu.cpp \
+	src/plugins/machines/gameboy/main/gb_cart.cpp \
+	src/plugins/machines/gameboy/main/plugin_init.cpp
+
 PLUGIN_NES_SRCS = src/plugins/machines/nes/main/machine_nes.cpp \
 	src/plugins/machines/nes/main/nes_cpu.cpp \
 	src/plugins/machines/nes/main/nes_ppu.cpp \
@@ -561,6 +571,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/snes/test/test_snes_sgb.cpp \
 	src/plugins/machines/gameboy/test/test_gameboy.cpp \
 	src/plugins/machines/gameboy/test/test_gameboy_roms.cpp \
+	src/plugins/machines/gameboy/test/test_gameboy_machine.cpp \
+	src/plugins/machines/gameboy/test/test_sm83_disasm.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
@@ -704,6 +716,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/gameboy/main/gb_ppu.o \
 	src/plugins/machines/gameboy/main/gb_apu.o \
 	src/plugins/machines/gameboy/main/gb_cart.o \
+	src/plugins/machines/gameboy/main/machine_gameboy.o \
+	src/plugins/machines/gameboy/main/sm83_core.o \
+	src/plugins/machines/gameboy/main/sm83_disasm.o \
 	src/plugins/machines/snes/main/snes_apu.o \
 	src/plugins/machines/snes/main/snes_ppu.o \
 	src/plugins/machines/snes/main/machine_snes.o \
@@ -881,6 +896,7 @@ PLUGIN_65816_OBJS  = $(PLUGIN_65816_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
 PLUGIN_NES_OBJS    = $(PLUGIN_NES_SRCS:.cpp=.o)
 PLUGIN_SNES_OBJS   = $(PLUGIN_SNES_SRCS:.cpp=.o)
+PLUGIN_GAMEBOY_OBJS = $(PLUGIN_GAMEBOY_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
 PLUGIN_SPECTRUM_OBJS = $(PLUGIN_SPECTRUM_SRCS:.cpp=.o)
@@ -954,6 +970,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
 	$(LIBDIR)/mmemu-plugin-nes.so \
 	$(LIBDIR)/mmemu-plugin-snes.so \
+	$(LIBDIR)/mmemu-plugin-gameboy.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
 	$(LIBDIR)/mmemu-plugin-spectrum.so \
@@ -1112,6 +1129,9 @@ $(LIBDIR)/mmemu-plugin-nes.so: $(PLUGIN_NES_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-snes.so: $(PLUGIN_SNES_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-gameboy.so: $(PLUGIN_GAMEBOY_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)

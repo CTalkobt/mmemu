@@ -39,6 +39,13 @@ public:
     uint64_t& cycleRef() { return m_s.cycles; }
     bool halted() const { return m_s.haltCounter > 0; }
 
+    // For the debugger (Sm83Core)
+    /** The next exec() starts with an interrupt dispatch. */
+    bool irqDispatchPending() const { return m_prevIrq && !m_s.haltBug && !m_s.stopped && m_s.ime; }
+    /** On: exec() returns after an interrupt dispatch, before the handler's first instruction
+     *  (the timing is unchanged: the next exec() runs it). */
+    void setSplitDispatch(bool on) { m_splitDispatch = on; }
+
 private:
     void execOp(uint8_t op);
     void execCb();
@@ -101,6 +108,7 @@ private:
     Ppu* m_ppu = nullptr;
     State m_s;
     uint8_t m_prevIrq = 0;
+    bool m_splitDispatch = false;
 };
 
 }  // namespace gb

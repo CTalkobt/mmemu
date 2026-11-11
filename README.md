@@ -87,6 +87,11 @@ A single plugin module can provide multiple resources, which are automatically r
 - **Profiles**: `atari2600`, `atari2600-pal`.
 - **Hardware**: MOS 6507 CPU, TIA video/sound/inputs, RIOT 6532 (RAM, ports, timer), two joysticks, the console switches, bank-switched cartridges (`.a26`/`.bin`: 2K, 4K, F8/F6/F4 with or without Superchip RAM, E0, 3F, FA). See `doc/README-A2600.md`.
 
+### Nintendo Game Boy
+- **Profiles**: `gameboy` (also `dmg`).
+- **Hardware**: Sharp SM83 CPU at 4.19 MHz, the DMG PPU (160x144, four shades), APU, timer, OAM DMA, joypad, serial port; cartridges (`.gb`: ROM only, MBC1, MBC2, MBC3 with its clock, MBC5) with battery saves beside the ROM, after Mesen2. The SM83 has full debugger support (registers, step, breakpoints, watchpoints, trace, disassembly with CB opcodes). See `doc/README-GAMEBOY.md`.
+- **Symbols**: The hardware registers (`LCDC`, `LY`, `IE`, ...) are auto-loaded from `roms/gameboy/hardware.sym`.
+
 ---
 
 ## 4. Symbol Management & Expressions

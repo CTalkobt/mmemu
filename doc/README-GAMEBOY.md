@@ -1,9 +1,69 @@
-# Game Boy core (`gb::Gameboy`)
+# Game Boy (`gameboy`) and its core (`gb::Gameboy`)
 
 A monochrome Game Boy (DMG), written for the SNES's Super Game Boy (#15)
 after Mesen2's `Core/Gameboy` (GPL-3.0, Sour and the Mesen contributors).
-It lives in `src/plugins/machines/gameboy/main/` and is linked into the
-SNES plugin; there is no standalone Game Boy machine yet.
+It lives in `src/plugins/machines/gameboy/main/`; its objects are linked
+into both the Game Boy plugin (`lib/mmemu-plugin-gameboy.so`, the
+standalone machine) and the SNES plugin (the Super Game Boy).
+
+## Running it
+
+```
+bin/mmemu-cli -m gameboy            # or -m dmg
+> cart path/to/game.gb              # also the GUI's Attach Cartridge, MCP attach_cartridge
+> run
+bin/mmemu-gui -m gameboy
+```
+
+`.gb` and `.gbc` files attach (a Game Boy Color cartridge runs only if it
+also works on the DMG). On a SNES the same files go into the Super Game Boy
+instead. With no cartridge the bus reads `$FF` and the CPU runs `RST $38`,
+as on the real machine.
+
+- **Screen**: 160x144, the four shades in the DMG's greens.
+- **Sound**: the APU's stereo output mixed to mono, 44.1 kHz.
+- **Joypad**: keys arrows, **X** (A), **Z** (B), **Return** (Start),
+  **Tab** or **Shift** (Select); a host gamepad's d-pad, A/X (A), B/Y (B),
+  START and SELECT; a joystick's directions and fire (A). START and SELECT
+  are also buttons under the GUI's screen.
+- **Battery saves**: a battery-backed cartridge's RAM is kept in
+  `<rom>.sav` beside the ROM (read from `<rom>.srm`, Mesen's name, when
+  there is no `.sav`), written within a second of a change, on eject and
+  on exit. The MBC3's clock goes in `<rom>.rtc` (Mesen's format: its
+  registers and the host time, so the time away passes).
+- **Boot ROM**: none is needed (the machine starts in the state the DMG's
+  leaves). Your own `roms/gameboy/dmg_boot.bin` (256 bytes; not included,
+  `MMEMU_GB_FIRMWARE` names another directory) is run if present.
+- **Reset**: the Game Boy has no reset button; `reset` powers it off and on
+  (the cartridge's RAM stays).
+
+## Debugging
+
+The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
+`sm83`), so the CLI, GUI and MCP tools work as on the other machines:
+
+- **Registers**: `A F B C D E H L SP PC`, F's flags shown as `ZNHC`; the
+  pairs `AF BC DE HL` and `IME` are also readable and writable by name
+  (expressions, breakpoint conditions: `HL == $C000`, `.Z`).
+- **Step / run**: a step is one instruction, an interrupt's dispatch (a
+  step of its own, so a breakpoint on `$0040` stops before the VBlank
+  handler's first instruction with the return address pushed), or one
+  machine cycle while halted or stopped. `isProgramEnd` is a locked CPU
+  (halted with no interrupt enabled, as after an unused opcode).
+- **Breakpoints, watchpoints, trace**: execution breakpoints, and read and
+  write watchpoints on the CPU's data accesses (loads, stores, pushes and
+  pops; not opcode fetches); the trace keeps each instruction's registers.
+- **Memory**: the 64 KB map as the CPU sees it. Reads have no side effects
+  (VRAM and OAM are shown whatever the PPU is doing); writes go to memory
+  or the register (`$0000-$7FFF` switches banks as a CPU write would).
+- **Disassembly** (`sm83_disasm.h`, also the `sm83` toolchain
+  disassembler): every opcode and the CB-prefixed ones, `LD (HL+),A`,
+  `LDH ($FF44),A`, `LD ($FF00+C),A`, `ADD SP,-$02`, `LD HL,SP+$05`, JR's
+  target address; the unused opcodes as `DB $xx`. There is no SM83
+  assembler.
+- **Symbols**: the hardware registers (`P1`, `DIV`, `LCDC`, `STAT`, `LY`,
+  `BGP`, `NR10`-`NR52`, `IE`, ...) from `roms/gameboy/hardware.sym`, used
+  in the disassembly (`LDH (LY),A`) and expressions.
 
 ## What's emulated
 
@@ -54,6 +114,13 @@ Nintendo's boot ROMs are not included.
 
 ## Tests
 
+- `test_gameboy_machine.cpp`: the machine with hand-built cartridges: the
+  registers and steps through `ICore`, a breakpoint on the VBlank handler,
+  watchpoints, the lock-up, the screen, sound and joypad, battery saves
+  and eject, and Blargg's `06-ld r,r` run through the scheduler with an
+  observer attached. `test_sm83_disasm.cpp`: a table of opcodes and their
+  text, every opcode's length and the call/return/branch flags, symbols.
+
 - `src/plugins/machines/gameboy/test/test_gameboy.cpp`: hand-assembled
   cartridges: the post-boot state, instruction timing and the ALU, the
   timer interrupt with HALT, OAM DMA from HRAM, LY and the modes, MBC1 and
@@ -77,4 +144,5 @@ Nintendo's boot ROMs are not included.
 
 - The Game Boy Color (and so CGB-only cartridges), the MBC6/MBC7, HuC1/HuC3,
   MMM01 and the other rare mappers, the infrared port.
-- A standalone Game Boy machine (CLI/GUI), and a debugger for the SM83.
+- An SM83 assembler; reverse stepping and snapshots keep only the CPU's
+  registers (not memory or the PPU); the GDB server does not know the SM83.
