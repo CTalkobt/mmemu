@@ -483,6 +483,15 @@ forced blank or mode 7 (mode 7 reads VRAM as it draws, as Mesen).
 - **Colour math**: add or subtract, half, the fixed colour, subscreen
   backdrop rules, force-black and its windows.
 - **Other effects**: mosaic and brightness. Forced blank shows black.
+  The mosaic's rows follow Mesen's line counter: reloaded on line 0 and
+  when the mosaic is turned on from off, so a block starts at the line it's
+  turned on. Mode 7 holds the row after its vertical flip. In modes 5 and 6
+  a mosaic of any size gives both half-pixels the even one.
+- **Offset-per-tile, as Mesen**: BG3's entries are addressed straight from
+  its column and row (a 64-wide map's right half is not its second screen),
+  the vertical entry 32 words on, wrapping in the map. In mode 6 the offset
+  is applied to the scroll in half-pixels. A 16x16 tile's half comes from
+  the BG's own scroll register, not the offset.
 - **Hi-res**: modes 5 and 6 and pseudo-hires (`SETINI` bit 3) make
   512-pixel lines, the sub screen in the even pixels, with colour math as
   Mesen does it (each even pixel mixed with the main screen's previous one).

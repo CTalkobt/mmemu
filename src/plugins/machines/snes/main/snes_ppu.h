@@ -138,8 +138,13 @@ private:
     void fetchMap(int bg, int line, int col);
     void fetchChr(int bg, int bpp, int line, int col, int plane, bool second);
     uint16_t mapEntry(int bg, int tileX, int tileY) const;
-    /** The BG row of line `line` before the vertical offset (mosaic, interlaced hi-res). */
-    int bgRow(int bg, int line) const;
+    /** The BG row of line `line` before the vertical offset (mosaic, interlaced hi-res), as Mesen's realY:
+     *  `chr` for the character fetch, which in interlaced hi-res with mosaic drops the odd field's row. */
+    int bgRow(int bg, int line, bool chr) const;
+    /** The rows a mosaic block has gone down so far (Mesen's MosaicSize - _mosaicScanlineCounter). */
+    int mosaicRows() const { return m_mosaicSize - m_mosaicCounter; }
+    /** The mosaic's line counter at the end of a line (Mesen's ProcessEndOfScanline), done when the next line starts. */
+    void mosaicLineEnd();
     /** BG pixels x0..x1 from the fetched columns; `even`: hi-res modes' even (sub screen) half-pixels. */
     void renderBg(int bg, int bpp, Layer& out, int x0, int x1, bool even);
     void renderMode7(int bg, int line, Layer& out, int x0, int x1);
@@ -171,6 +176,9 @@ private:
     bool m_bg3Priority = false;
     uint8_t m_tile16 = 0;
     uint8_t m_mosaicSize = 1, m_mosaicMask = 0;
+    // Mesen's _mosaicScanlineCounter: size + 1 from line 0 (or when the mosaic is turned on), down a line at a
+    // time and back to the size at 0; the end of a line's step waits (m_mosaicDue: 1 step, 2 line 0's reload too)
+    uint8_t m_mosaicCounter = 0, m_mosaicDue = 0;
     uint16_t m_mapBase[4] = {}, m_charBase[4] = {};
     uint8_t m_mapSize[4] = {};
     // $210D-$2114
