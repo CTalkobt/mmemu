@@ -1,4 +1,4 @@
-// The DMG PPU, after Mesen2 (Core/Gameboy/GbPpu.cpp), GPL-3.0, Sour and the Mesen contributors.
+// The DMG and CGB PPU, after Mesen2 (Core/Gameboy/GbPpu.cpp), GPL-3.0, Sour and the Mesen contributors.
 
 #include "gb_ppu.h"
 #include "gameboy.h"
@@ -34,11 +34,38 @@ void Ppu::init() {
     m_forceBlankFrame = true;
     m_rendererIdle = false;
     std::memset(m_buf, 0, sizeof(m_buf));
+    // The CGB's (the palettes power on cleared here; Mesen's follow its RAM setting)
+    m_cgb = m_gb->isCgb();
+    m_cgbEnabled = m_cgb;
+    m_tileGlitch = m_stopPaletteBlocked = false;
+    m_vramBank = 0;
+    std::memset(m_bgPal, 0, sizeof(m_bgPal));
+    std::memset(m_objPal, 0, sizeof(m_objPal));
+    m_bgPalPos = m_objPalPos = 0;
+    m_bgPalAutoInc = m_objPalAutoInc = false;
+    for (auto& b : m_cbuf) std::fill(b, b + WIDTH * HEIGHT, 0x7FFF);
 }
 
 void Ppu::setCpuStopState(bool stopped) {
-    if (stopped) m_lcdDisabled = true;
-    else if (m_lcdEnabled) m_lcdDisabled = !m_lcdEnabled;
+    if (!m_cgb) {
+        if (stopped) m_lcdDisabled = true;
+        else if (m_lcdEnabled) m_lcdDisabled = !m_lcdEnabled;
+        return;
+    }
+    // The CGB's LCD keeps going with what it could read when the CPU stopped: in mode 3
+    // the picture stays, otherwise OAM, VRAM or the palettes read as nothing (black)
+    if (stopped) {
+        m_stopOamBlocked = !m_oamReadBlocked;
+        m_stopVramBlocked = !m_vramReadBlocked;
+        m_stopPaletteBlocked = m_mode <= PpuMode::OamEvaluation;
+    } else {
+        m_stopOamBlocked = m_stopVramBlocked = m_stopPaletteBlocked = false;
+    }
+}
+
+void Ppu::setMode(PpuMode m) {
+    m_mode = m;
+    m_gb->processHdma();                 // the CGB's HDMA: a block on entering HBlank
 }
 
 void Ppu::exec(bool single) {
@@ -52,11 +79,12 @@ void Ppu::exec(bool single) {
         }
         return;
     }
-    const int n = single ? 1 : 2;
+    const int n = (single || m_gb->isHighSpeed()) ? 1 : 2;     // double speed: a dot per CPU half-cycle
     for (int i = 0; i < n; ++i) {
         ++m_cycle;
-        if (m_idleCycles > 0) { --m_idleCycles; continue; }
-        execCycle();
+        if (m_idleCycles > 0) --m_idleCycles;
+        else execCycle();
+        m_tileGlitch = false;              // the fetch glitch lasts the dot of the LCDC write
     }
 }
 
@@ -127,7 +155,7 @@ void Ppu::vblankScanline() {
             m_ly = 0;
             m_lyForCompare = 0;
             m_wyEnable = m_scanline == m_wy && m_windowEnabled;
-            setMode(PpuMode::HBlank);        // on the DMG, line 0 starts in mode 0
+            if (!m_cgb) setMode(PpuMode::HBlank);     // on the DMG, line 0 starts in mode 0 (not the CGB)
         } else {
             m_ly = m_scanline;
             m_lyForCompare = -1;
@@ -225,7 +253,7 @@ void Ppu::drawCycle() {
             m_bgFifo.reset();
             return;
         }
-        if (!m_windowEnabled && m_windowCounter > 0 && m_wxEnable && ((int)m_wx & 7) == 7 - ((int)m_scx & 7)) {
+        if (!m_cgb && !m_windowEnabled && m_windowCounter > 0 && m_wxEnable && ((int)m_wx & 7) == 7 - ((int)m_scx & 7)) {
             // The DMG's window glitch (Windesync-validate): an extra background pixel
             m_insertGlitchBgPixel = true;
         }
@@ -242,12 +270,20 @@ void Ppu::drawCycle() {
         if (m_drawnPixels >= 0) {
             const FifoEntry entry = m_insertGlitchBgPixel ? FifoEntry{} : m_bgFifo.content[m_bgFifo.position];
             const FifoEntry sprite = m_oamFifo.content[m_oamFifo.position];
-            if (sprite.color != 0 && (entry.color == 0 || (!(sprite.attributes & 0x80) && !(entry.attributes & 0x80)))) {
-                const uint8_t pal = (sprite.attributes & 0x10) ? m_obp1 : m_obp0;
-                writePixel((uint8_t)((pal >> (sprite.color * 2)) & 3));
+            // The object's pixel over colour 0, or with neither its nor the tile's priority bit
+            // set; in CGB mode always with LCDC bit 0 clear
+            if (sprite.color != 0 && (entry.color == 0 || (!(sprite.attributes & 0x80) && !(entry.attributes & 0x80)) ||
+                                      (m_cgbEnabled && !m_bgEnabled))) {
+                if (m_cgbEnabled) {
+                    writeObjPixel((uint8_t)(sprite.color | ((sprite.attributes & 0x07) << 2)));
+                } else {
+                    const uint8_t pal = (sprite.attributes & 0x10) ? m_obp1 : m_obp0;
+                    writeObjPixel((uint8_t)(((sprite.attributes & 0x10) ? 4 : 0) | ((pal >> (sprite.color * 2)) & 3)));
+                }
                 m_lastPixelBg = false;
             } else {
-                writePixel(m_bgEnabled ? (uint8_t)((m_bgp >> (entry.color * 2)) & 3) : (uint8_t)(m_bgp & 3));
+                if (m_cgbEnabled) writeBgPixel((uint8_t)(entry.color | ((entry.attributes & 0x07) << 2)));
+                else writeBgPixel(m_bgEnabled ? (uint8_t)((m_bgp >> (entry.color * 2)) & 3) : (uint8_t)(m_bgp & 3));
                 m_lastPixelBg = true;
                 m_lastBgColor = entry.color;
             }
@@ -261,9 +297,19 @@ void Ppu::drawCycle() {
     clockTileFetcher();
 }
 
-void Ppu::writePixel(uint8_t shade) {
-    m_cur[m_scanline * WIDTH + m_drawnPixels] = shade;
-    if (auto* s = m_gb->sgb()) s->lcdPixel((uint8_t)m_drawnPixels, shade);
+void Ppu::writeBgPixel(uint8_t index) {
+    writePixel(index, m_stopPaletteBlocked ? 0 : m_bgPal[index & 0x1F]);
+}
+
+void Ppu::writeObjPixel(uint8_t index) {
+    writePixel(index, m_stopPaletteBlocked ? 0 : m_objPal[index & 0x1F]);
+}
+
+void Ppu::writePixel(uint8_t index, uint16_t color) {
+    const int at = m_scanline * WIDTH + m_drawnPixels;
+    m_cur[at] = index & 3;
+    if (m_cgb) m_ccur[at] = color & 0x7FFF;
+    if (auto* s = m_gb->sgb()) s->lcdPixel((uint8_t)m_drawnPixels, index & 3);
 }
 
 void Ppu::spriteEvaluation() {
@@ -313,9 +359,10 @@ void Ppu::clockSpriteFetcher() {
         uint8_t tile = m_oamReadBuffer[0];
         const uint8_t attr = m_oamReadBuffer[1];
         const bool vflip = (attr & 0x40) != 0;
+        const uint16_t bank = (m_cgbEnabled && (attr & 0x08)) ? 0x2000 : 0;    // the CGB's VRAM bank bit
         const uint8_t row = (uint8_t)(vflip ? (m_largeSprites ? 15 : 7) - (m_scanline - y) : (m_scanline - y));
         if (m_largeSprites) tile &= 0xFE;
-        m_oamFetcher.addr = (uint16_t)(tile * 16 + row * 2);
+        m_oamFetcher.addr = (uint16_t)((tile * 16 + row * 2) | bank);
         m_oamFetcher.attributes = attr;
         break;
     }
@@ -328,7 +375,7 @@ void Ppu::clockSpriteFetcher() {
 }
 
 void Ppu::findNextSprite() {
-    if (m_fetchSprite >= 0 || !m_spritesEnabled) return;
+    if (m_fetchSprite >= 0 || !(m_spritesEnabled || m_cgbEnabled)) return;   // CGB mode: fetched (and dropped) when off
     for (int i = 0; i < m_spriteCount; ++i) {
         if ((int)m_spriteX[i] - 8 == m_drawnPixels) {
             m_fetchSprite = (int16_t)i;
@@ -355,15 +402,19 @@ void Ppu::clockTileFetcher() {
         }
         const uint16_t tileAddr = (uint16_t)(tilemap + scrollPos + (yOffset >> 3) * 32);
         m_tileIndex = lcdReadVram(tileAddr);
+        // CGB mode: the tile's attributes in bank 1 (palette, bank, flips, priority)
+        const uint8_t attr = m_cgbEnabled ? m_vram[tileAddr | 0x2000] : 0;
+        const bool vflip = (attr & 0x40) != 0;
+        const uint16_t bank = (attr & 0x08) ? 0x2000 : 0;
         const uint16_t base = m_bgTileSelect ? 0 : 0x1000;
-        const int tileY = yOffset & 7;
-        m_bgFetcher.addr = (uint16_t)(base + (base ? (int8_t)m_tileIndex * 16 : m_tileIndex * 16) + tileY * 2);
-        m_bgFetcher.attributes = 0;
+        const int tileY = vflip ? 7 - (yOffset & 7) : (yOffset & 7);
+        m_bgFetcher.addr = (uint16_t)((base + (base ? (int8_t)m_tileIndex * 16 : m_tileIndex * 16) + tileY * 2) | bank);
+        m_bgFetcher.attributes = attr & 0xBF;
         break;
     }
-    case 3: m_bgFetcher.low = lcdReadVram(m_bgFetcher.addr); break;
+    case 3: m_bgFetcher.low = m_tileGlitch ? m_tileIndex : lcdReadVram(m_bgFetcher.addr); break;
     case 5:
-        m_bgFetcher.high = lcdReadVram((uint16_t)(m_bgFetcher.addr + 1));
+        m_bgFetcher.high = m_tileGlitch ? m_tileIndex : lcdReadVram((uint16_t)(m_bgFetcher.addr + 1));
         [[fallthrough]];
     case 6:
     case 7:
@@ -374,6 +425,7 @@ void Ppu::clockTileFetcher() {
 }
 
 void Ppu::pushSpriteToFifo() {
+    const uint8_t index = (uint8_t)m_fetchSprite;
     m_fetchSprite = -1;
     m_oamFetcher.step = 0;
     if (!m_spritesEnabled) return;
@@ -381,9 +433,11 @@ void Ppu::pushSpriteToFifo() {
     for (int i = 0; i < 8; ++i) {
         const int shift = (m_oamFetcher.attributes & 0x20) ? i : 7 - i;
         const uint8_t bits = (uint8_t)(((m_oamFetcher.low >> shift) & 1) | (((m_oamFetcher.high >> shift) & 1) << 1));
-        if (bits > 0 && m_oamFifo.content[pos].color == 0) {
+        // Over a transparent pixel; in CGB mode over a later object's too (OAM order wins, not X)
+        if (bits > 0 && (m_oamFifo.content[pos].color == 0 || (m_cgbEnabled && index <= m_oamFifo.content[pos].index))) {
             m_oamFifo.content[pos].color = bits;
             m_oamFifo.content[pos].attributes = m_oamFetcher.attributes;
+            m_oamFifo.content[pos].index = index;
         }
         pos = (pos + 1) & 7;
     }
@@ -392,9 +446,9 @@ void Ppu::pushSpriteToFifo() {
 
 void Ppu::pushTileToFifo() {
     for (int i = 0; i < 8; ++i) {
-        const int shift = 7 - i;
+        const int shift = (m_bgFetcher.attributes & 0x20) ? i : 7 - i;     // the CGB's horizontal flip
         m_bgFifo.content[i].color = (uint8_t)(((m_bgFetcher.low >> shift) & 1) | (((m_bgFetcher.high >> shift) & 1) << 1));
-        m_bgFifo.content[i].attributes = 0;
+        m_bgFifo.content[i].attributes = m_bgFetcher.attributes;
     }
     m_fetchColumn = (m_fetchColumn + 1) & 0x1F;
     m_bgFifo.position = 0;
@@ -415,10 +469,14 @@ void Ppu::updateStatIrq() {
 void Ppu::sendFrame() {
     ++m_frameCount;
     // The first frame after the LCD is turned on stays blank (not on the SGB, whose ICD2 gets the lines anyway)
-    if (m_forceBlankFrame && !m_gb->isSgb()) std::memset(m_cur, 0, WIDTH * HEIGHT);
+    if (m_forceBlankFrame && !m_gb->isSgb()) {
+        std::memset(m_cur, 0, WIDTH * HEIGHT);
+        if (m_cgb) for (auto& b : m_cbuf) std::fill(b, b + WIDTH * HEIGHT, 0x7FFF);   // both, white (as Mesen)
+    }
     m_forceBlankFrame = false;
     m_isFirstFrame = false;
     std::swap(m_cur, m_front);
+    if (m_cgb) std::swap(m_ccur, m_cfront);
 }
 
 uint8_t Ppu::read(uint16_t addr) const {
@@ -457,7 +515,8 @@ void Ppu::write(uint16_t addr, uint8_t v) {
             } else {
                 m_lcdDisabled = false;
                 m_isFirstFrame = true;
-                m_forceBlankFrame = true;
+                // The CGB blanks the first frame only after the LCD has been off a while (Mesen: Men in Black flickers)
+                m_forceBlankFrame = !m_cgb || m_gb->apuCycles() - m_lastFrameTime > 5000;
                 m_cycle = 7;
                 m_idleCycles = 0;
                 m_irqMode = PpuMode::NoIrq;
@@ -476,9 +535,11 @@ void Ppu::write(uint16_t addr, uint8_t v) {
         m_wyEnable |= m_scanline == m_wy && m_windowEnabled;
         break;
     case 0xFF41:
-        // The DMG's STAT write bug: every source on for a moment
-        m_status = (uint8_t)(0xF8 | (m_status & 0x07));
-        updateStatIrq();
+        if (!m_cgb) {
+            // The DMG's STAT write bug: every source on for a moment
+            m_status = (uint8_t)(0xF8 | (m_status & 0x07));
+            updateStatIrq();
+        }
         m_status = v & 0xF8;
         updateStatIrq();
         break;
@@ -493,11 +554,11 @@ void Ppu::write(uint16_t addr, uint8_t v) {
         }
         break;
     case 0xFF47:
-        if (m_mode == PpuMode::Drawing && m_drawnPixels > 0 && m_lastPixelBg) {
+        if (!m_cgbEnabled && m_mode == PpuMode::Drawing && m_drawnPixels > 0 && m_lastPixelBg) {
             // A change mid-line reaches the pixel just drawn, ORed with the old value on the DMG
-            const uint8_t bgp = v | m_bgp;
+            const uint8_t bgp = m_cgb ? v : (uint8_t)(v | m_bgp);
             --m_drawnPixels;
-            writePixel((uint8_t)((bgp >> (m_lastBgColor * 2)) & 3));
+            writeBgPixel((uint8_t)((bgp >> (m_lastBgColor * 2)) & 3));
             ++m_drawnPixels;
         }
         m_bgp = v;
@@ -520,7 +581,7 @@ void Ppu::writeOam(uint8_t addr, uint8_t v, bool forDma) {
 }
 
 template <OamCorruption C> void Ppu::oamCorruption(uint16_t addr) {
-    if (m_cycle >= 83 || m_mode != PpuMode::OamEvaluation || (addr & 0xFF00) != 0xFE00) return;
+    if (m_cgb || m_cycle >= 83 || m_mode != PpuMode::OamEvaluation || (addr & 0xFF00) != 0xFE00) return;
     const int row = std::min(19, (m_cycle - 2) >> 2);
     if (row == 0) return;                 // the first two sprites are never hit
     if (C == OamCorruption::ReadIncDec) oamIncDecCorruption(row);
@@ -546,6 +607,53 @@ void Ppu::oamIncDecCorruption(int row) {
     m_oam[prev * 8 + 1] = (uint8_t)(r >> 8);
     std::memcpy(m_oam + row * 8, m_oam + prev * 8, 8);
     std::memcpy(m_oam + (row - 2) * 8, m_oam + prev * 8, 8);
+}
+
+// ---------------------------------------------------------------------------
+// The CGB's registers
+// ---------------------------------------------------------------------------
+
+uint8_t Ppu::readCgb(uint16_t addr) const {
+    if (!m_cgbEnabled) return 0xFF;
+    switch (addr) {
+    case 0xFF4F: return (uint8_t)(m_vramBank | 0xFE);
+    case 0xFF68: return (uint8_t)(m_bgPalPos | (m_bgPalAutoInc ? 0x80 : 0) | 0x40);
+    case 0xFF69: return readCgbPalette(m_bgPalPos, m_bgPal);
+    case 0xFF6A: return (uint8_t)(m_objPalPos | (m_objPalAutoInc ? 0x80 : 0) | 0x40);
+    case 0xFF6B: return readCgbPalette(m_objPalPos, m_objPal);
+    }
+    return 0xFF;
+}
+
+void Ppu::writeCgb(uint16_t addr, uint8_t v) {
+    if (!m_cgbEnabled && m_gb->bootRomDisabled()) return;
+    switch (addr) {
+    case 0xFF4C: m_cgbEnabled = (v & 0x0C) == 0; break;     // KEY0: bits 2-3 set, DMG compatibility
+    case 0xFF4F: m_vramBank = v & 0x01; break;
+    case 0xFF68:
+        m_bgPalPos = v & 0x3F;
+        m_bgPalAutoInc = (v & 0x80) != 0;
+        break;
+    case 0xFF69: writeCgbPalette(m_bgPalPos, m_bgPal, m_bgPalAutoInc, v); break;
+    case 0xFF6A:
+        m_objPalPos = v & 0x3F;
+        m_objPalAutoInc = (v & 0x80) != 0;
+        break;
+    case 0xFF6B: writeCgbPalette(m_objPalPos, m_objPal, m_objPalAutoInc, v); break;
+    }
+}
+
+uint8_t Ppu::readCgbPalette(uint8_t pos, const uint16_t* pal) const {
+    if (m_mode <= PpuMode::OamEvaluation) return (uint8_t)(pal[pos >> 1] >> ((pos & 1) ? 8 : 0));
+    return 0xFF;                           // in mode 3 the PPU has them
+}
+
+void Ppu::writeCgbPalette(uint8_t& pos, uint16_t* pal, bool autoInc, uint8_t v) {
+    if (m_mode <= PpuMode::OamEvaluation) {
+        if (pos & 1) pal[pos >> 1] = (uint16_t)((pal[pos >> 1] & 0xFF) | (v << 8));
+        else pal[pos >> 1] = (uint16_t)((pal[pos >> 1] & 0xFF00) | v);
+    }
+    if (autoInc) pos = (pos + 1) & 0x3F;   // the index moves on even when the write is blocked
 }
 
 template void Ppu::oamCorruption<OamCorruption::Read>(uint16_t);

@@ -58,7 +58,7 @@ public:
     Sm83Core(Gameboy* gb, GbBus* bus);
 
     const char* isaName()     const override { return "sm83"; }
-    const char* variantName() const override { return "Sharp SM83 (DMG)"; }
+    const char* variantName() const override { return m_gb->isCgb() ? "Sharp SM83 (CGB)" : "Sharp SM83 (DMG)"; }
     uint32_t    isaCaps()     const override { return 0; }
 
     int                  regCount()             const override { return R_COUNT; }

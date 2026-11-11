@@ -1,5 +1,5 @@
-// The Game Boy (DMG) machine: gb::Gameboy with its screen, sound, joypad,
-// cartridge slot and battery saves, and the SM83 for the debugger.
+// The Game Boy (DMG) and Game Boy Color machines: gb::Gameboy with its screen,
+// sound, joypad, cartridge slot and battery saves, and the SM83 for the debugger.
 
 #include "machine_gameboy.h"
 #include "gameboy.h"
@@ -45,7 +45,7 @@ std::string withExt(const std::string& path, const char* ext) {
     return stem + ext;
 }
 
-/** The LCD: its four shades in the DMG's greens (BGB's palette). */
+/** The LCD: its four shades in the DMG's greens (BGB's palette), or the CGB's colours. */
 class GbVideo : public IOHandler, public IVideoOutput {
 public:
     static constexpr int WIDTH = 160, HEIGHT = 144;
@@ -61,6 +61,14 @@ public:
 
     VideoDimensions getDimensions() const override { return {WIDTH, HEIGHT, WIDTH, HEIGHT}; }
     void renderFrame(uint32_t* buffer) override {
+        if (m_gb->isCgb()) {
+            // 15-bit BGR, each 5-bit channel X to 8 bits as (X << 3) | (X >> 2) (c-sp's test pictures)
+            const uint16_t* c = m_gb->colorScreen();
+            auto ch = [](uint16_t v, int shift) { const uint32_t x = (v >> shift) & 0x1F; return (x << 3) | (x >> 2); };
+            for (int i = 0; i < WIDTH * HEIGHT; ++i)
+                buffer[i] = 0xFF000000 | ch(c[i], 0) << 16 | ch(c[i], 5) << 8 | ch(c[i], 10);
+            return;
+        }
         static const uint32_t SHADES[4] = {0xFFE0F8D0, 0xFF88C070, 0xFF346856, 0xFF081820};
         const uint8_t* s = m_gb->screen();
         for (int i = 0; i < WIDTH * HEIGHT; ++i) buffer[i] = SHADES[s[i] & 3];
@@ -183,11 +191,13 @@ struct GbMachine {
     void applyButtons() { gb.setButtons((uint8_t)(keys | joy[0] | joy[1] | pads[0])); }
     void powerOn() {
         std::vector<uint8_t> boot;
-        if (readFile(firmwareDir() + "/dmg_boot.bin", boot) && boot.size() == 256) gb.setBootRom(boot);
+        const bool cgb = gb.isCgb();
+        const size_t size = cgb ? 2304 : 256;
+        if (readFile(firmwareDir() + (cgb ? "/cgb_boot.bin" : "/dmg_boot.bin"), boot) && boot.size() == size) gb.setBootRom(boot);
         else gb.setBootRom({});
         gb.powerOn();
         if (audio) audio->reset();
-        nextHousekeeping = gb.cycles() + Gameboy::CLOCK_HZ / 60;
+        nextHousekeeping = gb.apuCycles() + Gameboy::CLOCK_HZ / 60;
     }
 };
 
@@ -268,10 +278,10 @@ void setButtons(MachineDescriptor* m, uint8_t buttons) {
     if (auto* gm = machineOf(m)) { gm->keys = buttons; gm->applyButtons(); }
 }
 
-MachineDescriptor* createMachine(std::string* /*err*/) {
+MachineDescriptor* createMachine(std::string* /*err*/, bool color) {
     auto* desc = new MachineDescriptor();
-    desc->machineId = "gameboy";
-    desc->displayName = "Nintendo Game Boy";
+    desc->machineId = color ? "gameboycolor" : "gameboy";
+    desc->displayName = color ? "Nintendo Game Boy Color" : "Nintendo Game Boy";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = {"cartridge"};
@@ -279,10 +289,13 @@ MachineDescriptor* createMachine(std::string* /*err*/) {
     desc->symbolFiles.push_back(PathUtil::findResource("roms/gameboy/hardware.sym"));   // $FF00-$FFFF's names
 
     auto* gm = new GbMachine();
+    if (color) gm->gb.setModel(Gameboy::Model::Cgb);
     auto* bus = new MachineBus(gm);
     desc->buses.push_back({"system", bus});
     auto* cpu = new Sm83Core(&gm->gb, bus);
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});
+    // Real time is the APU's clock (the CPU's runs twice as fast in the CGB's double speed)
+    desc->deviceCycles = [gm]() { return gm->gb.apuCycles(); };
 
     auto* video = new GbVideo(&gm->gb);
     auto* audio = new GbAudio(&gm->gb);
@@ -343,9 +356,9 @@ MachineDescriptor* createMachine(std::string* /*err*/) {
     desc->onReset = [gm](MachineDescriptor&) { gm->powerOn(); };
     desc->schedulerStep = [gm, cpu](MachineDescriptor&) -> int {
         const int c = cpu->step();
-        if (gm->gb.cycles() >= gm->nextHousekeeping) {
+        if (gm->gb.apuCycles() >= gm->nextHousekeeping) {
             // Sixty times a second: the sound to the host; once a second, the battery RAM to its file
-            gm->nextHousekeeping = gm->gb.cycles() + Gameboy::CLOCK_HZ / 60;
+            gm->nextHousekeeping = gm->gb.apuCycles() + Gameboy::CLOCK_HZ / 60;
             gm->audio->drain();
             if (++gm->ticks >= 60) { gm->ticks = 0; gm->flushSave(); }
         }

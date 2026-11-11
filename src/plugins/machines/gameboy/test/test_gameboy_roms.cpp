@@ -1,12 +1,15 @@
 // Freely redistributable Game Boy test ROMs (c-sp's gameboy-test-roms
-// collection: Blargg's, Mooneye's, Matt Currie's dmg-acid2), read from
-// MMEMU_GB_TEST_ROMS or ../refs/gameboy-test-roms (skipped when absent).
+// collection: Blargg's, Mooneye's, Matt Currie's dmg-acid2 and cgb-acid2,
+// SameSuite, AGE), read from MMEMU_GB_TEST_ROMS or ../refs/gameboy-test-roms
+// (skipped when absent).
 //
-// gb_blargg_tests runs Blargg's cpu_instrs, instr_timing and mem_timing and
-// dmg-acid2 (compared with its reference picture) and must pass. With
-// MMEMU_GB_SURVEY=1, gb_rom_survey also runs the rest of Blargg's DMG tests
-// and Mooneye's acceptance tests and prints what passes (MMEMU_GB_SHOW=1:
-// the failures' names).
+// gb_blargg_tests runs Blargg's cpu_instrs, instr_timing and mem_timing,
+// dmg-acid2 and, on the Game Boy Color, cgb-acid2 (each compared with its
+// reference picture) and must pass. With MMEMU_GB_SURVEY=1, gb_rom_survey
+// also runs the rest of Blargg's DMG tests and Mooneye's acceptance tests on
+// the DMG, then Blargg's, Mooneye's, SameSuite's and AGE's tests for the
+// CGB (CPU CGB E) on the Game Boy Color, and prints what passes of each
+// (MMEMU_GB_SHOW=1: the passes' names too).
 
 #include "test_harness.h"
 #include "plugins/machines/gameboy/main/gameboy.h"
@@ -44,10 +47,22 @@ bool start(gb::Gameboy& g, const std::string& path, bool sgb = false) {
     return true;
 }
 
+/** A Game Boy Color with `path` in it, through SameBoy's CGB boot ROM (as Mesen) to the cartridge's $0100. */
+bool startCgb(gb::Gameboy& g, const std::string& path) {
+    std::string err;
+    auto rom = readAll(path);
+    if (rom.empty() || !g.load(rom, err)) return false;
+    g.setModel(gb::Gameboy::Model::Cgb);
+    g.powerOn();
+    const uint64_t end = g.apuCycles() + 10ull * gb::Gameboy::CLOCK_HZ;
+    while (!g.bootRomDisabled() && g.apuCycles() < end) g.cpu().exec();
+    return g.bootRomDisabled();
+}
+
 /** Run until the serial output has "Passed" or "Failed" (Blargg), or `seconds` pass. */
 std::string runBlargg(gb::Gameboy& g, double seconds) {
-    const uint64_t end = g.cycles() + (uint64_t)(seconds * gb::Gameboy::CLOCK_HZ);
-    while (g.cycles() < end) {
+    const uint64_t end = g.apuCycles() + (uint64_t)(seconds * gb::Gameboy::CLOCK_HZ);
+    while (g.apuCycles() < end) {
         g.runTo(g.cycles() + 70224);
         // Done once "Passed" or "Failed" and the end of that line are out
         const std::string& s = g.serialOutput();
@@ -102,9 +117,9 @@ struct TextSpill : gb::AccessHook {
 
 /** Mooneye's: LD B,B then the Fibonacci numbers in B C D E H L. */
 bool mooneyePassed(gb::Gameboy& g, double seconds) {
-    const uint64_t end = g.cycles() + (uint64_t)(seconds * gb::Gameboy::CLOCK_HZ);
+    const uint64_t end = g.apuCycles() + (uint64_t)(seconds * gb::Gameboy::CLOCK_HZ);
     auto& s = g.cpu().state();
-    while (g.cycles() < end) {
+    while (g.apuCycles() < end) {
         g.runTo(g.cycles() + 70224);
         if (s.b == 3 && s.c == 5 && s.d == 8 && s.e == 13 && s.h == 21 && s.l == 34) return true;
         if (s.b == 0x42 && s.c == 0x42 && s.d == 0x42 && s.e == 0x42 && s.h == 0x42 && s.l == 0x42) return false;
@@ -112,12 +127,13 @@ bool mooneyePassed(gb::Gameboy& g, double seconds) {
     return false;
 }
 
-/** An 8-bit RGB (or grey) PNG's pixels as RGB triples; false if it isn't one. */
+/** An 8-bit RGB, grey or palette PNG's pixels as RGB triples; false if it isn't one. */
 bool decodePng(const std::vector<uint8_t>& png, int& w, int& h, std::vector<uint8_t>& rgb) {
     if (png.size() < 33 || std::memcmp(png.data(), "\x89PNG\r\n\x1a\n", 8) != 0) return false;
     size_t p = 8;
-    std::vector<uint8_t> idat;
+    std::vector<uint8_t> idat, plte;
     int depth = 0, type = 0;
+    w = h = 0;
     auto be32 = [&](size_t at) { return (uint32_t)png[at] << 24 | png[at + 1] << 16 | png[at + 2] << 8 | png[at + 3]; };
     while (p + 8 <= png.size()) {
         const uint32_t len = be32(p);
@@ -126,11 +142,13 @@ bool decodePng(const std::vector<uint8_t>& png, int& w, int& h, std::vector<uint
         const uint8_t* d = &png[p + 8];
         if (kind == "IHDR") { w = (int)be32(p + 8); h = (int)be32(p + 12); depth = d[8]; type = d[9]; }
         else if (kind == "IDAT") idat.insert(idat.end(), d, d + len);
+        else if (kind == "PLTE") plte.assign(d, d + len);
         p += 12 + len;
     }
-    // 8-bit RGB, or grey of 1, 2, 4 or 8 bits (dmg-acid2's is 2-bit)
-    const int channels = type == 2 ? 3 : type == 0 ? 1 : 0;
-    if (!channels || (type == 2 && depth != 8) || (depth != 1 && depth != 2 && depth != 4 && depth != 8)) return false;
+    // 8-bit RGB(A), or grey or palette indices of 1, 2, 4 or 8 bits (dmg-acid2's is 2-bit grey, cgb-acid2's 4-bit palette)
+    const int channels = type == 2 ? 3 : type == 6 ? 4 : (type == 0 || type == 3) ? 1 : 0;
+    if (!channels || (channels > 1 && depth != 8) || (depth != 1 && depth != 2 && depth != 4 && depth != 8)) return false;
+    if (type == 3 && plte.empty()) return false;
     const int bpp = std::max(1, channels * depth / 8);
     const size_t stride = ((size_t)w * channels * depth + 7) / 8;
     std::vector<uint8_t> raw((stride + 1) * h);
@@ -162,12 +180,16 @@ bool decodePng(const std::vector<uint8_t>& png, int& w, int& h, std::vector<uint
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
             const size_t i = (size_t)y * w + x;
-            if (channels == 3) {
-                for (int k = 0; k < 3; ++k) rgb[i * 3 + k] = img[y * stride + x * 3 + k];
+            if (channels > 1) {
+                for (int k = 0; k < 3; ++k) rgb[i * 3 + k] = img[y * stride + x * channels + k];
             } else {
                 const size_t bit = (size_t)x * depth;
                 const int v = (img[y * stride + bit / 8] >> (8 - depth - (int)(bit % 8))) & ((1 << depth) - 1);
-                rgb[i * 3] = rgb[i * 3 + 1] = rgb[i * 3 + 2] = (uint8_t)(v * 255 / ((1 << depth) - 1));
+                if (type == 3) {
+                    for (int k = 0; k < 3; ++k) rgb[i * 3 + k] = (size_t)v * 3 + k < plte.size() ? plte[v * 3 + k] : 0;
+                } else {
+                    rgb[i * 3] = rgb[i * 3 + 1] = rgb[i * 3 + 2] = (uint8_t)(v * 255 / ((1 << depth) - 1));
+                }
             }
         }
     return true;
@@ -185,12 +207,31 @@ int compareScreen(gb::Gameboy& g, const std::string& pngPath) {
     return diff;
 }
 
-std::vector<std::string> listGb(const std::string& dir) {
+/**
+ * The CGB's screen against a reference picture, each 5-bit channel X as (X << 3) | (X >> 2)
+ * (c-sp's convention); the pixels that differ.
+ */
+int compareColorScreen(gb::Gameboy& g, const std::string& pngPath) {
+    int w, h;
+    std::vector<uint8_t> rgb;
+    if (!decodePng(readAll(pngPath), w, h, rgb) || w != 160 || h != 144) return -1;
+    auto ch = [](uint16_t v, int shift) { const int x = (v >> shift) & 0x1F; return (x << 3) | (x >> 2); };
+    int diff = 0;
+    for (int i = 0; i < 160 * 144; ++i) {
+        const uint16_t c = g.colorScreen()[i];
+        if (ch(c, 0) != rgb[i * 3] || ch(c, 5) != rgb[i * 3 + 1] || ch(c, 10) != rgb[i * 3 + 2]) ++diff;
+    }
+    return diff;
+}
+
+std::vector<std::string> listGb(const std::string& dir, bool gbc = false) {
     std::vector<std::string> out;
     if (DIR* d = opendir(dir.c_str())) {
         while (dirent* e = readdir(d)) {
             const std::string n = e->d_name;
-            if (n.size() > 3 && n.compare(n.size() - 3, 3, ".gb") == 0) out.push_back(n);
+            if ((n.size() > 3 && n.compare(n.size() - 3, 3, ".gb") == 0) ||
+                (gbc && n.size() > 4 && n.compare(n.size() - 4, 4, ".gbc") == 0))
+                out.push_back(n);
         }
         closedir(d);
     }
@@ -218,11 +259,43 @@ bool forSgb(const std::string& name) {
     return models.find('S') != std::string::npos;
 }
 
+/**
+ * For the CGB we are (CPU CGB E)? By the file name's model suffix: none (all models); Mooneye's
+ * letters (C); or lower-case groups (dmgABC, mgb, sgb, cgb0, cgbABCDE, ncmBCE: CGB E in DMG mode)
+ * with a bare "cgb", or "cgb"/"ncm" and an E.
+ */
+bool forCgb(const std::string& name) {
+    const auto dot = name.rfind('.');
+    const auto dash = name.rfind('-');
+    if (dash == std::string::npos) return true;
+    const std::string models = name.substr(dash + 1, (dot == std::string::npos ? name.size() : dot) - dash - 1);
+    bool upper = !models.empty();
+    for (char c : models) if (c < 'A' || c > 'Z') upper = false;
+    if (upper) return models.find('C') != std::string::npos;
+    for (size_t i = 0; i < models.size();) {
+        size_t j = i;
+        while (j < models.size() && models[j] >= 'a' && models[j] <= 'z') ++j;
+        const std::string group = models.substr(i, j - i);
+        size_t k = j;
+        while (k < models.size() && !(models[k] >= 'a' && models[k] <= 'z')) ++k;
+        const std::string revs = models.substr(j, k - j);
+        if ((group == "cgb" && (revs.empty() || revs.find('E') != std::string::npos)) ||
+            (group == "ncm" && revs.find('E') != std::string::npos))
+            return true;
+        if (k == i) break;
+        i = k;
+    }
+    return false;
+}
+
 bool haveRoms() {
     std::ifstream f(romDir() + "/blargg/cpu_instrs/cpu_instrs.gb");
     if (!f) std::printf("  (no Game Boy test ROMs in %s: skipped)\n", romDir().c_str());
     return (bool)f;
 }
+
+void surveyDmg(const std::string& dir, bool show);
+void surveyCgb(const std::string& dir, bool show);
 
 }  // namespace
 
@@ -258,6 +331,15 @@ TEST_CASE(gb_blargg_tests) {
         std::printf("  dmg-acid2: %d pixels differ\n", diff);
         EXPECT_EQ(diff, 0);
     }
+    {
+        // The Game Boy Color: cgb-acid2 through SameBoy's boot ROM
+        gb::Gameboy g;
+        ASSERT(startCgb(g, dir + "/cgb-acid2/cgb-acid2.gbc"));
+        for (int i = 0; i < 60; ++i) g.runFrame();
+        const int diff = compareColorScreen(g, dir + "/cgb-acid2/cgb-acid2.png");
+        std::printf("  cgb-acid2: %d pixels differ\n", diff);
+        EXPECT_EQ(diff, 0);
+    }
 }
 
 TEST_CASE(gb_rom_survey) {
@@ -265,6 +347,15 @@ TEST_CASE(gb_rom_survey) {
     if (!haveRoms()) return;
     const std::string dir = romDir();
     const bool show = std::getenv("MMEMU_GB_SHOW") != nullptr;
+    const std::string only = std::getenv("MMEMU_GB_SURVEY");     // "dmg" or "cgb": that half only
+    if (only != "cgb") surveyDmg(dir, show);
+    if (only != "dmg") surveyCgb(dir, show);
+}
+
+namespace {
+
+/** Blargg's DMG tests and Mooneye's acceptance tests on the DMG (the SGB's on the SGB). */
+void surveyDmg(const std::string& dir, bool show) {
     int pass = 0, fail = 0;
     auto report = [&](const std::string& name, bool ok) {
         ok ? ++pass : ++fail;
@@ -309,3 +400,79 @@ TEST_CASE(gb_rom_survey) {
     std::printf("  Game Boy test ROMs: %d PASS, %d FAIL\n", pass, fail);
 }
 
+/** The Game Boy Color's (CPU CGB E), through SameBoy's boot ROM as Mesen: Blargg's, the acid tests, Mooneye's, SameSuite's, AGE's. */
+void surveyCgb(const std::string& dir, bool show) {
+    int cgbPass = 0, cgbFail = 0;
+    auto cgbReport = [&](const std::string& name, bool ok) {
+        ok ? ++cgbPass : ++cgbFail;
+        if (show || !ok) std::printf("    CGB %s %s\n", ok ? "PASS" : "FAIL", name.c_str());
+    };
+    // Blargg's whole suites, judged by their screens (c-sp's -cgb and -dmg-cgb pictures) after the time
+    // c-sp's howto gives them; oam_bug's CGB picture is its result on a CGB (which has no OAM bug)
+    struct Screen { const char* rom; const char* png; double seconds; };
+    for (const Screen& t : {Screen{"cpu_instrs/cpu_instrs.gb", "cpu_instrs/cpu_instrs-dmg-cgb.png", 31},
+                            Screen{"instr_timing/instr_timing.gb", "instr_timing/instr_timing-dmg-cgb.png", 1},
+                            Screen{"mem_timing/mem_timing.gb", "mem_timing/mem_timing-dmg-cgb.png", 3},
+                            Screen{"mem_timing-2/mem_timing.gb", "mem_timing-2/mem_timing-dmg-cgb.png", 4},
+                            Screen{"halt_bug.gb", "halt_bug-dmg-cgb.png", 2},
+                            Screen{"interrupt_time/interrupt_time.gb", "interrupt_time/interrupt_time-cgb.png", 2},
+                            Screen{"cgb_sound/cgb_sound.gb", "cgb_sound/cgb_sound-cgb.png", 37},
+                            Screen{"oam_bug/oam_bug.gb", "oam_bug/oam_bug-cgb.png", 21}}) {
+        gb::Gameboy g;
+        int diff = -1;
+        if (startCgb(g, dir + "/blargg/" + t.rom)) {
+            const uint64_t end = g.apuCycles() + (uint64_t)(t.seconds * gb::Gameboy::CLOCK_HZ);
+            while (g.apuCycles() < end) g.runFrame();
+            diff = compareColorScreen(g, dir + "/blargg/" + t.png);
+        }
+        cgbReport(std::string("blargg/") + t.rom + (diff ? " (" + std::to_string(diff) + " pixels differ)" : ""), diff == 0);
+    }
+    // Blargg's single tests: the serial port's or $A000's result
+    for (const char* sub : {"cpu_instrs/individual", "mem_timing/individual", "mem_timing-2/rom_singles", "cgb_sound/rom_singles"}) {
+        for (const auto& n : listGb(dir + "/blargg/" + sub)) {
+            gb::Gameboy g;
+            bool ok = startCgb(g, dir + "/blargg/" + sub + "/" + n);
+            if (ok) {
+                const std::string out = runBlargg(g, 40);
+                ok = out.find("Passed") != std::string::npos || blarggMemoryResult(g) == 0;
+            }
+            cgbReport(std::string("blargg/") + sub + "/" + n, ok);
+        }
+    }
+    // The acid tests and Mooneye's sprite priority (screens)
+    for (const Screen& t : {Screen{"cgb-acid2/cgb-acid2.gbc", "cgb-acid2/cgb-acid2.png", 1},
+                            Screen{"cgb-acid-hell/cgb-acid-hell.gbc", "cgb-acid-hell/cgb-acid-hell.png", 1},
+                            Screen{"mooneye-test-suite/manual-only/sprite_priority.gb", "mooneye-test-suite/manual-only/sprite_priority-cgb.png", 1}}) {
+        gb::Gameboy g;
+        int diff = -1;
+        if (startCgb(g, dir + "/" + t.rom)) {
+            const uint64_t end = g.apuCycles() + (uint64_t)(t.seconds * gb::Gameboy::CLOCK_HZ);
+            while (g.apuCycles() < end) g.runFrame();
+            diff = compareColorScreen(g, dir + "/" + t.png);
+        }
+        cgbReport(t.rom + (diff ? " (" + std::to_string(diff) + " pixels differ)" : std::string()), diff == 0);
+    }
+    // Mooneye's (acceptance, and misc's CGB ones), SameSuite's and AGE's register-checking tests for
+    // CGB E (by their names' model suffixes; AGE's without one compare screens, not run here)
+    struct Dir { std::string path; bool needSuffix; };
+    std::vector<Dir> dirs;
+    for (const char* sub : {"", "/bits", "/instr", "/interrupts", "/oam_dma", "/ppu", "/serial", "/timer"})
+        dirs.push_back({"mooneye-test-suite/acceptance" + std::string(sub), false});
+    for (const char* sub : {"", "/bits", "/ppu"}) dirs.push_back({"mooneye-test-suite/misc" + std::string(sub), true});
+    for (const char* sub : {"dma", "interrupt", "ppu", "apu", "apu/channel_1", "apu/channel_2", "apu/channel_3", "apu/channel_4"})
+        dirs.push_back({"same-suite/" + std::string(sub), false});
+    for (const char* sub : {"halt", "lcd-align-ly", "ly", "oam", "speed-switch", "speed-switch/caution", "stat-interrupt",
+                            "stat-mode", "stat-mode-sprites", "stat-mode-window", "vram"})
+        dirs.push_back({"age-test-roms/" + std::string(sub), true});
+    for (const auto& d : dirs) {
+        for (const auto& n : listGb(dir + "/" + d.path, true)) {
+            if (!forCgb(n) || (d.needSuffix && n.find('-') == std::string::npos)) continue;
+            gb::Gameboy g;
+            cgbReport(d.path + "/" + n, startCgb(g, dir + "/" + d.path + "/" + n) && mooneyePassed(g, 20));
+        }
+    }
+    std::printf("  Game Boy Color test ROMs: %d PASS, %d FAIL\n", cgbPass, cgbFail);
+}
+
+
+}  // namespace

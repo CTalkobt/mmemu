@@ -6,7 +6,10 @@
 // the wave channel with its DMG-only wave RAM access and corruption, the
 // noise channel, the frame sequencer clocked from DIV, length counters with
 // the extra clocking quirk, the envelope's "zombie mode", and the DACs'
-// slow fade in and out.
+// slow fade in and out. On the CGB (as Mesen): wave RAM reads and writes
+// reach the byte the channel is playing at any time and retriggering doesn't
+// corrupt it, powering on clears the length counters, and PCM12/PCM34 read
+// the channels' digital outputs.
 //
 // The output is Mesen's level, ((7 - digital) * DAC) per channel summed times
 // (master volume + 1) * 40, box-filtered down to the sample rate asked for.
@@ -29,6 +32,8 @@ public:
     uint8_t read(uint16_t addr);
     uint8_t peek(uint16_t addr) const;
     void write(uint16_t addr, uint8_t v);
+    /** The CGB's PCM12 ($FF76: square 1 low, square 2 high) and PCM34 ($FF77: wave, noise), as they are now. */
+    uint8_t pcm(uint16_t addr) const;
 
     /** Output `rate` samples a second when the Game Boy's clock runs at `clockHz` (default 32 kHz, 4.19 MHz). */
     void setSampleRate(double rate, double clockHz);

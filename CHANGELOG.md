@@ -7,6 +7,38 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy Color
+
+- **`gameboycolor` (also `gbc`, `cgb`)**: the Game Boy Color on the Game Boy
+  core (`gb::Gameboy::Model::Cgb`), each part as Mesen2 handles the CGB:
+  double speed (KEY1 and STOP, the PPU and the APU keeping their time), VRAM
+  bank 1 and the background's attributes (palette, bank, flips, priority),
+  work RAM banks 1-7, the colour palettes (auto-increment, blocked in mode
+  3), objects' palettes and banks, object order by OAM index and LCDC bit 0
+  as the objects' master priority, HDMA (general and per HBlank), the
+  CGB's OAM DMA conflicts, PCM12/PCM34, wave RAM while playing, the length
+  counters cleared at APU power on, `$FF72-$FF75`, RP as a stub, the tile
+  fetch glitch, and no OAM corruption or STAT write bug. `.gb` and `.gbc`
+  files attach; `gameboy` stays a DMG.
+- **Boot**: SameBoy's open source CGB boot ROM (MIT, as Mesen embeds it) is
+  built in, `roms/gameboy/cgb_boot.bin` (2304 bytes) replaces it. It
+  colourises a DMG cartridge and turns on the DMG compatibility mode (KEY0).
+  `setSkipBootRom()` starts at `$0100` in Pan Docs' CGB state instead, a DMG
+  cartridge getting the default compatibility colours (c-sp's).
+- **Screen**: 15-bit colours, each channel X as `(X << 3) | (X >> 2)`.
+  The debugger's memory shows the VRAM and work RAM banks selected.
+- **Shared with the DMG and the SGB**: the square channels' duty waveforms
+  in Mesen's current phase (SameSuite's `channel_1/2` duty, delay, restart
+  and volume tests now pass as in Mesen); the MBC3's clock runs in real
+  time. The DMG survey stays 109 PASS, 0 FAIL.
+- **Tests**: `cgb-acid2` in `gb_blargg_tests` (0 pixels differ);
+  `gb_rom_survey`'s CGB half (`MMEMU_GB_SURVEY=cgb` alone): Blargg's suites
+  against their CGB pictures and singles, `cgb-acid2`, `cgb-acid-hell`,
+  Mooneye's acceptance/misc, SameSuite and AGE tests for CPU CGB E: 157
+  PASS, 38 FAIL. Mesen2, built from its source and run on the same list,
+  fails the same 38 and Mooneye's `div_write` (passing here). Unit tests
+  `gb_cgb_*` and `gameboy_color_machine`.
+
 ### Game Boy: oam_bug's 7-timing_effect, run as built
 
 - That test prints 20 corrupted-OAM dumps, 10,525 bytes, to cartridge RAM

@@ -14,7 +14,7 @@ namespace gb {
 
 uint8_t GbBus::peek8(uint32_t addr) {
     const uint16_t a = (uint16_t)addr;
-    if (a >= 0x8000 && a < 0xA000) return m_gb->ppu().vram()[a & 0x1FFF];
+    if (a >= 0x8000 && a < 0xA000) return m_gb->ppu().vram()[(m_gb->ppu().vramBank() << 13) | (a & 0x1FFF)];
     if (a >= 0xFE00 && a < 0xFEA0) return m_gb->ppu().oam()[a & 0xFF];
     return m_gb->peek(a);
 }
@@ -22,7 +22,7 @@ uint8_t GbBus::peek8(uint32_t addr) {
 void GbBus::write8(uint32_t addr, uint8_t v) {
     const uint16_t a = (uint16_t)addr;
     if (m_observer) m_observer->onMemoryWrite(this, a, peek8(a), v);
-    if (a >= 0x8000 && a < 0xA000) m_gb->ppu().vram()[a & 0x1FFF] = v;     // whatever the PPU's mode
+    if (a >= 0x8000 && a < 0xA000) m_gb->ppu().vram()[(m_gb->ppu().vramBank() << 13) | (a & 0x1FFF)] = v;   // whatever the PPU's mode
     else if (a >= 0xFE00 && a < 0xFEA0) m_gb->ppu().oam()[a & 0xFF] = v;
     else m_gb->write(a, v);
 }
@@ -154,7 +154,7 @@ int Sm83Core::step() {
     // An interrupt's dispatch is a step of its own (exec() returns after it)
     if (!cpu.irqDispatchPending()) {
         // (halted: an interrupt requested and enabled wakes it to run the next one, IME or not)
-        const bool runsOp = !s.stopped && (!cpu.halted() || s.haltBug || m_gb->pendingIrq() != 0);
+        const bool runsOp = !s.stopped && (!cpu.halted() || s.haltBug || (s.haltCounter == 1 && m_gb->pendingIrq() != 0));
         if (m_observer && runsOp) {
             if (m_observer->needsDisasm()) {
                 DisasmEntry entry;
@@ -197,7 +197,9 @@ bool Sm83Core::isReturnAt(IBus* bus, uint32_t addr) {
 }
 
 bool Sm83Core::isProgramEnd(IBus*) {
-    return m_gb->cpu().halted() && !m_gb->cpu().state().stopped && (m_gb->peek(0xFFFF) & 0x1F) == 0;
+    // (haltCounter above 1: the CGB switching speed, not locked up)
+    const auto& s = m_gb->cpu().state();
+    return s.haltCounter == 1 && !s.stopped && (m_gb->peek(0xFFFF) & 0x1F) == 0;
 }
 
 int Sm83Core::writeCallHarness(IBus* bus, uint32_t scratch, uint32_t routineAddr) {

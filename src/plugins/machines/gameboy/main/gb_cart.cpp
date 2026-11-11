@@ -187,7 +187,7 @@ public:
     }
 private:
     void updateTime() {
-        const uint64_t now = m_gb->cycles();
+        const uint64_t now = m_gb->apuCycles();          // real time (the CPU's clock doubles in the CGB's double speed)
         if (now > m_lastCycle) m_rtc.tick(now - m_lastCycle);
         m_lastCycle = now;
     }
