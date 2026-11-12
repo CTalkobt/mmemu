@@ -167,6 +167,12 @@ private:
     uint8_t m_replayValue = 0;
     void syncTo(int cycle);
     void pollInterrupts();
+    // RDY (VICE maincpu_steal_cycles): an interrupt asserted while BA holds
+    // the cycle after the poll (the last, mostly) is taken after the
+    // instruction, as if polled
+    int  m_lastCycle = -1;              // that cycle (from 0)
+    bool m_lastChecked = true;
+    void stallPoll(int cycle);
     uint16_t m_branchTarget = 0;        // BPREL: the branch target
 
 public:

@@ -1100,7 +1100,7 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
             if (line.find_first_not_of(' ') != std::string::npos) printf("    | %s\n", line.c_str());
         }
     }
-    if (code != 0) {
+    if (code != 0 || std::getenv("MMEMU_VICE_RUN")) {
         if (const char* dump = std::getenv("MMEMU_VICE_DUMP")) {   // the 64K as the CPU sees it, for diffing
             std::ofstream out(dump, std::ios::binary);
             for (uint32_t a = 0; a < 0x10000; ++a) out.put((char)bus->peek8(a));
@@ -1127,6 +1127,17 @@ TEST_CASE(c64_vice_testprogs) {
         if (sscanf(sh, "%d/%d", &shard, &shards) != 2 || shards < 1) shard = 0, shards = 1;
     }
     ensureRegistriesAndLoad();
+    // MMEMU_VICE_RUN=<prg>[,<cycles>]: just that program (a path under the
+    // root), e.g. a "record" program whose results MMEMU_VICE_DUMP keeps
+    if (const char* one = std::getenv("MMEMU_VICE_RUN")) {
+        std::string spec(one), prg = spec;
+        uint64_t limit = 100000000;
+        const size_t comma = spec.find(',');
+        if (comma != std::string::npos) { prg = spec.substr(0, comma); limit = std::stoull(spec.substr(comma + 1)); }
+        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit);
+        printf("  vice %-60s %s (%d)\n", prg.c_str(), code == 0 ? "pass" : "FAIL", code);
+        return;
+    }
     std::ifstream list(std::string(root) + "/testbench/c64-testlist.in");
     ASSERT(list.good());
     std::string line;

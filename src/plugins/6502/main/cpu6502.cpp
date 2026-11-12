@@ -146,7 +146,24 @@ void MOS6502::write(uint16_t addr, uint8_t val) {
 void MOS6502::syncTo(int cycle) {
     if (!m_sync) return;
     if (!m_polled && cycle >= m_pollCycle) pollInterrupts();
+    if (!m_lastChecked && cycle >= m_lastCycle) stallPoll(m_lastCycle);
     m_baWaits = m_sync(cycle);
+}
+
+// Run the BA waits of the last cycle (`~cycle` to the access sync: its waits,
+// not the cycle); if it waited, the interrupt lines count as polled at its
+// end (VICE: a steal adds a cycle to the interrupt's delay; not for SEI)
+void MOS6502::stallPoll(int cycle) {
+    m_lastChecked = true;
+    if (!m_sync) return;
+    m_baWaits = m_sync(~cycle);
+    if (!((m_baWaits >> cycle) & 1)) return;
+    if (m_curOp != 0x78 && m_state.irqLine && !(m_state.p & FLAG_I)) m_irqPending = true;
+    if ((m_state.nmiLine && !m_state.nmiPrev) || m_nmiEdge) {
+        m_nmiPending = true;
+        m_nmiEdge = false;
+        m_state.nmiPrev = m_state.nmiLine;
+    }
 }
 
 // The 6502 samples IRQ (level, against I) and NMI (edge) in an instruction's
@@ -1159,6 +1176,8 @@ int MOS6502::step() {
     if (m_sync) {
         m_readCycle = m_isRmw[op] ? baseTotal - 3 : baseTotal - 1;
         m_writeCycle = baseTotal - 1;
+        m_lastCycle = baseTotal - 1;
+        m_lastChecked = false;
         if (!m_polled || m_pollCycle != baseTotal - 2) {
             m_pollCycle = baseTotal - 2;
             m_polled = false;
@@ -1182,7 +1201,14 @@ int MOS6502::step() {
             if (info.mode != Mode::REL || total - baseTotal != 1) m_pollCycle = total - 2;
             pollInterrupts();
         }
+        // The cycle after the poll: the last, but for a taken branch that
+        // doesn't cross a page (which delays interrupts a cycle more) its
+        // operand cycle (VICE OPCODE_DELAYS_INTERRUPT; interrupts/irqdma test5)
+        const int stallCycle = (info.mode == Mode::REL && total - baseTotal == 1) ? 1 : total - 1;
+        if (m_lastCycle != stallCycle) { m_lastCycle = stallCycle; m_lastChecked = false; }
+        if (!m_lastChecked) stallPoll(m_lastCycle);
         m_readCycle = m_writeCycle = -1;
+        m_lastCycle = -1;
     }
     return total;
 }

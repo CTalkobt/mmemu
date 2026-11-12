@@ -1045,10 +1045,23 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             int t = 0;          // bus cycles so far, BA waits included
             int ticked = 0;     // bus cycles the devices have run
             uint32_t waited = 0; // CPU cycles that waited for BA (bit i: cycle i)
-            // Through CPU cycle k: a read cycle waits while BA is low.
+            // Through CPU cycle k: a read cycle waits while BA is low; `~k`:
+            // through cycle k's waits, not the cycle (the CPU's RDY poll).
             // Returns the cycles so far that waited (SHA, ANE use it).
             uint32_t advance(int k) {
                 const uint32_t writes = cpu->lastStepWrites();
+                if (k < 0) {
+                    k = ~k;
+                    if (k > 0) advance(k - 1);
+                    if (i == k && !(i < 32 && ((writes >> i) & 1)))
+                        while (ba->baLow(t - ticked)) {
+                            ++t;
+                            if (i < 32) waited |= 1u << i;
+                            if (d->ioRegistry) d->ioRegistry->tickAll(1);
+                            ++ticked;
+                        }
+                    return waited;
+                }
                 while (i <= k) {
                     if (!(i < 32 && ((writes >> i) & 1)))
                         while (ba->baLow(t - ticked)) {
