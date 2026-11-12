@@ -26,6 +26,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
   `sgb_bios.bin` (Mesen's names, 256 bytes); otherwise SameBoy's, built in.
   The cartridge description names the file.
 
+### VICE's test programs: interrupts under the VIC-II's DMA
+
+- **IRQ/NMI during a stall:** an interrupt raised while BA holds the cycle
+  after the poll is now taken after the instruction, as VICE's
+  `maincpu_steal_cycles` does (a steal counts as a cycle of the interrupt's
+  delay). That cycle is the last, but in a taken branch that doesn't cross a
+  page (which delays interrupts a cycle more) it is the operand cycle. The
+  access sync takes `~k` to run only cycle k's BA waits.
+- **Runner:** `MMEMU_VICE_RUN=<path>[,<cycles>]` runs one program from the tree
+  (e.g. irqdma's `record*.prg`) and `MMEMU_VICE_DUMP` keeps its memory, to diff
+  measurements against a test's reference data.
+- VICE programs now passing: all of `interrupts/irqdma` (17 runs); `record1`
+  and `record5` match the real C64's 16384 measurements each.
+  Tests: `cpu6502_irq_during_stall_of_last_cycle`,
+  `cpu6502_irq_during_stall_of_taken_branch`.
+
 ### Game Boy Color
 
 - **`gameboycolor` (also `gbc`, `cgb`)**: the Game Boy Color on the Game Boy

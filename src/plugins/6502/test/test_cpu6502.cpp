@@ -457,3 +457,42 @@ TEST_CASE(cpu6502_jsr_reads_high_byte_after_push) {
     ASSERT(bus.read8(0x0100) == 0x01);
     ASSERT(bus.read8(0x01FF) == 0x00);
 }
+
+// RDY: an IRQ raised while BA holds the cycle after the poll (VICE
+// maincpu_steal_cycles) is taken after the instruction. The access sync stub
+// raises IRQ during the waits (`~k`) of cycle `stallAt` and reports them.
+namespace {
+int stepAfterStall(const uint8_t* prog, size_t len, int stallAt, bool zero) {
+    FlatMemoryBus bus("system", 16);
+    MOS6502 cpu;
+    cpu.setDataBus(&bus);
+    for (size_t i = 0; i < len; ++i) bus.write8(0xC000 + i, prog[i]);
+    bus.write8(0xFFFE, 0x00); bus.write8(0xFFFF, 0xD0);
+    cpu.setPc(0xC000);
+    cpu.regWrite(5, zero ? FLAG_Z | FLAG_U : FLAG_U);           // I clear
+    uint32_t waited = 0;
+    bool first = true;
+    cpu.setAccessSync([&](int k) -> uint32_t {
+        if (first && k < 0 && ~k == stallAt) { waited |= 1u << stallAt; cpu.setIrqLine(true); }
+        return waited;
+    });
+    cpu.step();
+    first = false;
+    cpu.step();
+    return (int)cpu.pc();
+}
+} // namespace
+
+TEST_CASE(cpu6502_irq_during_stall_of_last_cycle) {
+    const uint8_t nops[] = { 0xEA, 0xEA, 0xEA };
+    ASSERT_EQ(stepAfterStall(nops, 3, 1, false), 0xD000);      // NOP's last cycle stalled: IRQ next
+    ASSERT_EQ(stepAfterStall(nops, 3, 0, false), 0xC002);      // its first: not the cycle after the poll
+}
+
+// A taken branch that doesn't cross a page delays interrupts a cycle: a stall
+// in its operand cycle counts, one in its last cycle doesn't (irqdma test5)
+TEST_CASE(cpu6502_irq_during_stall_of_taken_branch) {
+    const uint8_t beqs[] = { 0xF0, 0x00, 0xF0, 0x00, 0xEA };
+    ASSERT_EQ(stepAfterStall(beqs, 5, 1, true), 0xD000);
+    ASSERT_EQ(stepAfterStall(beqs, 5, 2, true), 0xC004);
+}
