@@ -48,11 +48,12 @@ bool start(gb::Gameboy& g, const std::string& path, bool sgb = false) {
 }
 
 /** A Game Boy Color with `path` in it, through SameBoy's CGB boot ROM (as Mesen) to the cartridge's $0100. */
-bool startCgb(gb::Gameboy& g, const std::string& path) {
+bool startCgb(gb::Gameboy& g, const std::string& path, const std::vector<uint8_t>& bootRom = {}) {
     std::string err;
     auto rom = readAll(path);
     if (rom.empty() || !g.load(rom, err)) return false;
     g.setModel(gb::Gameboy::Model::Cgb);
+    if (!bootRom.empty()) g.setBootRom(bootRom);
     g.powerOn();
     const uint64_t end = g.apuCycles() + 10ull * gb::Gameboy::CLOCK_HZ;
     while (!g.bootRomDisabled() && g.apuCycles() < end) g.cpu().exec();
@@ -211,15 +212,16 @@ int compareScreen(gb::Gameboy& g, const std::string& pngPath) {
  * The CGB's screen against a reference picture, each 5-bit channel X as (X << 3) | (X >> 2)
  * (c-sp's convention); the pixels that differ.
  */
-int compareColorScreen(gb::Gameboy& g, const std::string& pngPath) {
+int compareColorScreen(gb::Gameboy& g, const std::string& pngPath, int tolerance = 0) {
     int w, h;
     std::vector<uint8_t> rgb;
     if (!decodePng(readAll(pngPath), w, h, rgb) || w != 160 || h != 144) return -1;
     auto ch = [](uint16_t v, int shift) { const int x = (v >> shift) & 0x1F; return (x << 3) | (x >> 2); };
+    auto near = [tolerance](int a, int b) { return std::abs(a - b) <= tolerance; };
     int diff = 0;
     for (int i = 0; i < 160 * 144; ++i) {
         const uint16_t c = g.colorScreen()[i];
-        if (ch(c, 0) != rgb[i * 3] || ch(c, 5) != rgb[i * 3 + 1] || ch(c, 10) != rgb[i * 3 + 2]) ++diff;
+        if (!near(ch(c, 0), rgb[i * 3]) || !near(ch(c, 5), rgb[i * 3 + 1]) || !near(ch(c, 10), rgb[i * 3 + 2])) ++diff;
     }
     return diff;
 }
@@ -408,8 +410,9 @@ void surveyCgb(const std::string& dir, bool show) {
         if (show || !ok) std::printf("    CGB %s %s\n", ok ? "PASS" : "FAIL", name.c_str());
     };
     // Blargg's whole suites, judged by their screens (c-sp's -cgb and -dmg-cgb pictures) after the time
-    // c-sp's howto gives them; oam_bug's CGB picture is its result on a CGB (which has no OAM bug)
-    struct Screen { const char* rom; const char* png; double seconds; };
+    // c-sp's howto gives them; oam_bug's CGB picture is its result on a CGB (which has no OAM bug),
+    // made with X<<3 for each channel (white $F8F8F8, not the howto's $FFFFFF): within 7 for that one
+    struct Screen { const char* rom; const char* png; double seconds; int tolerance = 0; };
     for (const Screen& t : {Screen{"cpu_instrs/cpu_instrs.gb", "cpu_instrs/cpu_instrs-dmg-cgb.png", 31},
                             Screen{"instr_timing/instr_timing.gb", "instr_timing/instr_timing-dmg-cgb.png", 1},
                             Screen{"mem_timing/mem_timing.gb", "mem_timing/mem_timing-dmg-cgb.png", 3},
@@ -417,13 +420,13 @@ void surveyCgb(const std::string& dir, bool show) {
                             Screen{"halt_bug.gb", "halt_bug-dmg-cgb.png", 2},
                             Screen{"interrupt_time/interrupt_time.gb", "interrupt_time/interrupt_time-cgb.png", 2},
                             Screen{"cgb_sound/cgb_sound.gb", "cgb_sound/cgb_sound-cgb.png", 37},
-                            Screen{"oam_bug/oam_bug.gb", "oam_bug/oam_bug-cgb.png", 21}}) {
+                            Screen{"oam_bug/oam_bug.gb", "oam_bug/oam_bug-cgb.png", 21, 7}}) {
         gb::Gameboy g;
         int diff = -1;
         if (startCgb(g, dir + "/blargg/" + t.rom)) {
             const uint64_t end = g.apuCycles() + (uint64_t)(t.seconds * gb::Gameboy::CLOCK_HZ);
             while (g.apuCycles() < end) g.runFrame();
-            diff = compareColorScreen(g, dir + "/blargg/" + t.png);
+            diff = compareColorScreen(g, dir + "/blargg/" + t.png, t.tolerance);
         }
         cgbReport(std::string("blargg/") + t.rom + (diff ? " (" + std::to_string(diff) + " pixels differ)" : ""), diff == 0);
     }
@@ -464,15 +467,35 @@ void surveyCgb(const std::string& dir, bool show) {
     for (const char* sub : {"halt", "lcd-align-ly", "ly", "oam", "speed-switch", "speed-switch/caution", "stat-interrupt",
                             "stat-mode", "stat-mode-sprites", "stat-mode-window", "vram"})
         dirs.push_back({"age-test-roms/" + std::string(sub), true});
+    // Mooneye's checks of what Nintendo's CGB boot ROM leaves (DIV's phase after its logo, its chime still
+    // sounding in PCM12, the palette indexes): run with your own Nintendo boot ROM, MMEMU_GB_FIRMWARE or
+    // roms/gameboy/cgb_boot.bin (2304 bytes), else skipped (SameBoy's built-in one ends sooner and quieter)
+    auto nintendoBootOnly = [](const std::string& n) {
+        return n == "boot_div-cgbABCDE.gb" || n == "boot_hwio-C.gb" || n == "unused_hwio-C.gb";
+    };
+    const char* fw = std::getenv("MMEMU_GB_FIRMWARE");
+    std::vector<uint8_t> nintendoBoot = readAll((fw ? std::string(fw) : std::string("roms/gameboy")) + "/cgb_boot.bin");
+    if (nintendoBoot.size() != 2304) nintendoBoot.clear();
+    int cgbSkip = 0;
     for (const auto& d : dirs) {
         for (const auto& n : listGb(dir + "/" + d.path, true)) {
             if (!forCgb(n) || (d.needSuffix && n.find('-') == std::string::npos)) continue;
+            const bool nintendo = nintendoBootOnly(n);
+            if (nintendo && nintendoBoot.empty()) {
+                ++cgbSkip;
+                if (show) std::printf("    CGB SKIP %s/%s (needs Nintendo's CGB boot ROM)\n", d.path.c_str(), n.c_str());
+                continue;
+            }
             gb::Gameboy g;
-            cgbReport(d.path + "/" + n, startCgb(g, dir + "/" + d.path + "/" + n) && mooneyePassed(g, 20));
+            cgbReport(d.path + "/" + n + (nintendo ? " (Nintendo's boot ROM)" : ""),
+                      startCgb(g, dir + "/" + d.path + "/" + n, nintendo ? nintendoBoot : std::vector<uint8_t>{}) && mooneyePassed(g, 20));
         }
     }
-    std::printf("  Game Boy Color test ROMs: %d PASS, %d FAIL\n", cgbPass, cgbFail);
+    std::printf("  Game Boy Color test ROMs: %d PASS, %d FAIL", cgbPass, cgbFail);
+    if (cgbSkip) std::printf(", %d skipped (they need Nintendo's CGB boot ROM in roms/gameboy/cgb_boot.bin)", cgbSkip);
+    std::printf("\n");
 }
 
 
 }  // namespace
+
