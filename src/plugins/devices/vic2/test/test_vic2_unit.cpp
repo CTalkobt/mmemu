@@ -712,3 +712,77 @@ TEST_CASE(video_output_rgba_bytes) {
     ASSERT_EQ(bytes[4], (uint8_t)0x11);
     ASSERT_EQ(bytes[7], (uint8_t)0x80);
 }
+
+// --- Sprite collisions (VICE's sprite sequencer) ---
+
+namespace {
+// Sprite n at (x, y) showing one pixel (bit 7 of its first byte), data at $2000
+void oneDotSprite(VicFixture& f, int n, int x, int y) {
+    f.bus.write8(0x07F8 + n, 0x80);
+    f.bus.write8(0x2000, 0x80);
+    f.vic.ioWrite(nullptr, 0xD000 + 2 * n, (uint8_t)(x & 0xFF));
+    uint8_t msb = 0;
+    f.vic.ioRead(nullptr, 0xD010, &msb);
+    f.vic.ioWrite(nullptr, 0xD010, (uint8_t)((x & 0x100) ? (msb | (1 << n)) : (msb & ~(1 << n))));
+    f.vic.ioWrite(nullptr, 0xD001 + 2 * n, (uint8_t)y);
+}
+void runFrame(VicFixture& f) { f.vic.tick((uint64_t)VIC2::PAL_CYCLES_PER_LINE * 312); }
+} // namespace
+
+TEST_CASE(vic2_sprite_sprite_collision) {
+    VicFixture f;
+    oneDotSprite(f, 0, 100, 100);
+    oneDotSprite(f, 1, 100, 100);
+    f.vic.ioWrite(nullptr, 0xD01A, 0x04);             // sprite-sprite IRQ
+    f.vic.ioWrite(nullptr, 0xD015, 0x03);
+    runFrame(f);
+    uint8_t v;
+    f.vic.ioRead(nullptr, 0xD019, &v);
+    ASSERT(v & 0x04);
+    ASSERT(f.irq.m_level);
+    f.vic.ioRead(nullptr, 0xD01E, &v);
+    ASSERT_EQ(v, (uint8_t)0x03);
+    f.vic.ioRead(nullptr, 0xD01E, &v);                // cleared by the read
+    ASSERT_EQ(v, (uint8_t)0x00);
+    // One pixel apart: no collision
+    oneDotSprite(f, 1, 101, 100);
+    runFrame(f);
+    f.vic.ioRead(nullptr, 0xD01E, &v);
+    ASSERT_EQ(v, (uint8_t)0x00);
+}
+
+// PAL puts out no X from $1F8 to $1FF: a sprite there never starts
+TEST_CASE(vic2_sprite_gap_pal) {
+    VicFixture f;
+    oneDotSprite(f, 0, 0x1F8, 100);
+    oneDotSprite(f, 1, 0x1F8, 100);
+    f.vic.ioWrite(nullptr, 0xD015, 0x03);
+    runFrame(f);
+    uint8_t v;
+    f.vic.ioRead(nullptr, 0xD01E, &v);
+    ASSERT_EQ(v, (uint8_t)0x00);
+    oneDotSprite(f, 0, 0x1F7, 100);
+    oneDotSprite(f, 1, 0x1F7, 100);
+    runFrame(f);
+    f.vic.ioRead(nullptr, 0xD01E, &v);
+    ASSERT_EQ(v, (uint8_t)0x03);
+}
+
+// A sprite pixel on a character's foreground pixel: text row 0 starts on
+// line $33 (YSCROLL 3), its first pixel at X 24
+TEST_CASE(vic2_sprite_background_collision) {
+    VicFixture f;
+    f.charRom[0] = 0x80;                               // screen code 0, row 0: leftmost pixel
+    oneDotSprite(f, 0, 24, 0x32);                      // shown from line $33
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    runFrame(f);
+    runFrame(f);                                       // DEN seen on line $30
+    uint8_t v;
+    f.vic.ioRead(nullptr, 0xD01F, &v);
+    ASSERT_EQ(v, (uint8_t)0x01);
+    oneDotSprite(f, 0, 25, 0x32);
+    f.vic.ioRead(nullptr, 0xD01F, &v);
+    runFrame(f);
+    f.vic.ioRead(nullptr, 0xD01F, &v);
+    ASSERT_EQ(v, (uint8_t)0x00);
+}

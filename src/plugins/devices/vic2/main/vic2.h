@@ -274,6 +274,35 @@ protected:
 
     std::vector<uint8_t> m_fgMask;  ///< filled by renderBackground for sprite priority
     void updateIrq();
+    /** Sprite collisions on raster line `line` ($D01E/$D01F and their IRQs)
+     *  for its pixels from m_collT up to pixel time `tTo` (8 per cycle, 0 at
+     *  the line's first cycle), from the registers and memory as they are. */
+    void evalCollisions(int line, int tTo);
+    int  m_collT = 0;               ///< pixel time of this line evaluated for collisions
+    /** VICE's sprite sequencer state (viciisc vicii-draw-cycle.c). */
+    struct SpriteSeq {
+        uint32_t sbuf[8] = {};      ///< shift registers (24 bits)
+        uint8_t  pixel[8] = {};     ///< the pixel each puts out (0-3)
+        int      xPipe[8] = {};     ///< X as the register was a cycle ago
+        uint8_t  pending = 0, active = 0, halt = 0;
+        uint8_t  expxFlops = 0, mcFlops = 0;
+        uint8_t  mc = 0, pri = 0, expx = 0;
+    } m_seq;
+    int  cycleXpos(int c) const;
+    int  sprDma0In(int c) const;
+    int  lineDots() const { return m_cyclesPerLine * 8; }
+    /** The pixel time a CPU read in the current cycle sees collisions up to:
+     *  the pixels of the cycles before it (VICE testprogs VICII/spritecollisions
+     *  sprite-*-collision-cycle, PAL). */
+    int  collReadT() const { return (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine) * 8; }
+    /** Pixel time (8 per cycle from the line's first) of sprite X `x`: VICE's
+     *  cycle tables, X rounded down to 8 per cycle; PAL's first cycle draws
+     *  X $190-$197, its 13th $1F0-$1F7 and its 14th $000-$007, so X $1F8-$1FF
+     *  never comes (VICE testprogs VICII/spritegap). */
+    int  xToT(int x) const {
+        const int x0 = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 0x198 : 0x190;
+        return ((x - x0) % lineDots() + lineDots()) % lineDots();
+    }
 
     std::string  m_name;
     uint32_t     m_baseAddr;
