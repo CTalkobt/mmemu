@@ -5,7 +5,11 @@
 // cycle as Mesen (the machine cycle runs before the access in it), with the
 // HALT bug, the interrupt dispatch that re-reads IE/IF part way (ie_push),
 // EI's delay, STOP until a button (on the CGB with KEY1 armed, the speed
-// switch instead), and the illegal opcodes locking up.
+// switch instead), and the illegal opcodes locking up. Where the test ROMs
+// (verified on hardware) differ from Mesen, SameBoy's timing (Core/sm83_cpu.c,
+// timing.c; MIT): HALT looks at the interrupts a cycle late and with one
+// pending and IME set doesn't halt, and the speed switch's DIV reset and
+// pause.
 
 #include "gb_ppu.h"
 #include <cstdint>
@@ -51,7 +55,6 @@ private:
     void execOp(uint8_t op);
     void execCb();
     void nextCycleStart();
-    void haltBugStep();
     bool stoppedStep();
     void cgbSpeedSwitch();
 
@@ -106,11 +109,17 @@ private:
     void stop();
     void invalidOp();
 
+    /** The CGB's halt after a speed switch, in machine cycles (SameBoy's 0x20008 clocks at the new speed: spsw-div). */
+    static constexpr uint16_t SPEED_SWITCH_PAUSE = 32769;
+
     Gameboy* m_gb = nullptr;
     Ppu* m_ppu = nullptr;
     State m_s;
     uint8_t m_prevIrq = 0;
     bool m_splitDispatch = false;
+    bool m_justHalted = false;          // HALT run: its interrupt check is the next cycle's
+    bool m_stopDivReset = false;        // STOP's DIV reset, at the end of the next machine cycle
+    uint8_t m_toggleIn = 0;             // the speed switch's change of speed, this many cycles into its pause
 };
 
 }  // namespace gb

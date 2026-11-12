@@ -314,6 +314,7 @@ void Gameboy::powerOn(SgbLink* sgb) {
     m_serialOut.clear();
     m_joySelect = 0x30;
     m_highSpeed = m_speedSwitchRequest = false;
+    m_frameSeqDelay = 0;
     m_wramBank = 1;
     m_hdmaSource = m_hdmaDest = 0;
     m_hdmaLength = 0;
@@ -729,11 +730,15 @@ uint8_t Gameboy::readJoypad() const {
 // ---------------------------------------------------------------------------
 
 void Gameboy::timerExec() {
+    if (m_frameSeqDelay && --m_frameSeqDelay == 0) {
+        if (m_frameSeqDelayedRise) m_apu.frameSequencerRise();
+        else m_apu.clockFrameSequencer();
+    }
     if ((m_div & 3) == 2) {
         m_reloaded = false;
         if (m_needReload) reloadTimer();
     }
-    setDivider((uint16_t)(m_div + 2));
+    setDivider((uint16_t)(m_div + 2), true);
 }
 
 void Gameboy::reloadTimer() {
@@ -743,13 +748,39 @@ void Gameboy::reloadTimer() {
     m_reloaded = true;
 }
 
-void Gameboy::setDivider(uint16_t v) {
+void Gameboy::setDivider(uint16_t v, bool counting) {
     if (m_timerOn && !(v & m_timerBit) && (m_div & m_timerBit)) {
         if (++m_tima == 0) m_needReload = true;
     }
     const uint16_t frameSeqBit = m_highSpeed ? 0x2000 : 0x1000;
-    if (!(v & frameSeqBit) && (m_div & frameSeqBit)) m_apu.clockFrameSequencer();
+    const bool fall = !(v & frameSeqBit) && (m_div & frameSeqBit), rise = (v & frameSeqBit) && !(m_div & frameSeqBit);
+    if (counting && (fall || rise) && m_apu.speedSwitchDelay()) {
+        // Counted a machine cycle late (half of one in normal speed) after the speed switch
+        // that delays it (AGE's m_current_ds_delay: spsw-ch2-lc-delay)
+        m_frameSeqDelay = m_highSpeed ? 2 : 1;
+        m_frameSeqDelayedRise = rise;
+    } else if (fall) {
+        m_apu.clockFrameSequencer();
+    } else if (rise) {
+        m_apu.frameSequencerRise();
+    }
     m_div = v;
+}
+
+void Gameboy::resetDivider(bool duringStop) {
+    if (duringStop) {
+        // STOP's DIV reset doesn't see a bit that rose in this machine cycle fall (AGE's speed
+        // change glitch): TIMA doesn't tick, but at 262 kHz (CGB E: spsw-tima, spsw-interrupts),
+        // nor does the frame sequencer step
+        auto justRose = [this](uint16_t bit) {
+            const unsigned low = m_div & (2u * bit - 1);
+            return low >= bit && low < bit + 4u;
+        };
+        if (m_timerOn && m_timerBit != (1 << 3) && justRose(m_timerBit)) m_div &= (uint16_t)~m_timerBit;
+        const uint16_t frameSeqBit = m_highSpeed ? 0x2000 : 0x1000;
+        if (justRose(frameSeqBit)) m_div &= (uint16_t)~frameSeqBit;
+    }
+    setDivider(0, false);
 }
 
 uint8_t Gameboy::timerRead(uint16_t addr) const {
@@ -763,7 +794,7 @@ uint8_t Gameboy::timerRead(uint16_t addr) const {
 
 void Gameboy::timerWrite(uint16_t addr, uint8_t v) {
     switch (addr) {
-    case 0xFF04: setDivider(0); break;
+    case 0xFF04: setDivider(0, false); break;
     case 0xFF05:
         if (m_needReload) m_needReload = false;           // a write cancels the reload and its interrupt
         if (!m_reloaded) m_tima = v;                      // ignored on the reload's cycle

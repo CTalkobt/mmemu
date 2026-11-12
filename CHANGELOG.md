@@ -7,6 +7,55 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy Color: the test ROMs
+
+- With the PPU, CPU, speed switch and APU timing below: the CGB survey is
+  189 PASS, 3 FAIL, 3 skipped (was 157 PASS, 38 FAIL); the DMG survey, now
+  with AGE's DMG-C tests, 118 PASS, 2 FAIL (the 109 that passed still do).
+- Mooneye's `boot_div-cgbABCDE`, `boot_hwio-C` and `unused_hwio-C` check
+  what Nintendo's CGB boot ROM leaves (DIV's phase, its chime in PCM12, the
+  palette indexes): they run with your own `roms/gameboy/cgb_boot.bin`
+  (or `MMEMU_GB_FIRMWARE`) and are skipped otherwise.
+- `oam_bug`'s CGB picture was made with `X<<3` (white `$F8F8F8`): compared
+  within 7 per channel.
+- Still failing: SameSuite's `channel_4_freq_change`, AGE's
+  `lcd-align-ly-cgbE` and `spsw-mode0-cgbBCE` (half-dot PPU alignment after
+  a speed switch), and on the DMG `oam-write-dmgC` and `stat-int-dmgC-cgbBCE`.
+
+### Game Boy Color: CPU, speed switch and APU timing
+
+Where the hardware-verified test ROMs differ from Mesen2 (which fails all of
+these), SameBoy's and AGE's timings:
+
+- **HALT** looks at the interrupts a machine cycle in, as it fetches the next
+  opcode (the CGB at the cycle's end, the DMG three clocks in). With one
+  pending and IME set it doesn't halt: the interrupt is taken and returns to
+  the HALT. The HALT bug's opcode is the one fetched in that cycle. AGE's
+  `ei-halt`, `halt-prefetch` (CGB and DMG) and `halt-m0-interrupt` (DMG; on
+  the CGB with the PPU's mode 0 timing fix), SameSuite's `ei_delay_halt`.
+- **Speed switch:** STOP resets DIV once (a machine cycle late; a TIMA or
+  frame sequencer bit that rose in that cycle isn't seen falling, but at
+  262 kHz) and the CPU halts 32,769 machine cycles while the timer, PPU and
+  APU run on, so DIV is back at 0 after it; an interrupt ends the pause, and
+  one already pending skips it. The speed changes a cycle into the pause
+  going to double speed, two going back. After every other switch to double
+  speed the frame sequencer runs a cycle late (AGE's). Mesen held DIV at 0
+  for 33,941 machine cycles of the old speed. AGE's `spsw-stop-prefetch`,
+  `spsw-tima-cgbE`, `spsw-interrupts-cgbE`, `spsw-ch2-lc-delay`, `spsw-div`.
+- **APU:** SameBoy's envelope (a countdown, the clock raised on the frame
+  sequencer bit's rising edge), so a period written from 0 steps the volume
+  two steps later; a square's frequency high bits going from 7 to less as
+  its timer reloads, and the sweep's change on the reload clock, take effect
+  in that reload; channel 1's sweep holds its addend just after a trigger;
+  the sweep's overflow turns the channel off 2 clocks after the step.
+  SameSuite's `channel_1_freq_change_timing-cgbDE`,
+  `channel_1/2_nrx2_speed_change`, `channel_1_sweep_restart(_2)`.
+- The DMG half of the survey also runs AGE's three DMG-C HALT tests.
+- Still failing: AGE's `spsw-mode0` (the PPU a dot out after switching back to
+  normal speed, half-dot alignment) and SameSuite's `channel_4_freq_change`
+  (needs SameBoy's counter-based noise channel and its NR43 glitches).
+- With the PPU timing below, `halt-m0-interrupt` passes on the CGB too.
+
 ### Game Boy Color: PPU timing as the AGE tests
 
 - c-sp's AGE tests (verified on a CPU CGB E and a DMG C) win where they and
@@ -23,12 +72,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
   dots before it; OAM writes blocked from a line's first dot (2 dots in, in
   double speed) and through to mode 3; LY 153 for 8 dots; LY in double speed
   2 dots into a line.
-- `gb_rom_survey`'s DMG half also runs AGE's DMG-C tests: 115 PASS, 5 FAIL
-  (the 109 that passed, and 6 of AGE's 11). The CGB half: 175 PASS, 20
-  FAIL (was 157, 38). `stat-int-dmgC-cgbBCE` passes on the CGB but not the
-  DMG, whose mode 0 interrupt stays on mode 0's dot: a dot later needs the
-  halted DMG to look at the interrupts 2 clocks into a cycle, not 1, or
-  Mooneye's `hblank_ly_scx_timing-GS` fails.
+- `gb_rom_survey`'s DMG half also runs AGE's DMG-C tests. `stat-int-dmgC-cgbBCE`
+  passes on the CGB but not the DMG, whose mode 0 interrupt stays on mode
+  0's dot (a dot later breaks Mooneye's `hblank_ly_scx_timing-GS`).
 - `lcd-align-ly-cgbE` needs the double-to-single speed switch's length
   (mmsim holds the CPU 67,882 dots; the hardware, as SameBoy, 131,080) and
   the PPU a half-dot apart from the CPU after an odd switch (its "LCD

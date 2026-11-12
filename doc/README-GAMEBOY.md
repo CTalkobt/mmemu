@@ -96,7 +96,10 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
   reads IE/IF again between the two pushes (`ie_push`), EI's one-instruction
   delay, HALT (and the HALT bug, and the DMG's later interrupt check while
   halted), STOP until a button is pressed, and the illegal opcodes locking
-  the CPU up.
+  the CPU up. As SameBoy where the test ROMs differ from Mesen: HALT looks
+  at the interrupts a cycle in and, with one pending and IME set, doesn't
+  halt (the interrupt returns to it); the CGB's speed switch resets DIV once
+  and pauses 32,769 machine cycles with the timer, PPU and APU running.
 - **Memory map** (`gameboy.cpp`, Mesen's `GbMemoryManager`): 256 pages of
   256 bytes, each memory (ROM, work RAM, cartridge RAM, boot ROM) or
   registers. VRAM is blocked to the CPU while the PPU reads it, OAM during
@@ -233,12 +236,11 @@ title. Nintendo's boot ROMs are not included.
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
   tests for the DMG, plus the SGB ones with the SGB boot ROM, the
   combined `oam_bug.gb` against its picture, and AGE's tests verified on a
-  DMG C (`dmgC` in the name): 115 PASS, 5 FAIL. The 5 are AGE's: the three
-  HALT tests, `oam-write-dmgC` (its starred row changes with when the LCD
-  was last turned off, its author notes) and `stat-int-dmgC-cgbBCE` (the
-  mode 0 interrupt a dot after mode 0, as on the CGB, needs the halted
-  DMG to look at the interrupts 2 clocks into a cycle, not 1, or Mooneye's
-  `hblank_ly_scx_timing-GS` fails).
+  DMG C (`dmgC` in the name): 118 PASS, 2 FAIL. The 2 are AGE's
+  `oam-write-dmgC` (its starred row changes with when the LCD was last
+  turned off, its author notes) and `stat-int-dmgC-cgbBCE` on the DMG
+  (the mode 0 interrupt a dot after mode 0, as on the CGB, would break
+  Mooneye's `hblank_ly_scx_timing-GS` here).
   `gb_blargg_tests` also runs `cgb-acid2` on the Game Boy Color (0 pixels
   differ).
   `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its
@@ -256,18 +258,22 @@ title. Nintendo's boot ROMs are not included.
   and the register-checked tests for the CGB E by their names' model
   suffixes: Mooneye's acceptance and misc tests, SameSuite's and AGE's.
   `MMEMU_GB_SURVEY=dmg` or `=cgb` runs one half. The CGB result is
-  175 PASS, 20 FAIL. Mesen2 (built from its source and run on the same
-  list) fails these 20, 18 of AGE's LY, STAT, OAM and VRAM timing tests
-  that pass here (the PPU follows them and SameBoy where they differ from
-  Mesen: see `gb_ppu.h`), and Mooneye's `timer/div_write`: `oam_bug`'s picture, Mooneye's `boot_div-cgbABCDE`,
-  `boot_hwio-C` and `unused_hwio-C` (SameBoy's boot ROM reaches `$0100`
-  far sooner than Nintendo's, so DIV and the boot chime's square 1 are
-  elsewhere when they look), SameSuite's `ei_delay_halt`, `channel_1_freq_change_timing-cgbDE`,
-  `channel_1/2_nrx2_speed_change`, `channel_1_sweep_restart(_2)` and
-  `channel_4_freq_change`, and 9 of AGE's: the HALT and speed switch
-  tests, and `lcd-align-ly-cgbE` (the double-to-single speed switch is
-  shorter here than on the hardware, and after an odd switch the PPU sits
+  189 PASS, 3 FAIL, 3 skipped. Mesen2 (built from its source and run on
+  the same list) fails 39 of them; the PPU, HALT, speed switch and APU
+  timings that differ from Mesen follow those tests and SameBoy (see
+  `gb_ppu.h`, `gb_cpu.cpp`, `gb_apu.cpp`). The 3 failing: SameSuite's
+  `channel_4_freq_change` (it needs SameBoy's counter-based noise channel
+  and its NR43 glitches), and AGE's `lcd-align-ly-cgbE` and
+  `spsw-mode0-cgbBCE` (after a switch back to normal speed the PPU sits
   half a dot from the CPU, which the dot-stepped PPU can't show).
+  The 3 skipped are Mooneye's `boot_div-cgbABCDE`, `boot_hwio-C` and
+  `unused_hwio-C`, which check what Nintendo's CGB boot ROM leaves (DIV's
+  phase after its logo, its chime still sounding in PCM12, the palette
+  indexes): they run with your own Nintendo boot ROM in
+  `roms/gameboy/cgb_boot.bin` (or `MMEMU_GB_FIRMWARE`), and are skipped
+  with SameBoy's, which ends sooner and quieter. `oam_bug`'s CGB picture
+  was made with `X<<3` per channel (white `$F8F8F8`), so it is compared
+  within 7.
 - `test_gameboy.cpp`'s `gb_cgb_*` tests: the CGB's post-boot state, its
   registers (VBK, SVBK, the palettes, `$FF72-$FF75`, RP, KEY0), the
   compatibility mode, general and HBlank DMA, the speed switch, rendering

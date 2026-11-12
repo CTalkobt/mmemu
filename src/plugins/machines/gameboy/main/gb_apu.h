@@ -11,6 +11,13 @@
 // corrupt it, powering on clears the length counters, and PCM12/PCM34 read
 // the channels' digital outputs.
 //
+// Where SameSuite's and AGE's tests (verified on hardware) differ from Mesen:
+// the envelope is SameBoy's (apu.c, MIT: a countdown and a clock raised on
+// the frame sequencer bit's rising edge), frequency changes as the square's
+// timer reloads, channel 1's sweep held just after a trigger, its overflow a
+// moment after the step, and the frame sequencer's delay after a switch to
+// double speed (AGE's).
+//
 // The output is Mesen's level, ((7 - digital) * DAC) per channel summed times
 // (master volume + 1) * 40, box-filtered down to the sample rate asked for.
 
@@ -28,7 +35,14 @@ public:
     void init();
     /** Catch up with the Game Boy's clock. */
     void run();
+    /** DIV's frame sequencer bit falling: a step. */
     void clockFrameSequencer();
+    /** And rising (the envelopes' clocks are raised then). */
+    void frameSequencerRise();
+    /** The CGB's speed changed (to double: `high`). */
+    void speedChanged(bool high);
+    /** The frame sequencer's steps come late after the speed switch (AGE's double speed delay). */
+    bool speedSwitchDelay() const { return m_speedSwitchDelay; }
     uint8_t read(uint16_t addr);
     uint8_t peek(uint16_t addr) const;
     void write(uint16_t addr, uint8_t v);
@@ -60,19 +74,21 @@ private:
         }
     };
     struct Envelope {
-        uint8_t volume = 0, envVolume = 0, envPeriod = 0, envTimer = 0;
-        bool envRaise = false, envStopped = false;
+        uint8_t volume = 0, envVolume = 0, envPeriod = 0, envCountdown = 0;
+        bool envRaise = false, envClock = false, envLocked = false, envShouldLock = false;
     };
     struct Square : Envelope {
         uint16_t frequency = 0, timer = 0;
         uint16_t sweepTimer = 0, sweepFreq = 0, sweepPeriod = 0;
-        uint8_t sweepUpdateDelay = 0, sweepShift = 0;
+        uint8_t sweepUpdateDelay = 0, sweepOverflowDelay = 0, sweepShift = 0;
         bool sweepNegate = false, sweepEnabled = false, sweepNegateCalcDone = false;
         uint8_t duty = 0, length = 0;
         bool lengthEnabled = false, enabled = false, firstStep = false;
         uint8_t dutyPos = 0, output = 0;
+        uint64_t triggerClock = 0;
         Dac dac;
     };
+    static constexpr uint64_t SWEEP_RESTART_HOLD = 10;
     struct Wave {
         bool dacEnabled = false;
         uint8_t sampleBuffer = 0, ram[16] = {}, position = 0, volume = 0;
@@ -100,6 +116,7 @@ private:
     uint16_t sqSweepTarget(const Square& s) const;
     template <class T> void clockLength(T& c);
     void sqUpdateOutput(Square& s);
+    void sqSetFrequency(Square& s, uint16_t f, bool sweep = false);
     void sqExec(Square& s, uint32_t clocks);
     uint8_t sqRead(const Square& s, int reg) const;
     void sqWrite(Square& s, int reg, uint8_t v);
@@ -119,6 +136,8 @@ private:
     void noiseWrite(int reg, uint8_t v);
     // Envelopes (Mesen's GbEnvelope), the channel's output refreshed by `update`
     template <class T, class U> void clockEnvelope(T& s, U update);
+    template <class T> void armEnvelope(T& s);
+    template <class T> void setEnvelopeClock(T& s, bool on);
     template <class T, class U> void writeEnvelope(T& s, uint8_t v, U update);
     template <class L> void lengthEnableFlag(uint8_t v, L& length, bool& lengthEnabled, bool& enabled);
 
@@ -133,6 +152,7 @@ private:
 
     bool m_enabled = false;
     uint8_t m_frameStep = 0;
+    bool m_speedSwitchDelay = false;
     uint8_t m_enLeft[4] = {}, m_enRight[4] = {};     // 0 or 0xFF: square 1, square 2, wave, noise
     uint8_t m_leftVolume = 0, m_rightVolume = 0;
     bool m_extLeft = false, m_extRight = false;
