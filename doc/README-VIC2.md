@@ -49,6 +49,15 @@ Five video modes are selected by the ECM, BMM, and MCM control bits:
 - Mono sprites: 1-bit pixels, one color per sprite
 - Multicolor sprites: 2-bit pixels, shared `$D025`/`$D026` plus per-sprite color
 
+#### 2.3.1 Collisions
+Collisions come from a port of VICE's sprite sequencer (`viciisc/vicii-draw-cycle.c`, `draw_sprites8`), run pixel by pixel over a line (`VIC2::evalCollisions`). The picture the GUI shows is still drawn once a frame; the sequencer is only used for the collision registers.
+- **Pixel time:** 8 pixels a cycle. Each cycle puts out the X from VICE's cycle table, rounded down to 8. On PAL, cycle 1 puts out X `$190`-`$197`, cycle 13 `$1F0`-`$1F7` and cycle 14 `$000`-`$007`, so a sprite at X `$1F8`-`$1FF` never starts.
+- **Sequencer:** a sprite starts where the X put out matches its X register as it was a cycle earlier. It shifts out one bit a pixel (two pixels a bit when X-expanded, in pairs when multicolour). While its own pointer and data are fetched it pauses, still putting out the same pixel (the "sprite gap", VICE `VICII/spritegap`). Its shift register is loaded in its second DMA cycle, and display starts from cycle 58 if its DMA is on.
+- **Graphics:** a foreground pixel (hires 1, multicolour `10`/`11`) is at X 24 + XSCROLL + 8 × column + bit, inside the display window. Text rows start on line `$30` + YSCROLL.
+- **Registers:** two sprites' pixels meeting set `$D01E`, border included; a sprite pixel on foreground graphics sets `$D01F`. Each register raises its IRQ (`$D019` bit 2 / bit 1) when it goes from 0.
+- **Timing:** the sequencer runs lazily. A read of `$D01E`/`$D01F` runs it up to the cycle before the read, a write to a sprite register runs it up to the write first, and the end of each line runs the rest. So a read sees the pixels of the cycles before it (VICE `VICII/spritecollisions` `*-collision-cycle`).
+- **Not done:** the sprite DMA and display flags (`mc`, `mcbase`, the Y-expansion flop) are simplified, so a sprite restarted on its last line (VICE `VICII/spriterestart`) isn't right. Neither are the 6569R1's and 8565's own colour latencies; the 6569's is used.
+
 ### 2.4 Raster IRQ
 
 The raster counter advances once per scanline. When it matches the value in `$D012` (plus bit 8 from `$D011` bit 7), the VIC-II sets IRQ bit 0 in `$D019` and asserts the IRQ signal line. The host clears the flag by writing `1` to `$D019` bit 0.

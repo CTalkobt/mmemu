@@ -26,6 +26,8 @@ void VIC2::reset() {
     m_denOnLine30 = false;
     m_sprSprColl = 0;
     m_sprBgColl  = 0;
+    m_seq = SpriteSeq{};
+    m_collT = 0;
 
     if (m_irqLine) m_irqLine->set(false);
 }
@@ -172,10 +174,12 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             *val = m_regs[IRQ] | ((m_regs[IRQ] & m_regs[IRQEN] & 0x0F) ? IRQ_ANY : 0);
             break;
         case SSCOL:
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprSprColl;
             if (!m_peeking) m_sprSprColl = 0; // cleared on read
             break;
         case SBCOL:
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprBgColl;
             if (!m_peeking) m_sprBgColl = 0;
             break;
@@ -204,6 +208,11 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if (m_vicIIe && reg == 0x2F) { m_keyLines = val & 0x07; return true; }
     if (m_vicIIe && reg == 0x30) { m_d030 = val & 0x03; return true; }
     if (reg > 0x2E) return true; // writes to unused regs are ignored
+
+    // The sprite sequencer runs to this cycle on the registers as they were
+    if ((reg <= MSIGX || reg == SPENA || reg == SPBGPR || reg == SPMC || reg == XXPAND || reg == YXPAND) &&
+        (m_regs[SPENA] || m_seq.active))
+        evalCollisions(m_rasterLine, collReadT());
 
     switch (reg) {
         case IRQ:
@@ -328,6 +337,8 @@ void VIC2::tick(uint64_t cycles) {
     // Advance raster lines based on accumulated cycles.
     while (m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
         m_cycleAccum -= m_cyclesPerLine;
+        if (m_regs[SPENA] || m_seq.active) evalCollisions(m_rasterLine, lineDots());
+        m_collT = 0;
         m_rasterLine++;
 
         if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
@@ -604,6 +615,178 @@ void VIC2::renderSprites(uint32_t* buf, const uint8_t* fgMask) {
         if (sp < 0) continue;
         if (fgMask && (m_regs[SPBGPR] & (1 << sp)) && fgMask[i]) continue;
         buf[i] = col[i];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sprite collisions: VICE's sprite sequencer (viciisc vicii-draw-cycle.c
+// draw_sprites8), run pixel by pixel over a line's pixel times
+// ---------------------------------------------------------------------------
+
+// The X the VIC-II puts out in cycle c (from 0) of a line, rounded down to 8:
+// VICE's cycle_tab_pal / cycle_tab_ntsc Phi1 xpos
+int VIC2::cycleXpos(int c) const {
+    if (m_cyclesPerLine == NTSC_CYCLES_PER_LINE) return c <= 12 ? 0x198 + 8 * c : (8 * (c - 13)) & 0x1F8;
+    return c <= 12 ? 0x190 + 8 * c : 8 * (c - 13);
+}
+
+// The sprite whose pointer and first data byte are fetched in cycle c (from
+// 0), and the one whose last two bytes are; -1 for none (VICE SprPtr/SprDma0,
+// SprDma1/SprDma2: PAL sprite 0 in cycles 58 and 59, 3 in cycles 1 and 2)
+int VIC2::sprDma0In(int c) const {
+    const int first = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 58 : 57;    // sprite 0's (from 0)
+    for (int n = 0; n < 8; ++n)
+        if ((first + 2 * n) % m_cyclesPerLine == c) return n;
+    return -1;
+}
+
+// In sprite X: a graphics pixel at 24 + XSCROLL + 8 * column + bit. A sprite
+// starts when the X put out equals its X (as the X register was a cycle
+// earlier), shifts a bit a pixel (two when X expanded, pairs when
+// multicolour), and pauses while its own pointer and data are fetched (the
+// "sprite gap"). Any two sprites' pixels meeting set $D01E (border
+// included); a sprite pixel on a foreground graphics pixel (hires 1,
+// multicolour 10/11) inside the display window sets $D01F. Each register
+// raises its IRQ when it goes from 0.
+void VIC2::evalCollisions(int line, int tTo) {
+    const int tFrom = m_collT;
+    if (tTo > lineDots()) tTo = lineDots();
+    if (tTo <= tFrom) return;
+    m_collT = tTo;
+
+    // Foreground graphics on this line (pixel time), inside the display window
+    uint8_t fg[65 * 8] = {};
+    const uint8_t scr1 = m_regs[SCR1], scr2 = m_regs[SCR2];
+    const int ys = scr1 & SCR1_YSCROLL, xs = scr2 & 7;
+    const int top = (scr1 & SCR1_RSEL) ? 0x33 : 0x37, bottom = (scr1 & SCR1_RSEL) ? 0xFB : 0xF7;
+    const int rel = line - (0x30 + ys);
+    if (m_denOnLine30 && line >= top && line < bottom && rel >= 0 && rel / 8 < 25) {
+        const uint32_t scrBase = screenBase();
+        const int row = rel / 8, rl = rel % 8;
+        const bool bmm = scr1 & SCR1_BMM, ecm = scr1 & SCR1_ECM, mcm = scr2 & SCR2_MCM;
+        const uint32_t cbBase = charBitmapBase();
+        const bool bank02 = m_bankBase == 0x0000 || m_bankBase == 0x8000;
+        const bool useCharRom = m_charRom && !bmm && bank02 && cbBase == 0x1000;
+        const int left = (scr2 & SCR2_CSEL) ? 24 : 31, right = (scr2 & SCR2_CSEL) ? 344 : 335;
+        for (int col = 0; col < 40; ++col) {
+            const int cell = row * 40 + col;
+            const uint8_t code = dmaPeek(scrBase + cell);
+            const uint8_t colour = m_colorRam ? (m_colorRam[cell & 0x3FF] & 0x0F) : 0x0F;
+            uint8_t g;
+            bool mc;
+            if (bmm) {
+                g = dmaPeek(cbBase + cell * 8 + rl);
+                mc = mcm;
+            } else {
+                const uint8_t ch = ecm ? (code & 0x3F) : code;
+                g = useCharRom ? charRomByte(ch * 8 + rl) : dmaPeek(cbBase + ch * 8 + rl);
+                mc = mcm && (colour & 0x08);
+            }
+            if (!g) continue;
+            const int x0 = 24 + xs + col * 8;
+            for (int p = 0; p < 8; ++p) {
+                const bool on = mc ? ((g >> (6 - (p & ~1))) & 2) != 0 : ((g >> (7 - p)) & 1) != 0;
+                const int x = x0 + p;
+                if (on && x >= left && x < right) fg[xToT(x)] = 1;
+            }
+        }
+    }
+
+    SpriteSeq& q = m_seq;
+    const uint32_t scrBase = screenBase();
+    uint8_t ss = 0, sb = 0;
+    for (int t = tFrom; t < tTo; ++t) {
+        const int c = t >> 3, i = t & 7;
+        const int xpos = cycleXpos(c);
+        const int d0 = sprDma0In(c);
+        const int d2 = sprDma0In(c == 0 ? m_cyclesPerLine - 1 : c - 1);   // the cycle after a sprite's first
+        const uint8_t dma0 = d0 >= 0 ? (uint8_t)(1 << d0) : 0, dma2 = d2 >= 0 ? (uint8_t)(1 << d2) : 0;
+        if (i == 2) q.active &= (uint8_t)~dma2;
+        if (i == 3) q.halt |= dma0;
+        if (i == 4) {
+            if (c == (m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 58 : 57)) {   // ChkSprDisp
+                q.pending = 0;
+                for (int n = 0; n < 8; ++n)
+                    if ((m_regs[SPENA] >> n) & 1 && spriteDma(n, line)) q.pending |= (uint8_t)(1 << n);
+            }
+            if (d2 >= 0) {
+                // Sprites 3-7 fetch at the start of a line for the line before
+                int fetchRow = c < 11 ? line - 1 : line;
+                if (fetchRow < 0) fetchRow += m_linesPerFrame;
+                const int n = d2;
+                const bool yExp = (m_regs[YXPAND] >> n) & 1;
+                const int y = m_regs[SP0Y + 2 * n], h = yExp ? 42 : 21;
+                int dd = -1;
+                for (int start = y; start < m_linesPerFrame && dd < 0; start += 256) {
+                    int k = fetchRow - start;
+                    if (k < 0) k += m_linesPerFrame;
+                    if (k < h) dd = k;
+                }
+                if (dd >= 0) {
+                    const uint32_t a = (uint32_t)dmaPeek(scrBase + 0x03F8 + n) * 64 + (yExp ? dd / 2 : dd) * 3;
+                    q.sbuf[n] = ((uint32_t)dmaPeek(a) << 16) | ((uint32_t)dmaPeek(a + 1) << 8) | dmaPeek(a + 2);
+                }
+            }
+        }
+        if (i == 6) { q.pri = m_regs[SPBGPR]; q.expx = m_regs[XXPAND]; }
+        if (i == 7) {                                                       // 6569: MC bits latch late
+            const uint8_t next = m_regs[SPMC];
+            q.mcFlops &= (uint8_t)~(next ^ q.mc);
+            q.mc = next;
+            q.halt &= (uint8_t)~dma2;
+        }
+
+        // Trigger: X matches (as the register was a cycle ago)
+        const int x = xpos + i;
+        if (q.pending & ~q.active & ~q.halt) {
+            for (int n = 0; n < 8; ++n) {
+                const uint8_t m = (uint8_t)(1 << n);
+                if ((q.pending & m) && !(q.active & m) && !(q.halt & m) &&
+                    (q.xPipe[n] & 0x1F8) == xpos && q.xPipe[n] == x) {
+                    q.expxFlops |= m; q.mcFlops |= m; q.active |= m;
+                }
+            }
+        }
+
+        // Shift and collide
+        if (q.active) {
+            uint8_t mask = 0;
+            for (int n = 7; n >= 0; --n) {
+                const uint8_t m = (uint8_t)(1 << n);
+                if (!(q.active & m)) continue;
+                if (!q.sbuf[n] && !q.pixel[n]) { q.active &= (uint8_t)~m; continue; }
+                if (!(q.halt & m)) {
+                    if (q.expxFlops & m) {
+                        if (q.mc & m) {
+                            if (q.mcFlops & m) q.pixel[n] = (uint8_t)((q.sbuf[n] >> 22) & 3);
+                            q.mcFlops ^= m;
+                        } else {
+                            q.pixel[n] = (uint8_t)(((q.sbuf[n] >> 23) & 1) << 1);   // 6569: colour latency
+                        }
+                        q.sbuf[n] = (q.sbuf[n] << 1) & 0xFFFFFF;
+                    }
+                    if (q.expx & m) q.expxFlops ^= m;
+                    else            q.expxFlops |= m;
+                }
+                if (q.pixel[n]) mask |= m;
+            }
+            if (mask & (mask - 1)) ss |= mask;
+            if (mask && fg[t]) sb |= mask;
+        }
+
+        if (i == 7) {
+            for (int n = 0; n < 8; ++n)
+                q.xPipe[n] = m_regs[SP0X + 2 * n] | ((m_regs[MSIGX] >> n) & 1 ? 0x100 : 0);
+        }
+    }
+
+    if (ss) {
+        if (!m_sprSprColl && !(m_regs[IRQ] & IRQ_MMC)) { m_regs[IRQ] |= IRQ_MMC; updateIrq(); }
+        m_sprSprColl |= ss;
+    }
+    if (sb) {
+        if (!m_sprBgColl && !(m_regs[IRQ] & IRQ_MBC)) { m_regs[IRQ] |= IRQ_MBC; updateIrq(); }
+        m_sprBgColl |= sb;
     }
 }
 

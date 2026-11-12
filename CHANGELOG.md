@@ -48,6 +48,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
   over all of the text: 109 PASS, 0 FAIL (was 108 PASS, 1 FAIL). No emulator
   change.
 
+### VICE's test programs: VIC-II sprite collisions
+
+- **Sprite collisions:** the C64's VIC-II never set `$D01E`/`$D01F`. They now
+  come from a port of VICE's sprite sequencer (`vicii-draw-cycle.c`), run pixel
+  by pixel over each line: X from VICE's cycle tables, a sprite started where
+  X matches, shifted per pixel with X expansion and multicolour pairs, and paused
+  during its own DMA (the sprite gap). Sprite pixels against each other (border
+  included) and against foreground graphics inside the display window; each
+  register's IRQ fires when it goes from 0.
+- **Timing:** a read of `$D01E`/`$D01F` sees the pixels of the cycles before it;
+  a sprite register write takes effect at its cycle. PAL never puts out X
+  `$1F8`-`$1FF`, so a sprite there doesn't show.
+- VICE programs now passing: `VICII/spritecollisions` (11), `spritecollclear`,
+  `spritegap` (2), `spritex` (2), `spritey`, `split-tests/spritescan`.
+  Tests: `vic2_sprite_sprite_collision`, `vic2_sprite_gap_pal`,
+  `vic2_sprite_background_collision`.
+
 ### VICE's test programs: the 6510's unstable opcodes and JSR
 
 - **SHA, SHX, SHY, SHS:** if the read cycle before the store waits for the
