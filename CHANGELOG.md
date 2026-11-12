@@ -7,6 +7,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: the noise channel as SameBoy
+
+- The noise channel (APU channel 4) is SameBoy's rather than Mesen2's
+  period timer: a free-running 14-bit counter counted every divisor (2 MHz
+  cycles, 2 for divisor 0) whose bit `NR43 >> 4` rising clocks the LFSR, so
+  an NR43 write mid-note keeps the counter's phase; the trigger's first
+  count from the cycle alignment (`prepare_noise_start`); NR43 written as
+  the counter reloads reloading it with the new divisor; the shift's
+  intermediate value on an NR43 write stepping or glitching the LFSR (the
+  CGB as a CGB-E, the DMG as SameBoy's DMG); the DMG's trigger delayed 6
+  cycles off alignment and its feedback latched on the counter bit's
+  falling edge; the counter running on with the channel off until the DAC
+  is turned off.
+- SameSuite's `channel_4_freq_change` now passes: the CGB survey is
+  190 PASS, 2 FAIL, 3 skipped (the other channel 4 tests, `cgb_sound` and
+  `dmg_sound` still pass; the DMG survey stays 118 PASS, 2 FAIL).
+
 ### Game Boy Color: the test ROMs
 
 - With the PPU, CPU, speed switch and APU timing below: the CGB survey is
@@ -18,9 +35,9 @@ The canonical version is defined in the `VERSION` file at the repository root.
   (or `MMEMU_GB_FIRMWARE`) and are skipped otherwise.
 - `oam_bug`'s CGB picture was made with `X<<3` (white `$F8F8F8`): compared
   within 7 per channel.
-- Still failing: SameSuite's `channel_4_freq_change`, AGE's
-  `lcd-align-ly-cgbE` and `spsw-mode0-cgbBCE` (half-dot PPU alignment after
-  a speed switch), and on the DMG `oam-write-dmgC` and `stat-int-dmgC-cgbBCE`.
+- Still failing: AGE's `lcd-align-ly-cgbE` and `spsw-mode0-cgbBCE`
+  (half-dot PPU alignment after a speed switch), and on the DMG
+  `oam-write-dmgC` and `stat-int-dmgC-cgbBCE`.
 
 ### Game Boy Color: CPU, speed switch and APU timing
 

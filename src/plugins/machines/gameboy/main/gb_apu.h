@@ -15,8 +15,9 @@
 // the envelope is SameBoy's (apu.c, MIT: a countdown and a clock raised on
 // the frame sequencer bit's rising edge), frequency changes as the square's
 // timer reloads, channel 1's sweep held just after a trigger, its overflow a
-// moment after the step, and the frame sequencer's delay after a switch to
-// double speed (AGE's).
+// moment after the step, the frame sequencer's delay after a switch to
+// double speed (AGE's), and the noise channel: SameBoy's counter clocking
+// the LFSR, its trigger alignment and NR43 glitches (channel_4_freq_change).
 //
 // The output is Mesen's level, ((7 - digital) * DAC) per channel summed times
 // (master volume + 1) * 40, box-filtered down to the sample rate asked for.
@@ -101,11 +102,19 @@ private:
     };
     struct Noise : Envelope {
         uint8_t length = 0;
-        bool lengthEnabled = false;
-        uint16_t shiftRegister = 0;
-        uint8_t periodShift = 0, divisor = 0;
-        bool shortWidth = false, enabled = false;
-        uint32_t timer = 0;
+        bool lengthEnabled = false, enabled = false;
+        uint8_t nr43 = 0, nr44 = 0;
+        bool narrow = false;
+        uint16_t lfsr = 0;                   // SameBoy's sense: 0 at a trigger, the output on with bit 0 set
+        uint16_t counter = 0;                // 14 bits; bit (NR43 >> 4) rising clocks the LFSR
+        uint8_t countdown = 0;               // 2 MHz cycles to the counter's next increment
+        uint8_t alignment = 0;               // 2 MHz cycles since power on
+        uint8_t half = 0;                    // an APU clock left over (double speed)
+        bool counterActive = false, backgroundActive = false, startedWithDacOff = false;
+        bool didStepCounter = false, countdownReloaded = false;
+        bool steppedInNarrow = false, bit7BeforeStep = false;
+        bool feedbackLatch = false;          // the DMG's feedback, latched on the counter bit's falling edge
+        uint8_t dmgDelayedStart = 0;
         uint8_t output = 0;
         Dac dac;
     };
@@ -128,11 +137,18 @@ private:
     void waveCorruption();
     uint8_t waveReadRam(uint16_t addr) const;
     void waveWriteRam(uint16_t addr, uint8_t v);
-    // Noise
+    // Noise (SameBoy's)
     void noiseDisable();
-    uint32_t noisePeriod() const;
     void noiseUpdateOutput();
+    bool noiseFeedback() const;
+    void noiseShift(bool highBit);
+    void noiseClock();
+    uint32_t noiseNextEvent() const;
     void noiseExec(uint32_t clocks);
+    void noiseCycles(uint32_t cycles);
+    void noiseTrigger();
+    void noisePrepareStart();
+    void noiseNr43(uint8_t v);
     void noiseWrite(int reg, uint8_t v);
     // Envelopes (Mesen's GbEnvelope), the channel's output refreshed by `update`
     template <class T, class U> void clockEnvelope(T& s, U update);

@@ -118,7 +118,9 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
   3 black).
 - **APU** (`gb_apu.cpp`): two square channels (sweep on the first), the wave
   channel (DMG wave RAM access only on the cycle it is read, retrigger
-  corruption), the noise channel, the frame sequencer from DIV, length
+  corruption), the noise channel (SameBoy's: a 14-bit counter at the
+  divisor's rate whose selected bit clocks the LFSR, with its trigger
+  alignment and NR43 write glitches), the frame sequencer from DIV, length
   counters with the extra clocking, the envelope's "zombie mode", the DACs'
   fade. The output is Mesen's level, box-filtered to a chosen rate.
 - **Joypad and serial port**: the select lines and the joypad interrupt on
@@ -258,12 +260,11 @@ title. Nintendo's boot ROMs are not included.
   and the register-checked tests for the CGB E by their names' model
   suffixes: Mooneye's acceptance and misc tests, SameSuite's and AGE's.
   `MMEMU_GB_SURVEY=dmg` or `=cgb` runs one half. The CGB result is
-  189 PASS, 3 FAIL, 3 skipped. Mesen2 (built from its source and run on
+  190 PASS, 2 FAIL, 3 skipped. Mesen2 (built from its source and run on
   the same list) fails 39 of them; the PPU, HALT, speed switch and APU
   timings that differ from Mesen follow those tests and SameBoy (see
-  `gb_ppu.h`, `gb_cpu.cpp`, `gb_apu.cpp`). The 3 failing: SameSuite's
-  `channel_4_freq_change` (it needs SameBoy's counter-based noise channel
-  and its NR43 glitches), and AGE's `lcd-align-ly-cgbE` and
+  `gb_ppu.h`, `gb_cpu.cpp`, `gb_apu.cpp`). The 2 failing: AGE's
+  `lcd-align-ly-cgbE` and
   `spsw-mode0-cgbBCE` (after a switch back to normal speed the PPU sits
   half a dot from the CPU, which the dot-stepped PPU can't show).
   The 3 skipped are Mooneye's `boot_div-cgbABCDE`, `boot_hwio-C` and
