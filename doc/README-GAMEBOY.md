@@ -231,8 +231,14 @@ title. Nintendo's boot ROMs are not included.
   picture, all passing. `MMEMU_GB_SURVEY=1` runs `gb_rom_survey`: the rest
   of Blargg's DMG tests (`cpu_instrs`, `mem_timing`, `mem_timing-2`,
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
-  tests for the DMG, plus the SGB ones with the SGB boot ROM, and the
-  combined `oam_bug.gb` against its picture: 109 PASS, 0 FAIL.
+  tests for the DMG, plus the SGB ones with the SGB boot ROM, the
+  combined `oam_bug.gb` against its picture, and AGE's tests verified on a
+  DMG C (`dmgC` in the name): 115 PASS, 5 FAIL. The 5 are AGE's: the three
+  HALT tests, `oam-write-dmgC` (its starred row changes with when the LCD
+  was last turned off, its author notes) and `stat-int-dmgC-cgbBCE` (the
+  mode 0 interrupt a dot after mode 0, as on the CGB, needs the halted
+  DMG to look at the interrupts 2 clocks into a cycle, not 1, or Mooneye's
+  `hblank_ly_scx_timing-GS` fails).
   `gb_blargg_tests` also runs `cgb-acid2` on the Game Boy Color (0 pixels
   differ).
   `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its
@@ -250,15 +256,18 @@ title. Nintendo's boot ROMs are not included.
   and the register-checked tests for the CGB E by their names' model
   suffixes: Mooneye's acceptance and misc tests, SameSuite's and AGE's.
   `MMEMU_GB_SURVEY=dmg` or `=cgb` runs one half. The CGB result is
-  157 PASS, 38 FAIL. Mesen2 (built from its source and run on the same
-  list) fails the same 38, and Mooneye's `timer/div_write` (which passes
-  here): `oam_bug`'s picture, Mooneye's `boot_div-cgbABCDE`,
+  175 PASS, 20 FAIL. Mesen2 (built from its source and run on the same
+  list) fails these 20, 18 of AGE's LY, STAT, OAM and VRAM timing tests
+  that pass here (the PPU follows them and SameBoy where they differ from
+  Mesen: see `gb_ppu.h`), and Mooneye's `timer/div_write`: `oam_bug`'s picture, Mooneye's `boot_div-cgbABCDE`,
   `boot_hwio-C` and `unused_hwio-C` (SameBoy's boot ROM reaches `$0100`
   far sooner than Nintendo's, so DIV and the boot chime's square 1 are
   elsewhere when they look), SameSuite's `ei_delay_halt`, `channel_1_freq_change_timing-cgbDE`,
   `channel_1/2_nrx2_speed_change`, `channel_1_sweep_restart(_2)` and
-  `channel_4_freq_change`, and 27 of AGE's (its LY, STAT, OAM/VRAM access,
-  HALT and speed switch timings).
+  `channel_4_freq_change`, and 9 of AGE's: the HALT and speed switch
+  tests, and `lcd-align-ly-cgbE` (the double-to-single speed switch is
+  shorter here than on the hardware, and after an odd switch the PPU sits
+  half a dot from the CPU, which the dot-stepped PPU can't show).
 - `test_gameboy.cpp`'s `gb_cgb_*` tests: the CGB's post-boot state, its
   registers (VBK, SVBK, the palettes, `$FF72-$FF75`, RP, KEY0), the
   compatibility mode, general and HBlank DMA, the speed switch, rendering

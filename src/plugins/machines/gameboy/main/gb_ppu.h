@@ -15,6 +15,15 @@
 // one dot per CPU half-cycle in double speed. In DMG compatibility mode (KEY0)
 // the DMG palettes' shades index colour palettes 0 (BG) and 0/1 (objects).
 //
+// Where c-sp's AGE tests (verified on a CGB E and a DMG C) differ from Mesen,
+// they win, with SameBoy's timings (Core/display.c, MIT): the first line after
+// the LCD is turned on ends mode 3 a dot sooner; window and X 0 object
+// penalties; the DMG's WX 166. On the CGB (a CPU CGB E): the mode 0 interrupt
+// and OAM reads a dot after mode 0 (in double speed mode 0 itself a dot
+// later), VRAM reads blocked from mode 3 not 4 dots before it, OAM writes
+// blocked from a line's start, LY 153 for 8 dots, and LY in double speed 2
+// dots into a line.
+//
 // The output is a shade (0 white - 3 black) per pixel, the palettes already
 // applied; the Super Game Boy gets every pixel as it is drawn (SgbLink). The
 // CGB's is a 15-bit colour per pixel.
@@ -89,6 +98,8 @@ private:
     void firstScanlineAfterPowerOn();
     void visibleScanline();
     void drawCycle();
+    /** Mode 0: its interrupt, VRAM and OAM free, nothing more to do this line. */
+    void startHblank();
     void spriteEvaluation();
     void resetRenderer();
     void clockSpriteFetcher();
@@ -103,6 +114,9 @@ private:
     void writePixel(uint8_t index, uint16_t color);
     void sendFrame();
     void setMode(PpuMode m);
+    /** The CGB in double speed shows a new line's LY 2 dots in (AGE's ly). */
+    bool lyLate() const;
+    void oamWriteBlockAtLineStart();
     uint16_t vramAddr(uint16_t addr) const { return (uint16_t)((m_vramBank << 13) | (addr & 0x1FFF)); }
     uint8_t lcdReadOam(uint8_t a) const { return m_stopOamBlocked ? 0xFF : m_oam[a]; }
     uint8_t lcdReadVram(uint16_t a) const { return m_stopVramBlocked ? 0xFF : m_vram[a & 0x3FFF]; }
@@ -153,6 +167,7 @@ private:
     bool m_stopOamBlocked = false, m_stopVramBlocked = false;
     bool m_oamReadBlocked = false, m_oamWriteBlocked = false, m_vramReadBlocked = false, m_vramWriteBlocked = false;
     bool m_isFirstFrame = true, m_forceBlankFrame = true, m_rendererIdle = false;
+    bool m_hblankPending = false;      // the last pixel out: the rest of mode 0's start next dot
     uint8_t m_tileIndex = 0;
     bool m_lastPixelBg = true;
     uint8_t m_lastBgColor = 0;

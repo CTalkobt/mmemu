@@ -7,6 +7,34 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy Color: PPU timing as the AGE tests
+
+- c-sp's AGE tests (verified on a CPU CGB E and a DMG C) win where they and
+  Mesen2 differ, with SameBoy's timings: 18 of the 19 AGE LY, STAT, OAM and
+  VRAM tests that failed on the Game Boy Color now pass (`ly-cgbE`/`-ncmE`,
+  `stat-mode-cgbE`/`-ncmE`/`-ds`, `stat-int`, `stat-mode-sprites`(`-ds`),
+  `stat-mode-window` (`-ds`, `-ncm`), `oam-read-cgbE`/`-ncmE`, `oam-write`,
+  `vram-read`); `lcd-align-ly-cgbE` doesn't (below).
+- The first line after the LCD is turned on ends mode 3 a dot sooner; the
+  window costs mode 3 6 dots (7 at WX 0); an object at X 0 always 11 dots,
+  whatever SCX; the DMG's WX 166 opens no window.
+- The CGB: the mode 0 interrupt and OAM reads a dot after mode 0 (in double
+  speed mode 0 itself a dot later); VRAM reads blocked from mode 3, not 4
+  dots before it; OAM writes blocked from a line's first dot (2 dots in, in
+  double speed) and through to mode 3; LY 153 for 8 dots; LY in double speed
+  2 dots into a line.
+- `gb_rom_survey`'s DMG half also runs AGE's DMG-C tests: 115 PASS, 5 FAIL
+  (the 109 that passed, and 6 of AGE's 11). The CGB half: 175 PASS, 20
+  FAIL (was 157, 38). `stat-int-dmgC-cgbBCE` passes on the CGB but not the
+  DMG, whose mode 0 interrupt stays on mode 0's dot: a dot later needs the
+  halted DMG to look at the interrupts 2 clocks into a cycle, not 1, or
+  Mooneye's `hblank_ly_scx_timing-GS` fails.
+- `lcd-align-ly-cgbE` needs the double-to-single speed switch's length
+  (mmsim holds the CPU 67,882 dots; the hardware, as SameBoy, 131,080) and
+  the PPU a half-dot apart from the CPU after an odd switch (its "LCD
+  alignment offsets" and the LY & (LY + 1) glitch), which a dot-stepped PPU
+  can't show.
+
 ### Game Boy: an SM83 assembler, GDB for any CPU, the SGB's boot ROM from a file
 
 - **SM83 assembler** (`sm83_asm.h`, the `sm83` toolchain's): a line

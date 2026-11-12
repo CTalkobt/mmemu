@@ -6,9 +6,10 @@
 // gb_blargg_tests runs Blargg's cpu_instrs, instr_timing and mem_timing,
 // dmg-acid2 and, on the Game Boy Color, cgb-acid2 (each compared with its
 // reference picture) and must pass. With MMEMU_GB_SURVEY=1, gb_rom_survey
-// also runs the rest of Blargg's DMG tests and Mooneye's acceptance tests on
-// the DMG, then Blargg's, Mooneye's, SameSuite's and AGE's tests for the
-// CGB (CPU CGB E) on the Game Boy Color, and prints what passes of each
+// also runs the rest of Blargg's DMG tests, Mooneye's acceptance tests and
+// AGE's DMG-C ones on the DMG, then Blargg's, Mooneye's, SameSuite's and
+// AGE's tests for the CGB (CPU CGB E) on the Game Boy Color, and prints
+// what passes of each
 // (MMEMU_GB_SHOW=1: the passes' names too).
 
 #include "test_harness.h"
@@ -356,7 +357,7 @@ TEST_CASE(gb_rom_survey) {
 
 namespace {
 
-/** Blargg's DMG tests and Mooneye's acceptance tests on the DMG (the SGB's on the SGB). */
+/** Blargg's DMG tests, Mooneye's acceptance tests (the SGB's on the SGB) and AGE's DMG-C tests on the DMG. */
 void surveyDmg(const std::string& dir, bool show) {
     int pass = 0, fail = 0;
     auto report = [&](const std::string& name, bool ok) {
@@ -397,6 +398,16 @@ void surveyDmg(const std::string& dir, bool show) {
             if (sgb && !forSgb(n)) continue;
             gb::Gameboy g;
             report("mooneye" + std::string(sub) + "/" + n + (sgb ? " (SGB)" : ""), start(g, d + "/" + n, sgb) && mooneyePassed(g, 20));
+        }
+    }
+    // AGE's register-checking tests verified on a DMG-C (dmgC in the name)
+    for (const char* sub : {"halt", "lcd-align-ly", "ly", "oam", "speed-switch", "stat-interrupt", "stat-mode",
+                            "stat-mode-sprites", "stat-mode-window", "vram"}) {
+        const std::string d = dir + "/age-test-roms/" + sub;
+        for (const auto& n : listGb(d)) {
+            if (n.find("dmgC") == std::string::npos) continue;
+            gb::Gameboy g;
+            report("age-test-roms/" + std::string(sub) + "/" + n, start(g, d + "/" + n) && mooneyePassed(g, 20));
         }
     }
     std::printf("  Game Boy test ROMs: %d PASS, %d FAIL\n", pass, fail);

@@ -33,6 +33,7 @@ void Ppu::init() {
     m_isFirstFrame = true;
     m_forceBlankFrame = true;
     m_rendererIdle = false;
+    m_hblankPending = false;
     std::memset(m_buf, 0, sizeof(m_buf));
     // The CGB's (the palettes power on cleared here; Mesen's follow its RAM setting)
     m_cgb = m_gb->isCgb();
@@ -97,15 +98,26 @@ void Ppu::execCycle() {
         vblankScanline();
     }
 
-    if (m_mode == PpuMode::Drawing) {
+    if (m_hblankPending) {
+        // The CGB, a dot after the last pixel: the mode 0 interrupt (stat-int), the CGB E's OAM
+        // reads (oam-read-cgbE) and, in double speed, mode 0 itself (stat-mode-ds, vram-read)
+        m_hblankPending = false;
+        startHblank();
+    } else if (m_mode == PpuMode::Drawing) {
         drawCycle();
         if (m_drawnPixels == 160) {
-            // Mode 0 on the dot the last pixel goes out
-            m_irqMode = PpuMode::HBlank;
+            // Mode 0 on the dot the last pixel goes out; on the CGB in single speed VRAM and OAM
+            // writes free then too, the rest a dot later (SameBoy)
             if (auto* s = m_gb->sgb()) s->hblank();
-            m_idleCycles = (uint16_t)(456 - m_cycle - 1);
-            m_oamReadBlocked = m_oamWriteBlocked = m_vramReadBlocked = m_vramWriteBlocked = false;
-            setMode(PpuMode::HBlank);
+            if (!m_cgb) {
+                startHblank();
+            } else {
+                m_hblankPending = true;
+                if (!m_gb->isHighSpeed()) {
+                    m_oamWriteBlocked = m_vramReadBlocked = m_vramWriteBlocked = false;
+                    setMode(PpuMode::HBlank);
+                }
+            }
         }
     } else if (m_mode == PpuMode::OamEvaluation) {
         spriteEvaluation();
@@ -118,12 +130,21 @@ void Ppu::execCycle() {
     }
 }
 
+void Ppu::startHblank() {
+    m_irqMode = PpuMode::HBlank;
+    m_idleCycles = (uint16_t)(456 - m_cycle - 1);
+    m_oamReadBlocked = m_oamWriteBlocked = m_vramReadBlocked = m_vramWriteBlocked = false;
+    if (m_mode != PpuMode::HBlank) setMode(PpuMode::HBlank);
+}
+
 void Ppu::vblankScanline() {
     switch (m_cycle) {
     case 2:
         if (m_scanline == 144) m_irqMode = PpuMode::OamEvaluation;
+        if (lyLate()) m_ly = m_scanline;
         break;
     case 4:
+        if (m_cgb && m_scanline == 153) m_lyForCompare = 153;   // the CGB E's: LY 153 two dots longer
         if (m_scanline < 153) {
             m_lyForCompare = m_scanline;
             if (m_scanline == 144) {
@@ -137,10 +158,13 @@ void Ppu::vblankScanline() {
         }
         break;
     case 6:
-        if (m_scanline == 153) { m_ly = 0; m_lyForCompare = m_scanline; }
+        if (m_scanline == 153 && !m_cgb) { m_ly = 0; m_lyForCompare = m_scanline; }
         break;
     case 8:
-        if (m_scanline == 153) m_lyForCompare = -1;
+        if (m_scanline == 153) {
+            if (m_cgb) m_ly = 0;                  // ly-cgbE, ly-ncmE
+            else m_lyForCompare = -1;
+        }
         break;
     case 12:
         if (m_scanline == 153) m_lyForCompare = 0;
@@ -156,8 +180,9 @@ void Ppu::vblankScanline() {
             m_lyForCompare = 0;
             m_wyEnable = m_scanline == m_wy && m_windowEnabled;
             if (!m_cgb) setMode(PpuMode::HBlank);     // on the DMG, line 0 starts in mode 0 (not the CGB)
+            oamWriteBlockAtLineStart();
         } else {
-            m_ly = m_scanline;
+            if (!lyLate()) m_ly = m_scanline;
             m_lyForCompare = -1;
         }
         break;
@@ -166,8 +191,13 @@ void Ppu::vblankScanline() {
 
 void Ppu::firstScanlineAfterPowerOn() {
     switch (m_cycle) {
+    case 85:
+        m_oamWriteBlocked = true;                // 2 dots before mode 3 (SameBoy; oam-write)
+        break;
     case 87:
-        m_oamReadBlocked = m_oamWriteBlocked = m_vramReadBlocked = m_vramWriteBlocked = true;
+        // The CGB's VRAM stays free 4 dots more in single speed (vram-read)
+        m_oamReadBlocked = true;
+        m_vramReadBlocked = m_vramWriteBlocked = !m_cgb || m_gb->isHighSpeed();
         m_rendererIdle = true;
         m_wxEnable = false;
         setMode(PpuMode::Drawing);
@@ -175,7 +205,9 @@ void Ppu::firstScanlineAfterPowerOn() {
         resetRenderer();
         m_rendererIdle = true;
         break;
-    case 92:
+    case 91:
+        // Mode 3 here ends 2 dots later than on other lines, not 3 (stat-mode)
+        m_vramReadBlocked = m_vramWriteBlocked = true;
         m_rendererIdle = false;
         break;
     case 456:
@@ -183,7 +215,8 @@ void Ppu::firstScanlineAfterPowerOn() {
         ++m_scanline;
         m_wyEnable |= m_scanline == m_wy && m_windowEnabled;
         m_drawnPixels = 0;
-        m_ly = m_scanline;
+        if (!lyLate()) m_ly = m_scanline;
+        oamWriteBlockAtLineStart();
         break;
     }
 }
@@ -196,6 +229,8 @@ void Ppu::visibleScanline() {
             m_irqMode = PpuMode::OamEvaluation;
             m_lyForCompare = -1;
         }
+        if (lyLate()) m_ly = m_scanline;
+        if (m_cgb) m_oamWriteBlocked = true;     // in double speed from here (oam-write)
         break;
     case 3:
         m_oamReadBlocked = true;
@@ -211,11 +246,13 @@ void Ppu::visibleScanline() {
         m_irqMode = PpuMode::NoIrq;
         break;
     case 80:
-        m_oamWriteBlocked = false;
+        // The DMG's OAM writes free and VRAM reads blocked 4 dots before mode 3; the CGB's neither (SameBoy)
+        m_oamWriteBlocked = m_cgb;
         m_oamReadBlocked = true;
-        m_vramReadBlocked = true;
+        m_vramReadBlocked = !m_cgb;
         break;
     case 84:
+        m_vramReadBlocked = true;
         m_wxEnable = false;
         setMode(PpuMode::Drawing);
         m_irqMode = PpuMode::Drawing;
@@ -230,12 +267,20 @@ void Ppu::visibleScanline() {
     case 456:
         m_cycle = 0;
         ++m_scanline;
-        m_ly = m_scanline;
+        if (!lyLate()) m_ly = m_scanline;
         m_wyEnable |= m_scanline == m_wy && m_windowEnabled;
         m_drawnPixels = 0;
         if (m_scanline == 144) m_lyForCompare = -1;
+        oamWriteBlockAtLineStart();
         break;
     }
+}
+
+bool Ppu::lyLate() const { return m_cgb && m_gb->isHighSpeed(); }
+
+void Ppu::oamWriteBlockAtLineStart() {
+    // The CGB in single speed blocks OAM writes from a visible line's first dot (oam-write)
+    if (m_cgb && !m_gb->isHighSpeed() && m_scanline < 144) m_oamWriteBlocked = true;
 }
 
 void Ppu::drawCycle() {
@@ -243,15 +288,18 @@ void Ppu::drawCycle() {
 
     if (!m_wxEnable) {
         m_wxEnable |= m_drawnPixels == (int)m_wx - 7;
-        const bool fetchWindow = m_windowEnabled && m_wxEnable && m_wyEnable;
-        if (m_fetchWindow != fetchWindow) {
-            // Background to window: the fetcher and the FIFO restart, a dot lost
-            m_fetchWindow = fetchWindow;
+        if (m_wxEnable && !m_cgb && m_wx == 166) {
+            // The DMG's WX 166: the window's line counted, but no window this line (SameBoy; stat-mode-window-dmgC)
+            if (m_windowEnabled && m_wyEnable) ++m_windowCounter;
+        } else if (m_fetchWindow != (m_windowEnabled && m_wxEnable && m_wyEnable)) {
+            // Background to window: the fetcher and the FIFO restart, fetching from this dot (mode 3
+            // 6 dots longer); at WX 0 from the next (7: stat-mode-window), in double speed only with SCX & 7
+            m_fetchWindow = true;
             m_fetchColumn = 0;
             ++m_windowCounter;
             m_bgFetcher.step = 0;
             m_bgFifo.reset();
-            return;
+            if (m_wx == 0 && (!m_gb->isHighSpeed() || (m_scx & 7))) return;
         }
         if (!m_cgb && !m_windowEnabled && m_windowCounter > 0 && m_wxEnable && ((int)m_wx & 7) == 7 - ((int)m_scx & 7)) {
             // The DMG's window glitch (Windesync-validate): an extra background pixel
@@ -377,7 +425,8 @@ void Ppu::clockSpriteFetcher() {
 void Ppu::findNextSprite() {
     if (m_fetchSprite >= 0 || !(m_spritesEnabled || m_cgbEnabled)) return;   // CGB mode: fetched (and dropped) when off
     for (int i = 0; i < m_spriteCount; ++i) {
-        if ((int)m_spriteX[i] - 8 == m_drawnPixels) {
+        // X 0 is fetched at the line's first pixel, whatever SCX discards (11 dots: stat-mode-sprites)
+        if ((int)m_spriteX[i] - 8 == m_drawnPixels || (m_spriteX[i] == 0 && m_drawnPixels < -8)) {
             m_fetchSprite = (int16_t)i;
             m_spriteX[i] = 0xFF;          // not again
             m_oamFetcher.step = 0;
@@ -508,6 +557,7 @@ void Ppu::write(uint16_t addr, uint8_t v) {
                 m_cycle = 0; m_scanline = 0; m_ly = 0; m_lyForCompare = 0;
                 m_oamReadBlocked = m_oamWriteBlocked = m_vramReadBlocked = m_vramWriteBlocked = false;
                 m_irqMode = PpuMode::NoIrq;
+                m_hblankPending = false;
                 m_wyEnable = false;
                 m_lcdDisabled = true;
                 m_lastFrameTime = m_gb->apuCycles();
