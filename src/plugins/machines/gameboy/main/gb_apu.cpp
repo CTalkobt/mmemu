@@ -23,6 +23,7 @@ void Apu::init() {
     m_noise = Noise{};
     m_enabled = false;
     m_frameStep = 0;
+    m_speedSwitchDelay = false;
     std::memset(m_enLeft, 0, sizeof(m_enLeft));
     std::memset(m_enRight, 0, sizeof(m_enRight));
     m_leftVolume = m_rightVolume = 0;
@@ -107,12 +108,25 @@ void Apu::clockFrameSequencer() {
         clockLength(m_wave);
         clockLength(m_noise);
         if ((m_frameStep & 3) == 2) sqClockSweep(m_sq1);
-    } else if (m_frameStep == 7) {
-        clockEnvelope(m_sq1, [this]() { sqUpdateOutput(m_sq1); });
-        clockEnvelope(m_sq2, [this]() { sqUpdateOutput(m_sq2); });
-        clockEnvelope(m_noise, [this]() { noiseUpdateOutput(); });
     }
+    clockEnvelope(m_sq1, [this]() { sqUpdateOutput(m_sq1); });
+    clockEnvelope(m_sq2, [this]() { sqUpdateOutput(m_sq2); });
+    clockEnvelope(m_noise, [this]() { noiseUpdateOutput(); });
     m_frameStep = (m_frameStep + 1) & 7;
+}
+
+void Apu::speedChanged(bool high) {
+    // Each switch to double speed with the APU on turns the frame sequencer's delay on or off
+    // (the first, third... on; AGE's after_speed_change, spsw-ch2-lc-delay)
+    if (m_enabled && high) m_speedSwitchDelay = !m_speedSwitchDelay;
+}
+
+void Apu::frameSequencerRise() {
+    run();
+    if (!m_enabled) return;
+    armEnvelope(m_sq1);
+    armEnvelope(m_sq2);
+    armEnvelope(m_noise);
 }
 
 template <class T> void Apu::clockLength(T& c) {
@@ -121,18 +135,35 @@ template <class T> void Apu::clockLength(T& c) {
     }
 }
 
+// The envelope (SameBoy's model, apu.c): a 3-bit countdown, counted down on step 6 while
+// the envelope's clock is low. On the frame sequencer bit's rising edge a countdown at 0
+// reloads with the period and, for a period other than 0, raises the clock; the next step
+// steps the volume and lowers it. Raised at volume 15 going up (0 going down) the clock
+// locks the envelope until the next trigger. So a period written from 0 to more steps the
+// volume at the second step after it (channel_1_nrx2_speed_change).
+
+template <class T> void Apu::setEnvelopeClock(T& s, bool on) {
+    if (s.envClock == on) return;
+    s.envClock = on;
+    if (on) s.envShouldLock = (s.volume == 0x0F && s.envRaise) || (s.volume == 0 && !s.envRaise);
+    else s.envLocked |= s.envShouldLock;
+}
+
+template <class T> void Apu::armEnvelope(T& s) {
+    if (!s.enabled || s.envCountdown != 0) return;
+    s.envCountdown = s.envPeriod;
+    setEnvelopeClock(s, s.envPeriod != 0);
+}
+
 template <class T, class U> void Apu::clockEnvelope(T& s, U update) {
-    const uint8_t timer = s.envTimer;
-    if (s.envTimer == 0 || --s.envTimer == 0) {
-        if (s.envPeriod > 0 && !s.envStopped) {
-            if (s.envRaise && s.volume < 0x0F) ++s.volume;
-            else if (!s.envRaise && s.volume > 0) --s.volume;
-            else s.envStopped = true;
-            update();                                 // at once (div_trigger_volume, channel_4_volume_div)
-            s.envTimer = s.envPeriod;
-            if (timer == 0) --s.envTimer;             // channel_1_nrx2_glitch, as Mesen
-        }
+    if (!s.envClock) {
+        if (m_frameStep == 6) s.envCountdown = (s.envCountdown - 1) & 7;
+        return;
     }
+    setEnvelopeClock(s, false);
+    if (s.envLocked || s.envPeriod == 0) return;
+    s.volume = (uint8_t)((s.envRaise ? s.volume + 1 : s.volume - 1) & 0x0F);
+    update();                                         // at once (div_trigger_volume, channel_4_volume_div)
 }
 
 template <class T, class U> void Apu::writeEnvelope(T& s, uint8_t v, U update) {
@@ -141,23 +172,23 @@ template <class T, class U> void Apu::writeEnvelope(T& s, uint8_t v, U update) {
     if ((v & 0xF8) == 0) {
         s.enabled = false;
         s.output = 0;
-    } else {
-        // "Zombie mode", after SameBoy's and the channel_1_nrx2_glitch test (as Mesen)
-        bool preventIncrement = false;
+    } else if (s.enabled) {
+        // "Zombie mode" (SameBoy's nrx2_glitch, CGB D/E): the volume stepped or inverted
+        const uint8_t old = (uint8_t)((s.envVolume << 4) | (s.envRaise ? 0x08 : 0) | s.envPeriod);
+        if (s.envClock) s.envCountdown = period;
+        bool tick = period && !(old & 7) && !s.envLocked;
+        if ((v & 0x0F) == 8 && (old & 0x0F) == 8 && !s.envLocked) tick = true;
         if (raise != s.envRaise) {
             if (raise) {
-                if (!s.envStopped && s.envPeriod == 0) s.volume ^= 0x0F;
-                else s.volume = (uint8_t)(14 - s.volume);
-                preventIncrement = true;
+                if (!(old & 7) && !s.envLocked) s.volume ^= 0x0F;
+                else s.volume = (uint8_t)((14 - s.volume) & 0x0F);
+                tick = false;
             } else {
-                s.volume = (uint8_t)(16 - s.volume);
+                s.volume = (uint8_t)((16 - s.volume) & 0x0F);
             }
-            s.volume &= 0x0F;
         }
-        if (!s.envStopped && !preventIncrement && s.envPeriod == 0 && (period || raise)) {
-            if (raise) ++s.volume; else --s.volume;
-            s.volume &= 0x0F;
-        }
+        if (tick) s.volume = (uint8_t)((raise ? s.volume + 1 : s.volume - 1) & 0x0F);
+        else if (!period && s.envClock) setEnvelopeClock(s, false);
     }
     s.envPeriod = period;
     s.envRaise = raise;
@@ -202,12 +233,15 @@ void Apu::sqClockSweep(Square& s) {
         if (s.sweepPeriod == 0) return;
         const uint16_t f = sqSweepTarget(s);
         if (s.sweepNegate) s.sweepNegateCalcDone = true;
+        // Just after a trigger the calculation keeps the trigger's addend, none for shift 0 (SameBoy's
+        // channel_1_restart_hold: channel_1_sweep_restart_2)
+        if (s.sweepShift == 0 && m_gb->apuCycles() - s.triggerClock < SWEEP_RESTART_HOLD) return;
         if (f >= 2048) {
-            s.enabled = false;
+            // The overflow turns the channel off once the calculation is done, a moment later
             s.sweepEnabled = false;
-            s.output = 0;
+            s.sweepOverflowDelay = 2;
         } else if (s.sweepShift) {
-            s.frequency = f;
+            sqSetFrequency(s, f, true);
             s.sweepFreq = f;
             s.sweepUpdateDelay = 8 * 4;          // the next check 8 CPU cycles later (channel_1_sweep)
         }
@@ -222,6 +256,16 @@ void Apu::sqUpdateOutput(Square& s) {
 void Apu::sqExec(Square& s, uint32_t clocks) {
     s.dac.exec(clocks, s.envVolume || s.envRaise);
     if (!s.enabled) return;
+    if (s.sweepOverflowDelay) {
+        if (s.sweepOverflowDelay > clocks) {
+            s.sweepOverflowDelay = (uint8_t)(s.sweepOverflowDelay - clocks);
+        } else {
+            s.sweepOverflowDelay = 0;
+            s.enabled = false;
+            s.output = 0;
+            return;
+        }
+    }
     if (s.sweepUpdateDelay) {
         if (s.sweepUpdateDelay > clocks) {
             s.sweepUpdateDelay = (uint8_t)(s.sweepUpdateDelay - clocks);
@@ -242,6 +286,16 @@ void Apu::sqExec(Square& s, uint32_t clocks) {
         s.firstStep = false;
         sqUpdateOutput(s);
     }
+}
+
+void Apu::sqSetFrequency(Square& s, uint16_t f, bool sweep) {
+    // The sweep's change on the clock the timer reloads: the reload takes it (channel_1_sweep_restart,
+    // as SameBoy's just_reloaded). A write taking the high bits from 7 to less within a clock of the
+    // reload, the same (CGB D/E: channel_1_freq_change_timing-cgbDE; SameBoy's ">= $700 to < $700")
+    const int elapsed = (2048 - s.frequency) * 4 - s.timer;
+    const int window = sweep ? 1 : ((s.frequency >> 8) == 7 && (f >> 8) != 7) ? 4 : 0;
+    if (s.enabled && elapsed >= 0 && elapsed < window) s.timer = (uint16_t)((2048 - f) * 4 - elapsed);
+    s.frequency = f;
 }
 
 uint8_t Apu::sqRead(const Square& s, int reg) const {
@@ -277,8 +331,10 @@ void Apu::sqWrite(Square& s, int reg, uint8_t v) {
         break;
     case 4: {
         const bool prevEnabled = s.enabled;
-        s.frequency = (uint16_t)((s.frequency & 0xFF) | ((v & 0x07) << 8));
+        sqSetFrequency(s, (uint16_t)((s.frequency & 0xFF) | ((v & 0x07) << 8)));
         if (v & 0x80) {
+            s.triggerClock = m_gb->apuCycles();
+            s.sweepOverflowDelay = 0;
             // Trigger: the timer's low two bits aren't changed
             s.timer = (uint16_t)(((2048 - s.frequency) * 4) + 8 + (oddApuCycle() ? 2 : 0));
             if (s.enabled) s.timer = (uint16_t)(s.timer - 4);        // channel_1_restart
@@ -287,8 +343,8 @@ void Apu::sqWrite(Square& s, int reg, uint8_t v) {
             s.enabled = s.envRaise || s.envVolume > 0;
             if (s.enabled && !prevEnabled) s.firstStep = true;        // silent until the first step (Daiku no Gen-san)
             if (s.length == 0) { s.length = 64; s.lengthEnabled = false; }
-            s.envTimer = s.envPeriod;
-            s.envStopped = false;
+            s.envCountdown = s.envPeriod;
+            s.envClock = s.envLocked = false;
             s.sweepFreq = s.frequency;
             s.sweepTimer = s.sweepPeriod ? s.sweepPeriod : 8;
             s.sweepNegateCalcDone = false;
@@ -444,8 +500,8 @@ void Apu::noiseWrite(int reg, uint8_t v) {
             m_noise.enabled = m_noise.envRaise || m_noise.envVolume > 0;
             m_noise.shiftRegister = 0x7FFF;
             if (m_noise.length == 0) { m_noise.length = 64; m_noise.lengthEnabled = false; }
-            m_noise.envTimer = m_noise.envPeriod;
-            m_noise.envStopped = false;
+            m_noise.envCountdown = m_noise.envPeriod;
+            m_noise.envClock = m_noise.envLocked = false;
         }
         lengthEnableFlag(v, m_noise.length, m_noise.lengthEnabled, m_noise.enabled);
         if (!m_noise.enabled && prevEnabled) { m_noise.output = 0; noiseUpdateOutput(); }
@@ -536,6 +592,7 @@ void Apu::write(uint16_t addr, uint8_t v) {
                 // Powered on with DIV's bit 4 set: the first frame sequencer event is skipped
                 m_skipFirstEvent = m_gb->frameSequencerBit() ? 2 : 0;
                 m_frameStep = 0;
+                m_speedSwitchDelay = false;
                 m_powerOnCycle = m_gb->apuCycles();
                 sqDisable(m_sq1); sqDisable(m_sq2); noiseDisable(); waveDisable();
                 if (m_gb->isCgb()) m_sq1.length = m_sq2.length = m_noise.length = m_wave.length = 0;   // the CGB clears them

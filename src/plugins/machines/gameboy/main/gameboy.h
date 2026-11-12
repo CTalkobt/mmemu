@@ -187,9 +187,13 @@ public:
     /** A PPU mode change or the CPU leaving HALT: the HBlank block of HDMA, if one is due. */
     void processHdma();
     bool speedSwitchRequested() const { return m_speedSwitchRequest; }
-    void toggleSpeed() { m_speedSwitchRequest = false; m_highSpeed = !m_highSpeed; }
-    /** DIV held at 0 (while the speed switches). */
-    void resetDivider() { timerWrite(0xFF04, 0); }
+    void toggleSpeed() {
+        m_speedSwitchRequest = false;
+        m_highSpeed = !m_highSpeed;
+        m_apu.speedChanged(m_highSpeed);
+    }
+    /** DIV reset (by STOP: `duringStop`). */
+    void resetDivider(bool duringStop);
 
     // The map, for the mappers
     void map(uint16_t start, uint16_t end, Mem type, uint32_t offset, bool readOnly);
@@ -208,7 +212,8 @@ private:
     void timerExec();
     void timerWrite(uint16_t addr, uint8_t v);
     uint8_t timerRead(uint16_t addr) const;
-    void setDivider(uint16_t v);
+    /** The internal counter set to `v` (`counting`: by the clock, not a reset). */
+    void setDivider(uint16_t v, bool counting);
     void reloadTimer();
     void dmaExec();
     bool dmaConflict(uint16_t addr) const;
@@ -251,6 +256,8 @@ private:
     bool m_needReload = false, m_reloaded = false, m_timerOn = false;
     uint8_t m_tima = 0, m_tma = 0, m_tac = 0;
     uint16_t m_timerBit = 1024;
+    uint8_t m_frameSeqDelay = 0;                         // a frame sequencer edge due in this many exec()s
+    bool m_frameSeqDelayedRise = false;
 
     // OAM DMA
     uint8_t m_dmaSource = 0xFF, m_dmaStartDelay = 0, m_dmaDest = 0, m_dmaCounter = 0, m_dmaBuffer = 0;

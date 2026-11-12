@@ -11,13 +11,23 @@ void Cpu::init() {
     m_s.sp = 0xFFFF;
     m_s.cycles = 6;            // Mesen's, with a boot ROM (a start without one sets it: Gameboy::postBootState)
     m_prevIrq = 0;
+    m_justHalted = false;
+    m_stopDivReset = false;
+    m_toggleIn = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Time and memory
 // ---------------------------------------------------------------------------
 
-void Cpu::cycle() { m_gb->exec(); m_gb->exec(); }
+void Cpu::cycle() {
+    m_gb->exec();
+    m_gb->exec();
+    if (m_stopDivReset) {
+        m_stopDivReset = false;
+        m_gb->resetDivider(true);
+    }
+}
 void Cpu::masterCycle() { m_gb->execMasterCycle(); }
 
 uint8_t Cpu::readOp() { return m_gb->read<OamCorruption::ReadIncDec>(m_s.pc++); }
@@ -96,6 +106,7 @@ void Cpu::exec() {
     } else if (m_prevIrq && !m_s.haltBug) {
         if (m_s.haltCounter > 0) {
             m_s.haltCounter = 0;
+            if (m_toggleIn) { m_toggleIn = 0; m_gb->toggleSpeed(); }   // a speed switch's pause cut short
             m_gb->processHdma();                             // the CGB's HDMA waits out HALT
         }
         if (m_s.ime) {
@@ -121,21 +132,50 @@ void Cpu::exec() {
     }
 
     if (m_s.haltCounter) {
-        if (m_s.haltBug) haltBugStep();
-        else if (m_s.haltCounter > 1) cgbSpeedSwitch();
+        if (m_s.haltCounter > 1) cgbSpeedSwitch();
     } else {
         if (m_s.eiPending) { m_s.eiPending = false; m_s.ime = true; }
-        execOp(readOp());
+        const uint8_t op = readOp();
+        if (m_s.haltBug) {
+            // The HALT bug: PC isn't incremented, the byte is read again
+            --m_s.pc;
+            m_s.haltBug = false;
+        }
+        execOp(op);
     }
     nextCycleStart();
 }
 
 void Cpu::nextCycleStart() {
+    if (m_justHalted) {
+        // HALT looks at the interrupts a machine cycle in, as it fetches the next opcode
+        // (age halt-m0-interrupt, halt-prefetch): one requested and enabled, it doesn't halt.
+        // With IME the interrupt is taken and returns to the HALT (ei-halt, SameSuite's
+        // ei_delay_halt); without, the HALT bug
+        m_justHalted = false;
+        if (m_gb->isCgb()) {
+            // the CGB at the cycle's end (SameBoy's)
+            cycle();
+            m_prevIrq = m_gb->pendingIrq();
+        } else {
+            // the DMG three clocks in
+            masterCycle();
+            masterCycle();
+            masterCycle();
+            m_prevIrq = m_gb->pendingIrq();
+            masterCycle();
+        }
+        if (m_prevIrq) {
+            m_s.haltCounter = 0;
+            if (m_s.ime) --m_s.pc;
+            else m_s.haltBug = true;
+        }
+        return;
+    }
     if (m_s.haltCounter) {
         if (m_gb->isCgb()) {
-            // The CGB halted checks the interrupts at the cycle's start (none while the
-            // speed switches: Conker's Pocket Tales, as Mesen)
-            m_prevIrq = m_gb->speedSwitchRequested() ? 0 : m_gb->pendingIrq();
+            // The CGB halted checks the interrupts at the cycle's start
+            m_prevIrq = m_gb->pendingIrq();
             cycle();
         } else {
             // The DMG halted checks the interrupts a clock into the cycle
@@ -151,39 +191,41 @@ void Cpu::nextCycleStart() {
     }
 }
 
-void Cpu::haltBugStep() {
-    if (m_s.eiPending) { m_s.eiPending = false; m_s.ime = true; }
-    // The HALT bug: the next byte is read twice
-    cycle();
-    const uint8_t op = readOp();
-    --m_s.pc;
-    m_s.haltCounter = 0;
-    m_s.haltBug = false;
-    execOp(op);
-}
-
 void Cpu::halt() {
     m_s.haltCounter = 1;
-    if (!m_s.ime && m_gb->pendingIrq() != 0) m_s.haltBug = true;
+    m_justHalted = true;
 }
 
 void Cpu::stop() {
-    readCode();                     // the unused operand
     if (m_gb->isCgb() && m_gb->speedSwitchRequested()) {
-        // The CGB's speed switch: halted ~33941 machine cycles (Mesen's, after speed_switch_timing_stat)
-        m_s.haltCounter = 33942;
+        // The CGB's speed switch (SameBoy's, the AGE speed-switch tests): STOP resets DIV, the
+        // speed changes, and the CPU halts for SPEED_SWITCH_PAUSE machine cycles while the
+        // timer, PPU and APU run on (DIV back at 0 at the end). An interrupt requested and
+        // enabled ends the pause (spsw-interrupts); one already requested means none, and the
+        // byte after STOP runs as an opcode
+        const bool irq = m_gb->pendingIrq() != 0;
+        if (!irq) readCode();
+        else cycle();
+        m_stopDivReset = true;
+        if (irq) {
+            m_gb->toggleSpeed();
+        } else {
+            // The new speed a machine cycle into the pause going to double speed (SameBoy's 6
+            // clocks), two going back (the APU's length counters in step after: spsw-ch2-lc-delay)
+            m_toggleIn = m_gb->isHighSpeed() ? 2 : 1;
+            m_s.haltCounter = SPEED_SWITCH_PAUSE + 1;
+        }
         return;
     }
+    readCode();                     // the unused operand
     m_s.stopped = true;
     m_s.haltCounter = 1;
     m_ppu->setCpuStopState(true);
 }
 
 void Cpu::cgbSpeedSwitch() {
-    --m_s.haltCounter;
-    m_gb->resetDivider();           // DIV doesn't count while the speed switches
-    if (m_s.haltCounter == 1 && m_gb->speedSwitchRequested()) {
-        m_gb->toggleSpeed();
+    if (m_toggleIn && --m_toggleIn == 0) m_gb->toggleSpeed();
+    if (--m_s.haltCounter == 1) {
         m_s.haltCounter = 0;
         m_gb->processHdma();
     }

@@ -194,10 +194,11 @@ TEST_CASE(gb_joypad_serial_apu) {
     EXPECT_EQ(g.peek(0xFF01), 0xFF);                    // and $FF shifted in
     // The APU: the boot chime's square 1 fades; NR52 off clears the channels
     g.apu().setSampleRate(32000, gb::Gameboy::CLOCK_HZ);
-    g.apu().samples().clear();
-    g.runFrame();
     g.apu().run();
-    EXPECT_TRUE(g.apu().samples().size() >= 2 * 500);   // ~16.7 ms at 32 kHz
+    g.apu().samples().clear();
+    g.runTo(g.cycles() + 70224);                        // a frame's time, ~16.7 ms
+    g.apu().run();
+    EXPECT_TRUE(g.apu().samples().size() >= 2 * 500);   // at 32 kHz
     EXPECT_EQ(g.peek(0xFF26) & 0x80, 0x80);
 }
 
