@@ -74,8 +74,17 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
 - **Disassembly** (`sm83_disasm.h`, also the `sm83` toolchain
   disassembler): every opcode and the CB-prefixed ones, `LD (HL+),A`,
   `LDH ($FF44),A`, `LD ($FF00+C),A`, `ADD SP,-$02`, `LD HL,SP+$05`, JR's
-  target address; the unused opcodes as `DB $xx`. There is no SM83
-  assembler.
+  target address; the unused opcodes as `DB $xx`.
+- **Assembly** (`sm83_asm.h`, the `sm83` toolchain assembler: the CLI's
+  `asm $C000`, ending with `.`, the GUI's and MCP's): a line at a time,
+  reading back everything the disassembler writes, and `LDI`/`LDD`,
+  `(HLI)`/`(HLD)`, `(C)`, `LDH ($44),A`, ALU operands with or without
+  `A,`, `JP (HL)`, `STOP $xx`, `DB`/`DW`; numbers as `$FF`, `0xFF`, `0FFh`,
+  `%1010` or decimal. No labels or files (as the 6502's line assembler).
+- **GDB** (`--gdb-port`): the `g` packet is AF, BC, DE, HL, SP, PC, 16 bits
+  each, little-endian (the first six of GDB's Z80 order), with `p`/`P` and
+  a target description (`qXfer:features:read:target.xml`); `c` stops at
+  breakpoints, not at `$00` (that is the 6502's BRK; here NOP).
 - **Symbols**: the hardware registers (`P1`, `DIV`, `LCDC`, `STAT`, `LY`,
   `BGP`, `NR10`-`NR52`, `IE`, ...) from `roms/gameboy/hardware.sym`, used
   in the disassembly (`LDH (LY),A`) and expressions.
@@ -192,7 +201,9 @@ MIT licence, the one Mesen embeds), which sends the cartridge header to the
 SNES in joypad packets as Nintendo's does. Nintendo's takes a machine cycle
 less for each 1 bit of that header, SameBoy's the same time for either, so
 when it hands over DIV is moved by the difference (`boot_div-S`,
-`boot_div2-S`). `setBootRom()` takes another.
+`boot_div2-S`). `setBootRom()` takes another; the SNES machine passes
+`roms/snes/sgb_boot.bin` (`sgb2_boot.bin`, or `sgb_bios.bin`) if present
+(see [README-SNES.md](README-SNES.md)).
 On the Game Boy Color it runs SameBoy's CGB boot ROM (the one Mesen
 embeds): the logo, then for a DMG cartridge KEY0 and the palettes by its
 title. Nintendo's boot ROMs are not included.
@@ -259,5 +270,5 @@ title. Nintendo's boot ROMs are not included.
 - The MBC6/MBC7, HuC1/HuC3, MMM01 and the other rare mappers, the infrared
   port (RP is a stub), OPRI, the CGB's fast serial clock, the CGB's LCD
   colour correction, separate VRAM/work RAM bank views in the debugger.
-- An SM83 assembler; reverse stepping and snapshots keep only the CPU's
-  registers (not memory or the PPU); the GDB server does not know the SM83.
+- Reverse stepping and snapshots keep only the CPU's registers (not memory
+  or the PPU); file assembly and labels in the assembler.

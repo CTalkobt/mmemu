@@ -3,6 +3,7 @@
 #include <string>
 #include <atomic>
 #include <thread>
+#include <vector>
 
 class ICore;
 class IBus;
@@ -16,7 +17,7 @@ class DebugContext;
  * breakpoints). Runs in a background thread.
  *
  * Supports the minimal command set needed for basic debugging:
- *   ? g G m M s c Z0 z0 qSupported qAttached D k
+ *   ? g G p P m M s c Z0 z0 qSupported qAttached qXfer:features:read D k
  */
 class GdbServer {
 public:
@@ -73,7 +74,24 @@ private:
     static std::string toHex16LE(uint16_t v);
     static uint8_t fromHex(char hi, char lo);
 
-    // 6502 register order for GDB: A, X, Y, SP, PC (16-bit), P
-    static constexpr int GDB_REG_COUNT = 6;
-    int mapGdbRegToCore(int gdbIdx) const;
+    /** One register of the `g` packet: its ICore index (-1: none, sent as zeros) and size in bytes. */
+    struct GdbReg {
+        std::string name;
+        int coreIdx;
+        int bytes;
+    };
+    /**
+     * The `g` packet's registers for the current CPU, little-endian each:
+     *  - the 6502 family (6502, 65C02, 45GS02): A, X, Y, SP, PC (16-bit), P, as GDB's 6502;
+     *  - the SM83: AF, BC, DE, HL, SP, PC (16-bit each), the start of GDB's Z80 order;
+     *  - any other CPU: its registers in the core's order, less the internal ones.
+     */
+    std::vector<GdbReg> regLayout() const;
+    /** The layout as a GDB target description (qXfer:features:read:target.xml), for non-6502 CPUs. */
+    std::string targetXml() const;
+    /** The 6502 family's: `c` also stops on BRK ($00), which is NOP or another instruction elsewhere. */
+    bool is6502Family() const;
+    int findCoreReg(const char* name) const;
+    std::string handleReadReg(const std::string& params);
+    std::string handleWriteReg(const std::string& params);
 };

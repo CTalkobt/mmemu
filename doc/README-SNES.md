@@ -282,7 +282,12 @@ of [README-GAMEBOY.md](README-GAMEBOY.md)).
   stop bit), or with both lines high step to the next player; `$FF00`
   reads the current player's buttons, or `$F` minus the player. The boot
   ROM is SameBoy's open source SGB boot ROM (MIT licence, as Mesen embeds
-  it), which sends the cartridge's header to the BIOS in six packets. What
+  it), which sends the cartridge's header to the BIOS in six packets.
+  Nintendo's (256 bytes, your own; not included) is used instead if it is
+  in `roms/snes/sgb_boot.bin` (`sgb2_boot.bin` for the SGB2), or
+  `sgb_bios.bin` for either (Mesen's names); the description then reads
+  `, Super Game Boy (boot ROM <file>): ...`. Nintendo's takes its own time,
+  so DIV at `$0100` is left as it ends (SameBoy's is corrected for the header). What
   the packets mean (palettes, borders, `MLT_REQ`, sound) is the SGB BIOS's
   own work, so nothing of it is emulated here.
 - **Sound:** the Game Boy's APU is box-filtered to 32 kHz and added to the
