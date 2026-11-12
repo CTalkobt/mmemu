@@ -141,7 +141,6 @@ void Ppu::vblankScanline() {
     switch (m_cycle) {
     case 2:
         if (m_scanline == 144) m_irqMode = PpuMode::OamEvaluation;
-        if (lyLate()) m_ly = m_scanline;
         break;
     case 4:
         if (m_cgb && m_scanline == 153) m_lyForCompare = 153;   // the CGB E's: LY 153 two dots longer
@@ -161,10 +160,7 @@ void Ppu::vblankScanline() {
         if (m_scanline == 153 && !m_cgb) { m_ly = 0; m_lyForCompare = m_scanline; }
         break;
     case 8:
-        if (m_scanline == 153) {
-            if (m_cgb) m_ly = 0;                  // ly-cgbE, ly-ncmE
-            else m_lyForCompare = -1;
-        }
+        if (m_scanline == 153 && !m_cgb) m_lyForCompare = -1;
         break;
     case 12:
         if (m_scanline == 153) m_lyForCompare = 0;
@@ -182,7 +178,7 @@ void Ppu::vblankScanline() {
             if (!m_cgb) setMode(PpuMode::HBlank);     // on the DMG, line 0 starts in mode 0 (not the CGB)
             oamWriteBlockAtLineStart();
         } else {
-            if (!lyLate()) m_ly = m_scanline;
+            m_ly = m_scanline;
             m_lyForCompare = -1;
         }
         break;
@@ -215,7 +211,7 @@ void Ppu::firstScanlineAfterPowerOn() {
         ++m_scanline;
         m_wyEnable |= m_scanline == m_wy && m_windowEnabled;
         m_drawnPixels = 0;
-        if (!lyLate()) m_ly = m_scanline;
+        m_ly = m_scanline;
         oamWriteBlockAtLineStart();
         break;
     }
@@ -229,7 +225,6 @@ void Ppu::visibleScanline() {
             m_irqMode = PpuMode::OamEvaluation;
             m_lyForCompare = -1;
         }
-        if (lyLate()) m_ly = m_scanline;
         if (m_cgb) m_oamWriteBlocked = true;     // in double speed from here (oam-write)
         break;
     case 3:
@@ -267,7 +262,7 @@ void Ppu::visibleScanline() {
     case 456:
         m_cycle = 0;
         ++m_scanline;
-        if (!lyLate()) m_ly = m_scanline;
+        m_ly = m_scanline;
         m_wyEnable |= m_scanline == m_wy && m_windowEnabled;
         m_drawnPixels = 0;
         if (m_scanline == 144) m_lyForCompare = -1;
@@ -276,7 +271,14 @@ void Ppu::visibleScanline() {
     }
 }
 
-bool Ppu::lyLate() const { return m_cgb && m_gb->isHighSpeed(); }
+uint8_t Ppu::cgbLy() const {
+    // The CGB's LY (AGE's, at either speed): a line's number from its fourth dot, the last
+    // one's ANDed with it on the third (lcd-align-ly), LY 153 for 5 dots
+    const uint8_t line = m_scanline;
+    if (line == 0 || m_cycle >= 3) return (line == 153 && m_cycle >= 8) ? 0 : line;
+    const uint8_t prev = (uint8_t)(line - 1);
+    return m_cycle == 2 ? (uint8_t)(prev & line) : prev;
+}
 
 void Ppu::oamWriteBlockAtLineStart() {
     // The CGB in single speed blocks OAM writes from a visible line's first dot (oam-write)
@@ -534,7 +536,7 @@ uint8_t Ppu::read(uint16_t addr) const {
     case 0xFF41: return (uint8_t)(0x80 | (m_status & 0x78) | (m_lyCoincidence ? 0x04 : 0) | ((int)m_mode & 3));
     case 0xFF42: return m_scy;
     case 0xFF43: return m_scx;
-    case 0xFF44: return m_ly;
+    case 0xFF44: return m_cgb ? cgbLy() : m_ly;
     case 0xFF45: return m_lyCompare;
     case 0xFF47: return m_bgp;
     case 0xFF48: return m_obp0;

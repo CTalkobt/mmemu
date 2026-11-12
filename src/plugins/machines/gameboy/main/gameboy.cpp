@@ -530,6 +530,15 @@ void Gameboy::exec() {
     m_ppu.exec(false);
 }
 
+uint8_t Gameboy::execSamplingIrq() {
+    m_cpu.cycleRef() += 2;
+    timerDmaSerial();
+    m_ppu.exec(true);
+    const uint8_t irq = pendingIrq();
+    m_ppu.exec(true);
+    return irq;
+}
+
 // ---------------------------------------------------------------------------
 // Reads and writes
 // ---------------------------------------------------------------------------

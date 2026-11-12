@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy Color: the PPU half a dot from the CPU
+
+- Each speed switch moves the LCD half a dot from the CPU (AGE's "LCD
+  alignment offsets"): in double speed, the CPU reading every other dot,
+  nothing shows; back at normal speed the PPU is a whole dot on, and the
+  CPU sees it at dot phases it otherwise never does. Modelled as a PPU
+  dot more on each switch back to normal speed with the LCD on. AGE's `lcd-align-ly-cgbE` and `spsw-mode0-cgbBCE` pass.
+- The CGB's LY by the dot, as AGE's (either speed): a line's number from its
+  fourth dot, the one before ANDed with it on the third (the LY & (LY + 1)
+  glitch), LY 153 for 5 dots. Without a speed switch the CPU only ever
+  reads it on the fourth dot of four, where it is as before.
+- The DMG checks for interrupts a dot before the machine cycle's end: one
+  the PPU raises on a cycle's last dot (mode 0 with SCX & 7 at 3 or 7) is
+  taken a cycle later. AGE's `stat-int-dmgC-cgbBCE` passes on the DMG; the
+  halted DMG's check is unchanged (Mooneye's `hblank_ly_scx_timing-GS`).
+- With the noise channel above, the surveys: CGB 192 PASS, 0 FAIL,
+  3 skipped; DMG 119 PASS, 1 FAIL (AGE's `oam-write-dmgC`,
+  whose starred row its author finds changing with when the LCD was last
+  turned off, and here from line to line).
+
 ### Game Boy: the noise channel as SameBoy
 
 - The noise channel (APU channel 4) is SameBoy's rather than Mesen2's
@@ -20,9 +40,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
   cycles off alignment and its feedback latched on the counter bit's
   falling edge; the counter running on with the channel off until the DAC
   is turned off.
-- SameSuite's `channel_4_freq_change` now passes: the CGB survey is
-  190 PASS, 2 FAIL, 3 skipped (the other channel 4 tests, `cgb_sound` and
-  `dmg_sound` still pass; the DMG survey stays 118 PASS, 2 FAIL).
+- SameSuite's `channel_4_freq_change` now passes (the other channel 4
+  tests, `cgb_sound` and `dmg_sound` still pass).
 
 ### Game Boy Color: the test ROMs
 

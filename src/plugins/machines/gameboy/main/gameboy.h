@@ -154,6 +154,8 @@ public:
     // ---------------------------------------------------------------
     /** Two clocks: the timer, OAM DMA, the serial port, two PPU dots. */
     void exec();
+    /** exec(), returning the interrupts requested as of its first dot (the DMG's interrupt check). */
+    uint8_t execSamplingIrq();
     /** One clock (HALT's and some register writes' finer timing). */
     void execMasterCycle();
     template <OamCorruption C> uint8_t read(uint16_t addr);
@@ -191,6 +193,9 @@ public:
         m_speedSwitchRequest = false;
         m_highSpeed = !m_highSpeed;
         m_apu.speedChanged(m_highSpeed);
+        // Each switch leaves the LCD half a dot further from the CPU (AGE's LCD alignment
+        // offsets): unseen in double speed, a whole dot back at normal speed (lcd-align-ly)
+        if (!m_highSpeed && m_ppu.lcdOn()) m_ppu.exec(true);
     }
     /** DIV reset (by STOP: `duringStop`). */
     void resetDivider(bool duringStop);

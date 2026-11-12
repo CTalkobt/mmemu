@@ -9,7 +9,8 @@
 // (verified on hardware) differ from Mesen, SameBoy's timing (Core/sm83_cpu.c,
 // timing.c; MIT): HALT looks at the interrupts a cycle late and with one
 // pending and IME set doesn't halt, and the speed switch's DIV reset and
-// pause.
+// pause. The DMG checks for interrupts a dot before a machine cycle's end
+// (AGE's stat-int-dmgC).
 
 #include "gb_ppu.h"
 #include <cstdint>
