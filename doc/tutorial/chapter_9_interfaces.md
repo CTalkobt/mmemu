@@ -23,7 +23,8 @@ Located at [cli_interpreter.h:L11](file:///home/duck/m65/inpg/mmsim/src/cli/main
 Located at [gdb_server.h:L21](file:///home/duck/m65/inpg/mmsim/src/cli/main/gdb_server.h#L21).
 - Implements GDB RSP connection protocol in a background worker thread.
 - Maps standard GDB register request packets (`g`, `G`) and memory operations (`m`, `M`) to internal CPU register/bus actions.
-- Maps 6502 register sequences (A, X, Y, SP, PC, P) to GDB index parameters.
+- Maps the CPU's registers to the `g`/`G`/`p`/`P` packets by its ISA: the 6502 family's A, X, Y, SP, PC, P (GDB's 6502 order); the SM83's AF, BC, DE, HL, SP, PC (GDB's Z80 order); any other CPU's visible registers in the core's order, described by `qXfer:features:read:target.xml`.
+- `c` (continue) also stops on BRK (`$00`) only for the 65xx CPUs.
 
 ### 3.3 PluginPaneManager
 Located at [plugin_pane_manager.h:L17](file:///home/duck/m65/inpg/mmsim/src/gui/main/plugin_pane_manager.h#L17).

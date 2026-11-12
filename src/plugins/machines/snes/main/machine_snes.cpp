@@ -127,6 +127,7 @@ struct Cart {
     // The Super Game Boy (chipset $E3 or game code 042J, as Mesen): the ICD2 at $6000-$7FFF and its Game Boy
     std::unique_ptr<Sgb> sgb;
     std::string sgbPath;                        // its Game Boy cartridge's file
+    std::string sgbBootFile;                    // the boot ROM file it runs ("": SameBoy's, built in)
     std::string savePath;
     std::vector<uint8_t> saved;                 // what the file holds
     std::vector<uint8_t> savedRtc;              // what the clock's file holds
@@ -438,6 +439,16 @@ struct Cart {
         if (chips == 0xE3 || (chipLow < 0x03 && gameCode() == "042J")) {
             const bool sgb2 = raw.find("GAMEBOY2") != std::string::npos || rom.size() >= 0x80000;
             sgb = std::make_unique<Sgb>(sgb2);
+            // Its Game Boy's boot ROM: roms/snes/sgb_boot.bin or sgb2_boot.bin, else sgb_bios.bin
+            // (256 bytes, your own; Mesen's names), else SameBoy's built in
+            for (const char* n : {sgb2 ? "/sgb2_boot.bin" : "/sgb_boot.bin", "/sgb_bios.bin"}) {
+                std::vector<uint8_t> boot;
+                if (readFile(firmwareDir() + n, boot) && boot.size() == 256) {
+                    sgb->gameboy().setBootRom(std::move(boot));
+                    sgbBootFile = n + 1;
+                    break;
+                }
+            }
         }
         // The BS-X BIOS: chipset $E5 (as Mesen), with the pack from a .bs file or none
         if (chips == 0xE5) {
@@ -521,6 +532,7 @@ struct Cart {
     /** ", Super Game Boy: <the Game Boy cartridge>". */
     std::string sgbDescription() const {
         std::string s = sgb->sgb2() ? ", Super Game Boy 2" : ", Super Game Boy";
+        if (!sgbBootFile.empty()) s += " (boot ROM " + sgbBootFile + ")";
         auto& g = sgb->gameboy();
         if (!g.loaded()) return s + ", no Game Boy cartridge";
         s += ": " + (g.header().title.empty() ? std::string("Game Boy cartridge") : g.header().title) + ", " + g.mapperName() +

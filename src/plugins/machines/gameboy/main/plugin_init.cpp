@@ -1,6 +1,7 @@
 #include "mmemu_plugin_api.h"
 #include "machine_gameboy.h"
 #include "sm83_disasm.h"
+#include "sm83_asm.h"
 #include "libcore/main/machines/machine_registry.h"
 #include "libcore/main/image_loader.h"
 #include <fstream>
@@ -57,7 +58,8 @@ ICartridgeHandler* createHandler(const char* path) { return new GbCartHandler(pa
 CartridgePluginInfo s_carts[] = { { "gb", createHandler }, { "gbc", createHandler } };
 
 IDisassembler* createDisasmSm83() { return new DisassemblerSm83(); }
-ToolchainPluginInfo s_toolchains[] = { {"sm83", nullptr, createDisasmSm83, nullptr} };
+IAssembler* createAsmSm83() { return new AssemblerSm83(); }
+ToolchainPluginInfo s_toolchains[] = { {"sm83", nullptr, createDisasmSm83, createAsmSm83} };
 
 }  // namespace
 

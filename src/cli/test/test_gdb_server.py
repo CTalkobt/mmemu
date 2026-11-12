@@ -188,9 +188,70 @@ def run_tests():
         proc.wait(timeout=3)
 
 
+def run_sm83_tests():
+    """The Game Boy's SM83: AF BC DE HL SP PC (16-bit each, GDB's Z80 order), a target description,
+    p/P, and `c` not stopping on $00 (NOP here, BRK only on the 6502)."""
+    port = GDB_PORT + 1
+    proc = subprocess.Popen(
+        ['./bin/mmemu-cli', '-m', 'gameboy', '--speed', 'max', '--gdb-port', str(port)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    try:
+        if not wait_for_port(port):
+            raise RuntimeError("GDB server did not start in time")
+        client = GdbRspClient(port=port)
+        print("--- GDB RSP Tests (Game Boy, SM83) ---")
+
+        reply = client.command('qSupported')
+        assert 'qXfer:features:read+' in reply, f"Expected qXfer in qSupported, got: {reply}"
+        xml = client.command('qXfer:features:read:target.xml:0,1000')
+        assert xml.startswith('l<?xml') and '<reg name="af" bitsize="16"/>' in xml and 'name="pc" bitsize="16" type="code_ptr"' in xml, xml
+        part = client.command('qXfer:features:read:target.xml:0,10')
+        assert part == 'm' + xml[1:17], f"Expected the first $10 bytes, got: {part}"
+        print("  ✓ Target description OK")
+
+        # After the boot ROM (none: its hand-off state): AF=$01B0 BC=$0013 DE=$00D8 HL=$014D SP=$FFFE PC=$0100
+        reply = client.command('g')
+        assert reply == 'b0011300d8004d01feff0001', f"Unexpected SM83 registers: {reply}"
+        assert client.command('p5') == '0001', "p5 (PC) should be $0100"
+        print(f"  ✓ Read registers OK (g -> {reply})")
+
+        # In work RAM: NOP x4; LD A,$42; JR -2
+        assert client.command('Mc000,8:000000003e4218fe') == 'OK'
+        assert client.command('mc000,8') == '000000003e4218fe'
+        assert client.command('P5=00c0') == 'OK'
+        assert client.command('p5') == '00c0'
+        print("  ✓ Write memory and PC OK")
+
+        assert client.command('s') == 'S05'
+        assert client.command('p5') == '01c0', "After a NOP, PC should be $C001"
+        assert client.command('Z0,c004,1') == 'OK'
+        assert client.command('c') == 'S05'
+        assert client.command('p5') == '04c0', "Continue should run past the NOPs to the breakpoint at $C004"
+        assert client.command('z0,c004,1') == 'OK'
+        print("  ✓ Step, breakpoint and continue past $00 OK")
+
+        assert client.command('s') == 'S05'
+        af = client.command('p0')
+        assert af[2:4] == '42', f"After LD A,$42, expected A=$42, got AF (LE) {af}"
+        reply = client.command('G' + 'b0ff' + '3412' + '7856' + 'bc9a' + 'f0df' + '00c0')
+        assert reply == 'OK'
+        assert client.command('g') == 'b0ff34127856bc9af0df00c0'
+        print("  ✓ Register verification and G OK")
+
+        assert client.command('D') == 'OK'
+        client.close()
+        print("ALL SM83 GDB RSP TESTS PASSED")
+    finally:
+        proc.stdin.write('quit\n')
+        proc.stdin.flush()
+        proc.terminate()
+        proc.wait(timeout=3)
+
+
 if __name__ == '__main__':
     try:
         run_tests()
+        run_sm83_tests()
     except Exception as e:
         print(f"TEST FAILED: {e}")
         import traceback

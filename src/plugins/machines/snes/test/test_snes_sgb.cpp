@@ -103,6 +103,7 @@ TEST_CASE(snes_sgb) {
     setenv("MMEMU_SNES_FIRMWARE", DIR.c_str(), 1);
     std::remove((DIR + "/SGB1.sfc").c_str());
     std::remove((DIR + "/SGB2.sfc").c_str());
+    for (const char* n : {"/sgb_boot.bin", "/sgb2_boot.bin", "/sgb_bios.bin"}) std::remove((DIR + n).c_str());
     const auto cart = gbCart();
     const std::string gbPath = DIR + "/test.gb";
     writeFile(gbPath, cart);
@@ -251,5 +252,52 @@ TEST_CASE(snes_sgb_battery_and_sgb2) {
     EXPECT_EQ(snes::sgbGameboy(m)->cartRam()[0], 0x5A);
     delete m;
     std::remove((DIR + "/SGB2.sfc").c_str());
+    unsetenv("MMEMU_SNES_FIRMWARE");
+}
+
+// The Game Boy's boot ROM from roms/snes/sgb_boot.bin (Mesen's name; sgb2_boot.bin for the SGB2, and
+// sgb_bios.bin for either) in place of SameBoy's: a stand-in that marks $C001, turns itself off at $00FE
+// and so falls into the cartridge at $0100.
+TEST_CASE(snes_sgb_boot_rom_file) {
+    mkdir(DIR.c_str(), 0755);
+    setenv("MMEMU_SNES_FIRMWARE", DIR.c_str(), 1);
+    for (const char* n : {"/SGB2.sfc", "/sgb_boot.bin", "/sgb2_boot.bin", "/sgb_bios.bin"}) std::remove((DIR + n).c_str());
+    writeFile(DIR + "/SGB1.sfc", bios(0x40000, "Super GAMEBOY"));
+    std::vector<uint8_t> boot(256, 0x00);
+    const uint8_t prog[] = {0x31, 0xFE, 0xFF, 0x3E, 0x42, 0xEA, 0x01, 0xC0};   // LD SP,$FFFE; LD A,$42; LD ($C001),A
+    std::memcpy(boot.data(), prog, sizeof prog);
+    const uint8_t off[] = {0x3E, 0x01, 0xE0, 0x50};                          // LD A,1; LDH ($50),A
+    std::memcpy(&boot[0xFC], off, sizeof off);
+    const auto cart = gbCart();
+    std::string err;
+
+    // The wrong size is ignored: SameBoy's runs
+    writeFile(DIR + "/sgb_boot.bin", std::vector<uint8_t>(255, 0));
+    MachineDescriptor* m = snes::create(false, &err);
+    ASSERT(m);
+    ASSERT(snes::insertCartridge(m, cart, "test.gb", err));
+    EXPECT_TRUE(snes::cartridgeInfo(m).find("boot ROM") == std::string::npos);
+    delete m;
+
+    // sgb_bios.bin, then sgb_boot.bin before it
+    std::remove((DIR + "/sgb_boot.bin").c_str());
+    writeFile(DIR + "/sgb_bios.bin", boot);
+    m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, cart, "test.gb", err));
+    EXPECT_TRUE(snes::cartridgeInfo(m).find("Super Game Boy (boot ROM sgb_bios.bin): SGBTEST") != std::string::npos);
+    delete m;
+    writeFile(DIR + "/sgb_boot.bin", boot);
+    m = snes::create(false, &err);
+    ASSERT(snes::insertCartridge(m, cart, "test.gb", err));
+    EXPECT_TRUE(snes::cartridgeInfo(m).find("Super Game Boy (boot ROM sgb_boot.bin): SGBTEST") != std::string::npos);
+    gb::Gameboy* g = snes::sgbGameboy(m);
+    ASSERT(g);
+    runFor(m, 0.05);
+    EXPECT_EQ(g->peek(0xC001), 0x42);                   // the file's boot ROM ran
+    EXPECT_EQ(g->peek(0xC000), 0xEF);                   // and the cartridge after it (the pad, nothing pressed)
+    EXPECT_EQ(g->peek(0x0000), cart[0]);                // the boot ROM is off
+    delete m;
+
+    for (const char* n : {"/sgb_boot.bin", "/sgb_bios.bin"}) std::remove((DIR + n).c_str());
     unsetenv("MMEMU_SNES_FIRMWARE");
 }

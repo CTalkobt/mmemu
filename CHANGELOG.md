@@ -7,6 +7,25 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: an SM83 assembler, GDB for any CPU, the SGB's boot ROM from a file
+
+- **SM83 assembler** (`sm83_asm.h`, the `sm83` toolchain's): a line
+  assembler for the CLI's `asm`, the GUI and MCP. Everything the SM83
+  disassembler writes reads back as the same bytes (all 511 opcodes are
+  checked), plus `LDI`/`LDD`, `(HLI)`/`(HLD)`, `(C)`, `LDH ($44),A`, ALU
+  operands without `A,`, `DB`/`DW`.
+- **GDB server, by the CPU:** the 6502 family keeps GDB's 6502 layout; the
+  SM83's `g` packet is AF, BC, DE, HL, SP, PC (GDB's Z80 order); any other
+  CPU (Z80, 6809, 65816, ARM, SPC700) gets its visible registers in the
+  core's order instead of the 6502's. Added `p`/`P` and a target
+  description (`qXfer:features:read:target.xml`) for non-6502 CPUs.
+  `c` stopped wherever the next opcode was `$00`, the 6502's BRK, which is
+  NOP on the SM83 and Z80: now only on the 65xx CPUs.
+- **Super Game Boy:** Nintendo's boot ROM for its Game Boy, if you have it,
+  from `roms/snes/sgb_boot.bin` (`sgb2_boot.bin` for the SGB2) or
+  `sgb_bios.bin` (Mesen's names, 256 bytes); otherwise SameBoy's, built in.
+  The cartridge description names the file.
+
 ### Game Boy Color
 
 - **`gameboycolor` (also `gbc`, `cgb`)**: the Game Boy Color on the Game Boy

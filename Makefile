@@ -155,6 +155,7 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 PLUGIN_GAMEBOY_SRCS = src/plugins/machines/gameboy/main/machine_gameboy.cpp \
 	src/plugins/machines/gameboy/main/sm83_core.cpp \
 	src/plugins/machines/gameboy/main/sm83_disasm.cpp \
+	src/plugins/machines/gameboy/main/sm83_asm.cpp \
 	src/plugins/machines/gameboy/main/gameboy.cpp \
 	src/plugins/machines/gameboy/main/gb_cpu.cpp \
 	src/plugins/machines/gameboy/main/gb_ppu.cpp \
@@ -573,6 +574,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/gameboy/test/test_gameboy_roms.cpp \
 	src/plugins/machines/gameboy/test/test_gameboy_machine.cpp \
 	src/plugins/machines/gameboy/test/test_sm83_disasm.cpp \
+	src/plugins/machines/gameboy/test/test_sm83_asm.cpp \
 	src/plugins/machines/apple2/test/test_apple2_machine.cpp \
 	src/plugins/machines/apple2/test/test_apple2_disk.cpp \
 	src/plugins/devices/apple2_video/test/test_apple2_video.cpp \
@@ -719,6 +721,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/gameboy/main/machine_gameboy.o \
 	src/plugins/machines/gameboy/main/sm83_core.o \
 	src/plugins/machines/gameboy/main/sm83_disasm.o \
+	src/plugins/machines/gameboy/main/sm83_asm.o \
 	src/plugins/machines/snes/main/snes_apu.o \
 	src/plugins/machines/snes/main/snes_ppu.o \
 	src/plugins/machines/snes/main/machine_snes.o \

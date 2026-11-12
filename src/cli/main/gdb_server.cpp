@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <cstring>
 #include <cerrno>
+#include <cctype>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -44,20 +45,53 @@ uint8_t GdbServer::fromHex(char hi, char lo) {
 }
 
 // ---------------------------------------------------------------------------
-// Register mapping: GDB 6502 order → ICore register index
-// GDB order: A(0), X(1), Y(2), SP(3), PC(4), P(5)
+// Register layout: by the CPU (GDB's 6502 order, the SM83's as GDB's Z80, else the core's)
 // ---------------------------------------------------------------------------
 
-int GdbServer::mapGdbRegToCore(int gdbIdx) const {
-    // Map by name since ICore register indices vary by CPU type
-    static const char* gdbRegNames[] = {"A", "X", "Y", "SP", "PC", "P"};
-    if (gdbIdx < 0 || gdbIdx >= GDB_REG_COUNT) return -1;
-    int rc = m_cpu->regCount();
+int GdbServer::findCoreReg(const char* name) const {
+    const int rc = m_cpu->regCount();
     for (int i = 0; i < rc; ++i) {
-        if (std::strcmp(m_cpu->regDescriptor(i)->name, gdbRegNames[gdbIdx]) == 0)
-            return i;
+        if (std::strcmp(m_cpu->regDescriptor(i)->name, name) == 0) return i;
     }
     return -1;
+}
+
+bool GdbServer::is6502Family() const {
+    const std::string isa = m_cpu->isaName();
+    return isa == "6502" || isa == "65C02" || isa == "45GS02";
+}
+
+std::vector<GdbServer::GdbReg> GdbServer::regLayout() const {
+    std::vector<GdbReg> out;
+    const std::string isa = m_cpu->isaName();
+    if (is6502Family()) {
+        for (const char* n : {"A", "X", "Y", "SP", "PC", "P"})
+            out.push_back({n, findCoreReg(n), std::strcmp(n, "PC") == 0 ? 2 : 1});
+    } else if (isa == "sm83") {
+        for (const char* n : {"AF", "BC", "DE", "HL", "SP", "PC"}) out.push_back({n, findCoreReg(n), 2});
+    } else {
+        const int rc = m_cpu->regCount();
+        for (int i = 0; i < rc; ++i) {
+            const RegDescriptor* d = m_cpu->regDescriptor(i);
+            if (d->flags & REGFLAG_INTERNAL) continue;
+            out.push_back({d->name, i, (int)d->width});
+        }
+    }
+    return out;
+}
+
+std::string GdbServer::targetXml() const {
+    std::string x = "<?xml version=\"1.0\"?><!DOCTYPE target SYSTEM \"gdb-target.dtd\"><target version=\"1.0\">"
+                    "<feature name=\"org.mmemu." + std::string(m_cpu->isaName()) + "\">";
+    for (const auto& r : regLayout()) {
+        std::string name = r.name;
+        for (auto& c : name) c = (char)std::tolower((unsigned char)c);
+        const bool pc = r.coreIdx >= 0 && (m_cpu->regDescriptor(r.coreIdx)->flags & REGFLAG_PC);
+        const bool sp = r.coreIdx >= 0 && (m_cpu->regDescriptor(r.coreIdx)->flags & REGFLAG_SP);
+        x += "<reg name=\"" + name + "\" bitsize=\"" + std::to_string(r.bytes * 8) + "\"" +
+             (pc ? " type=\"code_ptr\"" : sp ? " type=\"data_ptr\"" : "") + "/>";
+    }
+    return x + "</feature></target>";
 }
 
 // ---------------------------------------------------------------------------
@@ -128,8 +162,21 @@ void GdbServer::sendError(int fd, int code) {
 
 std::string GdbServer::handleQuery(const std::string& pkt) {
     if (pkt.find("qSupported") == 0) {
-        // Advertise mmemu-specific extensions for metadata
-        return "PacketSize=4096;swbreak+;hwbreak-;mmemu-symbols+;mmemu-variables+;mmemu-frame+";
+        // Advertise mmemu-specific extensions for metadata; a register description for CPUs other than the 6502's
+        return std::string("PacketSize=4096;swbreak+;hwbreak-;mmemu-symbols+;mmemu-variables+;mmemu-frame+") +
+               (is6502Family() ? "" : ";qXfer:features:read+");
+    }
+    if (pkt.find("qXfer:features:read:target.xml:") == 0 && !is6502Family()) {
+        // qXfer:features:read:target.xml:offset,length
+        const std::string range = pkt.substr(31);
+        const size_t comma = range.find(',');
+        if (comma == std::string::npos) return "E01";
+        const size_t off = std::stoul(range.substr(0, comma), nullptr, 16);
+        const size_t len = std::stoul(range.substr(comma + 1), nullptr, 16);
+        const std::string xml = targetXml();
+        if (off >= xml.size()) return "l";
+        const std::string part = xml.substr(off, len);
+        return (off + part.size() >= xml.size() ? "l" : "m") + part;
     }
     if (pkt == "qAttached") {
         return "1"; // Attached to existing process
@@ -158,40 +205,47 @@ std::string GdbServer::handleQuery(const std::string& pkt) {
 
 std::string GdbServer::handleReadRegs() {
     std::string result;
-    // GDB 6502: A, X, Y, SP (8-bit each), PC (16-bit LE), P (8-bit)
-    for (int g = 0; g < GDB_REG_COUNT; ++g) {
-        int ci = mapGdbRegToCore(g);
-        if (ci < 0) {
-            result += (g == 4) ? "0000" : "00"; // PC is 16-bit
-            continue;
-        }
-        uint32_t val = m_cpu->regRead(ci);
-        if (g == 4) { // PC is 16-bit LE
-            result += toHex16LE(val & 0xFFFF);
-        } else {
-            result += toHexByte(val & 0xFF);
-        }
+    for (const auto& r : regLayout()) {
+        const uint32_t val = r.coreIdx >= 0 ? m_cpu->regRead(r.coreIdx) : 0;
+        for (int i = 0; i < r.bytes; ++i) result += toHexByte((uint8_t)(val >> (8 * i)));
     }
     return result;
 }
 
 std::string GdbServer::handleWriteRegs(const std::string& data) {
-    // Parse hex pairs: A(1), X(1), Y(1), SP(1), PC(2 bytes LE), P(1)
     size_t pos = 0;
-    for (int g = 0; g < GDB_REG_COUNT && pos + 1 < data.size(); ++g) {
-        int ci = mapGdbRegToCore(g);
-        if (g == 4) { // PC: 2 bytes LE
-            if (pos + 3 >= data.size()) break;
-            uint8_t lo = fromHex(data[pos], data[pos+1]);
-            uint8_t hi = fromHex(data[pos+2], data[pos+3]);
-            if (ci >= 0) m_cpu->regWrite(ci, lo | (hi << 8));
-            pos += 4;
-        } else {
-            uint8_t val = fromHex(data[pos], data[pos+1]);
-            if (ci >= 0) m_cpu->regWrite(ci, val);
-            pos += 2;
-        }
+    for (const auto& r : regLayout()) {
+        if (pos + 2 * r.bytes > data.size()) break;
+        uint32_t val = 0;
+        for (int i = 0; i < r.bytes; ++i) val |= (uint32_t)fromHex(data[pos + 2 * i], data[pos + 2 * i + 1]) << (8 * i);
+        if (r.coreIdx >= 0) m_cpu->regWrite(r.coreIdx, val);
+        pos += 2 * r.bytes;
     }
+    return "OK";
+}
+
+std::string GdbServer::handleReadReg(const std::string& params) {
+    // Format: n (hex register number)
+    const auto layout = regLayout();
+    const size_t n = std::stoul(params, nullptr, 16);
+    if (n >= layout.size()) return "E01";
+    const uint32_t val = layout[n].coreIdx >= 0 ? m_cpu->regRead(layout[n].coreIdx) : 0;
+    std::string result;
+    for (int i = 0; i < layout[n].bytes; ++i) result += toHexByte((uint8_t)(val >> (8 * i)));
+    return result;
+}
+
+std::string GdbServer::handleWriteReg(const std::string& params) {
+    // Format: n=value (hex register number, value little-endian)
+    const size_t eq = params.find('=');
+    if (eq == std::string::npos) return "E01";
+    const auto layout = regLayout();
+    const size_t n = std::stoul(params.substr(0, eq), nullptr, 16);
+    const std::string hex = params.substr(eq + 1);
+    if (n >= layout.size() || hex.size() < (size_t)(2 * layout[n].bytes)) return "E01";
+    uint32_t val = 0;
+    for (int i = 0; i < layout[n].bytes; ++i) val |= (uint32_t)fromHex(hex[2 * i], hex[2 * i + 1]) << (8 * i);
+    if (layout[n].coreIdx >= 0) m_cpu->regWrite(layout[n].coreIdx, val);
     return "OK";
 }
 
@@ -239,6 +293,7 @@ std::string GdbServer::handleContinue(int fd) {
     int steps = 0;
     const int maxSteps = 100000000;
     bool interrupted = false;
+    const bool stopOnBrk = is6502Family() || std::string(m_cpu->isaName()) == "65816";
 
     while (steps < maxSteps && !m_stopRequested) {
         m_cpu->step();
@@ -247,8 +302,8 @@ std::string GdbServer::handleContinue(int fd) {
         // Check for breakpoint hit
         if (m_dbg && m_dbg->isPaused()) break;
 
-        // Check for BRK
-        if (m_bus->peek8(m_cpu->pc()) == 0x00) break;
+        // Check for BRK (the 65xx's; $00 is NOP on the Z80 and SM83)
+        if (stopOnBrk && m_bus->peek8(m_cpu->pc()) == 0x00) break;
 
         // Periodically check for interrupt from GDB (every 1024 steps)
         if ((steps & 0x3FF) == 0) {
@@ -392,6 +447,10 @@ void GdbServer::handleClient(int fd) {
             reply = handleReadRegs();
         } else if (pkt[0] == 'G') {
             reply = handleWriteRegs(pkt.substr(1));
+        } else if (pkt[0] == 'p') {
+            reply = handleReadReg(pkt.substr(1));
+        } else if (pkt[0] == 'P') {
+            reply = handleWriteReg(pkt.substr(1));
         } else if (pkt[0] == 'm') {
             reply = handleReadMem(pkt.substr(1));
         } else if (pkt[0] == 'M') {
