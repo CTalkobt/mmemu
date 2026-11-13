@@ -105,6 +105,8 @@ The implementation supports the full NMOS 6502 instruction set, including both d
 #### Control Flow
 - **JMP**: Jump to a new location.
 - **JSR**: Jump to a new location, saving the return address on the stack. As on the chip, the high byte of the address is read after the pushes, so a JSR whose high byte is on the stack page reads the PCH it just pushed (VICE `CPU/jsrselfmod`).
+
+**Dummy reads (NMOS):** an indexed access (`abs,X`, `abs,Y`, `(zp),Y`) reads the address before the carry into its high byte one cycle before the real access: on a page crossing, and always for stores and read-modify-write instructions (where it is the address itself). A dummy read of an I/O register has its effects, e.g. it acknowledges a CIA's interrupts (VICE `CIA/dd0dtest`, `dd0drw`). Reads of plain memory are skipped, having none. `setDummyReads(false)` turns them off: the Apple II does, as AppleWin has none and its Disk II timing follows AppleWin's. The 65C02 doesn't make them (it re-reads an instruction byte instead, not modelled).
 - **RTS**: Return from subroutine.
 - **RTI**: Return from interrupt.
 - **BCC/BCS**: Branch if Carry Clear/Set.

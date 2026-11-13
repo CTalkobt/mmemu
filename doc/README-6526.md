@@ -172,3 +172,4 @@ By default an output bit reads back the output latch. `setOutputsReadPins(true)`
 - **Address Mask**: `0x000F` (16 registers mirrored across the $DC00/$DD00 window)
 - **Clock Default**: 1 022 727 Hz (NTSC C64); call `setClockHz(985248)` for PAL
 - **Options** (`setOption`, or `"options"` in a machine JSON device): `model` = `6526` (default), `6526A` or `mega65`
+- **`decode`**: the address window the CIA answers in, as a mask (`0x0F` by default up to `0xFF`); its 16 registers repeat through it. The C64 decodes each CIA through its whole page, `$DC00-$DCFF` and `$DD00-$DDFF` (`machines/c64.json`: `"decode": "0xFF"`; VICE `CIA/mirrors`). The C128 mirrors them in its own I/O decode.

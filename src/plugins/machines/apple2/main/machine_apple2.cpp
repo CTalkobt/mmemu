@@ -905,6 +905,9 @@ MachineDescriptor* create(Model model, std::string* err) {
     desc->buses.push_back({"system", bus});
     // The enhanced IIe has a 65C02
     MOS6502* cpu = enhanced ? new MOS65C02() : new MOS6502();
+    // AppleWin's 6502 makes no dummy reads, and the Disk II here follows its
+    // timing (a dummy read of $C08D before STA $C08D,X would load the latch)
+    cpu->setDummyReads(false);
     cpu->setDataBus(bus);
     cpu->setCodeBus(bus);
     desc->cpus.push_back({"main", cpu, bus, bus, nullptr, true, 1});

@@ -496,3 +496,36 @@ TEST_CASE(cpu6502_irq_during_stall_of_taken_branch) {
     ASSERT_EQ(stepAfterStall(beqs, 5, 1, true), 0xD000);
     ASSERT_EQ(stepAfterStall(beqs, 5, 2, true), 0xC004);
 }
+
+// NMOS indexed dummy reads: LDA $D0FD,X (X=$10) reads $D00D before $D10D;
+// STA $D00D,X always reads its address first; not with dummy reads off
+// (the Apple II, after AppleWin), nor on the 65C02 (VICE CIA/dd0dtest)
+TEST_CASE(cpu6502_indexed_dummy_reads) {
+    for (int mode = 0; mode < 3; ++mode) {
+        FlatMemoryBus bus("system", 16);
+        bus.setIoLowBase(0xD000);
+        std::vector<uint16_t> reads;
+        bus.setIoHooks([&](IBus*, uint32_t a, uint8_t* v) { if (a >= 0xD000 && a < 0xE000) { reads.push_back((uint16_t)a); *v = 0; return true; } return false; },
+                       [&](IBus*, uint32_t a, uint8_t) { return a >= 0xD000 && a < 0xE000; },
+                       [&](IBus*, uint32_t a, uint8_t* v) { *v = 0; return a >= 0xD000 && a < 0xE000; });   // peeks don't count
+        std::unique_ptr<MOS6502> cpu(mode == 2 ? new MOS65C02() : new MOS6502());
+        cpu->setDataBus(&bus);
+        cpu->setCodeBus(&bus);
+        if (mode == 1) cpu->setDummyReads(false);
+        const uint8_t prog[] = { 0xBD, 0xFD, 0xD0, 0x9D, 0x0D, 0xD0 };   // LDA $D0FD,X; STA $D00D,X
+        for (size_t i = 0; i < sizeof(prog); ++i) bus.write8(0x0200 + i, prog[i]);
+        cpu->setPc(0x0200);
+        cpu->regWrite(1, 0x10);
+        cpu->step();
+        cpu->step();
+        if (mode == 0) {
+            ASSERT_EQ(reads.size(), (size_t)3);
+            ASSERT_EQ(reads[0], 0xD00D);                        // LDA: before the carry
+            ASSERT_EQ(reads[1], 0xD10D);
+            ASSERT_EQ(reads[2], 0xD01D);                        // STA: its address, read first
+        } else {
+            ASSERT_EQ(reads.size(), (size_t)1);
+            ASSERT_EQ(reads[0], 0xD10D);
+        }
+    }
+}

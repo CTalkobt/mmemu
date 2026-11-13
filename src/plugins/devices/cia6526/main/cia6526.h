@@ -201,6 +201,7 @@ private:
 
     std::string  m_name;
     uint32_t     m_baseAddr;
+    uint32_t     m_decodeMask = 0x0F;   ///< the window it answers in ("decode" option); registers repeat every 16
     uint32_t     m_clockHz = 1022727; // NTSC default
     uint32_t     m_powerHz = 60;      // the mains frequency the TOD counts
 

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "cia6526.h"
 #include "include/util/logging.h"
 #include <algorithm>
@@ -75,7 +76,16 @@ CIA6526::CIA6526(const std::string& name, uint32_t baseAddr)
 bool CIA6526::setOption(const std::string& key, const std::string& value, std::string& err) {
     std::string v;
     for (char c : value) v += (char)toupper((unsigned char)c);
-    if (key != "model") { err = "the CIA's option is its model (6526, 6526A)"; return false; }
+    if (key == "decode") {
+        // The address window it answers in, registers repeating every 16
+        // bytes: the C64 decodes a CIA through its whole page ("0xFF")
+        char* end = nullptr;
+        const unsigned long m = std::strtoul(value.c_str(), &end, 0);
+        if (!end || *end || m < 0x0F || ((m + 1) & m)) { err = "decode is a window mask: 0x0F, 0x1F ... 0xFF"; return false; }
+        m_decodeMask = (uint32_t)m;
+        return true;
+    }
+    if (key != "model") { err = "the CIA's options are its model (6526, 6526A, mega65) and decode"; return false; }
     if (v == "6526" || v == "OLD")                        m_newModel = false, m_instantSdr = false;
     else if (v == "6526A" || v == "8521" || v == "NEW")   m_newModel = true, m_instantSdr = false;
     else if (v == "MEGA65")                               m_newModel = true, m_instantSdr = true;
@@ -147,7 +157,7 @@ bool CIA6526::ioPeek(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readRe
 // A register read; `peek` returns the same value without its side effects
 // (ICR clear and IRQ release, TOD latch and release, port device reads).
 bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
-    if ((addr & ~addrMask()) != m_baseAddr) return false;
+    if ((addr & ~m_decodeMask) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x0F;
     switch (reg) {
@@ -261,7 +271,7 @@ bool CIA6526::readReg(uint32_t addr, uint8_t* val, bool peek) {
 }
 
 bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
-    if ((addr & ~addrMask()) != m_baseAddr) return false;
+    if ((addr & ~m_decodeMask) != m_baseAddr) return false;
     m_quiet = 0;                                // the timers may change
 
     uint8_t reg = addr & 0x0F;
