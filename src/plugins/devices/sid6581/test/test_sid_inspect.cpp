@@ -24,6 +24,7 @@ TEST_CASE(sid_inspect_voice_info) {
     SID6581 sid("SID", BASE);
     sid.setClockHz(985248);
     sid.setSampleRate(44100);
+    run(sid, 10000);   // the envelopes power up at $AA and fall to 0
     IAudioInspect* insp = &sid;
 
     ASSERT(insp->chipCount() == 1);

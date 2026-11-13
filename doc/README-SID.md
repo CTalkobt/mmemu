@@ -26,7 +26,7 @@ Each of the three voices contains:
 | Triangle | `CR_TRI` (bit 4) | Folded from phase accumulator (LSB grounded) |
 | Sawtooth | `CR_SAW` (bit 5) | Direct MSBs of phase accumulator |
 | Pulse | `CR_PULSE` (bit 6) | High when `phase > PW` (12-bit pulse width) |
-| Noise | `CR_NOISE` (bit 7) | 23-bit LFSR (taps 22,17); clocked on bit-19 rising edge; output bits 11-4 = LFSR bits 20,18,14,11,9,5,2,0 |
+| Noise | `CR_NOISE` (bit 7) | 23-bit LFSR (taps 22,17); shifted in two phases, 2 and 3 cycles after accumulator bit 19 rises; output bits 11-4 = LFSR bits 20,18,14,11,9,5,2,0 |
 
 **Combined Waveforms (#119):**
 With several waveforms selected, each 0 output bit of a selected waveform grounds that line (an AND). When pulse, or saw and triangle together, are selected, the lines are also interconnected, so a grounded bit pulls neighbouring bits down too. The result is quieter than the AND and has its own timbre. With saw and triangle together the triangle's XOR is disabled, so the raw value is the saw ANDed with itself shifted left one bit.
@@ -37,9 +37,18 @@ Against those chips' OSC3 samplings (all 4096 oscillator steps, 8 bits), the mod
 
 The chip model follows `setFilterVariant()` (0 = 6581, the default; 1 = 8580).
 
-With noise combined with another waveform, a 0 output bit also clears the LFSR bit feeding it as the register shifts (noise writeback), so the noise dies away and stays silent ("noise lockup") until TEST reloads the LFSR.
+With noise combined with another waveform, a 0 output bit also clears the LFSR bit feeding it (noise writeback), so the noise dies away and stays silent ("noise lockup") until TEST reloads the LFSR. Whether a change of waveform carries the combined output into the register follows reSIDfp's rules, fitted to VICE testprogs `SID/wb_testsuite`.
 
-Not modelled: the 6581's saw combinations pulling the accumulator MSB low, the 8580's half-cycle delay of the triangle/saw output on OSC3, and the fading of the waveform output when no waveform is selected.
+**Oscillator details** (reSIDfp's `WaveformGenerator`, in `sid_voice.cpp`):
+
+- The accumulators power up at `$555555` (even bits high), and reset doesn't change them.
+- On the 6581, a saw combination whose output top bit is low pulls the accumulator MSB low.
+- The 8580's OSC3 is a cycle late for triangle and saw.
+- The pulse comparator takes effect the cycle after.
+- With no waveform selected, the waveform DAC input floats. The last output stays, then fades a bit at a time: from 54,000 cycles on the 6581 and 800,000 on the 8580 (VICE testprogs `SID/osc3-wave0`).
+- With TEST set, the LFSR holds its first shift phase. After 50,000 cycles on the 6581, or 986,000 on the 8580, its bits start fading to 1. Releasing TEST completes the shift (`SID/noiselfsrinit`, `SID/oscinit`).
+
+VICE testprogs results: 93 of the 102 SID programs pass. The other 9 are `wb_testsuite`'s `*_to_C_old`, `D_to_E_old` and `F_to_8_old`, which reSIDfp fails too. Every rule tried that passes the `*_to_C_old` ones breaks `SID/wf12nsr`.
 
 **Control bits:**
 
@@ -48,7 +57,7 @@ Not modelled: the 6581's saw combinations pulling the accumulator MSB low, the 8
 | 0 | `CR_GATE` | Gate: 0→1 triggers attack; 1→0 triggers release |
 | 1 | `CR_SYNC` | Hard sync: resets oscillator when sync source overflows |
 | 2 | `CR_RING` | Ring modulation: triangle XOR'd with MSB of previous voice |
-| 3 | `CR_TEST` | Test: freezes oscillator phase and loads LFSR with all-1s |
+| 3 | `CR_TEST` | Test: zeroes and holds the oscillator; the LFSR fades to all 1s |
 
 **ADSR Envelope Generator:**
 
@@ -59,7 +68,9 @@ Not modelled: the 6581's saw combinations pulling the accumulator MSB low, the 8
 | Sustain | Level reaches `SUSTAIN × $11` | Hold |
 | Release | Gate 1→0 | Exponential-like decay to 0 |
 
-The envelope is clocked every cycle as in reSID (#123). A 15-bit rate counter counts up to the period for the A, D or R nibble (9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532 or 31251 cycles per step: 2 ms to 8 s for a full attack at 1 MHz). Decay and release are slowed further by an exponential counter, whose period changes to 1, 2, 4, 8, 16 and 30 as the level passes $FF, $5D, $36, $1A, $0E and $06. Reaching 0 freezes the counter until the next attack.
+The envelope is clocked every cycle, ported from reSIDfp's `EnvelopeGenerator` (#123). A 15-bit LFSR runs until it matches the value for the A, D or R nibble (9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532 or 31251 cycles per step: 2 ms to 8 s for a full attack at 1 MHz). It is never reset by a gate change, so a new period below its position waits for the wrap (the ADSR delay bug). Decay and release are slowed further by an exponential counter, whose period changes to 1, 2, 4, 8, 16 and 30 as the level passes $FF, $5D, $36, $1A, $0E and $06. A new period takes effect a cycle late. Reaching 0 freezes the counter until the next attack.
+
+Gate changes go through a short pipeline found by die analysis. An attack enables the decay rate for one cycle before the attack rate, and a release straight from attack takes a cycle longer. ENV3 reads the counter as it was at the start of the cycle. The counter powers up at `$AA` (VICE testprogs `SID/env_test`).
 
 The rate counter is never reset. If a new, shorter period is set while the counter is already past it, the counter runs on to its 15-bit wraparound first, a delay of up to ~33 ms (the "ADSR delay bug" that players work around).
 
@@ -112,10 +123,10 @@ Because the master volume multiplies the DC as well, writing `$D418` changes the
 |--------|----------|-------------|
 | $19 | POTX | Paddle X (returns $FF — A/D not implemented) |
 | $1A | POTY | Paddle Y (returns $FF) |
-| $1B | OSC3 | Upper 8 bits of voice 3's waveform output |
-| $1C | ENV3 | Voice 3 envelope level |
+| $1B | OSC3 | Upper 8 bits of voice 3's waveform output (or the floating DAC input) |
+| $1C | ENV3 | Voice 3 envelope level, a cycle late |
 
-**The data bus** (reSID 1.0 `bus_value`): every write, and every read of `$19-$1C`, leaves its value on the SID's data bus. A read of any other register, write-only or unused (`$00-$18`, `$1D-$1F`), returns what is on it. The value fades to 0 after `$1D00` cycles on the 6581 and `$A2000` on the 8580, unless refreshed (VICE testprogs `general/fuxxortest` `ef2-inst4b`).
+**The data bus** (reSID 1.0 `bus_value`): every write, and every read of `$19-$1C`, leaves its value on the SID's data bus. A read of any other register, write-only or unused (`$00-$18`, `$1D-$1F`), returns what is on it. The value fades to 0 after `$1D00` cycles on the 6581 and `$A2000` on the 8580, unless refreshed. Reading a write-only or unused register halves the time left, as in reSIDfp (VICE testprogs `general/fuxxortest` `ef2-inst4b`, `SID/busvalue`).
 
 ### 2.5 Audio Output (IAudioOutput Pull Model)
 
@@ -287,6 +298,6 @@ Shared registers at base + $15:
 - **Clock Default**: 985 248 Hz (PAL); call `setClockHz(1022727)` for NTSC
 - **Sample Rate Default**: 44 100 Hz
 - **Ring Buffer**: 8192 float32 mono samples
-- **Timing (#123)**: oscillators, noise LFSR (shifted when accumulator bit 19 rises), hard sync, envelopes, filter and external filter are all clocked every cycle. The output therefore doesn't depend on how the host splits time into `tick()` calls. Register writes take effect at the cycle the CPU instruction completes. A C64 at max speed runs about 11 times real time with this.
+- **Timing (#123)**: oscillators, noise LFSR (shifted after accumulator bit 19 rises), hard sync, envelopes, filter and external filter are all clocked every cycle. The output therefore doesn't depend on how the host splits time into `tick()` calls. Register writes take effect at the cycle the CPU instruction completes. A C64 at max speed runs about 11 times real time with this.
 - **Chip model**: `setFilterVariant(0)` selects the 6581 (default), `1` the 8580. This affects combined waveforms, the cutoff curve, filter headroom and the DC offsets.
-- **Not modelled**: reSID 1.0 / reSIDfp's transistor-level 6581 filter (its exact cutoff-dependent distortion and resonance shape), the 8580's half-cycle OSC3 delay, waveform DAC nonlinearity, and floating-waveform fade-out.
+- **Not modelled**: reSID 1.0 / reSIDfp's transistor-level 6581 filter (its exact cutoff-dependent distortion and resonance shape), and waveform DAC nonlinearity.

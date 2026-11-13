@@ -11,17 +11,13 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-// The synthesis follows reSID 0.16 (Dag Lem): every clock cycle the
-// oscillators, noise LFSR, envelope generators and filter are clocked (#123),
+// The synthesis follows reSID (Dag Lem): every clock cycle the oscillators,
+// noise LFSR, envelope generators (reSIDfp's, sid_voice.h) and filter are
+// clocked (#123),
 // and the per-cycle output is averaged down to the audio sample rate. Voice
 // and filter levels are in reSID's units (20-bit voice output >> 7), as floats.
 
 namespace {
-
-// Envelope rate counter periods (cycles per step) for the 4-bit A/D/R values
-const uint16_t RATE_PERIOD[16] = {
-    9, 32, 63, 95, 149, 220, 267, 313, 392, 977, 1954, 3126, 3907, 11720, 19532, 31251
-};
 
 // One voice's full swing: 12-bit waveform x 8-bit envelope, >> 7
 constexpr float VOICE_RANGE = 4095.0f * 255.0f / 128.0f;
@@ -103,10 +99,17 @@ SID6581::SID6581(const std::string& name, uint32_t baseAddr)
 
 void SID6581::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
-    for (auto& v : m_voices) {
-        v = Voice();
-        v.ratePeriod = RATE_PERIOD[0];
+    for (int i = 0; i < 3; ++i) {
+        Voice& v = m_voices[i];
+        v.wave.setChip(chipModel());
+        v.wave.setVoices(&m_voices[(i + 2) % 3].wave, &m_voices[(i + 1) % 3].wave);
+        v.wave.reset();
+        v.env.reset();
+        v.freq = v.pw = 0;
+        v.cr = v.ad = v.sr = 0;
     }
+    m_busValue = 0;
+    m_busTtl = 0;
     m_vhp = m_vbp = m_vlp = 0.0f;
     m_extLp = m_extHp = 0.0f;
     m_coeffValid = false;
@@ -141,18 +144,21 @@ bool SID6581::readReg(uint32_t addr, uint8_t* val, bool peek) {
             v = m_pots ? m_pots->pot(reg == POTY) : 0xFF;
             break;
         case OSC3:
-            // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
-            // folded triangle, pulse, noise etc., not the raw accumulator.
-            v = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2]), chipModel()) >> 4);
+            // Voice 3's waveform output as last clocked (8580: a cycle late
+            // for triangle and saw), or the floating DAC input fading
+            v = m_voices[2].wave.readOsc();
             break;
         case ENV3:
-            v = m_voices[2].envLevel;
+            v = m_voices[2].env.readEnv();
             break;
         default:
             break;
     }
-    if (v >= 0 && !peek) { m_busValue = (uint8_t)v; m_busTtl = busTtl(); }
+    if (!peek && v >= 0) { m_busValue = (uint8_t)v; m_busTtl = busTtl(); }
     *val = v >= 0 ? (uint8_t)v : m_busValue;
+    // Reading a write-only register discharges the bus faster (reSIDfp
+    // halves what is left; at 0 it is gone, which reSIDfp misses)
+    if (!peek && v < 0 && m_busTtl && !(m_busTtl /= 2)) m_busValue = 0;
     return true;
 }
 
@@ -180,39 +186,13 @@ bool SID6581::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
 
 void SID6581::writeVoiceReg(Voice& v, int reg, uint8_t val) {
     switch (reg) {
-        case 0: v.freq = (uint16_t)((v.freq & 0xFF00) | val); break;
-        case 1: v.freq = (uint16_t)((v.freq & 0x00FF) | (val << 8)); break;
-        case 2: v.pw   = (uint16_t)((v.pw & 0x0F00) | val); break;
-        case 3: v.pw   = (uint16_t)((v.pw & 0x00FF) | ((val & 0x0F) << 8)); break;
-        case 4: {
-            bool gate = (val & CR_GATE) != 0, wasGate = (v.cr & CR_GATE) != 0;
-            if (gate && !wasGate) {
-                // Attack. The rate counter is not reset: the first step comes
-                // when it next reaches the period (the "ADSR delay bug").
-                v.envState = Voice::EnvState::ATTACK;
-                v.ratePeriod = RATE_PERIOD[v.ad >> 4];
-                v.holdZero = false;
-            } else if (!gate && wasGate) {
-                v.envState = Voice::EnvState::RELEASE;
-                v.ratePeriod = RATE_PERIOD[v.sr & 0x0F];
-            }
-            // Test bit: oscillator held at 0, LFSR reloaded
-            if (val & CR_TEST) {
-                v.phase = 0;
-                v.lfsr  = 0x7FFFFF;
-            }
-            v.cr = val;
-            break;
-        }
-        case 5:
-            v.ad = val;
-            if (v.envState == Voice::EnvState::ATTACK)             v.ratePeriod = RATE_PERIOD[val >> 4];
-            else if (v.envState == Voice::EnvState::DECAY_SUSTAIN) v.ratePeriod = RATE_PERIOD[val & 0x0F];
-            break;
-        case 6:
-            v.sr = val;
-            if (v.envState == Voice::EnvState::RELEASE) v.ratePeriod = RATE_PERIOD[val & 0x0F];
-            break;
+        case 0: v.freq = (uint16_t)((v.freq & 0xFF00) | val);        v.wave.writeFreqLo(val); break;
+        case 1: v.freq = (uint16_t)((v.freq & 0x00FF) | (val << 8)); v.wave.writeFreqHi(val); break;
+        case 2: v.pw   = (uint16_t)((v.pw & 0x0F00) | val);          v.wave.writePwLo(val);   break;
+        case 3: v.pw   = (uint16_t)((v.pw & 0x00FF) | ((val & 0x0F) << 8)); v.wave.writePwHi(val); break;
+        case 4: v.cr = val; v.wave.writeControl(val); v.env.writeControl(val); break;
+        case 5: v.ad = val; v.env.writeAttackDecay(val); break;
+        case 6: v.sr = val; v.env.writeSustainRelease(val); break;
     }
 }
 
@@ -228,60 +208,13 @@ void SID6581::tick(uint64_t cycles) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Envelope generator (reSID 0.16)
-// ---------------------------------------------------------------------------
-
-void SID6581::Voice::clockEnvelope() {
-    // 15-bit rate counter compared with the period; it is never reset by a
-    // gate change, so a smaller new period can mean a wait of up to 2^15
-    // cycles for the wraparound (ADSR delay bug).
-    if (++rateCounter & 0x8000) rateCounter = (uint16_t)((rateCounter + 1) & 0x7FFF);
-    if (rateCounter != ratePeriod) return;
-    rateCounter = 0;
-
-    // Decay and release are slowed further by the exponential counter
-    if (envState != EnvState::ATTACK && ++expCounter != expPeriod) return;
-    expCounter = 0;
-    if (holdZero) return;
-
-    switch (envState) {
-        case EnvState::ATTACK:
-            ++envLevel;
-            if (envLevel == 0xFF) {
-                envState = EnvState::DECAY_SUSTAIN;
-                ratePeriod = RATE_PERIOD[ad & 0x0F];
-            }
-            break;
-        case EnvState::DECAY_SUSTAIN:
-            // Sustain level: both nibbles of the counter compared with S
-            if (envLevel != (uint8_t)((sr >> 4) * 0x11)) --envLevel;
-            break;
-        case EnvState::RELEASE:
-            --envLevel;
-            break;
-    }
-
-    // Piecewise-linear approximation of an exponential decay
-    switch (envLevel) {
-        case 0xFF: expPeriod = 1;  break;
-        case 0x5D: expPeriod = 2;  break;
-        case 0x36: expPeriod = 4;  break;
-        case 0x1A: expPeriod = 8;  break;
-        case 0x0E: expPeriod = 16; break;
-        case 0x06: expPeriod = 30; break;
-        case 0x00: expPeriod = 1; holdZero = true; break;
-        default: break;
-    }
-}
-
 SID6581::Voice::Env SID6581::Voice::envPhase() const {
-    switch (envState) {
-        case EnvState::ATTACK: return Env::ATTACK;
-        case EnvState::DECAY_SUSTAIN:
-            return envLevel == (uint8_t)((sr >> 4) * 0x11) ? Env::SUSTAIN : Env::DECAY;
+    switch (env.state()) {
+        case SidEnvelope::State::ATTACK: return Env::ATTACK;
+        case SidEnvelope::State::DECAY_SUSTAIN:
+            return env.output() == env.sustainLevel() ? Env::SUSTAIN : Env::DECAY;
         default:
-            return envLevel == 0 ? Env::IDLE : Env::RELEASE;
+            return env.output() == 0 ? Env::IDLE : Env::RELEASE;
     }
 }
 
@@ -307,7 +240,6 @@ void SID6581::synthesize(uint64_t cycles) {
     if (!m_coeffValid) updateFilterCoeffs();
 
     const bool is6581 = m_filterVariant == 0;
-    const auto chip = chipModel();
     const float waveZero = is6581 ? WAVE_ZERO_6581 : 2048.0f;
     const float voiceDc  = is6581 ? VOICE_DC_6581 : 0.0f;
     const float mixerDc  = is6581 ? MIXER_DC_6581 : 0.0f;
@@ -331,50 +263,22 @@ void SID6581::synthesize(uint64_t cycles) {
     const float outScale = 1.0f / (VOICE_RANGE * 3.0f * 15.0f);
 
     for (uint64_t c = 0; c < cycles; ++c) {
-        // 1. Envelopes and oscillators. Hard sync is applied after all three
-        //    accumulators have advanced, from the sources' MSB rising edges.
-        for (Voice& v : m_voices) {
-            v.clockEnvelope();
-            if (v.cr & CR_TEST) { v.msbRose = false; continue; }
-            uint32_t old = v.phase;
-            v.phase = (old + v.freq) & 0xFFFFFF;
-            v.msbRose = !(old & 0x800000) && (v.phase & 0x800000);
-            // Noise LFSR: shifted when accumulator bit 19 goes high
-            if (!(old & 0x080000) && (v.phase & 0x080000)) {
-                uint32_t bit = ((v.lfsr >> 22) ^ (v.lfsr >> 17)) & 1u;
-                v.lfsr = ((v.lfsr << 1) | bit) & 0x7FFFFF;
-                // Noise with another waveform: 0 output bits pull the LFSR
-                // bits feeding them low (noise writeback, #119)
-                if ((v.cr & CR_NOISE) && (v.cr & 0x70)) {
-                    uint16_t out = v.waveOutput(false, ringMsbFor(v), chip);
-                    v.lfsr &= ~CombinedWaveformTable::NOISE_TAPS | CombinedWaveformTable::noiseWriteback(out);
-                }
-            }
-        }
-        for (int i = 0; i < 3; ++i) {
-            Voice& v = m_voices[i];
-            const Voice& src = m_voices[(i + 2) % 3];
-            const Voice& srcSrc = m_voices[(i + 1) % 3];
-            // No sync when the source is itself being synced in this cycle (reSID)
-            if ((v.cr & CR_SYNC) && src.msbRose && !((src.cr & CR_SYNC) && srcSrc.msbRose))
-                v.phase = 0;
-        }
-
-        // 2. Voice outputs: (waveform - zero) x envelope + DC
+        // 1. Oscillators, then envelopes, then the voice outputs, then hard
+        //    sync, as reSIDfp clocks them
+        for (Voice& v : m_voices) v.wave.clock();
+        for (Voice& v : m_voices) v.env.clock();
         float vi = 0.0f, vnf = 0.0f;
         float voice[3];   // for the scope: each voice's swing, -1..1
         for (int i = 0; i < 3; ++i) {
             Voice& v = m_voices[i];
-            uint16_t wave = v.waveOutput(false, ringMsbFor(v), chip);
-            // 6581: with saw in a combination, a low output top bit pulls the
-            // accumulator MSB low (reSIDfp)
-            if (is6581 && (v.cr & CR_SAW) && (v.cr & 0xD0) && !(wave & 0x800))
-                v.phase &= 0x7FFFFF;
-            float ac = ((float)wave - waveZero) * (float)v.envLevel / 128.0f;
-            voice[i] = ((float)wave - 2048.0f) / 2048.0f * (float)v.envLevel / 255.0f;
+            const uint32_t wave = v.wave.output();
+            const float env = (float)v.env.output();
+            float ac = ((float)wave - waveZero) * env / 128.0f;
+            voice[i] = ((float)wave - 2048.0f) / 2048.0f * env / 255.0f;
             if (filt & (1 << i))           vi += ac;
             else if (!(i == 2 && v3off))   vnf += ac + voiceDc;
         }
+        for (Voice& v : m_voices) v.wave.synchronize();
 
         // 3. Filter (#120): state-variable filter, one step per cycle, the
         //    integrators limited by the op-amps' output swing (#121)
@@ -413,29 +317,6 @@ void SID6581::synthesize(uint64_t cycles) {
             pushSample(s);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Waveform output
-// ---------------------------------------------------------------------------
-
-uint16_t SID6581::Voice::noiseOutput() const {
-    return CombinedWaveformTable::noise(lfsr);
-}
-
-uint16_t SID6581::Voice::waveOutput(bool syncReset, bool ringMsb,
-                                    CombinedWaveformTable::Chip chip) const {
-    uint32_t p = syncReset ? 0 : phase;
-    // Combined waveforms use the pulldown model fitted to real chips (#119)
-    return CombinedWaveformTable::getCombinedOutput(p, cr & 0xF0u, pw, lfsr, ringMsb, chip);
-}
-
-bool SID6581::ringMsbFor(const Voice& v) const {
-    // Ring modulation only when the voice's RING bit is set: the triangle then
-    // folds on (own MSB XOR source MSB), as in reSID. Source = previous voice.
-    if (!(v.cr & CR_RING)) return false;
-    int srcIdx = (int)(&v - m_voices + 2) % 3;
-    return (m_voices[srcIdx].phase & 0x800000u) != 0u;
 }
 
 // ---------------------------------------------------------------------------
@@ -531,7 +412,7 @@ void SID6581::getDeviceInfo(DeviceInfo& out) const {
         }
         std::string prefix = "Voice " + std::to_string(i+1);
         out.state.push_back({prefix + " Env Phase", ph});
-        out.state.push_back({prefix + " Env Level", std::to_string(m_voices[i].envLevel)});
+        out.state.push_back({prefix + " Env Level", std::to_string(m_voices[i].envLevel())});
     }
 
     uint16_t fc = ((m_regs[FC_HI] << 3) | (m_regs[FC_LO] & 0x07));
@@ -568,7 +449,7 @@ bool SID6581::voiceInfo(int chip, int voice, VoiceInfo& out) const {
         case Voice::Env::SUSTAIN: out.envPhase = EnvPhase::Sustain; break;
         case Voice::Env::RELEASE: out.envPhase = EnvPhase::Release; break;
     }
-    out.envLevel = v.envLevel;
+    out.envLevel = v.envLevel();
     out.filtered = (m_regs[RES_FILT] >> voice) & 1;
     out.muted    = voice == 2 && (m_regs[MODE_VOL] & MV_3OFF);
     return true;

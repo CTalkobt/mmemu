@@ -14,6 +14,10 @@ struct Sid {
         sid.setSampleRate(44100);
         sid.setFilterVariant(variant);
         sid.reset();
+        // The envelope counters power up at $AA and fall to 0 in release
+        sid.tick(100000);
+        std::vector<float> drain(8192);
+        sid.pullSamples(drain.data(), (int)drain.size());
     }
     void w(int reg, uint8_t v) { sid.ioWrite(nullptr, 0xD400 + reg, v); }
     uint8_t r(int reg) { uint8_t v = 0; sid.ioRead(nullptr, 0xD400 + reg, &v); return v; }
@@ -74,7 +78,9 @@ TEST_CASE(sid_cycle_attack_rate_exact) {
     Sid s;
     s.voice(2, 0, 0x00, 0xF0, 0x01);    // gate, A=0
     int first = s.cyclesUntilEnv3(1, 100);
-    ASSERT(first >= 1 && first <= 9);   // rate counter is free-running: up to one period
+    // The rate counter is free-running (up to one period), the gate goes
+    // through a 2-cycle pipeline and ENV3 is a cycle late (reSIDfp)
+    ASSERT(first >= 1 && first <= 12);
     int full = s.cyclesUntilEnv3(0xFF, 5000);
     ASSERT_EQ(full, 254 * 9);
 }
@@ -87,7 +93,7 @@ TEST_CASE(sid_cycle_decay_exponential_steps) {
     int toA = s.cyclesUntilEnv3(0x5D, 100000);      // 255 -> $5D at 1 step per period
     ASSERT_EQ(toA, (0xFF - 0x5D) * 9);
     int toB = s.cyclesUntilEnv3(0x36, 100000);      // $5D -> $36 at 1 step per 2 periods
-    ASSERT_EQ(toB, (0x5D - 0x36) * 2 * 9);
+    ASSERT_EQ(toB, (0x5D - 0x36) * 2 * 9 + 1);       // the new period starts a cycle late
     int toC = s.cyclesUntilEnv3(0x1A, 100000);      // then 4 periods per step
     ASSERT_EQ(toC, (0x36 - 0x1A) * 4 * 9);
 }
@@ -176,19 +182,28 @@ TEST_CASE(sid_filter_saturates_at_opamp_headroom) {
 
 // reSID 1.0: a write-only register reads the data bus, the last value written
 // or read; it fades to 0 after $1D00 cycles on the 6581 (testprogs
-// general/fuxxortest ef2-inst4b)
+// general/fuxxortest ef2-inst4b, SID/busvalue). Reading one halves what is
+// left (reSIDfp).
 TEST_CASE(sid_bus_value_fades) {
     SID6581 sid("SID", 0xD400);
     uint8_t v;
     sid.ioWrite(nullptr, 0xD404, 0x41);
-    sid.ioRead(nullptr, 0xD400, &v);
-    ASSERT_EQ(v, (uint8_t)0x41);
-    sid.ioRead(nullptr, 0xD41F, &v);                     // unused: the bus too
+    sid.ioPeek(nullptr, 0xD400, &v);
     ASSERT_EQ(v, (uint8_t)0x41);
     sid.tick(0x1D00 - 1);
-    sid.ioRead(nullptr, 0xD400, &v);
+    sid.ioPeek(nullptr, 0xD41F, &v);                     // unused: the bus too
     ASSERT_EQ(v, (uint8_t)0x41);
     sid.tick(1);
-    sid.ioRead(nullptr, 0xD400, &v);
+    sid.ioPeek(nullptr, 0xD400, &v);
+    ASSERT_EQ(v, (uint8_t)0x00);
+
+    sid.ioWrite(nullptr, 0xD404, 0x42);
+    sid.ioRead(nullptr, 0xD41F, &v);                     // read: $E80 cycles left
+    ASSERT_EQ(v, (uint8_t)0x42);
+    sid.tick(0xE80 - 1);
+    sid.ioPeek(nullptr, 0xD400, &v);
+    ASSERT_EQ(v, (uint8_t)0x42);
+    sid.tick(1);
+    sid.ioPeek(nullptr, 0xD400, &v);
     ASSERT_EQ(v, (uint8_t)0x00);
 }

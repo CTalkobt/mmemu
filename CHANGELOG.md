@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE's test programs: the SID's oscillators and envelopes as reSIDfp (#317)
+
+- The SID's waveform and envelope generators are ported from reSIDfp
+  (libsidplayfp, GPL-2.0-or-later), into a new `sid_voice.cpp`. The noise LFSR
+  now shifts in two phases after accumulator bit 19 rises, with reSIDfp's
+  writeback rules. TEST holds the shift and lets the LFSR fade to 1s. With no
+  waveform selected, the output floats, then fades. The 8580's OSC3 is a
+  cycle late for triangle and saw. The accumulators power up at `$555555`.
+- The envelope: a 15-bit rate LFSR, the gate pipeline, ENV3 a cycle late and
+  a power-up level of `$AA`.
+- Reading a write-only SID register halves what is left of the data bus
+  value's life, as reSIDfp, and clears the value when that reaches 0.
+- VICE testprogs SID: 93 of 102 pass, up from 17. The 9 left are
+  `wb_testsuite` cases that reSIDfp fails as well.
+
 ### TRS-80 MC-10 Micro Color Computer and the MC6803 (#333)
 
 - New CPU plugin `mmemu-plugin-6801`: the **Motorola MC6801/MC6803** (cores
