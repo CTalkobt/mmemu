@@ -37,7 +37,7 @@ bool Tape::mountTape(const std::string& path) {
     const std::string e = extOf(path);
     if (e == "wav") {
         if (!loadWav(bytes)) return false;
-    } else if (e == "cas") {
+    } else if (e == "cas" || e == "c10") {     // .c10: the MC-10's name for the same format
         loadCas(bytes);
     } else {
         return false;
@@ -231,7 +231,7 @@ std::vector<uint8_t> Tape::recordedWav() const {
 bool Tape::saveTapeRecording(const std::string& path) {
     const std::string e = extOf(path);
     std::vector<uint8_t> data;
-    if (e == "cas") data = recordedCas();
+    if (e == "cas" || e == "c10") data = recordedCas();
     else if (e == "wav") data = recordedWav();
     else return false;
     std::ofstream f(path, std::ios::binary | std::ios::trunc);

@@ -231,6 +231,15 @@ PLUGIN_ARM_SRCS = src/plugins/arm/main/cpu_arm2.cpp \
 	src/plugins/arm/main/plugin_init.cpp
 PLUGIN_6809_SRCS = src/plugins/6809/main/cpu6809.cpp \
 	src/plugins/6809/main/plugin_init.cpp
+PLUGIN_6801_SRCS = src/plugins/6801/main/cpu6801.cpp \
+	src/plugins/6801/main/asm6801.cpp \
+	src/plugins/6801/main/plugin_init.cpp
+PLUGIN_MC10_SRCS = src/plugins/machines/mc10/main/machine_mc10.cpp \
+	src/plugins/machines/mc10/main/mc10_cart.cpp \
+	src/plugins/machines/coco/main/coco_tape.cpp \
+	src/plugins/devices/mc6847/main/mc6847.cpp \
+	src/plugins/devices/mc6847/main/mc6847_font.cpp \
+	src/plugins/machines/mc10/main/plugin_init.cpp
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/z80/main/plugin_init.cpp
@@ -617,6 +626,9 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/mc6821/test/test_mc6821.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
+	src/plugins/6801/test/test_cpu6801.cpp \
+	src/plugins/6801/test/test_asm6801.cpp \
+	src/plugins/machines/mc10/test/test_mc10_machine.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
@@ -724,6 +736,10 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/c128/main/c128_carts.o \
 	src/plugins/z80/main/cpu_z80.o \
 	src/plugins/6809/main/cpu6809.o \
+	src/plugins/6801/main/cpu6801.o \
+	src/plugins/6801/main/asm6801.o \
+	src/plugins/machines/mc10/main/machine_mc10.o \
+	src/plugins/machines/mc10/main/mc10_cart.o \
 	src/plugins/arm/main/cpu_arm2.o \
 	src/plugins/65816/main/cpu65816.o \
 	src/plugins/devices/riot6532/main/riot6532.o \
@@ -947,6 +963,8 @@ PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_C128_OBJS   = $(PLUGIN_C128_SRCS:.cpp=.o)
 PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
 PLUGIN_6809_OBJS   = $(PLUGIN_6809_SRCS:.cpp=.o)
+PLUGIN_6801_OBJS   = $(PLUGIN_6801_SRCS:.cpp=.o)
+PLUGIN_MC10_OBJS   = $(PLUGIN_MC10_SRCS:.cpp=.o)
 PLUGIN_ARM_OBJS    = $(PLUGIN_ARM_SRCS:.cpp=.o)
 PLUGIN_65816_OBJS  = $(PLUGIN_65816_SRCS:.cpp=.o)
 PLUGIN_A2600_OBJS  = $(PLUGIN_A2600_SRCS:.cpp=.o)
@@ -1024,6 +1042,8 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-c128.so \
 	$(LIBDIR)/mmemu-plugin-z80.so \
 	$(LIBDIR)/mmemu-plugin-6809.so \
+	$(LIBDIR)/mmemu-plugin-6801.so \
+	$(LIBDIR)/mmemu-plugin-mc10.so \
 	$(LIBDIR)/mmemu-plugin-arm.so \
 	$(LIBDIR)/mmemu-plugin-65816.so \
 	$(LIBDIR)/mmemu-plugin-atari2600.so \
@@ -1178,6 +1198,12 @@ $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-6809.so: $(PLUGIN_6809_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-6801.so: $(PLUGIN_6801_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-mc10.so: $(PLUGIN_MC10_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-arm.so: $(PLUGIN_ARM_OBJS) | $(LIBDIR)
