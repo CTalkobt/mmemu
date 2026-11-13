@@ -400,12 +400,14 @@ void surveyDmg(const std::string& dir, bool show) {
             report("mooneye" + std::string(sub) + "/" + n + (sgb ? " (SGB)" : ""), start(g, d + "/" + n, sgb) && mooneyePassed(g, 20));
         }
     }
-    // AGE's register-checking tests verified on a DMG-C (dmgC in the name)
+    // AGE's register-checking tests verified on a DMG-C (dmgC in the name), less oam-write-dmgC, which
+    // AGE's own emulator leaves out too (build/test-blacklist.txt): its starred row lands on the mode
+    // edges and on the hardware changes from line to line, with when the LCD was last turned off
     for (const char* sub : {"halt", "lcd-align-ly", "ly", "oam", "speed-switch", "stat-interrupt", "stat-mode",
                             "stat-mode-sprites", "stat-mode-window", "vram"}) {
         const std::string d = dir + "/age-test-roms/" + sub;
         for (const auto& n : listGb(d)) {
-            if (n.find("dmgC") == std::string::npos) continue;
+            if (n.find("dmgC") == std::string::npos || n == "oam-write-dmgC.gb") continue;
             gb::Gameboy g;
             report("age-test-roms/" + std::string(sub) + "/" + n, start(g, d + "/" + n) && mooneyePassed(g, 20));
         }

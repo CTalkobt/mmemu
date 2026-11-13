@@ -240,10 +240,11 @@ title. Nintendo's boot ROMs are not included.
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
   tests for the DMG, plus the SGB ones with the SGB boot ROM, the
   combined `oam_bug.gb` against its picture, and AGE's tests verified on a
-  DMG C (`dmgC` in the name): 119 PASS, 1 FAIL. The 1 is AGE's
-  `oam-write-dmgC`: its starred row, the writes 2 machine cycles in, lands
-  on the mode edges' boundary and changes from line to line and with when
-  the LCD was last turned off, its author notes.
+  DMG C (`dmgC` in the name): 119 PASS, 0 FAIL. Left out, as AGE's own
+  emulator leaves it out (its `build/test-blacklist.txt`): AGE's
+  `oam-write-dmgC`, whose starred row (the writes 2 machine cycles in)
+  lands on the mode edges and on a real DMG changes from line to line and
+  with when the LCD was last turned off, its author notes (unexplained).
   `gb_blargg_tests` also runs `cgb-acid2` on the Game Boy Color (0 pixels
   differ).
   `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its

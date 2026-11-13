@@ -7,6 +7,14 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Game Boy: AGE's oam-write-dmgC left out of the survey
+
+- Its starred row (the writes 2 machine cycles in) lands on the mode edges,
+  and on a real DMG its result changes from line to line within one run,
+  with when the LCD was last turned off (its author's note, unexplained);
+  AGE's own emulator leaves it out (`build/test-blacklist.txt`). The DMG
+  survey is now 119 PASS, 0 FAIL.
+
 ### Game Boy Color: the PPU half a dot from the CPU
 
 - Each speed switch moves the LCD half a dot from the CPU (AGE's "LCD
