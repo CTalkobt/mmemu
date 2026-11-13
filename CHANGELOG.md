@@ -7,6 +7,22 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### WD17xx floppy disk controller and disk images (#330, #331)
+
+- New device plugin `wd17xx`: the Western Digital FD1771, FD1791/1793/1795/1797,
+  WD2791/2793/2795/2797 and WD1773 floppy controllers, for the CoCo's
+  FD-500 cartridge and the TRS-80 Model I/III/4. All Type I-IV commands
+  (Write Track formats from the raw stream with `$F5`-`$F7`), status bits
+  per command type, INTRQ and DRQ as callbacks or signal lines, the
+  inverted data bus, side compare / side select output and 1771 data marks
+  and sector lengths of each variant.
+- Timing in machine cycles: step rates, head settling, a 300 RPM disk with
+  index pulses, a byte every 32 us (MFM) / 64 us (FM), lost data when the
+  CPU is late, record not found after five index pulses.
+- Four drives with motor, ready, write protect and side; images held as raw
+  tracks (DMK-style) with JVC, VDK, DMK, JV1 and JV3 loaders and savers;
+  writes go back to the file. See `doc/README-WD17XX.md`.
+
 ### CLI: `-i` attaches cartridges; `.<instruction>` on non-6502 CPUs
 
 - `load` (and so `-i`) attaches a file that no image loader or drive takes

@@ -261,6 +261,10 @@ PLUGIN_ACIA6551_SRCS = src/plugins/devices/acia6551/main/acia6551.cpp \
 	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/acia6551/main/plugin_init.cpp
 
+PLUGIN_WD17XX_SRCS = src/plugins/devices/wd17xx/main/wd17xx.cpp \
+	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
+	src/plugins/devices/wd17xx/main/plugin_init.cpp
+
 PLUGIN_CIA6526_SRCS = src/plugins/devices/cia6526/main/cia6526.cpp \
 	src/plugins/devices/cia6526/main/plugin_init.cpp
 
@@ -506,6 +510,8 @@ MCP_SRCS = src/mcp/main/main.cpp src/plugins/devices/datasette/main/datasette.cp
 TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/acia6551/test/test_acia6551.cpp \
 	src/plugins/devices/acia6551/test/test_hayes_modem.cpp \
+	src/plugins/devices/wd17xx/test/test_wd17xx.cpp \
+	src/plugins/devices/wd17xx/test/test_floppy_images.cpp \
 	tests/src/test_c64_tape.cpp \
 	tests/src/test_tape_roundtrip.cpp \
 	src/cli/test/test_cli.cpp \
@@ -675,6 +681,8 @@ PLUGIN_VIC2_TEST_SRCS = src/plugins/devices/vic2/test/test_c64_video.cpp \
 
 # Test-related objects (excluding plugin entry points to avoid multiple mmemuPluginInit definitions)
 ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
+	src/plugins/devices/wd17xx/main/wd17xx.o \
+	src/plugins/devices/wd17xx/main/floppy_disk.o \
 	src/plugins/machines/x16/main/x16_i2c.o \
 	src/plugins/machines/x16/main/x16_hostfs.o \
 	src/plugins/devices/ieee488/main/cbm_host_dos.o \
@@ -877,6 +885,7 @@ PLUGIN_GEORAM_OBJS   = $(PLUGIN_GEORAM_SRCS:.cpp=.o)
 PLUGIN_MOUSE1351_OBJS = $(PLUGIN_MOUSE1351_SRCS:.cpp=.o)
 PLUGIN_ACIA6551_OBJS = $(PLUGIN_ACIA6551_SRCS:.cpp=.o)
 PLUGIN_CIA6526_OBJS  = $(PLUGIN_CIA6526_SRCS:.cpp=.o)
+PLUGIN_WD17XX_OBJS   = $(PLUGIN_WD17XX_SRCS:.cpp=.o)
 PLUGIN_VIC2_OBJS   = $(PLUGIN_VIC2_SRCS:.cpp=.o)
 PLUGIN_VIC3_OBJS   = $(PLUGIN_VIC3_SRCS:.cpp=.o)
 PLUGIN_VIC4_OBJS   = $(PLUGIN_VIC4_SRCS:.cpp=.o)
@@ -956,6 +965,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-georam.so \
 	$(LIBDIR)/mmemu-plugin-mouse1351.so \
 	$(LIBDIR)/mmemu-plugin-acia6551.so \
+	$(LIBDIR)/mmemu-plugin-wd17xx.so \
 	$(LIBDIR)/mmemu-plugin-cia6526.so \
 	$(LIBDIR)/mmemu-plugin-vic2.so \
 	$(LIBDIR)/mmemu-plugin-vic3.so \
@@ -1081,6 +1091,9 @@ $(LIBDIR)/mmemu-plugin-mouse1351.so: $(PLUGIN_MOUSE1351_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-acia6551.so: $(PLUGIN_ACIA6551_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-wd17xx.so: $(PLUGIN_WD17XX_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cia6526.so: $(PLUGIN_CIA6526_OBJS) | $(LIBDIR)
