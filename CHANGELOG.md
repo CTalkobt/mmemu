@@ -7,6 +7,82 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80 Color Computer 1, 2 and 2B (#331)
+
+- New machines `coco` / `coco2`, `coco1` and `coco2b` (`mmemu-plugin-coco`):
+  the 6809E with three new chips, each reusable: the **MC6847 VDG** (every
+  alphanumeric, semigraphics and graphics mode, CSS, mid-line mode
+  changes, NTSC timing with HS/FS, PMODE 4 artifact colours off /
+  blue-red / red-blue, and the **MC6847T1**'s lower case on the 2B), the
+  **MC6883 SAM** (its control register at `$FFC0-$FFDF`, map types 0 and
+  1, 4/16/64K multiplexing, the video address counter's dividers, CPU
+  rates with the address-dependent "speed-up poke") and the **MC6821 PIA**
+  (a new device: mmsim's 6520 clears port B's flags on a write and starts
+  at `$FF`, the 6821 doesn't).
+- 4, 16, 32 or 64 KB (`expansion ram`); the keyboard matrix from the host
+  keyboard; analog joysticks through the DAC and comparator (host stick,
+  pad or mouse); DAC, single-bit and cartridge sound; cassette `.cas` and
+  `.wav` (play, record, save) with the motor relay; the bit banger to a
+  file (`serial file:`).
+- Cartridges: ROM Paks (`.ccc`, `.rom`; `cart` or `-i`) start themselves
+  through the CART FIRQ; the Multi-Pak Interface (`$FF7F`, four slots),
+  the Orchestra-90, the Deluxe RS-232 Pak (the 6551) and the FD-500 disk
+  controller (Disk BASIC, its latch and a WD2793 with HALT on DRQ and NMI on
+  INTRQ; JVC/VDK/DMK images with `disk mount 1` = DRIVE 0, or `-i`) through
+  `expansion`.
+- BASIC ROMs are the user's, in `roms/coco/` (git-ignored) or
+  `MMEMU_COCO_FIRMWARE`; `roms/coco/hardware.sym` names the I/O. Tests use
+  hand-assembled stand-in ROMs. See `doc/README-COCO.md`.
+- The **Hi-Res Joystick Interface** (Radio Shack 26-3028) on either port
+  (`expansion joyright hires` / `joyleft hires`, `normal` to take it off):
+  as MAME's model, writing the DAC 0 starts a ramp and the comparator rises
+  560 µs + position × 4856 µs / 1023 later, so a timing loop reads the stick
+  far finer than the DAC's 64 steps; the host mouse moves the stick on it.
+- The MC6821's **IRQ delay** (tRS3): /IRQ follows an active Cx1/Cx2 edge 1
+  us later (as XRoar), timed from the VDG's HS/FS edge itself; the flags
+  read set at once.
+- The SAM's video counter under mid-line V changes (the divider "glitches")
+  and mid-frame F and rate changes, tested step for step against XRoar's
+  model.
+
+### Dragon 32 / Dragon 64 and PAL timing (#331)
+
+- New machines `dragon32`, `dragon64` and `tano` (the NTSC Dragon 64) in
+  `mmemu-plugin-coco`, from the CoCo's code: the Dragon keyboard matrix
+  (rows rotated), 16 KB BASIC at `$8000`, the parallel printer port (PIA0
+  port B data, PIA1 PA1 STROBE, PB0 BUSY, CA1 /ACK; `serial file:`), PIA1
+  PB2 as the RAM size (Dragon 32) or ROM select (Dragon 64: the second,
+  64K-mode BASIC), PIAs decoded at A2 low, and the Dragon 64's 6551 at
+  `$FF04` (`serial loopback` / `tcp:` / `modem`).
+- **DragonDOS** cartridge (`expansion cart dragondos`): its ROM, a WD2797 at
+  `$FF40`, the latch at `$FF48` (drive, motor, density, precomp, NMI
+  enable), DRQ on CART (FIRQ) and INTRQ to /NMI; VDK/JVC/DMK images with
+  `disk mount 1` (or `-i`) = DragonDOS's drive 1. ROM cartridges `.dgn`.
+- **PAL timing** in the MC6847 (`setPal`, as XRoar's vdg_pal): the board
+  stops the VDG for 50 blank lines a frame (312 lines, 50 Hz; the Dragon 64
+  without HS during them); the PAL crystals (14.218 MHz Dragon, 14.23753 MHz
+  CoCo) time sound, tape `.wav`, disk and serial; no artifact colours. A PAL
+  CoCo too: `cocopal` (HS inverted to PIA0 CA1).
+- ROMs are the user's, in `roms/dragon/` (ignored) or
+  `MMEMU_DRAGON_FIRMWARE`; `roms/dragon/hardware.sym` names the I/O. See
+  `doc/README-DRAGON.md`.
+
+### WD17xx floppy disk controller and disk images (#330, #331)
+
+- New device plugin `wd17xx`: the Western Digital FD1771, FD1791/1793/1795/1797,
+  WD2791/2793/2795/2797 and WD1773 floppy controllers, for the CoCo's
+  FD-500 cartridge and the TRS-80 Model I/III/4. All Type I-IV commands
+  (Write Track formats from the raw stream with `$F5`-`$F7`), status bits
+  per command type, INTRQ and DRQ as callbacks or signal lines, the
+  inverted data bus, side compare / side select output and 1771 data marks
+  and sector lengths of each variant.
+- Timing in machine cycles: step rates, head settling, a 300 RPM disk with
+  index pulses, a byte every 32 us (MFM) / 64 us (FM), lost data when the
+  CPU is late, record not found after five index pulses.
+- Four drives with motor, ready, write protect and side; images held as raw
+  tracks (DMK-style) with JVC, VDK, DMK, JV1 and JV3 loaders and savers;
+  writes go back to the file. See `doc/README-WD17XX.md`.
+
 ### CLI: `-i` attaches cartridges; `.<instruction>` on non-6502 CPUs
 
 - `load` (and so `-i`) attaches a file that no image loader or drive takes

@@ -44,6 +44,7 @@ Plugins that implement the `IOHandler` interface for memory-mapped hardware.
 | `lib/mmemu-plugin-vic2.so` | MOS 6567/6569 VIC-II video chip with sprite engine. | [README-VIC2.md](README-VIC2.md) |
 | `lib/mmemu-plugin-sid6581.so` | MOS 6581 SID sound chip: 3 voices + SVF filter. | [README-SID.md](README-SID.md) |
 | `lib/mmemu-plugin-pia6520.so` | MOS 6520 PIA: dual 8-bit I/O ports, handshake lines. | [README-6520.md](README-6520.md) |
+| `lib/mmemu-plugin-wd17xx.so` | WD17xx/WD279x floppy disk controllers (FD1771, FD179x, WD279x, WD1773); JVC, VDK, DMK, JV1, JV3 images. | [README-WD17XX.md](README-WD17XX.md) |
 | `lib/mmemu-plugin-crtc6545.so` | MOS 6545/6845 CRTC video controller. | [README-6545.md](README-6545.md) |
 | `lib/mmemu-plugin-pet-video.so` | PET Video Subsystem (Discrete and CRTC models). | [README-PET-VIDEO.md](README-PET-VIDEO.md) |
 | `lib/mmemu-plugin-antic.so` | Atari ANTIC DMA engine and display controller. | [README-ANTIC.md](README-ANTIC.md) |
