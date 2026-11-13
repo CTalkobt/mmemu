@@ -33,6 +33,7 @@ The C64 machine plugin composes the full Commodore 64 hardware stack — 6510 CP
 | \$D800–\$DBFF | 1 KB | Color RAM (always I/O, 4-bit cells) |
 | \$DC00–\$DCFF | 256 B | CIA1 registers (CHAREN=1) / Char ROM (CHAREN=0) |
 | \$DD00–\$DDFF | 256 B | CIA2 registers (CHAREN=1) / Char ROM (CHAREN=0) |
+| \$DE00–\$DFFF | 512 B | I/O 1 and 2, the expansion port; with nothing there a read returns the VIC-II's Phi1 bus value (`"openBus"`, open I/O) |
 | \$E000–\$FFFF | 8 KB | KERNAL ROM (banked out when HIRAM=0) |
 
 **Power-up RAM:** VICE's C64 pattern, not zeroes (`"ramInit": "c64"` on the bus in `machines/c64.json`; `ram_resources_init`): two `$00`, then four `$FF` and four `$00` in turn, the whole inverted every 16 KB. VICE's 0.1% random bit flips are left out, so runs repeat. Tape loaders that read uninitialised RAM depend on it (`C64/raminitpattern`). A JSON bus can give its own pattern: `{"startValue", "valueInvert", "valueOffset", "patternInvert", "patternInvertValue"}` (`ram_init_pattern.h`).

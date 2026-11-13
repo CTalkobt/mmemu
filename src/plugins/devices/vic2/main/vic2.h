@@ -296,6 +296,18 @@ protected:
     int32_t m_sCap[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
     bool    m_vborder = true;           ///< the vertical border flip-flop
     uint32_t m_decodeMask = 0;          ///< "decode": a wider window than addrMask() (0: none)
+    // The light pen (VICE vicii-lightpen.c)
+    uint64_t m_ticks = 0;               ///< cycles run
+    bool     m_lpLow = false;           ///< the line is low
+    bool     m_lpPending = false;       ///< it fell: trigger at m_lpAt
+    uint64_t m_lpAt = 0;
+    bool     m_lpTriggered = false;     ///< once a frame
+    void     triggerLightPen(bool retrigger);
+    bool     m_frameStartPending = false; ///< line 0 began; the frame starts in its cycle 1
+    void     frameStart();
+    void     rasterCompare();
+    /** The raster line as read: the last line through cycle 0 of line 0. */
+    int      visibleLine() const { return m_frameStartPending ? m_linesPerFrame - 1 : m_rasterLine; }
     void nextLine();
     void captureFetch(int c);
     bool gfxFetch(int line, int col, uint8_t& g, bool& mc) const;
@@ -303,6 +315,7 @@ protected:
 public:
     int  phi1Value() const override;
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    void setLightPen(bool low) override;
 protected:
     int  sprDma0In(int c) const;
     int  lineDots() const { return m_cyclesPerLine * 8; }

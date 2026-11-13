@@ -14,6 +14,7 @@
       "licenseClass": "proprietary",
       "clockHz": 985248,
       "bus": { "type": "FlatMemoryBus", "name": "system", "addrBits": 16, "ramInit": "c64" },
+      "openBus": { "from": "0xDE00", "to": "0xDFFF" },
       "cpu": { "type": "6510", "dataBus": "system", "codeBus": "system" },
       "devices": [
         { "type": "c64_pla",          "name": "PLA",      "baseAddr": null,
@@ -23,7 +24,8 @@
           "dmaBus": true, "colorRam": true, "options": { "decode": "0x3FF" } },
         { "type": "6581",             "name": "SID",      "baseAddr": "0xD400" },
         { "type": "6526",             "name": "CIA1",     "baseAddr": "0xDC00",
-          "clockHz": 985248, "options": { "decode": "0xFF" } },
+          "clockHz": 985248, "options": { "decode": "0xFF" },
+          "portBWriteCallback": "light_pen", "lightPenTarget": "VIC-II" },
         { "type": "6526",             "name": "CIA2",     "baseAddr": "0xDD00",
           "clockHz": 985248, "options": { "decode": "0xFF" },
           "portAWriteCallback": "vic2_bank_select", "bankSelectTarget": "VIC-II" },

@@ -416,6 +416,17 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 }
             }
 
+            // CIA1 PB4 driven low: the VIC-II's light pen line (VICE c64cia1.c)
+            if (devSpec.value("portBWriteCallback", "") == "light_pen") {
+                std::string tgtName = devSpec.value("lightPenTarget", "VIC-II");
+                if (devPtrs.count(tgtName)) {
+                    IOHandler* tgt = devPtrs[tgtName];
+                    dev->setPortBWriteCallback([tgt](uint8_t prb, uint8_t ddrb) {
+                        tgt->setLightPen((ddrb & 0x10) && !(prb & 0x10));
+                    });
+                }
+            }
+
             // Generic device-to-device links (e.g. PetVideo → CRTC6545)
             if (devSpec.contains("linkedDevices") && devSpec["linkedDevices"].is_object()) {
                 for (auto& [role, tgtVal] : devSpec["linkedDevices"].items()) {
@@ -568,13 +579,31 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
     // -----------------------------------------------------------------------
     // Step 6 — Bus I/O hook (with optional mirror ranges)
     // -----------------------------------------------------------------------
+    // Open I/O ("openBus": {"from", "to"}): a read there that no device
+    // answers returns what the video chip left on the bus (IBaSource::
+    // phi1Value; the source is wired with the scheduler below). The C64's
+    // IO1/IO2 without a cartridge (VICE testprogs C64/openio gauntlet)
+    struct OpenBus { uint32_t from = 1, to = 0; IBaSource* src = nullptr; };
+    auto openBus = std::make_shared<OpenBus>();
+    if (spec.contains("openBus")) {
+        openBus->from = hexStrToU32(spec["openBus"].value("from", "0x0"));
+        openBus->to   = hexStrToU32(spec["openBus"].value("to", "0x0"));
+    }
+    auto openRead = [openBus](uint32_t a, uint8_t* v) {
+        if (a < openBus->from || a > openBus->to || !openBus->src) return false;
+        const int x = openBus->src->phi1Value();
+        if (x < 0) return false;
+        *v = (uint8_t)x;
+        return true;
+    };
+
     // FlatMemoryBus: set I/O hooks directly on the bus
     if (bus) {
         if (mirrors.empty()) {
             bus->setIoHooks(
-                [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead (b, a, v); },
+                [io, openRead](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchRead (b, a, v) || openRead(a, v); },
                 [io](IBus* b, uint32_t a, uint8_t  v) { return io->dispatchWrite(b, a, v); },
-                [io](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchPeek (b, a, v); });
+                [io, openRead](IBus* b, uint32_t a, uint8_t* v) { return io->dispatchPeek (b, a, v) || openRead(a, v); });
         } else {
             bus->setIoHooks(
                 [io, mirrors](IBus* b, uint32_t a, uint8_t* v) {
@@ -1050,6 +1079,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
         if (devPtrs.count(n)) baSource = dynamic_cast<IBaSource*>(devPtrs[n]);
         if (!baSource) log->error("JsonMachineLoader: scheduler.baSource: no device '{}' that pulls BA", n);
     }
+    openBus->src = baSource;
 
     if (baSource) {
         // The CPU's read cycles wait while BA is low (RDY); its writes go on.

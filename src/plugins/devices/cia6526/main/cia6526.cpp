@@ -286,6 +286,7 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case PRB:
             m_prb = val;
             if (m_portBDevice) m_portBDevice->writePort(val);
+            if (m_portBWriteCallback) m_portBWriteCallback(m_prb, m_ddrb);
             break;
         case DDRA:
             m_ddra = val;
@@ -295,6 +296,7 @@ bool CIA6526::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case DDRB:
             m_ddrb = val;
             if (m_portBDevice) m_portBDevice->setDdr(val);
+            if (m_portBWriteCallback) m_portBWriteCallback(m_prb, m_ddrb);
             break;
 
         // Latch writes (VICE ciat_set_latchlo/hi): a load in progress takes
