@@ -199,9 +199,12 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         // Try primary assembler first
         if (m_ctx.assem)
             sz = m_ctx.assem->assembleLine(instr, opcodes, sizeof(opcodes), m_ctx.cpu->pc());
-        // Fallback: try ISA default, then base "6502" assembler (handles LDA/STA/etc.)
+        // Fallback: the ISA's default assembler, then (65xx CPUs only: the 45GS02's and 65C02's
+        // superset of it) the base 6502 one; on another CPU a 6502 line would be the wrong bytes
+        const std::string isa = m_ctx.cpu->isaName();
+        const bool is65xx = isa == "6502" || isa == "65C02" || isa == "45GS02";
         if (sz <= 0) {
-            const char* fallbackIsas[] = { m_ctx.cpu->isaName(), "6502", nullptr };
+            const char* fallbackIsas[] = { m_ctx.cpu->isaName(), is65xx ? "6502" : nullptr, nullptr };
             for (int fi = 0; sz <= 0 && fallbackIsas[fi]; fi++) {
                 IAssembler* fallback = ToolchainRegistry::instance().createAssembler(fallbackIsas[fi]);
                 if (fallback) {
@@ -211,12 +214,17 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         }
         if (sz > 0) {
-            uint32_t scratch = 0x0200;
+            // Run it from scratch RAM and put that back: $0200 on the 65xx, else just below the stack
+            // (on the Game Boy $0200 is cartridge ROM, its writes the mapper's registers)
+            const uint32_t scratch = is65xx ? 0x0200 : ((m_ctx.cpu->sp() - 32) & 0xFFFF);
+            uint8_t saved[16];
+            for (int i = 0; i < sz; ++i) saved[i] = m_ctx.bus->peek8(scratch + i);
             for (int i = 0; i < sz; ++i) m_ctx.bus->write8(scratch + i, opcodes[i]);
             uint32_t oldPc = m_ctx.cpu->pc();
             m_ctx.cpu->setPc(scratch);
             m_ctx.cpu->step();
             m_ctx.cpu->setPc(oldPc);
+            for (int i = 0; i < sz; ++i) m_ctx.bus->write8(scratch + i, saved[i]);
             showRegisters();
         } else {
             m_output("Assembly failed: " + instr + "\n");
@@ -711,7 +719,18 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 // Not a program: a disk for the machine's drives (-i game.dsk)
                 m_output("Mounted '" + path + "' on " + drive->name() + " unit 1\n");
             } else {
-                m_output("No loader found for '" + path + "'\n");
+                // Nor a disk: a cartridge, as `cart` attaches it (-i game.gb, game.nes, game.sfc)
+                bool supported = false;
+                ICartridgeHandler* handler = ImageLoaderRegistry::instance().attachCartridge(path, m_ctx.bus, m_ctx.machine, &supported);
+                if (handler) {
+                    auto md = handler->metadata();
+                    m_output("Attached cartridge: " + md.displayName + " (" + md.type + ")\n");
+                    if (m_ctx.machine->onReset) m_ctx.machine->onReset(*m_ctx.machine);
+                } else if (supported) {
+                    m_output("Failed to attach cartridge '" + path + "'\n");
+                } else {
+                    m_output("No loader found for '" + path + "'\n");
+                }
             }
         } else {
             m_output("Syntax: load <path> [address]\n");
@@ -1486,7 +1505,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
     } else if (cmd == "cart") {
         if (!m_ctx.bus) { m_output("No machine created.\n"); return; }
         std::string path;
-        if (ss >> path) {
+        if (ss >> std::quoted(path)) {                  // "a path with spaces" or a bare word
             bool supported = false;
             ICartridgeHandler* handler = ImageLoaderRegistry::instance().attachCartridge(path, m_ctx.bus, m_ctx.machine, &supported);
             if (supported) {
@@ -1495,7 +1514,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     m_output("Attached cartridge: " + md.displayName + " (" + md.type + ")\n");
                     // Optional: Trigger reset
                     m_output("Resetting machine...\n");
-                    m_ctx.machine->onReset(*m_ctx.machine);
+                    if (m_ctx.machine->onReset) m_ctx.machine->onReset(*m_ctx.machine);
                     showRegisters();
                 } else {
                     m_output("Failed to attach cartridge '" + path + "'\n");

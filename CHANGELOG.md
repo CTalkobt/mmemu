@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CLI: `-i` attaches cartridges; `.<instruction>` on non-6502 CPUs
+
+- `load` (and so `-i`) attaches a file that no image loader or drive takes
+  as a cartridge, as `cart` does: `mmemu-cli -m gameboy -i game.gb` (it
+  said "No loader found"). `cart` takes a quoted path too.
+- `.<instruction>` no longer falls back to the 6502 assembler on CPUs
+  outside the 65xx family (a typo valid as 6502 became 6502 bytes on a
+  Game Boy or Z80), and on those it runs the instruction just below the
+  stack rather than at `$0200` (cartridge ROM on the Game Boy, where the
+  write went to the mapper). The bytes it borrows are put back, at `$0200`
+  too.
+
 ### Game Boy: AGE's oam-write-dmgC left out of the survey
 
 - Its starred row (the writes 2 machine cycles in) lands on the mode edges,

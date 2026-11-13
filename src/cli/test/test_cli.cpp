@@ -4,6 +4,8 @@
 #include "plugins/6502/main/cpu6502.h"
 #include "plugins/6502/main/assembler_6502.h"
 #include "plugins/6502/main/disassembler_6502.h"
+#include "plugins/z80/main/cpu_z80.h"
+#include "libcore/main/image_loader.h"
 #include "libmem/main/memory_bus.h"
 #include "libdebug/main/debug_context.h"
 #include "libcore/main/machine_desc.h"
@@ -846,4 +848,59 @@ TEST_CASE(cli_load_quoted_path) {
     output.clear();
     interpreter.processLine("load plain.zzz");
     EXPECT_TRUE(output.find("'plain.zzz'") != std::string::npos);
+}
+
+// `load` (and so -i) attaches a file no loader or drive takes as a cartridge, if a handler has its
+// extension: a Game Boy's .gb as `cart` does
+TEST_CASE(cli_load_falls_back_to_cartridge) {
+    struct Cart : ICartridgeHandler {
+        bool* attached;
+        explicit Cart(bool* a) : attached(a) {}
+        bool attach(IBus*, MachineDescriptor*) override { *attached = true; return true; }
+        void eject(IBus*) override {}
+        CartridgeMetadata metadata() const override { CartridgeMetadata md; md.displayName = "t.clitestcart"; md.type = "Test cartridge"; return md; }
+    };
+    static bool attached = false;
+    ImageLoaderRegistry::instance().registerCartridgeHandler("clitestcart",
+        [](const std::string&) { return std::unique_ptr<ICartridgeHandler>(new Cart(&attached)); });
+    const std::string path = "/tmp/mmemu_cli_test.clitestcart";
+    { std::ofstream f(path, std::ios::binary); f << "x"; }
+
+    auto* bus = new FlatMemoryBus("system", 16);          // (the machine owns and deletes it)
+    MOS6502 cpu;
+    cpu.setDataBus(bus);
+    DebugContext dbg(&cpu, bus);
+    MachineDescriptor md;
+    md.buses.push_back({"system", bus});
+    bool reset = false;
+    md.onReset = [&](MachineDescriptor&) { reset = true; };
+    CliContext ctx;
+    ctx.bus = bus; ctx.cpu = &cpu; ctx.dbg = &dbg; ctx.machine = &md;
+    std::string output;
+    CliInterpreter interp(ctx, [&](const std::string& s) { output += s; });
+    interp.processLine("load \"" + path + "\"");
+    EXPECT_TRUE(attached);
+    EXPECT_TRUE(reset);
+    EXPECT_TRUE(output.find("Attached cartridge: t.clitestcart (Test cartridge)") != std::string::npos);
+    output.clear();
+    interp.processLine("load /tmp/mmemu_cli_test.nothing_takes_this");
+    EXPECT_TRUE(output.find("No loader found") != std::string::npos);
+    std::remove(path.c_str());
+}
+
+// `.<instruction>` on a CPU other than the 65xx: no fallback to the 6502 assembler, and the
+// instruction runs below the stack (not at $0200), which is put back
+TEST_CASE(cli_immediate_instruction_not_6502) {
+    FlatMemoryBus bus("system", 16);
+    Z80 cpu;
+    cpu.setDataBus(&bus);
+    DebugContext dbg(&cpu, &bus);
+    CliContext ctx;
+    ctx.bus = &bus; ctx.cpu = &cpu; ctx.dbg = &dbg;       // (no Z80 assembler)
+    std::string output;
+    CliInterpreter interp(ctx, [&](const std::string& s) { output += s; });
+    bus.write8(0x0200, 0x5A);
+    interp.processLine(".LDA #$42");                      // 6502: A9 42, not Z80
+    EXPECT_TRUE(output.find("Assembly failed") != std::string::npos);
+    EXPECT_EQ(bus.peek8(0x0200), 0x5A);
 }
