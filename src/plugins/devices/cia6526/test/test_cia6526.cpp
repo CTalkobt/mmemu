@@ -753,3 +753,21 @@ TEST_CASE(cia_tod_hours_roll) {
     f.cia.ioPeek(&f.bus, 0xDC0B, &hr);
     ASSERT_EQ((int)hr, 0x92);
 }
+
+// "decode": the C64 decodes a CIA through its page, registers every 16 bytes
+// (VICE CIA/mirrors); by default it answers only its 16 registers
+TEST_CASE(cia_decode_window) {
+    CiaFixture f;
+    uint8_t val = 0;
+    ASSERT(!f.cia.ioWrite(&f.bus, 0xDC12, 0xFF));          // $DC10+: not ours
+    std::string err;
+    ASSERT(f.cia.setOption("decode", "0xFF", err));
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDCF2, 0xFF));           // DDRA through a mirror
+    ASSERT(f.cia.ioWrite(&f.bus, 0xDC30, 0x5A));           // PRA
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC00, &val));
+    ASSERT_EQ((int)val, 0x5A);
+    ASSERT(f.cia.ioRead(&f.bus, 0xDCA0, &val));
+    ASSERT_EQ((int)val, 0x5A);
+    ASSERT(!f.cia.ioRead(&f.bus, 0xDD00, &val));           // the next page isn't
+    ASSERT(!f.cia.setOption("decode", "0x17", err));       // not a window mask
+}

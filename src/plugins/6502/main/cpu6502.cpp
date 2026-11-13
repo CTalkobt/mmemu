@@ -1185,6 +1185,21 @@ int MOS6502::step() {
         // CLI, SEI, PLP: the poll comes before I changes
         if (!m_cmos && (op == 0x58 || op == 0x78 || op == 0x28)) pollInterrupts();
     }
+    // NMOS indexed accesses read the address before the carry into its high
+    // byte first: on a page crossing, and always for stores and read-modify-
+    // write instructions. A dummy read of an I/O register has its effects (a
+    // CIA's ICR acknowledged: VICE testprogs CIA/dd0dtest, dd0drw)
+    if (m_dummyReads && !m_cmos && (info.mode == Mode::ABSX || info.mode == Mode::ABSY || info.mode == Mode::INDBPY) &&
+        (pageCrossed || m_writeKind[op] == W_LAST || m_isRmw[op])) {
+        const uint8_t idx = info.mode == Mode::ABSX ? m_state.x : m_state.y;
+        const uint16_t dummy = (uint16_t)(((addr - idx) & 0xFF00) | (addr & 0x00FF));
+        if (!m_bus || !m_bus->isPlainMemory(dummy)) {
+            const int saved = m_readCycle;
+            if (m_sync) m_readCycle = info.mode == Mode::INDBPY ? 4 : 3;
+            (void)read(dummy);
+            m_readCycle = saved;
+        }
+    }
     if (info.fn) {
         extraCycles += (this->*(info.fn))(addr);
     }

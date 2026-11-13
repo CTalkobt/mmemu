@@ -125,6 +125,22 @@ these), SameBoy's and AGE's timings:
   alignment offsets" and the LY & (LY + 1) glitch), which a dot-stepped PPU
   can't show.
 
+### VICE's test programs: CIA mirrors and the 6502's dummy reads
+
+- **CIA mirrors:** the C64 decodes each CIA through its whole page, its 16
+  registers repeating (`$DC00-$DCFF`, `$DD00-$DDFF`). The CIA has a `decode`
+  option for the window (default 16 bytes), set to `0xFF` in `machines/c64.json`.
+- **Dummy reads (NMOS 6502):** an indexed access (`abs,X`, `abs,Y`, `(zp),Y`)
+  reads the address before the carry into its high byte one cycle before the
+  real one: on a page crossing, and always for stores and read-modify-write
+  instructions. With I/O there it has its effects: `STA $DC0D,X` and
+  `LDA $DCFD,X` acknowledge a CIA's interrupts. Plain memory is skipped. The
+  Apple II turns them off (`setDummyReads(false)`), as AppleWin has none and its
+  Disk II follows AppleWin's timing.
+- VICE programs now passing: `CIA/mirrors`, `CIA/dd0drw`, `CIA/dd0dtest` (both
+  CIA models).
+  Tests: `cia_decode_window`, `cpu6502_indexed_dummy_reads`.
+
 ### Game Boy: an SM83 assembler, GDB for any CPU, the SGB's boot ROM from a file
 
 - **SM83 assembler** (`sm83_asm.h`, the `sm83` toolchain's): a line

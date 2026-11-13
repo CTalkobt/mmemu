@@ -203,6 +203,14 @@ public:
     void setIrqPollLatency(bool on) { m_pollLatency = on; }
 
     /**
+     * NMOS indexed accesses read the address before the carry into its high
+     * byte first (on a page crossing, and always for stores and read-modify-
+     * write instructions); with I/O there, the read has its effects. On by
+     * default; the Apple II turns it off, as AppleWin has none.
+     */
+    void setDummyReads(bool on) { m_dummyReads = on; }
+
+    /**
      * The RESET line (not power-on): A, X and Y are kept, S drops by 3 (the
      * suppressed pushes), I is set and PC comes from $FFFC.
      */
@@ -214,6 +222,7 @@ private:
     uint8_t m_magic = 0xEE;             // LXA, and XAA/ANE outside a BA wait
     uint8_t m_aneMagic = 0xEE;          // XAA/ANE when its operand fetch didn't wait
     bool m_pollLatency = false;
+    bool m_dummyReads = true;
     int m_polledI = -1;                 // I as polled before CLI/SEI/PLP (-1: use P)
 
 protected:
