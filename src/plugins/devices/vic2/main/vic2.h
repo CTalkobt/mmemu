@@ -289,6 +289,21 @@ protected:
         uint8_t  mc = 0, pri = 0, expx = 0;
     } m_seq;
     int  cycleXpos(int c) const;
+    // Fetches taken as their cycles pass (sprites on): this line's g-accesses
+    // (bit 8: multicolour; -1: not yet) and sprite data (-1: none yet)
+    int16_t m_gCap[40] = {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+                          -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
+    int32_t m_sCap[8] = {-1,-1,-1,-1,-1,-1,-1,-1};
+    bool    m_vborder = true;           ///< the vertical border flip-flop
+    uint32_t m_decodeMask = 0;          ///< "decode": a wider window than addrMask() (0: none)
+    void nextLine();
+    void captureFetch(int c);
+    bool gfxFetch(int line, int col, uint8_t& g, bool& mc) const;
+    bool spriteData(int n, int c, uint32_t& data) const;
+public:
+    int  phi1Value() const override;
+    bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+protected:
     int  sprDma0In(int c) const;
     int  lineDots() const { return m_cyclesPerLine * 8; }
     /** The pixel time a CPU read in the current cycle sees collisions up to:

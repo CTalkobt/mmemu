@@ -132,6 +132,9 @@ public:
     virtual void setIrqLine(bool asserted) { if (asserted) triggerIrq(); }
     virtual void setNmiLine(bool asserted) { if (asserted) triggerNmi(); }
     virtual void setHaltLine(bool asserted) { (void)asserted; }
+    /** The video chip's Phi1 bus value (IBaSource::phi1Value): a 6510 write
+     *  to $00/$01 puts it in the RAM under the port. Other cores ignore it. */
+    virtual void setPhi1Source(std::function<int()> src) { (void)src; }
     virtual bool isHalted() const { return false; }
 
     /** Return a named signal line output (e.g. "loram"/"hiram"/"charen" for MOS6510). */

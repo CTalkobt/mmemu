@@ -63,6 +63,8 @@ public:
     bool ioPeek(IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t val) override;
     void reset() override;
+    /** The RAM as it powers up (VICE reu_init_ram). */
+    void initRam();
     void tick(uint64_t) override {}
     int busMasterCycle() override;
     void setBaSource(IBaSource* ba) override { m_ba = ba; }

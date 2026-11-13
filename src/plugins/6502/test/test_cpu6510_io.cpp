@@ -61,3 +61,19 @@ TEST_CASE(cpu6510_port_bus_forwards_rom_overlays) {
     data->removeRomOverlay(0x8000);
     EXPECT_EQ(bus.peek8(0x8002), 0x00);
 }
+
+// A write to $00/$01 sets the port and puts the VIC-II's Phi1 bus value (not
+// the CPU's data) in the RAM under it (VICE zero_store; testprogs REU/cpuport)
+TEST_CASE(cpu6510_port_write_stores_phi1_in_ram) {
+    MOS6510 cpu;
+    FlatMemoryBus bus("system", 16);
+    cpu.setDataBus(&bus);
+    cpu.getPortBus()->write8(0x0001, 0x37);
+    EXPECT_EQ(bus.read8(0x0001), 0x00);              // no Phi1 source: RAM left alone
+    cpu.setPhi1Source([] { return 0x18; });
+    cpu.getPortBus()->write8(0x0000, 0x2F);
+    cpu.getPortBus()->write8(0x0001, 0x35);
+    EXPECT_EQ(cpu.portDDR(), 0x2F);
+    EXPECT_EQ(bus.read8(0x0000), 0x18);
+    EXPECT_EQ(bus.read8(0x0001), 0x18);
+}

@@ -110,7 +110,8 @@ flag at once; bit 7 (IR) and the IRQ output follow one cycle later. Enabling
 the mask of a flag already set raises IRQ two cycles after the write. A read
 clears the flags and releases IRQ at once, and IR two cycles later. Timer B
 bug: if ICR was read the cycle before a timer B underflow, the next read drops
-the TB flag. FLAG (bit 4), SP (bit 3) and the TOD alarm (bit 2) go through the
+the TB flag, whether timer B counts Φ2 or timer A's underflows (VICE's
+`ciacore_inttb` flags it either way; testprogs `CIA/ciavarious/cia8`). FLAG (bit 4), SP (bit 3) and the TOD alarm (bit 2) go through the
 same pipeline.
 
 **The 6526A** (`setOption("model", "6526A")`; machine JSON `"options": { "model": "6526A" }`), the C64C's and C128's "new" CIA, differs only in this pipeline (VICE's `CIA_MODEL_6526A`): a flag raises IR and IRQ in the cycle it is set (a cycle later if the ICR was read the cycle before); enabling the mask of a pending flag raises IRQ in the next cycle, unless the ICR was read last cycle; a read leaves the flags it returned set for one more cycle; and there is no timer B bug. The old 6526 is the default.

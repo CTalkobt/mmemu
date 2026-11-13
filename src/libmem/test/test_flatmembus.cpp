@@ -80,3 +80,20 @@ TEST_CASE(flatmembus_snapshot) {
 }
 
 // No main here
+
+#include "libmem/main/ram_init_pattern.h"
+
+// VICE's C64 power-up RAM (ram_resources_init): $00 x2, then $FF x4 / $00 x4
+// stripes, the whole pattern inverted every 16K (testprogs C64/raminitpattern)
+TEST_CASE(ram_init_pattern_c64) {
+    std::vector<uint8_t> m(0x10000);
+    ramInitPattern(m.data(), m.size(), ramInitC64());
+    ASSERT_EQ(m[0x0000], 0x00);
+    ASSERT_EQ(m[0x0001], 0x00);
+    ASSERT_EQ(m[0x0002], 0xFF);
+    ASSERT_EQ(m[0x0005], 0xFF);
+    ASSERT_EQ(m[0x0006], 0x00);
+    ASSERT_EQ(m[0x4000], 0xFF);                    // inverted from 16K
+    ASSERT_EQ(m[0x4002], 0x00);
+    ASSERT_EQ(m[0x8000], 0x00);
+}

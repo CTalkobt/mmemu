@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 #include <utility>
+#include <string>
 
 namespace {
 
@@ -785,4 +786,21 @@ TEST_CASE(vic2_sprite_background_collision) {
     runFrame(f);
     f.vic.ioRead(nullptr, 0xD01F, &v);
     ASSERT_EQ(v, (uint8_t)0x00);
+}
+
+// "decode": the C64 decodes the VIC-II through $D000-$D3FF, its 64 registers
+// repeating (testprogs GEO-RAM/newtest-auto reads $D0FE as $FF)
+TEST_CASE(vic2_decode_window) {
+    VicFixture f;
+    uint8_t v = 0;
+    ASSERT(!f.vic.ioRead(nullptr, 0xD0FE, &v));          // not without the option
+    std::string err;
+    ASSERT(f.vic.setOption("decode", "0x3FF", err));
+    ASSERT(f.vic.ioRead(nullptr, 0xD0FE, &v));
+    ASSERT_EQ(v, (uint8_t)0xFF);                         // unused register $3E
+    ASSERT(f.vic.ioWrite(nullptr, 0xD360, 0x02));        // $D020 through a mirror
+    f.vic.ioRead(nullptr, 0xD020, &v);
+    ASSERT_EQ(v, (uint8_t)0xF2);
+    ASSERT(!f.vic.ioRead(nullptr, 0xD400, &v));          // the SID's
+    ASSERT(!f.vic.setOption("decode", "0x100", err));
 }
