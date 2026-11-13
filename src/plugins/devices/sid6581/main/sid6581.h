@@ -67,6 +67,7 @@ public:
     uint32_t    addrMask() const override { return 0x001F; } // 32-byte window
 
     bool ioRead (IBus* bus, uint32_t addr, uint8_t* val) override;
+    bool ioPeek (IBus* bus, uint32_t addr, uint8_t* val) override;
     bool ioWrite(IBus* bus, uint32_t addr, uint8_t  val) override;
     void reset()  override;
     void tick(uint64_t cycles) override;
@@ -190,6 +191,11 @@ private:
     uint32_t     m_baseAddr;
 
     uint8_t      m_regs[32];     // raw register storage (32-byte aligned)
+    uint8_t      m_busValue = 0; // the data bus as the last access left it (reSID bus_value)
+    uint32_t     m_busTtl = 0;   // cycles until it fades to 0
+    /** reSID databus_ttl: $1D00 cycles on the 6581, $A2000 on the 8580. */
+    uint32_t     busTtl() const { return chipModel() == CombinedWaveformTable::Chip::MOS8580 ? 0xA2000u : 0x1D00u; }
+    bool         readReg(uint32_t addr, uint8_t* val, bool peek);
     Voice        m_voices[3];
 
     uint32_t     m_clockHz   = 985248;  // PAL default

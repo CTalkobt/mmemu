@@ -61,6 +61,20 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - The CoCo's `.cas` loader now also mounts a `.cas` on another machine's
   recorder (both plugins take the extension).
 
+### VICE's test programs: the fuxxortest programs and the SID's data bus
+
+- **Runner:** a list directory without its trailing `/`
+  (`../general/fuxxortest,...`) is joined with one, so the eight fuxxortest
+  programs are found.
+- **SID data bus** (reSID 1.0): a write-only or unused register reads the last
+  value written or read on the chip, which fades to 0 after `$1D00` cycles
+  (6581) or `$A2000` (8580); before, each register read back its own last write.
+- VICE programs now passing: `general/fuxxortest` `ef1-nmi`, `ef2-inst3`,
+  `ef2-inst4a`, `ef2-inst4b`, `ef2-inst4c`; `SID/busvalue`. Still failing: `ef2-inst1` (needs a
+  true drive), `ef2-inst2` (a sprite collision on the line a sprite's DMA
+  starts), `test-fuxxored` (all of them in one).
+  Test: `sid_bus_value_fades`; `mega65_integration_dual_sid` reads each SID's bus.
+
 ### VICE's test programs: open I/O, the light pen and the VIC-II's Phi1 fetches
 
 - **Open I/O:** a read of `$DE00-$DFFF` that no cartridge answers returns the

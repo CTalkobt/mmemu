@@ -1177,6 +1177,8 @@ TEST_CASE(c64_vice_testprogs) {
                      f[i].rfind("warn:", 0) == 0 || f[i].rfind("comment:", 0) == 0) {}
             else ok = false;               // NTSC, other carts, drives, CIA models...
         }
+        // The list's directory may lack its "/" ("../general/fuxxortest,...")
+        if (!f[0].empty() && f[0].back() != '/') f[0] += '/';
         const std::string path = std::string(root) + "/testbench/" + f[0] + f[1];
         if (!ok || (filter && path.find(filter) == std::string::npos)) continue;
         if (++index % shards != shard) continue;

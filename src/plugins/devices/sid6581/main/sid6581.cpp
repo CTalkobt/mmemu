@@ -125,35 +125,39 @@ void SID6581::reset() {
 // IOHandler: ioRead
 // ---------------------------------------------------------------------------
 
-bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
+// reSID 1.0 SID::read: the readable registers put their value on the data
+// bus; a write-only or unused register returns what is on it, the last value
+// written or read, which fades to 0 (bus_value_ttl; testprogs
+// general/fuxxortest ef2-inst4b waits for it to change)
+bool SID6581::readReg(uint32_t addr, uint8_t* val, bool peek) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
     uint8_t reg = addr & 0x1F;
+    int v = -1;
 
     switch (reg) {
         case POTX:
         case POTY:
             // A pot source (a 1351 mouse) or nothing there: $FF
-            *val = m_pots ? m_pots->pot(reg == POTY) : 0xFF;
+            v = m_pots ? m_pots->pot(reg == POTY) : 0xFF;
             break;
         case OSC3:
             // Upper 8 bits of voice 3's waveform output (reSID readOSC): the
             // folded triangle, pulse, noise etc., not the raw accumulator.
-            *val = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2]), chipModel()) >> 4);
+            v = (uint8_t)(m_voices[2].waveOutput(false, ringMsbFor(m_voices[2]), chipModel()) >> 4);
             break;
         case ENV3:
-            *val = m_voices[2].envLevel;
+            v = m_voices[2].envLevel;
             break;
         default:
-            // Write-only registers return the last written value (open-bus on real chip,
-            // but returning the stored value is the common emulator approximation).
-            if (reg <= 0x1C)
-                *val = m_regs[reg];
-            else
-                *val = 0xFF;
             break;
     }
+    if (v >= 0 && !peek) { m_busValue = (uint8_t)v; m_busTtl = busTtl(); }
+    *val = v >= 0 ? (uint8_t)v : m_busValue;
     return true;
 }
+
+bool SID6581::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, false); }
+bool SID6581::ioPeek(IBus* /*bus*/, uint32_t addr, uint8_t* val) { return readReg(addr, val, true); }
 
 
 // ---------------------------------------------------------------------------
@@ -164,6 +168,8 @@ bool SID6581::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if ((addr & ~addrMask()) != m_baseAddr) return false;
     uint8_t reg = addr & 0x1F;
 
+    m_busValue = val;                   // any write drives the data bus
+    m_busTtl = busTtl();
     if (reg > 0x18) return true; // $D419–$D41F are read-only or unused
 
     m_regs[reg] = val;
@@ -216,6 +222,10 @@ void SID6581::writeVoiceReg(Voice& v, int reg, uint8_t val) {
 
 void SID6581::tick(uint64_t cycles) {
     synthesize(cycles);
+    if (m_busTtl) {                     // the bus value fades (reSID clock)
+        if (cycles >= m_busTtl) { m_busTtl = 0; m_busValue = 0; }
+        else m_busTtl -= (uint32_t)cycles;
+    }
 }
 
 // ---------------------------------------------------------------------------
