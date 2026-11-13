@@ -185,6 +185,11 @@ void Cpu::nextCycleStart() {
             masterCycle();
             masterCycle();
         }
+    } else if (!m_gb->isCgb()) {
+        // The DMG looks a dot before the cycle's end: an interrupt the PPU raises on the last
+        // dot waits a cycle (AGE's stat-int-dmgC)
+        m_gb->exec();
+        m_prevIrq = m_gb->execSamplingIrq();
     } else {
         cycle();
         m_prevIrq = m_gb->pendingIrq();

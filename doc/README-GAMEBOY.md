@@ -118,7 +118,9 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
   3 black).
 - **APU** (`gb_apu.cpp`): two square channels (sweep on the first), the wave
   channel (DMG wave RAM access only on the cycle it is read, retrigger
-  corruption), the noise channel, the frame sequencer from DIV, length
+  corruption), the noise channel (SameBoy's: a 14-bit counter at the
+  divisor's rate whose selected bit clocks the LFSR, with its trigger
+  alignment and NR43 write glitches), the frame sequencer from DIV, length
   counters with the extra clocking, the envelope's "zombie mode", the DACs'
   fade. The output is Mesen's level, box-filtered to a chosen rate.
 - **Joypad and serial port**: the select lines and the joypad interrupt on
@@ -136,12 +138,14 @@ The SM83 is the machine's CPU for the debugger (`sm83_core.h`, ISA
 `Gameboy::setModel(Model::Cgb)`, the `gameboycolor` machine. Each part
 follows Mesen's CGB handling:
 
-- **Double speed**: KEY1 (`$FF4D`) arms it, STOP switches: the CPU halts
-  33942 machine cycles (Mesen's, after `speed_switch_timing_stat`) with DIV
-  held at 0 and no interrupts taken, then runs twice as fast. The timer,
+- **Double speed**: KEY1 (`$FF4D`) arms it, STOP switches: DIV resets and
+  the CPU halts 32,769 machine cycles while the timer, PPU and APU run on
+  (SameBoy's; an interrupt ends it), then runs twice as fast. The timer,
   OAM DMA and the serial port run with the CPU; the PPU takes a dot per
   CPU half-cycle and the APU keeps its clock (its frame sequencer then off
-  DIV bit 13). `cycles()` counts the CPU's clocks, `apuCycles()` real time
+  DIV bit 13). Each switch moves the LCD half a dot from the CPU: unseen
+  in double speed, back at normal speed the PPU is a dot on (AGE's
+  `lcd-align-ly`, `spsw-mode0`). `cycles()` counts the CPU's clocks, `apuCycles()` real time
   (the machine paces on the latter).
 - **VRAM bank 1** (VBK `$FF4F`), and the background's attribute map in it:
   each tile's palette (0-7), VRAM bank, horizontal and vertical flips and
@@ -236,11 +240,10 @@ title. Nintendo's boot ROMs are not included.
   `dmg_sound` and `oam_bug` singles, `halt_bug`) and Mooneye's acceptance
   tests for the DMG, plus the SGB ones with the SGB boot ROM, the
   combined `oam_bug.gb` against its picture, and AGE's tests verified on a
-  DMG C (`dmgC` in the name): 118 PASS, 2 FAIL. The 2 are AGE's
-  `oam-write-dmgC` (its starred row changes with when the LCD was last
-  turned off, its author notes) and `stat-int-dmgC-cgbBCE` on the DMG
-  (the mode 0 interrupt a dot after mode 0, as on the CGB, would break
-  Mooneye's `hblank_ly_scx_timing-GS` here).
+  DMG C (`dmgC` in the name): 119 PASS, 1 FAIL. The 1 is AGE's
+  `oam-write-dmgC`: its starred row, the writes 2 machine cycles in, lands
+  on the mode edges' boundary and changes from line to line and with when
+  the LCD was last turned off, its author notes.
   `gb_blargg_tests` also runs `cgb-acid2` on the Game Boy Color (0 pixels
   differ).
   `oam_bug` 7-timing_effect can't pass as built, on hardware or here: its
@@ -258,14 +261,10 @@ title. Nintendo's boot ROMs are not included.
   and the register-checked tests for the CGB E by their names' model
   suffixes: Mooneye's acceptance and misc tests, SameSuite's and AGE's.
   `MMEMU_GB_SURVEY=dmg` or `=cgb` runs one half. The CGB result is
-  189 PASS, 3 FAIL, 3 skipped. Mesen2 (built from its source and run on
+  192 PASS, 0 FAIL, 3 skipped. Mesen2 (built from its source and run on
   the same list) fails 39 of them; the PPU, HALT, speed switch and APU
-  timings that differ from Mesen follow those tests and SameBoy (see
-  `gb_ppu.h`, `gb_cpu.cpp`, `gb_apu.cpp`). The 3 failing: SameSuite's
-  `channel_4_freq_change` (it needs SameBoy's counter-based noise channel
-  and its NR43 glitches), and AGE's `lcd-align-ly-cgbE` and
-  `spsw-mode0-cgbBCE` (after a switch back to normal speed the PPU sits
-  half a dot from the CPU, which the dot-stepped PPU can't show).
+  timings that differ from Mesen follow those tests, SameBoy and AGE (see
+  `gb_ppu.h`, `gb_cpu.cpp`, `gb_apu.cpp`).
   The 3 skipped are Mooneye's `boot_div-cgbABCDE`, `boot_hwio-C` and
   `unused_hwio-C`, which check what Nintendo's CGB boot ROM leaves (DIV's
   phase after its logo, its chime still sounding in PCM12, the palette

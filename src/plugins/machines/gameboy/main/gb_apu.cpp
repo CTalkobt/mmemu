@@ -78,7 +78,8 @@ void Apu::run() {
         if (m_sq1.timer < step) step = m_sq1.timer;
         if (m_sq2.timer < step) step = m_sq2.timer;
         if (m_wave.timer < step) step = m_wave.timer;
-        if (m_noise.timer < step) step = m_noise.timer;
+        const uint32_t noiseNext = noiseNextEvent();
+        if (noiseNext < step) step = noiseNext;
         clocks -= step;
         sqExec(m_sq1, step);
         sqExec(m_sq2, step);
@@ -445,7 +446,9 @@ void Apu::waveWriteRam(uint16_t addr, uint8_t v) {
 }
 
 // ---------------------------------------------------------------------------
-// The noise channel
+// The noise channel (SameBoy's, apu.c: a 14-bit counter counted at the divisor's rate,
+// a rising edge of its bit (NR43 >> 4) clocking the LFSR; the CGB as a CGB-E, the DMG
+// as SameBoy's DMG/CGB-C and earlier)
 // ---------------------------------------------------------------------------
 
 void Apu::noiseDisable() {
@@ -454,57 +457,346 @@ void Apu::noiseDisable() {
     m_noise = Noise{};
     m_noise.dac = dac;
     m_noise.length = len;
-    m_noise.timer = noisePeriod();
-}
-
-uint32_t Apu::noisePeriod() const {
-    return m_noise.divisor == 0 ? (8u << m_noise.periodShift) : ((16u * m_noise.divisor) << m_noise.periodShift);
 }
 
 void Apu::noiseUpdateOutput() {
-    if (m_noise.enabled) m_noise.output = (uint8_t)(((m_noise.shiftRegister & 1) ^ 1) * m_noise.volume);
+    if (m_noise.enabled) m_noise.output = (m_noise.lfsr & 1) ? m_noise.volume : 0;
+}
+
+bool Apu::noiseFeedback() const { return ((m_noise.lfsr ^ (m_noise.lfsr >> 1) ^ 1) & 1) != 0; }
+
+void Apu::noiseShift(bool highBit) {
+    // The new bit goes in at bit 14 and, narrow, bit 6 (cleared there too: switching widths)
+    const uint16_t mask = m_noise.narrow ? 0x4040 : 0x4000;
+    m_noise.bit7BeforeStep = (m_noise.lfsr & 0x80) != 0;
+    m_noise.lfsr >>= 1;
+    if (highBit) m_noise.lfsr |= mask;
+    else m_noise.lfsr &= (uint16_t)~mask;
+    noiseUpdateOutput();
+    m_noise.steppedInNarrow = m_noise.narrow;
+}
+
+// A counter edge: the DMG shifts in the feedback latched on the bit's last falling edge (JOTO)
+void Apu::noiseClock() { noiseShift(m_gb->isCgb() ? noiseFeedback() : m_noise.feedbackLatch); }
+
+uint32_t Apu::noiseNextEvent() const {
+    // APU clocks until the LFSR's next clock (or the DMG's delayed start), for run()'s steps
+    uint32_t cycles = 0xFFFF;
+    const unsigned shift = m_noise.nr43 >> 4;
+    if (m_noise.enabled && (m_noise.counterActive || m_noise.backgroundActive) && shift < 14) {
+        unsigned div = (m_noise.nr43 & 7u) << 2;
+        if (!div) div = 2;
+        const unsigned span = 2u << shift, low = m_noise.counter & (span - 1);
+        unsigned k = ((1u << shift) - low) & (span - 1);
+        if (!k) k = span;
+        cycles = (m_noise.countdown ? m_noise.countdown : div) + (k - 1) * div;
+    }
+    if (m_noise.dmgDelayedStart && m_noise.dmgDelayedStart < cycles) cycles = m_noise.dmgDelayedStart;
+    if (cycles > 0xFFFF) cycles = 0xFFFF;
+    return cycles * 2 - m_noise.half;
 }
 
 void Apu::noiseExec(uint32_t clocks) {
     m_noise.dac.exec(clocks, m_noise.envVolume || m_noise.envRaise);
-    if (!m_noise.enabled || m_noise.periodShift >= 14) return;      // shifts 14 and 15: no clocks
-    m_noise.timer -= clocks;
-    if (m_noise.timer == 0) {
-        m_noise.timer = noisePeriod();
-        const uint16_t shifted = (uint16_t)(m_noise.shiftRegister >> 1);
-        const uint8_t x = (uint8_t)((m_noise.shiftRegister & 1) ^ (shifted & 1));
-        m_noise.shiftRegister = (uint16_t)((x << 14) | shifted);
-        if (m_noise.shortWidth) m_noise.shiftRegister = (uint16_t)((m_noise.shiftRegister & ~0x40) | (x << 6));
-        noiseUpdateOutput();
+    // The channel counts 2 MHz cycles: half the APU's clocks
+    m_noise.half += clocks;
+    const uint32_t cycles = m_noise.half >> 1;
+    m_noise.half &= 1;
+    if (cycles) noiseCycles(cycles);
+}
+
+void Apu::noiseCycles(uint32_t cycles) {
+    bool start = false;
+    if (m_noise.dmgDelayedStart) {
+        if (m_noise.dmgDelayedStart == cycles) {
+            m_noise.dmgDelayedStart = 0;
+            start = true;
+        } else if (m_noise.dmgDelayedStart > cycles) {
+            m_noise.dmgDelayedStart = (uint8_t)(m_noise.dmgDelayedStart - cycles);
+        } else {
+            const uint32_t first = m_noise.dmgDelayedStart;
+            noiseCycles(first);
+            noiseCycles(cycles - first);
+            return;
+        }
     }
+    m_noise.alignment = (uint8_t)(m_noise.alignment + cycles);
+    if (m_noise.counterActive || m_noise.backgroundActive) {
+        uint32_t left = cycles;
+        uint8_t div = (uint8_t)((m_noise.nr43 & 7) << 2);
+        if (!div) div = 2;
+        if (m_noise.countdown == 0) m_noise.countdown = div;
+        while (left >= m_noise.countdown) {
+            left -= m_noise.countdown;
+            m_noise.countdown = div;
+            const uint32_t mask = 1u << (m_noise.nr43 >> 4);
+            const bool oldBit = (m_noise.counter & mask) != 0;
+            m_noise.counter = (m_noise.counter + 1) & 0x3FFF;
+            m_noise.didStepCounter = true;
+            const bool newBit = (m_noise.counter & mask) != 0;
+            if (!m_gb->isCgb() && oldBit && !newBit && m_noise.enabled) m_noise.feedbackLatch = noiseFeedback();
+            if (newBit && !oldBit && m_noise.enabled) noiseClock();
+        }
+        if (left) {
+            m_noise.countdown = (uint8_t)(m_noise.countdown - left);
+            m_noise.countdownReloaded = false;
+        } else {
+            m_noise.countdownReloaded = true;
+        }
+    }
+    if (start) noiseWrite(4, (uint8_t)(m_noise.nr44 | 0x80));   // NR44 written again, now aligned
+}
+
+void Apu::noiseTrigger() {
+    m_noise.envClock = m_noise.envLocked = false;
+    if (!m_gb->isCgb() && (m_noise.alignment & 3) != 0) {
+        m_noise.dmgDelayedStart = 6;          // the DMG starts it 6 cycles later, aligned
+        return;
+    }
+    m_noise.lfsr = 0;
+    noisePrepareStart();
+    m_noise.volume = m_noise.envVolume;
+    m_noise.envCountdown = m_noise.envPeriod;
+    m_noise.didStepCounter = (m_noise.alignment & 3) == 2;
+    if (m_noise.envRaise || m_noise.envVolume > 0) {
+        m_noise.enabled = true;
+        m_noise.output = 0;
+    }
+    if (m_noise.length == 0) { m_noise.length = 64; m_noise.lengthEnabled = false; }
+}
+
+void Apu::noisePrepareStart() {
+    // The counter's first increment after a trigger (SameBoy's prepare_noise_start, measured
+    // on hardware; the counter itself runs on)
+    Noise& n = m_noise;
+    const bool cgb = m_gb->isCgb(), old = !cgb;          // CGB-E, or as the DMG to CGB-C
+    const bool ds = m_gb->isHighSpeed();
+    if (!cgb) n.feedbackLatch = false;
+    n.counterActive = n.envVolume || n.envRaise;          // cleared by APU off and the DAC off
+    const bool wasStartedWithDacOff = n.startedWithDacOff;
+    n.startedWithDacOff = !n.counterActive;
+    unsigned divisor = n.nr43 & 7;
+    const bool wasBackground = n.backgroundActive;
+    n.backgroundActive = true;
+    bool instantStep = false, div1Glitch = false;
+    const uint8_t a = n.alignment;
+
+    if (divisor > 1 && n.countdown == 1) {
+        n.counter = (n.counter + 1) & 0x3FFF;
+    } else if (divisor > 1 && n.countdown == 2 && n.enabled && old && ds) {
+        n.counter = (n.counter + 1) & 0x3FFF;
+    } else if (n.countdown == 2 && (a & 3) == 0 && n.enabled) {
+        if (divisor == 0) {
+            divisor = 8;
+        } else if (divisor == 1) {
+            if (!n.didStepCounter) div1Glitch = true;
+            const uint32_t mask = 1u << (n.nr43 >> 4);
+            const bool oldBit = (n.counter & mask) != 0;
+            n.counter = (n.counter + 1) & 0x3FFF;
+            if ((n.counter & mask) && !oldBit) instantStep = true;
+        }
+    }
+    int cd = divisor == 0 ? 6 : (int)divisor * 4 + 6;
+    if (a & 1) {
+        if (!divisor) cd += (old || !wasBackground) ? 1 : -1;
+        else if (a & 2) cd += (divisor == 1 && !n.enabled) ? 1 : -3;
+        else cd -= (divisor == 1 && n.enabled) ? 5 : 1;
+    } else if (divisor) {
+        if (a & 2) cd += (ds && old && divisor == 1) ? 2 : -2;
+        else if (divisor > 1 && (!ds || !old)) cd -= 4;
+        else if (divisor == 1 && n.enabled && !(n.nr43 & 0xF0)) cd -= 4;
+    } else if (ds && old) {
+        cd += 2;
+    }
+    // Counting in the background (the DAC off) shifts it again
+    if (divisor > 1) {
+        if (!n.counterActive && !(a & 3)) cd += 4;
+    } else if (wasBackground && !n.enabled && !(a & 3)) {
+        if (divisor == 0) { if (wasStartedWithDacOff) cd += 28; }
+        else cd -= 4;
+    }
+    if (!divisor && old && wasBackground && !n.enabled && ds) cd--;
+    if (div1Glitch) cd -= 4;
+    n.countdown = (uint8_t)cd;
+    // Divisor 0 retriggered on the fourth cycle starts the LFSR at $55 (SameBoy's measurement)
+    n.lfsr = (!divisor && n.enabled && (a & 3) == 3) ? 0x0055 : 0;
+    if (instantStep) noiseShift(noiseFeedback());
+}
+
+void Apu::noiseNr43(uint8_t v) {
+    // NR43 written: its shift passes through an intermediate value (bit 7 new, the rest old), and
+    // the counter bit it selects rising or glitching on the way steps the LFSR (SameBoy's nr43_write,
+    // its CGB-E; the DMG as its CGB-C and earlier)
+    Noise& n = m_noise;
+    const bool cgb = m_gb->isCgb();
+    const bool oldNarrow = n.narrow;
+    n.narrow = (v & 8) != 0;
+    const uint8_t prev = n.nr43;
+    n.nr43 = v;
+    if ((prev & 0xF0) == (v & 0xF0)) return;
+
+    uint16_t counter = n.counter;
+    if (!cgb && n.countdownReloaded) counter |= (counter - 1) & 0x3FFF;
+    const bool oldBit = (counter >> (prev >> 4)) & 1;
+    const uint8_t glitchValue = (uint8_t)((prev & 0x7F) | (v & 0x80));
+    const bool glitchBit = (counter >> (glitchValue >> 4)) & 1;
+    const bool newBit = (counter >> (v >> 4)) & 1;
+    if (!cgb && oldBit && !glitchBit) n.feedbackLatch = noiseFeedback();
+
+    if (oldBit == newBit && newBit != glitchBit) {
+        if (newBit) {
+            // A glitch pulse with the bit high on both sides (the CGB-E's deterministic variants)
+            if (cgb) {
+                if (!(v & 0x80)) {
+                    noiseShift(noiseFeedback());
+                } else {
+                    const unsigned t1 = (prev >> 4) & 7, t2 = (v >> 4) & 7;
+                    if ((t1 ^ 7) + t2 > 7 || ((t1 ^ 7) & t2)) {
+                        n.lfsr = (uint16_t)((n.lfsr & ~0x80) | ((n.lfsr >> 1) & 0x80));   // bit 8 into bit 7
+                        if ((t1 == 0 || t1 == 4) && t2 == 3) {
+                            n.lfsr &= (uint16_t)((n.lfsr >> 1) | 0x545);
+                            noiseUpdateOutput();
+                        } else if (t1 == 2 && t2 == 3) {
+                            uint16_t mask = 0x555;
+                            if ((n.lfsr & 0xC) == 0xC) mask |= 8;
+                            if ((n.lfsr & 0xC00) == 0xC00) mask |= 0x800;
+                            n.lfsr &= (uint16_t)((n.lfsr >> 1) | mask);
+                            noiseUpdateOutput();
+                        }
+                        if (!n.narrow && oldNarrow && n.steppedInNarrow) {
+                            if (n.bit7BeforeStep) n.lfsr |= 0x40;
+                            else n.lfsr &= (uint16_t)~0x40;
+                        }
+                        n.lfsr |= n.narrow ? 0x4040 : 0x4000;
+                        n.steppedInNarrow = n.narrow;
+                    }
+                }
+            }
+        } else if (cgb) {
+            // A glitch pulse with the bit low on both sides
+            static const uint8_t GLITCH[8 * 8] = {
+                0, 0, 4, 2, 2, 2, 0, 0,
+                0, 0, 2, 4, 2, 2, 0, 0,
+                1, 2, 0, 1, 5, 3, 0, 0,
+                0, 0, 0, 0, 2, 2, 0, 0,
+                0, 2, 2, 2, 0, 0, 0, 0,
+                6, 0, 2, 2, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0,
+            };
+            const unsigned glitch = (v & 0x80) ? GLITCH[((prev & 0x70) >> 1) | ((v & 0x70) >> 4)] : 0;
+            switch (glitch) {
+            case 1:
+            case 6:
+                // A step, bit 1 ANDed with bit 0 (6: and the LFSR's top bits glitched too)
+                noiseShift(noiseFeedback());
+                if (glitch == 6) {
+                    if ((n.narrow && (n.lfsr & 0x71) == 0x20) || (n.lfsr & 0x71) == 0x61) n.lfsr &= (uint16_t)~0x20;
+                    if ((n.lfsr & 0x7001) == 0x2000 || (n.lfsr & 0x7001) == 0x6001) n.lfsr &= (uint16_t)~0x2000;
+                }
+                if ((n.lfsr & 3) == 2) n.lfsr &= (uint16_t)~2;
+                break;
+            case 2: {
+                // A step ANDed with what was there, bit 0 aside
+                const uint16_t before = n.lfsr;
+                noiseShift(noiseFeedback());
+                n.lfsr &= (uint16_t)(before | 1);
+                break;
+            }
+            case 5:
+                if ((n.lfsr & 3) == 2) n.lfsr &= (uint16_t)(n.narrow ? ~0x4040 : ~0x4000);
+                if ((n.lfsr & 0x19) == 8) n.lfsr &= (uint16_t)~8;
+                [[fallthrough]];
+            case 3:
+                // No step: bit 0 takes bit 1
+                n.lfsr = (uint16_t)((n.lfsr & ~1) | ((n.lfsr >> 1) & 1));
+                noiseUpdateOutput();
+                n.steppedInNarrow = n.narrow;
+                break;
+            case 4: {
+                const uint16_t before = n.lfsr;
+                noiseShift(noiseFeedback());
+                n.lfsr &= (uint16_t)(before | (n.narrow ? ~0x2022 : ~0x2002));
+                break;
+            }
+            default:
+                noiseShift(noiseFeedback());
+                break;
+            }
+        } else {
+            noiseClock();
+        }
+    } else if (!oldBit && newBit) {
+        // The selected bit rising: a clock
+        if (!cgb) {
+            const bool narrow = n.narrow;
+            n.narrow = true;
+            noiseClock();
+            n.narrow = narrow;
+            if ((v & 0xF0) <= 0x20 && glitchBit && !(counter & 8)) {
+                noiseShift(noiseFeedback());
+                n.lfsr &= (uint16_t)~(n.narrow ? 0x4040 : 0x4000);
+                n.lfsr |= (uint16_t)((n.lfsr & (n.narrow ? 0x2020 : 0x2000)) << 1);
+            }
+        } else {
+            noiseShift(noiseFeedback());
+        }
+    } else if (!cgb) {
+        if ((v & 0xF0) <= 0x20 && !glitchBit && !newBit && !oldBit && (counter & 8)) noiseShift(noiseFeedback());
+    }
+    if (!cgb && glitchBit && !newBit) n.feedbackLatch = noiseFeedback();
 }
 
 void Apu::noiseWrite(int reg, uint8_t v) {
     switch (reg) {
     case 1: m_noise.length = (uint8_t)(64 - (v & 0x3F)); break;
-    case 2: writeEnvelope(m_noise, v, [this]() { noiseUpdateOutput(); }); break;
-    case 3:
-        m_noise.periodShift = (uint8_t)((v & 0xF0) >> 4);
-        m_noise.shortWidth = (v & 0x08) != 0;
-        m_noise.divisor = v & 0x07;
+    case 2:
+        if ((v & 0xF8) == 0) {
+            // The DAC off stops the counter (a last increment if it was about to); the DMG's stops
+            // counting in the background too
+            if (m_noise.enabled && (m_noise.nr43 & 7)) {
+                if (m_noise.countdown <= 2) m_noise.counter = (m_noise.counter + 1) & 0x3FFF;
+                m_noise.backgroundActive = false;
+            }
+            if (!m_gb->isCgb()) m_noise.backgroundActive = false;
+            m_noise.counterActive = false;
+        }
+        writeEnvelope(m_noise, v, [this]() { noiseUpdateOutput(); });
         break;
+    case 3: {
+        if (m_noise.countdownReloaded) {
+            // Written as the counter reloads: it reloads with the new divisor, the phase within 4 cycles kept
+            uint8_t div = (uint8_t)((v & 7) << 2);
+            if (!div) div = 2;
+            static const uint8_t CGB_E[4] = {2, 1, 0, 3}, OLD[4] = {2, 1, 4, 3};
+            m_noise.countdown = (uint8_t)(div + (div == 2 ? 0 : (m_gb->isCgb() ? CGB_E : OLD)[m_noise.alignment & 3]));
+        }
+        if (!m_gb->isCgb()) {
+            // Before the CGB-D, every write passes through $FF
+            if (m_noise.countdownReloaded) {
+                auto bits = [&](uint16_t c, bool& o, bool& g, bool& nw) {
+                    o = (c >> (m_noise.nr43 >> 4)) & 1;
+                    g = (c >> 7) & 1;
+                    nw = (c >> (v >> 4)) & 1;
+                };
+                bool o, g, nw;
+                bits(m_noise.counter, o, g, nw);
+                if (!o && nw && g) {
+                    bits((m_noise.counter - 1) & 0x3FFF, o, g, nw);
+                    if (o && !nw && g) noiseShift(noiseFeedback());
+                }
+            }
+            noiseNr43(0xFF);
+        }
+        noiseNr43(v);
+        break;
+    }
     case 4: {
         const bool prevEnabled = m_noise.enabled;
-        if (v & 0x80) {
-            // The first period halved plus 8 (SameSuite's channel_4_delay, as Mesen)
-            m_noise.timer = (noisePeriod() / 2 + 8) + (oddApuCycle() ? 2 : 0);
-            if (m_noise.enabled) m_noise.timer += 4;
-            if (m_noise.divisor && !(elapsedApuCycles() & 0x04)) m_noise.timer += (m_noise.divisor == 1) ? 4 : (uint32_t)-4;
-            m_noise.volume = m_noise.envVolume;
-            if (m_noise.enabled) noiseUpdateOutput();
-            m_noise.enabled = m_noise.envRaise || m_noise.envVolume > 0;
-            m_noise.shiftRegister = 0x7FFF;
-            if (m_noise.length == 0) { m_noise.length = 64; m_noise.lengthEnabled = false; }
-            m_noise.envCountdown = m_noise.envPeriod;
-            m_noise.envClock = m_noise.envLocked = false;
-        }
+        m_noise.nr44 = v;
+        if (v & 0x80) noiseTrigger();
         lengthEnableFlag(v, m_noise.length, m_noise.lengthEnabled, m_noise.enabled);
-        if (!m_noise.enabled && prevEnabled) { m_noise.output = 0; noiseUpdateOutput(); }
+        if (!m_noise.enabled && prevEnabled) m_noise.output = 0;
         break;
     }
     }
@@ -536,7 +828,7 @@ uint8_t Apu::peek(uint16_t addr) const {
         const int r = addr - 0xFF1F;
         uint8_t v = 0;
         if (r == 2) v = (uint8_t)((m_noise.envVolume << 4) | (m_noise.envRaise ? 0x08 : 0) | m_noise.envPeriod);
-        else if (r == 3) v = (uint8_t)((m_noise.periodShift << 4) | (m_noise.shortWidth ? 0x08 : 0) | m_noise.divisor);
+        else if (r == 3) v = m_noise.nr43;
         else if (r == 4) v = m_noise.lengthEnabled ? 0x40 : 0;
         return v | openBus[r];
     }
