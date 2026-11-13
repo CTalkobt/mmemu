@@ -7,6 +7,32 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80 MC-10 Micro Color Computer and the MC6803 (#333)
+
+- New CPU plugin `mmemu-plugin-6801`: the **Motorola MC6801/MC6803** (cores
+  `6803` and `6801`): the 6800 set with the 6801's additions (MUL, ABX,
+  ADDD/SUBD/LDD/STD, PSHX/PULX, LSRD/ASLD, BRN, JSR direct, CPX with all
+  flags), the data sheet's cycle counts, the undocumented opcodes as XRoar
+  found them, NMI/IRQ1/IRQ2/SWI/WAI, and the on-chip peripherals: 128 bytes
+  of RAM, the modes, ports 1-4 with their DDRs, the free-running counter
+  with output compare and input capture (TOF/OCF/ICF and their clearing
+  sequences), the SCI (rate generator, TDR/RDR, overrun/framing, wake-up)
+  and RAM control. Motorola-syntax disassembler and a line assembler
+  (toolchain ISA `6803`); `raw6803` (64 KB) for the debugger. See
+  `doc/README-6803.md`.
+- New machines `mc10`, `mc10-4k` and `alice` (`mmemu-plugin-mc10`): the
+  MC6803 at 0.89 MHz, the shared MC6847 VDG driven from the `$BFFF` latch
+  and fetching the internal RAM itself, 4 KB at `$4000`, the keyboard
+  matrix (port 1 columns, rows at `$BFFF`, row 6 on P21), 1-bit sound, the
+  cassette (`.c10`/`.cas`/`.wav`, load and save; a `.c10` with `-i` types
+  CLOAD and plays), the serial printer port on P20 decoded to a file (raw
+  or the TP-10's 32-column paper). Expansion port: the 16K RAM pack (by
+  default), program packs at `$5000`, and the MCX-128 (128 KB, its BASIC
+  EPROM). The Matra Alice: PAL, AZERTY. Micro Color BASIC is the user's
+  (`roms/mc10/mc10.rom`, or `MMEMU_MC10_FIRMWARE`); without it a stand-in
+  says so. See `doc/README-MC10.md`.
+- The CoCo's cassette code also reads and writes `.c10`.
+
 ### TRS-80 Model I, III, 4 and 4P (#330)
 
 - New machines `trs80m1` (Level II BASIC with the Expansion Interface),

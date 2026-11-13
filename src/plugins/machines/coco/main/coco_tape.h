@@ -13,7 +13,7 @@ namespace coco {
  * CA2), its playback on the comparator at PIA1 PA0, recording from the
  * 6-bit DAC (PIA1 PA2-PA7).
  *
- * Formats: .cas (the bytes as BASIC writes them; each bit one cycle,
+ * Formats: .cas (and the MC-10's .c10: the bytes as BASIC writes them; each bit one cycle,
  * least significant first: a 1 a short cycle of about 2 kHz, a 0 a long
  * one of about 1.1 kHz, the timings XRoar uses), and .wav (8/16-bit PCM,
  * any rate, mono or stereo: played by its zero crossings; saved as 8-bit
