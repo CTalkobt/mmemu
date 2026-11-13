@@ -41,6 +41,11 @@ public:
     // Port-A write callback — called with (pra, ddra) after each PRA/DDRA write.
     // CIA6526 overrides this for VIC-II bank switching.
     virtual void setPortAWriteCallback(std::function<void(uint8_t, uint8_t)>) {}
+    /** Port-B write callback — called with (prb, ddrb) after each PRB/DDRB write
+     *  (the C64's CIA1 PB4: the VIC-II's light pen line). */
+    virtual void setPortBWriteCallback(std::function<void(uint8_t, uint8_t)>) {}
+    /** The light pen input (a video chip): true while the line is low. */
+    virtual void setLightPen(bool /*low*/) {}
 
     // Control-line attachment (VIA, PIA)
     virtual void setCA1Line(ISignalLine*) {}

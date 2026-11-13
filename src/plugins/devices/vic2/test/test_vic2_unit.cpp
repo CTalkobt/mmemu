@@ -156,9 +156,18 @@ TEST_CASE(vic2_raster_wraps) {
     for (int i = 0; i < VIC2::PAL_LINES_PER_FRAME; i++)
         f.vic.tick(VIC2::PAL_CYCLES_PER_LINE);
 
-    uint8_t lo;
+    // Cycle 0 of line 0 still reads the last line, 311 (VICE: the frame
+    // starts in cycle 1; testprogs VICII/split-tests/lightpen)
+    uint8_t lo, hi;
     f.vic.ioRead(nullptr, 0xD012, &lo);
-    ASSERT_EQ(lo, (uint8_t)0); // wrapped back to 0
+    f.vic.ioRead(nullptr, 0xD011, &hi);
+    ASSERT_EQ(lo, (uint8_t)(311 & 0xFF));
+    ASSERT(hi & 0x80);
+    f.vic.tick(1);
+    f.vic.ioRead(nullptr, 0xD012, &lo);
+    f.vic.ioRead(nullptr, 0xD011, &hi);
+    ASSERT_EQ(lo, (uint8_t)0);                  // wrapped back to 0
+    ASSERT(!(hi & 0x80));
 }
 
 TEST_CASE(vic2_raster_irq) {
@@ -360,7 +369,7 @@ TEST_CASE(vic2_memory_pointers) {
 
     uint8_t vmem;
     f.vic.ioRead(nullptr, 0xD018, &vmem);
-    ASSERT_EQ(vmem, (uint8_t)0x28);
+    ASSERT_EQ(vmem, (uint8_t)0x29);                   // bit 0 isn't there: reads 1
 }
 
 TEST_CASE(vic2_device_info) {
@@ -803,4 +812,39 @@ TEST_CASE(vic2_decode_window) {
     ASSERT_EQ(v, (uint8_t)0xF2);
     ASSERT(!f.vic.ioRead(nullptr, 0xD400, &v));          // the SID's
     ASSERT(!f.vic.setOption("decode", "0x100", err));
+}
+
+// Bits that aren't there read 1 (VICE vicii-mem.c): $D016 bits 6-7, $D018
+// bit 0, $D019 bits 4-6, $D01A bits 4-7
+TEST_CASE(vic2_unused_bits_read_one) {
+    VicFixture f;
+    uint8_t v;
+    f.vic.ioWrite(nullptr, 0xD016, 0x08); f.vic.ioRead(nullptr, 0xD016, &v); ASSERT_EQ(v, (uint8_t)0xC8);
+    f.vic.ioWrite(nullptr, 0xD018, 0x14); f.vic.ioRead(nullptr, 0xD018, &v); ASSERT_EQ(v, (uint8_t)0x15);
+    f.vic.ioWrite(nullptr, 0xD019, 0x0F); f.vic.ioRead(nullptr, 0xD019, &v); ASSERT_EQ(v, (uint8_t)0x70);
+    f.vic.ioWrite(nullptr, 0xD01A, 0x00); f.vic.ioRead(nullptr, 0xD01A, &v); ASSERT_EQ(v, (uint8_t)0xF0);
+}
+
+// The light pen (the C64: CIA1 PB4): the line falling triggers a cycle later,
+// latching $D013/$D014 and the IRQ flag, once a frame (testprogs VICII/lplatency)
+TEST_CASE(vic2_light_pen) {
+    VicFixture f;
+    uint8_t v;
+    f.vic.ioWrite(nullptr, 0xD01A, 0x08);                 // light pen IRQ on
+    f.vic.tick(VIC2::PAL_CYCLES_PER_LINE * 100 + 20);     // line 100, cycle 20
+    f.vic.setLightPen(true);
+    f.vic.ioRead(nullptr, 0xD019, &v);
+    ASSERT_EQ(v & 0x08, 0);                               // not yet
+    f.vic.tick(1);
+    f.vic.ioRead(nullptr, 0xD019, &v);
+    ASSERT_EQ(v, (uint8_t)0xF8);                          // flag, IRQ, unused bits
+    ASSERT(f.irq.m_level);
+    f.vic.ioRead(nullptr, 0xD014, &v);
+    ASSERT_EQ(v, (uint8_t)100);
+    f.vic.ioWrite(nullptr, 0xD019, 0x08);
+    f.vic.setLightPen(false);
+    f.vic.setLightPen(true);                              // again this frame: nothing
+    f.vic.tick(2);
+    f.vic.ioRead(nullptr, 0xD019, &v);
+    ASSERT_EQ(v & 0x08, 0);
 }

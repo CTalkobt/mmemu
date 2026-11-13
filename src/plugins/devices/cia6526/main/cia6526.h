@@ -87,6 +87,9 @@ public:
     }
     /** The CNT pin as the serial port drives it (high when idle). */
     bool cntOut() const { return m_cntOut; }
+    void setPortBWriteCallback(std::function<void(uint8_t prb, uint8_t ddrb)> cb) override {
+        m_portBWriteCallback = std::move(cb);
+    }
     void setPortAWriteCallback(std::function<void(uint8_t pra, uint8_t ddra)> cb) override {
         m_portAWriteCallback = std::move(cb);
     }
@@ -305,4 +308,5 @@ private:
     ISignalLine* m_irqLine     = nullptr;
 
     std::function<void(uint8_t, uint8_t)> m_portAWriteCallback;
+    std::function<void(uint8_t, uint8_t)> m_portBWriteCallback;
 };

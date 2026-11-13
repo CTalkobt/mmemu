@@ -45,7 +45,10 @@ Five video modes are selected by the ECM, BMM, and MCM control bits:
 - Per-sprite enable (`$D015`), multicolor (`$D01C`), X/Y expansion (`$D01D`/`$D017`)
 - Priority control (`$D01B`): sprite-behind-background per sprite
 - Registers repeat every 64 bytes through the window the `decode` option gives (`setOption("decode", "0x3FF")`; the C64 in `machines/c64.json`; VICE `GEO-RAM/newtest-auto` reads `$D0FE` as `$FF`)
-- **Phi1 bus value** (`IBaSource::phi1Value`): what the VIC-II fetched in the first half of the current cycle, from VICE's cycle tables (sprite pointers, sprite data, refresh, graphics, else the idle fetch); a 6510 write to `$00`/`$01` stores it in RAM (`REU/cpuport`)
+- **Phi1 bus value** (`IBaSource::phi1Value`): what the VIC-II fetched in the first half of the current cycle, from VICE's cycle tables: sprite pointers, sprite data, refresh (`$3Fxx`), graphics, else the idle fetch (`$3FFF`; a g-access in the idle state reads `$39FF` with ECM). A 6510 write to `$00`/`$01` stores it in RAM (`REU/cpuport`); reads of open I/O return it (`"openBus"`; `VICII/phi1timing`, `C64/openio`)
+- **Unused bits read 1** (VICE `vicii-mem.c`): `$D016` bits 6-7, `$D018` bit 0, `$D019` bits 4-6, `$D01A` bits 4-7, the colour registers' upper nibble. Code run from the registers depends on it (`VICII/lplatency` runs `$D017-$D01C`)
+- **Frame start** (VICE `vicii_cycle_start_of_frame`): a line begins in cycle 0, but the frame begins in cycle 1 of line 0. Through cycle 0 the raster counter still reads the last line (311 on PAL), and line 0's raster compare, the light pen's reset and its retrigger come in cycle 1 (`VICII/split-tests/lightpen`)
+- **Light pen** (`setLightPen`, VICE `vicii-lightpen.c`): the line falling triggers a cycle later, once a frame, latching `$D013` (the cycle's X / 2, +2 on the 6569) and `$D014` (the raster line) and the light pen IRQ; still low at a new frame, it triggers again with X `$D1`. On the C64 the line is CIA1 PB4 driven low (`"portBWriteCallback": "light_pen"`); joystick 1's fire button is not wired to it yet
 - Sprite-sprite collision register (`$D01E`): cleared on read
 - Sprite-background collision register (`$D01F`): cleared on read
 - Mono sprites: 1-bit pixels, one color per sprite

@@ -7,6 +7,24 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE's test programs: open I/O, the light pen and the VIC-II's Phi1 fetches
+
+- **Open I/O:** a read of `$DE00-$DFFF` that no cartridge answers returns the
+  VIC-II's Phi1 bus value (machine JSON `"openBus"`).
+- **Phi1 fetches:** idle fetches outside the g-accesses are from `$3FFF`; a
+  g-access in the idle state reads `$39FF` with ECM.
+- **VIC-II registers:** bits that aren't there read 1 (`$D016`, `$D018`,
+  `$D019`, `$D01A`), as VICE.
+- **Light pen:** CIA1 PB4 driven low triggers it (CIA port B write callback,
+  `"portBWriteCallback": "light_pen"`): a cycle later, once a frame, latching
+  `$D013`/`$D014` and the light pen IRQ (VICE `vicii-lightpen.c`).
+- **Frame start:** the frame begins in cycle 1 of line 0, as VICE: through
+  cycle 0 `$D011`/`$D012` still read line 311; line 0's raster IRQ and the
+  light pen's frame reset come a cycle later.
+- VICE programs now passing: `C64/openio/gauntlet`, `VICII/lplatency`,
+  `VICII/phi1timing`; `VICII/split-tests/lightpen` (all 1280 bytes as a real 6569).
+  Tests: `vic2_unused_bits_read_one`, `vic2_light_pen`, `vic2_raster_wraps`.
+
 ### TRS-80 Color Computer 1, 2 and 2B (#331)
 
 - New machines `coco` / `coco2`, `coco1` and `coco2b` (`mmemu-plugin-coco`):

@@ -31,6 +31,8 @@ void VIC2::reset() {
     m_sprBgColl  = 0;
     m_seq = SpriteSeq{};
     m_vborder = true;
+    m_lpLow = m_lpPending = m_lpTriggered = false;
+    m_frameStartPending = false;
     m_collT = 0;
 
     if (m_irqLine) m_irqLine->set(false);
@@ -167,15 +169,16 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 
     switch (reg) {
         case RASTER:
-            *val = (uint8_t)(m_rasterLine & 0xFF);
+            *val = (uint8_t)(visibleLine() & 0xFF);
             break;
         case SCR1:
             *val = (m_regs[SCR1] & ~SCR1_RASTER8) |
-                   ((m_rasterLine >> 8) ? SCR1_RASTER8 : 0);
+                   ((visibleLine() >> 8) ? SCR1_RASTER8 : 0);
             break;
         case IRQ:
-            // Bit 7 is set if any enabled IRQ source is active.
-            *val = m_regs[IRQ] | ((m_regs[IRQ] & m_regs[IRQEN] & 0x0F) ? IRQ_ANY : 0);
+            // Bit 7 is set if any enabled IRQ source is active; bits 4-6
+            // aren't there and read 1 (VICE: irq_status | 0x70)
+            *val = 0x70 | m_regs[IRQ] | ((m_regs[IRQ] & m_regs[IRQEN] & 0x0F) ? IRQ_ANY : 0);
             break;
         case SSCOL:
             if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
@@ -187,6 +190,11 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             *val = m_sprBgColl;
             if (!m_peeking) m_sprBgColl = 0;
             break;
+        // Bits that aren't there read 1 (VICE vicii-mem.c): code run from the
+        // registers depends on it (testprogs VICII/lplatency runs $D017-$D01C)
+        case SCR2:  *val = m_regs[SCR2] | 0xC0; break;
+        case VMEM:  *val = m_regs[VMEM] | 0x01; break;
+        case IRQEN: *val = m_regs[IRQEN] | 0xF0; break;
         // Color registers: only low 4 bits exist; high bits read as 1
         case EXTCOL: case BGCOL0: case BGCOL1: case BGCOL2: case BGCOL3:
         case SPMC0:  case SPMC1:
@@ -230,7 +238,9 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
             break;
         case SSCOL:
         case SBCOL:
-            // Read-only collision registers; writes are ignored.
+        case LPX:
+        case LPY:
+            // Read-only collision and light pen registers; writes are ignored.
             break;
         default:
             m_regs[reg] = val;
@@ -339,21 +349,27 @@ void VIC2::tick(uint64_t cycles) {
     // With sprites on, cycle by cycle: the graphics and sprite data are taken
     // as fetched, for the collisions (memory changed during a line counts
     // from the cycle it changed: VICE testprogs REU/bonzai checkchar)
-    if (m_regs[SPENA] || m_seq.active) {
+    if (m_regs[SPENA] || m_seq.active || m_lpPending) {
         while (cycles--) {
+            ++m_ticks;
             if (++m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
                 m_cycleAccum -= m_cyclesPerLine;
                 nextLine();
             }
-            captureFetch((int)m_cycleAccum);
+            if (m_frameStartPending && m_cycleAccum >= 1) frameStart();
+            if (m_lpPending && m_ticks >= m_lpAt) { m_lpPending = false; triggerLightPen(false); }
+            if (m_regs[SPENA] || m_seq.active) captureFetch((int)m_cycleAccum);
         }
         return;
     }
+    m_ticks += cycles;
     m_cycleAccum += cycles;
     while (m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
         m_cycleAccum -= m_cyclesPerLine;
+        if (m_frameStartPending) frameStart();
         nextLine();
     }
+    if (m_frameStartPending && m_cycleAccum >= 1) frameStart();
 }
 
 // The fetches of cycle c (from 0) of this line that the collisions use: a
@@ -433,6 +449,7 @@ void VIC2::nextLine() {
 
         if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
             m_rasterLine = 0;
+            m_frameStartPending = true;         // the counter reads 0 from cycle 1
         }
         if (m_rasterLine == 0x30) m_denOnLine30 = (m_regs[SCR1] & SCR1_DEN) != 0;
         // The vertical border flip-flop (VICE check_vborder_top/bottom): on at
@@ -452,15 +469,29 @@ void VIC2::nextLine() {
         if (m_stallBacklog && isBadline(m_rasterLine))
             *m_stallBacklog += 40 + m_badlineExtra;
 
-        // Check for raster IRQ
-        uint16_t rasterCmp = ((m_regs[SCR1] & SCR1_RASTER8) << 1) | m_regs[RASTER];
-        if (m_rasterLine == rasterCmp) {
-            if (!(m_regs[IRQ] & IRQ_RST)) {
-                m_regs[IRQ] |= IRQ_RST;
-                updateIrq();
-            }
+        // Check for raster IRQ (line 0's waits for the frame start)
+        if (!m_frameStartPending) rasterCompare();
+    }
+}
+
+void VIC2::rasterCompare() {
+    uint16_t rasterCmp = ((m_regs[SCR1] & SCR1_RASTER8) << 1) | m_regs[RASTER];
+    if (m_rasterLine == rasterCmp) {
+        if (!(m_regs[IRQ] & IRQ_RST)) {
+            m_regs[IRQ] |= IRQ_RST;
+            updateIrq();
         }
     }
+}
+
+// The frame starts in cycle 1 of line 0 (VICE vicii_cycle_start_of_frame):
+// until then the raster counter still reads the last line. The light pen can
+// trigger again, at once if its line is still low; line 0's raster compare
+void VIC2::frameStart() {
+    m_frameStartPending = false;
+    m_lpTriggered = false;
+    if (m_lpLow) triggerLightPen(true);
+    rasterCompare();
 }
 
 void VIC2::log(int level, const char* msg) const {
@@ -864,7 +895,9 @@ int VIC2::phi1Value() const {
     const int c = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine);
     const int line = m_rasterLine;
     const bool ecm = m_regs[SCR1] & SCR1_ECM;
-    const uint8_t idle = dmaPeek(ecm ? 0x39FF : 0x3FFF);
+    // Idle fetches are from $3FFF; a g-access in the idle state from $39FF
+    // with ECM (testprogs VICII/phi1timing)
+    const uint8_t idle = dmaPeek(0x3FFF);
     // Sprite n's pointer is fetched in Phi1 of its first DMA cycle, its first
     // data byte in Phi1 of the next (if its DMA is on)
     const int ptr = sprDma0In(c);
@@ -887,8 +920,33 @@ int VIC2::phi1Value() const {
             const uint8_t code = dmaPeek(screenBase() + cell);
             return dmaPeek(charBitmapBase() + (ecm ? (code & 0x3F) : code) * 8 + rl);
         }
+        return ecm ? dmaPeek(0x39FF) : idle;
     }
     return idle;
+}
+
+// The light pen line went low or high (the C64: CIA1 PB4, joystick 1's
+// fire). Falling, it triggers a cycle later (VICE vicii_set_light_pen)
+void VIC2::setLightPen(bool low) {
+    if (low && !m_lpLow) { m_lpPending = true; m_lpAt = m_ticks + 1; }
+    m_lpLow = low;
+}
+
+// VICE vicii_trigger_light_pen_internal: once a frame, latch X (the cycle's
+// X / 2, +2 on the 6569) and the raster line, and raise the light pen IRQ;
+// a retrigger at the start of a frame latches X $D1 ($D5 with 65 cycles)
+void VIC2::triggerLightPen(bool retrigger) {
+    if (m_lpTriggered) return;
+    m_lpTriggered = true;
+    const int c = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine);
+    const int line = visibleLine();
+    if (line == m_linesPerFrame - 1 && c > 0) return;            // not on the last line
+    int x = cycleXpos(c) / 2 + 2;
+    if (retrigger) x = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 0xD5 : 0xD1;
+    m_regs[LPX] = (uint8_t)x;
+    m_regs[LPY] = (uint8_t)line;
+    m_regs[IRQ] |= IRQ_LP;
+    updateIrq();
 }
 
 // "decode": the window the chip answers in, its 64 registers repeating (the
