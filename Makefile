@@ -207,6 +207,14 @@ PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/devices/wd17xx/main/wd17xx.cpp \
 	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
 	src/plugins/machines/coco/main/plugin_init.cpp
+PLUGIN_TRS80_SRCS = src/plugins/machines/trs80/main/machine_trs80.cpp \
+	src/plugins/machines/trs80/main/trs80_system.cpp \
+	src/plugins/machines/trs80/main/trs80_font.cpp \
+	src/plugins/machines/trs80/main/trs80_tape.cpp \
+	src/plugins/machines/trs80/main/trs80_serial.cpp \
+	src/plugins/devices/wd17xx/main/wd17xx.cpp \
+	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
+	src/plugins/machines/trs80/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
 	src/plugins/machines/bbc/main/sn76489.cpp \
@@ -610,6 +618,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
+	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
+	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -782,6 +792,11 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/coco/main/coco_tape.o \
 	src/plugins/machines/coco/main/machine_dragon.o \
 	src/plugins/machines/coco/main/dragon_dos.o \
+	src/plugins/machines/trs80/main/machine_trs80.o \
+	src/plugins/machines/trs80/main/trs80_system.o \
+	src/plugins/machines/trs80/main/trs80_font.o \
+	src/plugins/machines/trs80/main/trs80_tape.o \
+	src/plugins/machines/trs80/main/trs80_serial.o \
 	src/plugins/devices/mc6847/main/mc6847.o \
 	src/plugins/devices/mc6847/main/mc6847_font.o \
 	src/plugins/devices/mc6883/main/mc6883.o \
@@ -942,6 +957,7 @@ PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
 PLUGIN_SPECTRUM_OBJS = $(PLUGIN_SPECTRUM_SRCS:.cpp=.o)
 PLUGIN_COCO_OBJS   = $(PLUGIN_COCO_SRCS:.cpp=.o)
+PLUGIN_TRS80_OBJS  = $(PLUGIN_TRS80_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -1018,6 +1034,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
 	$(LIBDIR)/mmemu-plugin-spectrum.so \
 	$(LIBDIR)/mmemu-plugin-coco.so \
+	$(LIBDIR)/mmemu-plugin-trs80.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -1191,6 +1208,9 @@ $(LIBDIR)/mmemu-plugin-spectrum.so: $(PLUGIN_SPECTRUM_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-coco.so: $(PLUGIN_COCO_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-trs80.so: $(PLUGIN_TRS80_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)

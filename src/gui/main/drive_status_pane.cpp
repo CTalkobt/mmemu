@@ -22,12 +22,14 @@ DriveStatusPane::DriveStatusPane(wxWindow* parent)
 namespace {
 bool s_apple2 = false;     // the Apple II's Disk II drives (units 1, 2)
 bool s_bbc = false;        // the BBC Micro's 8271 drives (units 0, 1)
+bool s_trs80 = false;      // the TRS-80 Model I/III/4's floppies (units 1-4 = drives :0-:3)
 
 /** "Unit 8: IDLE T:18 S:00"; Atari drives (units 1-4) as "D1: IDLE S:0001";
  *  the Apple II's as "S6,D1: IDLE T:17"; the BBC's as "Drv 0: IDLE T:00". */
 wxString unitLabel(int unit, const char* state, int t, int s) {
     if (s_apple2) return wxString::Format("S6,D%d: %s T:%02d", unit, state, t);
     if (s_bbc) return wxString::Format("Drv %d: %s T:%02d", unit, state, t);
+    if (s_trs80) return wxString::Format(":%d: %s T:%02d S:%02d", unit - 1, state, t, s);
     if (unit < 8) return wxString::Format("D%d: %s S:%04d", unit, state, s);
     return wxString::Format("Unit %d: %s T:%02d S:%02d", unit, state, t, s);
 }
@@ -37,6 +39,7 @@ void DriveStatusPane::SetMachine(MachineDescriptor* md) {
     m_md = md;
     s_apple2 = md && md->machineId.rfind("apple2", 0) == 0;
     s_bbc = md && md->machineId.rfind("bbc", 0) == 0;
+    s_trs80 = md && md->machineId.rfind("trs80", 0) == 0;
     m_drives.clear();
     m_mainSizer->Clear(true);
 
@@ -144,6 +147,7 @@ void DriveStatusPane::OnMount(wxCommandEvent& event) {
     wxFileDialog openFileDialog(this, "Mount Disk", "", "",
                        s_apple2 ? filter("Apple II disk images", {"dsk", "do", "po", "nib", "woz"})
                        : s_bbc ? filter("BBC DFS disc images", {"ssd", "dsd"})
+                       : s_trs80 ? filter("TRS-80 disk images", {"dmk", "dsk", "jv1", "jv3"})
                        : unit < 8 ? filter("Atari disk images", {"atr"})
                                 : filter("Disk images", {"d64", "d71", "d80", "d81", "d82", "g64", "imd", "img", "prg"}),
                        wxFD_OPEN | wxFD_FILE_MUST_EXIST);

@@ -58,3 +58,6 @@ roms/coco/*
 # Dragon 32/64 ROMs (Dragon BASIC, DragonDOS): local only (Microsoft / Dragon Data copyright); see doc/README-DRAGON.md
 roms/dragon/*
 !roms/dragon/hardware.sym
+# TRS-80 Model I/III/4/4P ROMs and character generators: local only (Tandy / Microsoft copyright); see doc/README-TRS80.md
+roms/trs80/*
+!roms/trs80/hardware.sym

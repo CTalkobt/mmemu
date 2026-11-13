@@ -4,6 +4,7 @@
 #include "libcore/main/image_loader.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
+#include "libdevices/main/io_registry.h"
 #include "util/logging.h"
 #include <algorithm>
 #include <cstdio>
@@ -68,8 +69,14 @@ public:
         return e == "cas";
     }
     bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
-        coco::System* sys = coco::systemOf(m);
-        return sys && sys->tape.mountTape(path);
+        if (coco::System* sys = coco::systemOf(m)) return sys->tape.mountTape(path);
+        // Another machine's recorder (the TRS-80 Model I/III/4's .cas too)
+        if (!m || !m->ioRegistry) return false;
+        std::vector<IOHandler*> hs;
+        m->ioRegistry->enumerate(hs);
+        for (auto* h : hs)
+            if (h->mountTape(path)) return true;
+        return false;
     }
     const char* name() const override { return "CoCo CAS Tape Loader"; }
 };
