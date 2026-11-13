@@ -1,3 +1,6 @@
+#include <cstdlib>
+#include <iterator>
+#include <algorithm>
 #include "vic2.h"
 #include "libmem/main/ibus.h"
 #include "mmemu_plugin_api.h"
@@ -27,6 +30,7 @@ void VIC2::reset() {
     m_sprSprColl = 0;
     m_sprBgColl  = 0;
     m_seq = SpriteSeq{};
+    m_vborder = true;
     m_collT = 0;
 
     if (m_irqLine) m_irqLine->set(false);
@@ -149,7 +153,7 @@ bool VIC2::ioPeek(IBus* bus, uint32_t addr, uint8_t* val) {
 }
 
 bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
-    if ((addr & ~addrMask()) != m_baseAddr) return false;
+    if ((addr & ~(addrMask() | m_decodeMask)) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x3F;
 
@@ -202,7 +206,7 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
 // ---------------------------------------------------------------------------
 
 bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
-    if ((addr & ~addrMask()) != m_baseAddr) return false;
+    if ((addr & ~(addrMask() | m_decodeMask)) != m_baseAddr) return false;
 
     uint8_t reg = addr & 0x3F;
     if (m_vicIIe && reg == 0x2F) { m_keyLines = val & 0x07; return true; }
@@ -332,20 +336,114 @@ bool VIC2::baLowForDma(int ahead) const {
 // ---------------------------------------------------------------------------
 
 void VIC2::tick(uint64_t cycles) {
+    // With sprites on, cycle by cycle: the graphics and sprite data are taken
+    // as fetched, for the collisions (memory changed during a line counts
+    // from the cycle it changed: VICE testprogs REU/bonzai checkchar)
+    if (m_regs[SPENA] || m_seq.active) {
+        while (cycles--) {
+            if (++m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
+                m_cycleAccum -= m_cyclesPerLine;
+                nextLine();
+            }
+            captureFetch((int)m_cycleAccum);
+        }
+        return;
+    }
     m_cycleAccum += cycles;
-
-    // Advance raster lines based on accumulated cycles.
     while (m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
         m_cycleAccum -= m_cyclesPerLine;
+        nextLine();
+    }
+}
+
+// The fetches of cycle c (from 0) of this line that the collisions use: a
+// g-access (cycles 15-54) and the second data cycle of a sprite
+void VIC2::captureFetch(int c) {
+    if (c >= 15 && c <= 54) {
+        uint8_t g; bool mc;
+        if (gfxFetch(m_rasterLine, c - 15, g, mc)) m_gCap[c - 15] = (int16_t)(g | (mc ? 0x100 : 0));
+    }
+    const int n = sprDma0In(c == 0 ? m_cyclesPerLine - 1 : c - 1);
+    if (n >= 0) {
+        uint32_t data;
+        if (spriteData(n, c, data)) m_sCap[n] = (int32_t)data;
+    }
+}
+
+// The graphics byte at column `col` of `line` and whether it is multicolour;
+// false while the vertical border is on (VICE draw_graphics8 loads no
+// graphics then). Outside the display rows it is the idle fetch ($3FFF,
+// $39FF with ECM; no colour, so multicolour only in bitmap mode): it shows,
+// and collides, in an opened border (VICE testprogs REU/bonzai spritetiming)
+bool VIC2::gfxFetch(int line, int col, uint8_t& g, bool& mc) const {
+    (void)col;
+    if (m_vborder) return false;
+    const uint8_t scr1 = m_regs[SCR1], scr2 = m_regs[SCR2];
+    const int rel = line - (0x30 + (scr1 & SCR1_YSCROLL));
+    if (!m_denOnLine30 || line >= 0xF8 || rel < 0 || rel / 8 >= 25) {
+        g = dmaPeek((scr1 & SCR1_ECM) ? 0x39FF : 0x3FFF);
+        mc = (scr1 & SCR1_BMM) && (scr2 & SCR2_MCM);
+        return true;
+    }
+    const int cell = (rel / 8) * 40 + col, rl = rel % 8;
+    const bool bmm = scr1 & SCR1_BMM, ecm = scr1 & SCR1_ECM, mcm = scr2 & SCR2_MCM;
+    const uint32_t cbBase = charBitmapBase();
+    const bool bank02 = m_bankBase == 0x0000 || m_bankBase == 0x8000;
+    const bool useCharRom = m_charRom && !bmm && bank02 && cbBase == 0x1000;
+    const uint8_t code = dmaPeek(screenBase() + cell);
+    const uint8_t colour = m_colorRam ? (m_colorRam[cell & 0x3FF] & 0x0F) : 0x0F;
+    if (bmm) {
+        g = dmaPeek(cbBase + cell * 8 + rl);
+        mc = mcm;
+    } else {
+        const uint8_t ch = ecm ? (code & 0x3F) : code;
+        g = useCharRom ? charRomByte(ch * 8 + rl) : dmaPeek(cbBase + ch * 8 + rl);
+        mc = mcm && (colour & 0x08);
+    }
+    return true;
+}
+
+// Sprite n's 24 data bits as fetched in cycle c (from 0) of this line, if its
+// DMA is on (sprites 3-7 fetch at the start of a line for the line before)
+bool VIC2::spriteData(int n, int c, uint32_t& data) const {
+    int fetchRow = c < 11 ? m_rasterLine - 1 : m_rasterLine;
+    if (fetchRow < 0) fetchRow += m_linesPerFrame;
+    const bool yExp = (m_regs[YXPAND] >> n) & 1;
+    const int y = m_regs[SP0Y + 2 * n], h = yExp ? 42 : 21;
+    int dd = -1;
+    for (int start = y; start < m_linesPerFrame && dd < 0; start += 256) {
+        int k = fetchRow - start;
+        if (k < 0) k += m_linesPerFrame;
+        if (k < h) dd = k;
+    }
+    if (dd < 0) return false;
+    const uint32_t a = (uint32_t)dmaPeek(screenBase() + 0x03F8 + n) * 64 + (yExp ? dd / 2 : dd) * 3;
+    data = ((uint32_t)dmaPeek(a) << 16) | ((uint32_t)dmaPeek(a + 1) << 8) | dmaPeek(a + 2);
+    return true;
+}
+
+// The end of a line: its collisions, then the next line's raster events
+void VIC2::nextLine() {
+    {
         if (m_regs[SPENA] || m_seq.active) evalCollisions(m_rasterLine, lineDots());
         m_collT = 0;
+        std::fill(std::begin(m_gCap), std::end(m_gCap), (int16_t)-1);
+        std::fill(std::begin(m_sCap), std::end(m_sCap), (int32_t)-1);
         m_rasterLine++;
 
         if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
             m_rasterLine = 0;
         }
         if (m_rasterLine == 0x30) m_denOnLine30 = (m_regs[SCR1] & SCR1_DEN) != 0;
-        else if (m_rasterLine == 0xF8) m_denOnLine30 = false;
+        // The vertical border flip-flop (VICE check_vborder_top/bottom): on at
+        // the bottom line for RSEL, off at the top one if DEN is set; moving
+        // RSEL past the bottom line keeps it off (an opened border)
+        {
+            const bool rsel = m_regs[SCR1] & SCR1_RSEL;
+            if (m_rasterLine == (rsel ? 0xFB : 0xF7)) m_vborder = true;
+            if (m_rasterLine == (rsel ? 0x33 : 0x37) && (m_regs[SCR1] & SCR1_DEN)) m_vborder = false;
+        }
+        if (m_rasterLine == 0xF8) m_denOnLine30 = false;
 
         // Badline detection (#20): a badline occurs when the raster is in the
         // display area, DEN is set, and the lower 3 bits of the raster line
@@ -654,46 +752,24 @@ void VIC2::evalCollisions(int line, int tTo) {
     if (tTo <= tFrom) return;
     m_collT = tTo;
 
-    // Foreground graphics on this line (pixel time), inside the display window
+    // Foreground graphics on this line (pixel time), inside the display
+    // window: as fetched where the line has got to, else from memory now
+    // (the side border hides graphics but doesn't stop their collisions)
     uint8_t fg[65 * 8] = {};
-    const uint8_t scr1 = m_regs[SCR1], scr2 = m_regs[SCR2];
-    const int ys = scr1 & SCR1_YSCROLL, xs = scr2 & 7;
-    const int top = (scr1 & SCR1_RSEL) ? 0x33 : 0x37, bottom = (scr1 & SCR1_RSEL) ? 0xFB : 0xF7;
-    const int rel = line - (0x30 + ys);
-    if (m_denOnLine30 && line >= top && line < bottom && rel >= 0 && rel / 8 < 25) {
-        const uint32_t scrBase = screenBase();
-        const int row = rel / 8, rl = rel % 8;
-        const bool bmm = scr1 & SCR1_BMM, ecm = scr1 & SCR1_ECM, mcm = scr2 & SCR2_MCM;
-        const uint32_t cbBase = charBitmapBase();
-        const bool bank02 = m_bankBase == 0x0000 || m_bankBase == 0x8000;
-        const bool useCharRom = m_charRom && !bmm && bank02 && cbBase == 0x1000;
-        const int left = (scr2 & SCR2_CSEL) ? 24 : 31, right = (scr2 & SCR2_CSEL) ? 344 : 335;
-        for (int col = 0; col < 40; ++col) {
-            const int cell = row * 40 + col;
-            const uint8_t code = dmaPeek(scrBase + cell);
-            const uint8_t colour = m_colorRam ? (m_colorRam[cell & 0x3FF] & 0x0F) : 0x0F;
-            uint8_t g;
-            bool mc;
-            if (bmm) {
-                g = dmaPeek(cbBase + cell * 8 + rl);
-                mc = mcm;
-            } else {
-                const uint8_t ch = ecm ? (code & 0x3F) : code;
-                g = useCharRom ? charRomByte(ch * 8 + rl) : dmaPeek(cbBase + ch * 8 + rl);
-                mc = mcm && (colour & 0x08);
-            }
-            if (!g) continue;
-            const int x0 = 24 + xs + col * 8;
-            for (int p = 0; p < 8; ++p) {
-                const bool on = mc ? ((g >> (6 - (p & ~1))) & 2) != 0 : ((g >> (7 - p)) & 1) != 0;
-                const int x = x0 + p;
-                if (on && x >= left && x < right) fg[xToT(x)] = 1;
-            }
+    const int xs = m_regs[SCR2] & 7;
+    for (int col = 0; col < 40; ++col) {
+        uint8_t g; bool mc;
+        if (line == m_rasterLine && m_gCap[col] >= 0) { g = (uint8_t)m_gCap[col]; mc = m_gCap[col] & 0x100; }
+        else if (!gfxFetch(line, col, g, mc)) break;
+        if (!g) continue;
+        const int x0 = 24 + xs + col * 8;
+        for (int p = 0; p < 8; ++p) {
+            const bool on = mc ? ((g >> (6 - (p & ~1))) & 2) != 0 : ((g >> (7 - p)) & 1) != 0;
+            if (on) fg[xToT(x0 + p)] = 1;
         }
     }
 
     SpriteSeq& q = m_seq;
-    const uint32_t scrBase = screenBase();
     uint8_t ss = 0, sb = 0;
     for (int t = tFrom; t < tTo; ++t) {
         const int c = t >> 3, i = t & 7;
@@ -709,23 +785,10 @@ void VIC2::evalCollisions(int line, int tTo) {
                 for (int n = 0; n < 8; ++n)
                     if ((m_regs[SPENA] >> n) & 1 && spriteDma(n, line)) q.pending |= (uint8_t)(1 << n);
             }
-            if (d2 >= 0) {
-                // Sprites 3-7 fetch at the start of a line for the line before
-                int fetchRow = c < 11 ? line - 1 : line;
-                if (fetchRow < 0) fetchRow += m_linesPerFrame;
-                const int n = d2;
-                const bool yExp = (m_regs[YXPAND] >> n) & 1;
-                const int y = m_regs[SP0Y + 2 * n], h = yExp ? 42 : 21;
-                int dd = -1;
-                for (int start = y; start < m_linesPerFrame && dd < 0; start += 256) {
-                    int k = fetchRow - start;
-                    if (k < 0) k += m_linesPerFrame;
-                    if (k < h) dd = k;
-                }
-                if (dd >= 0) {
-                    const uint32_t a = (uint32_t)dmaPeek(scrBase + 0x03F8 + n) * 64 + (yExp ? dd / 2 : dd) * 3;
-                    q.sbuf[n] = ((uint32_t)dmaPeek(a) << 16) | ((uint32_t)dmaPeek(a + 1) << 8) | dmaPeek(a + 2);
-                }
+            if (d2 >= 0) {                                              // as fetched, if it was
+                uint32_t data;
+                if (line == m_rasterLine && m_sCap[d2] >= 0) q.sbuf[d2] = (uint32_t)m_sCap[d2];
+                else if (spriteData(d2, c, data)) q.sbuf[d2] = data;
             }
         }
         if (i == 6) { q.pri = m_regs[SPBGPR]; q.expx = m_regs[XXPAND]; }
@@ -788,6 +851,55 @@ void VIC2::evalCollisions(int line, int tTo) {
         if (!m_sprBgColl && !(m_regs[IRQ] & IRQ_MBC)) { m_regs[IRQ] |= IRQ_MBC; updateIrq(); }
         m_sprBgColl |= sb;
     }
+}
+
+// ---------------------------------------------------------------------------
+// The Phi1 fetch of the current cycle (VICE cycle_phi1_fetch, from its cycle
+// tables): sprite pointers and data, DRAM refresh, graphics in the display,
+// else the idle fetch ($3FFF, $39FF with ECM). An approximation of VICE's
+// per-cycle fetch state: the display test is by line, as for collisions
+// ---------------------------------------------------------------------------
+int VIC2::phi1Value() const {
+    if (!m_dmaBus) return -1;
+    const int c = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine);
+    const int line = m_rasterLine;
+    const bool ecm = m_regs[SCR1] & SCR1_ECM;
+    const uint8_t idle = dmaPeek(ecm ? 0x39FF : 0x3FFF);
+    // Sprite n's pointer is fetched in Phi1 of its first DMA cycle, its first
+    // data byte in Phi1 of the next (if its DMA is on)
+    const int ptr = sprDma0In(c);
+    if (ptr >= 0) return dmaPeek(screenBase() + 0x3F8 + ptr);
+    const int prev = sprDma0In(c == 0 ? m_cyclesPerLine - 1 : c - 1);
+    if (prev >= 0) {
+        int row = c < 11 ? line - 1 : line;
+        if (row < 0) row += m_linesPerFrame;
+        if (!((m_regs[SPENA] >> prev) & 1) || !spriteDma(prev, row)) return idle;
+        return dmaPeek((uint32_t)dmaPeek(screenBase() + 0x3F8 + prev) * 64);
+    }
+    if (c >= 10 && c <= 14)                                     // refresh: $3Fxx, 5 a line
+        return dmaPeek(0x3F00 | ((0xFF - (line * 5 + (c - 10))) & 0xFF));
+    if (c >= 15 && c <= 54) {                                   // g-accesses
+        const uint8_t scr1 = m_regs[SCR1];
+        const int rel = line - (0x30 + (scr1 & SCR1_YSCROLL));
+        if (m_denOnLine30 && line >= 0x30 && line < 0xF8 && rel >= 0 && rel / 8 < 25) {
+            const int cell = (rel / 8) * 40 + (c - 15), rl = rel % 8;
+            if (scr1 & SCR1_BMM) return dmaPeek(charBitmapBase() + cell * 8 + rl);
+            const uint8_t code = dmaPeek(screenBase() + cell);
+            return dmaPeek(charBitmapBase() + (ecm ? (code & 0x3F) : code) * 8 + rl);
+        }
+    }
+    return idle;
+}
+
+// "decode": the window the chip answers in, its 64 registers repeating (the
+// C64 decodes the VIC-II through $D000-$D3FF: "0x3FF")
+bool VIC2::setOption(const std::string& key, const std::string& value, std::string& err) {
+    if (key != "decode") { err = "the VIC-II's option is decode (a window mask, e.g. 0x3FF)"; return false; }
+    char* end = nullptr;
+    const unsigned long m = std::strtoul(value.c_str(), &end, 0);
+    if (!end || *end || m < 0x3F || ((m + 1) & m)) { err = "decode is a window mask: 0x3F ... 0x3FF"; return false; }
+    m_decodeMask = (uint32_t)m;
+    return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 #include <cstdio>
+#include "ram_init_pattern.h"
 #include <memory>
 #include <algorithm>
 #include "json_machine_loader.h"
@@ -202,6 +203,24 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             cpuBus = bus;
             desc->buses.push_back({busName, bus});
             busPtrs[busName] = bus;
+            // Power-up RAM as a pattern (VICE ram_init_with_pattern): "c64",
+            // or {"startValue", "valueInvert", "valueOffset", "patternInvert",
+            // "patternInvertValue"}; without it, zeroes
+            if (busSpec.contains("ramInit")) {
+                const auto& ri = busSpec["ramInit"];
+                RamInitParam p;
+                if (ri.is_string() && ri.get<std::string>() == "c64") p = ramInitC64();
+                else if (ri.is_object()) {
+                    p.startValue = ri.value("startValue", 0);
+                    p.valueInvert = ri.value("valueInvert", 0);
+                    p.valueOffset = ri.value("valueOffset", 0);
+                    p.patternInvert = ri.value("patternInvert", 0);
+                    p.patternInvertValue = ri.value("patternInvertValue", 0);
+                } else log->error("JsonMachineLoader: bus.ramInit: \"c64\" or an object of pattern values");
+                std::vector<uint8_t> ram((size_t)1 << addrBits);
+                ramInitPattern(ram.data(), ram.size(), p);
+                for (size_t a = 0; a < ram.size(); ++a) bus->write8((uint32_t)a, ram[a]);
+            }
         }
         log->debug("JsonMachineLoader: bus {} ({}, {}-bit)", busName, busType, addrBits);
     } else {
@@ -1085,6 +1104,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
             if (s.cpu) {
                 clock->cpu = s.cpu;
                 s.cpu->setAccessSync([clock](int k) { return clock->advance(k); });
+                s.cpu->setPhi1Source([baSource]() { return baSource->phi1Value(); });
                 break;
             }
         desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {

@@ -95,6 +95,36 @@ The canonical version is defined in the `VERSION` file at the repository root.
   write went to the mapper). The bytes it borrows are put back, at `$0200`
   too.
 
+### VICE's test programs: REU, GeoRAM and power-up RAM
+
+- **Power-up RAM:** the C64's RAM comes up in VICE's pattern (two `$00`, then
+  `$FF`/`$00` in fours, inverted every 16K), not zeroes: a JSON bus's `"ramInit"`
+  (`"c64"` or the pattern's values; `ram_init_pattern.h`). The REU's RAM comes up
+  in VICE's 1764 pattern. Random bit flips are left out, so runs repeat.
+- **$00/$01:** a 6510 write there also stores the VIC-II's Phi1 bus value in the
+  RAM underneath (VICE `zero_store`), which the REU sees. The VIC-II estimates
+  its Phi1 fetch per cycle from VICE's tables (`IBaSource::phi1Value`).
+- **VIC-II mirrors:** the C64 decodes the VIC-II through `$D000-$D3FF` (VIC-II
+  `decode` option), so the unused `$D0FE` reads `$FF`.
+- **REU and BA:** a write to the C64 goes in the first cycle BA is low only, as
+  VICE's `reu_clk_inc_post_write` (45 free cycles a line under 8 sprites).
+- **$FF00 trigger:** the REU takes the bus at once, so `INC $FF00`'s second write
+  never reaches memory.
+- **Collisions:** the VIC-II keeps its graphics and sprite fetches as they
+  happen while sprites are on; the vertical border flip-flop is modelled, and
+  idle graphics collide in an opened border.
+- **Runner:** `MMEMU_VICE_RUN` takes the list's options (`reu256k`, `cia-new`) and
+  prints the cycles a program took.
+- VICE programs now passing: `C64/raminitpattern` (3), `C64/bankio`,
+  `general/ram0001`, `REU/mirrors256k`, `REU/floatingbus` (`floating4a`,
+  `floating4b`), `REU/cpuport`, `REU/rmw-trigger` (2; VICE fails these),
+  `REU/bonzai` (`checkchar`, `spritetiming`), `GEO-RAM/newtest-auto`.
+  `floating3b` reads what the real C64 does but takes 1.74 billion cycles to
+  its 1.5 billion limit: its wait loop's ICR reads hit the old CIA's timer B
+  bug 8 times out of 54 underflows.
+  Tests: `ram_init_pattern_c64`, `cpu6510_port_write_stores_phi1_in_ram`,
+  `vic2_decode_window`.
+
 ### Game Boy: AGE's oam-write-dmgC left out of the survey
 
 - Its starred row (the writes 2 machine cycles in) lands on the mode edges,

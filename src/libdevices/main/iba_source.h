@@ -17,4 +17,8 @@ public:
     /** BA as a DMA master (the REU) sees it, which can differ from the CPU's
      *  view: the VIC-II pulls BA a cycle late at the start of sprite 0's DMA. */
     virtual bool baLowForDma(int ahead) const { return baLow(ahead); }
+    /** What the device put on the data bus in the first half (Phi1) of the
+     *  current cycle, or -1 if it doesn't say. A 6510 write to $00/$01
+     *  stores it in the RAM there (VICE zero_store, testprogs REU/cpuport). */
+    virtual int phi1Value() const { return -1; }
 };

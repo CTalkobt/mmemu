@@ -73,6 +73,8 @@ public:
     /** Returns the internal proxy bus that intercepts $00/$01. */
     IBus* getPortBus() const { return m_portBus; }
 
+    void setPhi1Source(std::function<int()> src) override { m_phi1 = std::move(src); }
+
     // Execution
     int  step()  override;
     void reset() override;
@@ -109,8 +111,17 @@ private:
         }
 
         void write8(uint32_t addr, uint8_t val) override {
-            if (addr == 0x0000) { m_owner->ddrWrite(val);  return; }
-            if (addr == 0x0001) { m_owner->dataWrite(val); return; }
+            if (addr <= 0x0001) {
+                if (addr == 0x0000) m_owner->ddrWrite(val);
+                else                m_owner->dataWrite(val);
+                // The RAM under the port gets what the VIC-II left on the bus
+                // in Phi1, not the CPU's data (VICE zero_store)
+                if (m_owner->m_phi1) {
+                    const int v = m_owner->m_phi1();
+                    if (v >= 0) m_real->write8(addr, (uint8_t)v);
+                }
+                return;
+            }
             m_real->write8(addr, val);
         }
 
@@ -167,6 +178,7 @@ private:
     SignalLine  m_cassetteSense;
 
     PortBus*    m_portBus = nullptr;
+    std::function<int()> m_phi1;        // the VIC-II's Phi1 bus value
     IBus*       m_realBus = nullptr;
 
 public:

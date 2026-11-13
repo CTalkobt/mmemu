@@ -1090,6 +1090,7 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
     bus->write8(0xC6, 4);
     while (!cart.written() && cycles < limit) cycles += (uint64_t)desc->schedulerStep(*desc);
     const int code = cart.written() ? cart.code() : -1;
+    if (std::getenv("MMEMU_VICE_RUN")) printf("  %llu cycles\n", (unsigned long long)cycles);
     if (code != 0 && std::getenv("MMEMU_VICE_SCREEN")) {      // what a failing program printed
         for (int r = 0; r < 25; ++r) {
             std::string line;
@@ -1130,11 +1131,24 @@ TEST_CASE(c64_vice_testprogs) {
     // MMEMU_VICE_RUN=<prg>[,<cycles>]: just that program (a path under the
     // root), e.g. a "record" program whose results MMEMU_VICE_DUMP keeps
     if (const char* one = std::getenv("MMEMU_VICE_RUN")) {
-        std::string spec(one), prg = spec;
-        uint64_t limit = 100000000;
-        const size_t comma = spec.find(',');
-        if (comma != std::string::npos) { prg = spec.substr(0, comma); limit = std::stoull(spec.substr(comma + 1)); }
-        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit);
+        // MMEMU_VICE_RUN=<prg>[,<cycles>[,<option>...]]: options as the list's
+        // (reu512k, geo512k, cia-new)
+        std::vector<std::string> f;
+        std::stringstream ss(one);
+        for (std::string t; std::getline(ss, t, ',');) f.push_back(t);
+        const std::string prg = f.empty() ? "" : f[0];
+        const uint64_t limit = f.size() > 1 ? std::stoull(f[1]) : 100000000;
+        std::string expansion, size;
+        bool newCia = false;
+        for (size_t i = 2; i < f.size(); ++i) {
+            const bool isReu = f[i].rfind("reu", 0) == 0, isGeo = f[i].rfind("geo", 0) == 0;
+            if ((isReu || isGeo) && f[i].size() > 4 && isdigit((unsigned char)f[i][3])) {
+                expansion = isReu ? "reu" : "georam";
+                size = f[i].substr(3);
+                for (char& c : size) c = (char)toupper((unsigned char)c);
+            } else if (f[i] == "cia-new") newCia = true;
+        }
+        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia);
         printf("  vice %-60s %s (%d)\n", prg.c_str(), code == 0 ? "pass" : "FAIL", code);
         return;
     }

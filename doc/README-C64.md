@@ -23,17 +23,19 @@ The C64 machine plugin composes the full Commodore 64 hardware stack — 6510 CP
 ### 2.2 Memory Map
 | Range | Size | Description |
 |-------|------|-------------|
-| \$0000–\$00FF | 256 B | Zero Page (CPU port at \$00/\$01) |
+| \$0000–\$00FF | 256 B | Zero Page (CPU port at \$00/\$01; a CPU write there also stores the VIC-II's Phi1 bus value in the RAM underneath, VICE `zero_store`) |
 | \$0100–\$01FF | 256 B | Stack |
 | \$0200–\$9FFF | ~39 KB | Main RAM |
 | \$A000–\$BFFF | 8 KB | BASIC ROM (banked out when LORAM=0) |
 | \$C000–\$CFFF | 4 KB | RAM |
-| \$D000–\$D3FF | 1 KB | VIC-II registers (CHAREN=1) / Char ROM (CHAREN=0) |
+| \$D000–\$D3FF | 1 KB | VIC-II registers, repeating every 64 bytes (`"decode": "0x3FF"`) (CHAREN=1) / Char ROM (CHAREN=0) |
 | \$D400–\$D7FF | 1 KB | SID registers (CHAREN=1) / Char ROM (CHAREN=0) |
 | \$D800–\$DBFF | 1 KB | Color RAM (always I/O, 4-bit cells) |
 | \$DC00–\$DCFF | 256 B | CIA1 registers (CHAREN=1) / Char ROM (CHAREN=0) |
 | \$DD00–\$DDFF | 256 B | CIA2 registers (CHAREN=1) / Char ROM (CHAREN=0) |
 | \$E000–\$FFFF | 8 KB | KERNAL ROM (banked out when HIRAM=0) |
+
+**Power-up RAM:** VICE's C64 pattern, not zeroes (`"ramInit": "c64"` on the bus in `machines/c64.json`; `ram_resources_init`): two `$00`, then four `$FF` and four `$00` in turn, the whole inverted every 16 KB. VICE's 0.1% random bit flips are left out, so runs repeat. Tape loaders that read uninitialised RAM depend on it (`C64/raminitpattern`). A JSON bus can give its own pattern: `{"startValue", "valueInvert", "valueOffset", "patternInvert", "patternInvertValue"}` (`ram_init_pattern.h`).
 
 ### 2.3 PLA Banking Model
 The 6510 I/O port (DDR at \$00, DATA at \$01) drives three banking signals into the PLA:
@@ -144,7 +146,7 @@ The scheduler's answer to each access sync is the mask of the instruction's cycl
 
 So a badline costs 40-43 cycles depending on the instruction under it. The instruction's own memory accesses still happen when it starts; only the time it takes changes.
 
-The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and its writes to the C64 continue for two cycles after BA falls, then wait. Where sprite 0's DMA starts, the VIC-II pulls BA a cycle late, and the REU still gets that cycle (VICE `vicii_cycle_reu`; `IBaSource::baLowForDma`). A swap follows Denise instead (§2.10).
+The REU waits too (VICE `reu.c` `reu_ba`): its reads wait while BA is low, and a write to the C64 still goes in the first cycle BA is low, then they wait too (`reu_clk_inc_post_write`; under 8 sprites that leaves 45 cycles a line, VICE `REU/bonzai/spritetiming`). Where sprite 0's DMA starts, the VIC-II pulls BA a cycle late, and the REU still gets that cycle (VICE `vicii_cycle_reu`; `IBaSource::baLowForDma`). A swap follows Denise instead (§2.10).
 
 Tests (`src/libcore/test/test_machine_boot.cpp`):
 - `vic2_ba_cycles`: the tables, PAL and NTSC.
@@ -178,7 +180,7 @@ It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c6
 | `$DF0A` | address control: bit 7 fixes the C64 address, 6 the REU address |
 
 - The registers repeat every 32 bytes up to `$DFFF`; `$DF0B-$DF1F` read `$FF`.
-- **Starting a transfer:** execute with bit 4 set starts at once. With bit 4 clear, the REU waits for any write to `$FF00`; the write still goes on to the RAM under the KERNAL.
+- **Starting a transfer:** execute with bit 4 set starts at once. With bit 4 clear, the REU waits for any write to `$FF00`; the write still goes on to the RAM under the KERNAL. The REU then has the bus at once (AEC), so the second write of a read-modify-write instruction never reaches memory: `INC $FF00` starts a transfer and leaves RAM as it was, or with the ROM's byte in it when the KERNAL is in (VICE `REU/rmw-trigger`, which VICE itself fails).
 - **Timing:** the CPU waits while the REU transfers one byte a cycle (a swap takes two). The VIC-II's badlines and sprite fetches pause the transfer (§2.9).
 - **Swap and BA:** a swap alternates a read cycle and a write cycle, after Denise's `Reu::swap`, and the cycles alternate whether or not the access happens. A read goes ahead unless BA has been low for four cycles; a write waits for BA, but for the last byte. So on a badline the byte read at cycle 12 is read again at cycle 14, and its write waits for cycle 55.
 - **C64C glue:** on a C64C, a DMA read made while BA is low returns the RAM under I/O, not the chip's register. That's the first read of a swap after BA falls, and a copy's read in the late sprite-0 cycle. The REU's `glue` option (`c64`, the default, or `c64c`) selects the board. There is no CLI or GUI control for it yet; the VICE test runner sets it (§2.15).
@@ -189,6 +191,7 @@ It is the `reu` device plugin (`src/plugins/devices/reu/`), after VICE's `src/c6
   - 128K (1700, 64K chips: status bit 4 clear, wraps at 128 KB), 256K (1764) and 512K (1750).
   - 1M-16M behave like the "1750 XL" style units.
   - The REC's address counter wraps at 512 KB. A 1764's upper 256 KB are unbacked: reads float and writes are lost.
+  - **Power-up contents:** the RAM comes up in VICE's pattern measured on a 1764 (`reu_init_ram`: `$FF`/`$00` alternating bytes, inverted every 256, plus blocks inverted as x1541 saw), not zeroes; what a read of an unbacked bank floats to depends on it (`REU/mirrors`, `REU/floatingbus`). An image file replaces it.
   - Above 512 KB the bank register's upper bits are a latch straight to the DRAM, so those units wrap at their size and each 512 KB wraps within itself.
 - **IRQ:** the REU's IRQ goes to the expansion port's /IRQ, which is the `expansion_irq` line of the machine's shared IRQ.
 

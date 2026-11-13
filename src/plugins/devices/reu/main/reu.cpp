@@ -1,4 +1,5 @@
 #include "reu.h"
+#include "ram_init_pattern.h"
 #include "libmem/main/ibus.h"
 #include <algorithm>
 #include <cstdio>
@@ -27,6 +28,7 @@ bool Reu::setSize(uint32_t bytes) {
     }
     if (bytes % 1024) return false;
     m_ram.assign(bytes, 0);
+    initRam();
     // VICE set_reu_size
     m_wrap = m_dramWrap = 0x80000;          // the REC wraps at 512 KB...
     m_bankUnused = 0xF8;
@@ -97,6 +99,29 @@ bool Reu::setOption(const std::string& key, const std::string& value, std::strin
     return false;
 }
 
+// Power-up contents (VICE reu_init_ram): the stripes measured on a 1764,
+// then blocks inverted as x1541 saw. With banks 4-7 of a 256K unit
+// unconnected, what reads there depends on them (testprogs REU/mirrors)
+void Reu::initRam() {
+    static const RamInitParam REU_RAM{255, 2, 1, 0x100, 255};
+    ramInitPattern(m_ram.data(), m_ram.size(), REU_RAM);
+    auto invert = [&](uint32_t a, uint32_t len) {
+        for (uint32_t e = a + len; a < e && a < m_ram.size(); ++a) m_ram[a] ^= 0xFF;
+    };
+    for (uint32_t b = 0; b < (uint32_t)(m_ram.size() >> 16); b += 4) {
+        for (uint32_t i = 0; i < 2; ++i) {
+            invert(0x002A00 + ((i + b) << 16), 0x2A00);
+            invert(0x008000 + ((i + b) << 16), 0x2C00);
+            invert(0x00D600 + ((i + b) << 16), 0x2A00);
+        }
+        for (uint32_t i = 0; i < 2; ++i) {
+            invert(0x020000 + ((i + b) << 16), 0x2A00);
+            invert(0x025400 + ((i + b) << 16), 0x2C00);
+            invert(0x02AC00 + ((i + b) << 16), 0x2A00);
+        }
+    }
+}
+
 void Reu::reset() {
     // VICE reu_reset: the registers; the RAM stays
     m_status = m_statusPreset;
@@ -148,7 +173,15 @@ bool Reu::ioRead(IBus*, uint32_t addr, uint8_t* val) {
 }
 
 bool Reu::ioWrite(IBus*, uint32_t addr, uint8_t v) {
-    if ((addr & 0xFFFF) == 0xFF00) { ff00Write(); return false; }   // and on to whatever is there
+    if ((addr & 0xFFFF) == 0xFF00) {
+        // The write that starts the transfer goes on to whatever is there; the
+        // REU then has the bus at once (AEC), so a read-modify-write
+        // instruction's second write never reaches memory (testprogs
+        // REU/rmw-trigger: INC $FF00 starts it and leaves RAM as it was)
+        if (m_active) return true;
+        ff00Write();
+        return false;
+    }
     if ((addr & 0xFF00) != 0xDF00) return false;
     if (m_active) return true;
     switch ((int)(addr & 0x1F)) {
@@ -267,10 +300,12 @@ int Reu::busMasterCycle() {
         m_swapRead = !m_swapRead;
         return 1;
     }
-    // The VIC-II has the bus (VICE reu.c reu_ba): a read waits; writes to
-    // the C64 go on for two cycles after BA falls, then wait too
+    // The VIC-II has the bus (VICE reu.c reu_ba): a read waits; a write to
+    // the C64 still goes in the first cycle BA is low, then they wait too
+    // (reu_clk_inc_post_write steals on the second; VICE testprogs
+    // REU/bonzai spritetiming: 45 free cycles a line under 8 sprites)
     if (m_ba && m_ba->baLowForDma(0)) {
-        if (m_type != FROM_REU || m_baWrites >= 2) return 1;
+        if (m_type != FROM_REU || m_baWrites >= 1) return 1;
         ++m_baWrites;
     } else {
         m_baWrites = 0;
