@@ -173,3 +173,22 @@ TEST_CASE(sid_filter_saturates_at_opamp_headroom) {
     float one8 = level(1, 1), three8 = level(1, 3);
     ASSERT(three8 > one8 * 2.9f);
 }
+
+// reSID 1.0: a write-only register reads the data bus, the last value written
+// or read; it fades to 0 after $1D00 cycles on the 6581 (testprogs
+// general/fuxxortest ef2-inst4b)
+TEST_CASE(sid_bus_value_fades) {
+    SID6581 sid("SID", 0xD400);
+    uint8_t v;
+    sid.ioWrite(nullptr, 0xD404, 0x41);
+    sid.ioRead(nullptr, 0xD400, &v);
+    ASSERT_EQ(v, (uint8_t)0x41);
+    sid.ioRead(nullptr, 0xD41F, &v);                     // unused: the bus too
+    ASSERT_EQ(v, (uint8_t)0x41);
+    sid.tick(0x1D00 - 1);
+    sid.ioRead(nullptr, 0xD400, &v);
+    ASSERT_EQ(v, (uint8_t)0x41);
+    sid.tick(1);
+    sid.ioRead(nullptr, 0xD400, &v);
+    ASSERT_EQ(v, (uint8_t)0x00);
+}

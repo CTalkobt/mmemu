@@ -115,6 +115,8 @@ Because the master volume multiplies the DC as well, writing `$D418` changes the
 | $1B | OSC3 | Upper 8 bits of voice 3's waveform output |
 | $1C | ENV3 | Voice 3 envelope level |
 
+**The data bus** (reSID 1.0 `bus_value`): every write, and every read of `$19-$1C`, leaves its value on the SID's data bus. A read of any other register, write-only or unused (`$00-$18`, `$1D-$1F`), returns what is on it. The value fades to 0 after `$1D00` cycles on the 6581 and `$A2000` on the 8580, unless refreshed (VICE testprogs `general/fuxxortest` `ef2-inst4b`).
+
 ### 2.5 Audio Output (IAudioOutput Pull Model)
 
 ```cpp

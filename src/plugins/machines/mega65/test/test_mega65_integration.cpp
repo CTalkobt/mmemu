@@ -470,22 +470,20 @@ TEST_CASE(mega65_integration_dual_sid) {
 
     if (desc->onReset) desc->onReset(*desc);
 
-    // Write distinct frequency values to SID1 and SID2 voice 1
-    desc->ioRegistry->dispatchWrite(nullptr, 0xD400, 0x12);
+    // Write distinct values to SID1 and SID2. A write-only register reads
+    // back what is on that chip's data bus, its last access (reSID
+    // bus_value), so each chip shows the last value written to it
     desc->ioRegistry->dispatchWrite(nullptr, 0xD401, 0x34);
-    desc->ioRegistry->dispatchWrite(nullptr, 0xD420, 0x56);
     desc->ioRegistry->dispatchWrite(nullptr, 0xD421, 0x78);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD400, 0x12);
+    desc->ioRegistry->dispatchWrite(nullptr, 0xD420, 0x56);
 
-    uint8_t s1l = 0, s1h = 0, s2l = 0, s2h = 0;
-    desc->ioRegistry->dispatchRead(nullptr, 0xD400, &s1l);
-    desc->ioRegistry->dispatchRead(nullptr, 0xD401, &s1h);
-    desc->ioRegistry->dispatchRead(nullptr, 0xD420, &s2l);
-    desc->ioRegistry->dispatchRead(nullptr, 0xD421, &s2h);
+    uint8_t s1 = 0, s2 = 0;
+    desc->ioRegistry->dispatchRead(nullptr, 0xD401, &s1);
+    desc->ioRegistry->dispatchRead(nullptr, 0xD421, &s2);
 
-    ASSERT_EQ(s1l, 0x12);
-    ASSERT_EQ(s1h, 0x34);
-    ASSERT_EQ(s2l, 0x56);
-    ASSERT_EQ(s2h, 0x78);
+    ASSERT_EQ(s1, 0x12);                        // SID1 saw $D400
+    ASSERT_EQ(s2, 0x56);                        // SID2 saw $D420
 
     delete desc;
 }
