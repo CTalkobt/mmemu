@@ -7,6 +7,34 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80 Model I, III, 4 and 4P (#330)
+
+- New machines `trs80m1` (Level II BASIC with the Expansion Interface),
+  `trs80m1l1` (Level I), `trs80m3`, `trs80m4` and `trs80m4p`
+  (`mmemu-plugin-trs80`), on mmsim's Z80 and WD17xx: each model's memory
+  map (the Model 4's port `$84` maps, 32K banks of 128 KB and video page;
+  the 4P's boot ROM at port `$9C`), the keyboard matrix at `$3800`, 64 x 16
+  / 32 x 16 text with 2 x 3 block graphics (the Model I without D6 unless
+  `expansion lowercase` fits the lower case mod; the III/4's special and
+  alternate characters; the Model 4's 80 x 24 and inverse video), the
+  40 Hz (Model I EI), 30 Hz and 60 Hz (Model 4 at 4 MHz, `speed 4`) clock
+  interrupts, the Model III/4 interrupt and NMI latches (`$E0`, `$E4`),
+  the Model 4's sound bit (`$90`).
+- Disks: the Model I EI's FD1771 (with a Percom or Radio Shack doubler:
+  `expansion doubler`) and the III/4's FD1793 with INTRQ to NMI and the
+  `$F4` WAIT released by DRQ; DMK, JV1 (also as `.dsk`) and JV3 by `-i` or
+  `disk mount 1` (= drive `:0`); the GUI's drive pane shows them.
+- Cassette `.cas` (250, 500 and 1500 baud, xtrs's pulse shapes; the III/4's
+  high speed through its rise/fall interrupts) and `.wav`, play and record;
+  the printer port to a file (`serial printer:PATH`); the RS-232 board's
+  TR1602 (`serial loopback`, `file:`, `tcp:`); /CMD programs by `-i`.
+- ROMs are the user's, in `roms/trs80/` (git-ignored) or
+  `MMEMU_TRS80_FIRMWARE`, with a built-in font when there is no character
+  generator ROM; `roms/trs80/hardware.sym` names the I/O. Tests use
+  hand-assembled stand-in ROMs. See `doc/README-TRS80.md`.
+- The CoCo's `.cas` loader now also mounts a `.cas` on another machine's
+  recorder (both plugins take the extension).
+
 ### VICE's test programs: open I/O, the light pen and the VIC-II's Phi1 fetches
 
 - **Open I/O:** a read of `$DE00-$DFFF` that no cartridge answers returns the
