@@ -7,6 +7,33 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80 Color Computer 1, 2 and 2B (#331)
+
+- New machines `coco` / `coco2`, `coco1` and `coco2b` (`mmemu-plugin-coco`):
+  the 6809E with three new chips, each reusable: the **MC6847 VDG** (every
+  alphanumeric, semigraphics and graphics mode, CSS, mid-line mode
+  changes, NTSC timing with HS/FS, PMODE 4 artifact colours off /
+  blue-red / red-blue, and the **MC6847T1**'s lower case on the 2B), the
+  **MC6883 SAM** (its control register at `$FFC0-$FFDF`, map types 0 and
+  1, 4/16/64K multiplexing, the video address counter's dividers, CPU
+  rates with the address-dependent "speed-up poke") and the **MC6821 PIA**
+  (a new device: mmsim's 6520 clears port B's flags on a write and starts
+  at `$FF`, the 6821 doesn't).
+- 4, 16, 32 or 64 KB (`expansion ram`); the keyboard matrix from the host
+  keyboard; analog joysticks through the DAC and comparator (host stick,
+  pad or mouse); DAC, single-bit and cartridge sound; cassette `.cas` and
+  `.wav` (play, record, save) with the motor relay; the bit banger to a
+  file (`serial file:`).
+- Cartridges: ROM Paks (`.ccc`, `.rom`; `cart` or `-i`) start themselves
+  through the CART FIRQ; the Multi-Pak Interface (`$FF7F`, four slots),
+  the Orchestra-90, the Deluxe RS-232 Pak (the 6551) and the FD-500 disk
+  controller (Disk BASIC, its latch and a WD2793 with HALT on DRQ and NMI on
+  INTRQ; JVC/VDK/DMK images with `disk mount 1` = DRIVE 0, or `-i`) through
+  `expansion`.
+- BASIC ROMs are the user's, in `roms/coco/` (git-ignored) or
+  `MMEMU_COCO_FIRMWARE`; `roms/coco/hardware.sym` names the I/O. Tests use
+  hand-assembled stand-in ROMs. See `doc/README-COCO.md`.
+
 ### WD17xx floppy disk controller and disk images (#330, #331)
 
 - New device plugin `wd17xx`: the Western Digital FD1771, FD1791/1793/1795/1797,

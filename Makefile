@@ -193,6 +193,18 @@ PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
 	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
 	src/plugins/machines/spectrum/main/spi_sd_card.cpp \
 	src/plugins/machines/spectrum/main/plugin_init.cpp
+PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
+	src/plugins/machines/coco/main/coco_cart.cpp \
+	src/plugins/machines/coco/main/coco_tape.cpp \
+	src/plugins/devices/mc6847/main/mc6847.cpp \
+	src/plugins/devices/mc6847/main/mc6847_font.cpp \
+	src/plugins/devices/mc6883/main/mc6883.cpp \
+	src/plugins/devices/mc6821/main/mc6821.cpp \
+	src/plugins/devices/acia6551/main/acia6551.cpp \
+	src/plugins/devices/acia6551/main/hayes_modem.cpp \
+	src/plugins/devices/wd17xx/main/wd17xx.cpp \
+	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
+	src/plugins/machines/coco/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
 	src/plugins/machines/bbc/main/sn76489.cpp \
@@ -590,6 +602,11 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/bbc/test/test_electron.cpp \
 	src/plugins/machines/spectrum/test/test_spectrum.cpp \
 	src/plugins/machines/spectrum/test/test_spectrum_tape.cpp \
+	src/plugins/devices/mc6847/test/test_mc6847.cpp \
+	src/plugins/devices/mc6883/test/test_mc6883.cpp \
+	src/plugins/devices/mc6821/test/test_mc6821.cpp \
+	src/plugins/machines/coco/test/test_coco_machine.cpp \
+	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -757,6 +774,13 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/spectrum/main/spectrum_tape.o \
 	src/plugins/machines/spectrum/main/spectrum_ay.o \
 	src/plugins/machines/spectrum/main/spi_sd_card.o \
+	src/plugins/machines/coco/main/machine_coco.o \
+	src/plugins/machines/coco/main/coco_cart.o \
+	src/plugins/machines/coco/main/coco_tape.o \
+	src/plugins/devices/mc6847/main/mc6847.o \
+	src/plugins/devices/mc6847/main/mc6847_font.o \
+	src/plugins/devices/mc6883/main/mc6883.o \
+	src/plugins/devices/mc6821/main/mc6821.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
@@ -912,6 +936,7 @@ PLUGIN_GAMEBOY_OBJS = $(PLUGIN_GAMEBOY_SRCS:.cpp=.o)
 PLUGIN_APPLE2_OBJS = $(PLUGIN_APPLE2_SRCS:.cpp=.o)
 PLUGIN_BBC_OBJS    = $(PLUGIN_BBC_SRCS:.cpp=.o)
 PLUGIN_SPECTRUM_OBJS = $(PLUGIN_SPECTRUM_SRCS:.cpp=.o)
+PLUGIN_COCO_OBJS   = $(PLUGIN_COCO_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
@@ -987,6 +1012,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-apple2.so \
 	$(LIBDIR)/mmemu-plugin-bbc.so \
 	$(LIBDIR)/mmemu-plugin-spectrum.so \
+	$(LIBDIR)/mmemu-plugin-coco.so \
 	$(LIBDIR)/mmemu-plugin-cbm-loader.so \
 	$(LIBDIR)/mmemu-plugin-crtc6545.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
@@ -1157,6 +1183,9 @@ $(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS) -lz
 
 $(LIBDIR)/mmemu-plugin-spectrum.so: $(PLUGIN_SPECTRUM_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-coco.so: $(PLUGIN_COCO_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
