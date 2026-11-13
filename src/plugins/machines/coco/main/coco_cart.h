@@ -24,7 +24,8 @@ namespace coco {
  * data bus.
  *
  * Lines back to the machine: CART (PIA1 CB1, the FIRQ), /NMI and /HALT.
- * Time passes through clock(), in 14.31818 MHz ticks (16 a slow cycle).
+ * Time passes through clock(), in ticks of the machine's crystal (16 a slow
+ * cycle): 14.31818 MHz, or a PAL board's, which setClockHz gives.
  */
 class Cart {
 public:
@@ -39,6 +40,8 @@ public:
     virtual bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const { (void)a; (void)cts; (void)scs; (void)d; return false; }
     virtual void write(uint16_t a, bool cts, bool scs, uint8_t d) { (void)a; (void)cts; (void)scs; (void)d; }
     virtual void clock(uint64_t ticks) { (void)ticks; }
+    /** The rate clock() counts (the machine's crystal), before reset(). */
+    virtual void setClockHz(double hz) { (void)hz; }
     /** Sound it puts on the machine's audio, -1..1 (the Orchestra-90's DACs). */
     virtual float audio() const { return 0.0f; }
     /** Connect a serial port's far end (CLI `serial`): false if it has none. */
@@ -119,6 +122,7 @@ public:
     bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
     void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
     void clock(uint64_t ticks) override;
+    void setClockHz(double hz) override;
     bool attachSerial(const std::string& spec) override;
     Acia6551& acia() { return *m_acia; }
 
@@ -155,6 +159,7 @@ public:
     bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
     void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
     void clock(uint64_t ticks) override;
+    void setClockHz(double hz) override;
     bool mountDisk(int drive, const std::string& path) override;
     bool ejectDisk(int drive) override;
     std::string diskPath(int drive) const override;
@@ -193,6 +198,7 @@ public:
     bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
     void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
     void clock(uint64_t ticks) override;
+    void setClockHz(double hz) override;
     float audio() const override;
     bool attachSerial(const std::string& spec) override;
     bool mountDisk(int drive, const std::string& path) override;
@@ -216,6 +222,48 @@ private:
     bool m_cart[4] = {true, true, true, true}, m_nmi[4] = {}, m_halt[4] = {};
     int m_switch = 3;
     uint8_t m_reg = 0x33;
+    double m_hz = 14318180.0;
+};
+
+/**
+ * DragonDOS (Dragon Data's disk cartridge): its ROM ($C000), a WD2797 at
+ * $FF40-$FF43 and a latch at $FF48-$FF4F (write; mirrored to $FF5F).
+ *
+ * Latch: bits 0-1 drive select 0-3 (DragonDOS's drives 1-4), 2 motor on,
+ * 3 density (1 = single), 4 write precompensation, 5 NMI enable. The
+ * controller's DRQ is the CART line (PIA1 CB1: DragonDOS takes bytes on
+ * the FIRQ or by polling); INTRQ rising with the NMI enable set is /NMI.
+ * The 2797 selects the side itself (the U bit of its commands); READY is
+ * tied high (as XRoar's dragondos.c). `mountDisk` drive 0 is DragonDOS's
+ * drive 1 (CLI `disk mount 1 game.vdk`, or `-i`); VDK, JVC or DMK images.
+ */
+class DragonDos : public Cart {
+public:
+    explicit DragonDos(std::vector<uint8_t> rom);
+    ~DragonDos() override;
+    std::string kind() const override { return "dragondos"; }
+    std::string describe() const override;
+    void reset() override;
+    bool read(uint16_t a, bool cts, bool scs, uint8_t& d) override;
+    bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
+    void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
+    void clock(uint64_t ticks) override;
+    void setClockHz(double hz) override;
+    bool mountDisk(int drive, const std::string& path) override;
+    bool ejectDisk(int drive) override;
+    std::string diskPath(int drive) const override;
+    bool diskStatus(int drive, int& track, bool& motor) const override;
+
+    uint8_t latch() const { return m_latch; }
+    Wd17xx& controller() { return *m_fdc; }
+
+private:
+    void latchWrite(uint8_t v);
+    void setIntrq(bool on);
+    std::unique_ptr<Wd17xx> m_fdc;
+    std::string m_paths[4];
+    std::vector<uint8_t> m_rom;
+    uint8_t m_latch = 0;
 };
 
 }  // namespace coco

@@ -4,6 +4,7 @@
 
 #include "coco_system.h"
 #include "plugins/6809/main/cpu6809.h"
+#include "plugins/devices/acia6551/main/acia6551.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdebug/main/execution_observer.h"
@@ -152,7 +153,9 @@ uint8_t Keyboard::column(int col) const {
 void Keyboard::pressChord(int code, bool down) {
     if (code & SHIFTED) m_shifts += down ? 1 : -1;
     if (m_shifts < 0) m_shifts = 0;
-    set((code >> 3) & 7, code & 7, down);
+    int row = (code >> 3) & 7;
+    if (m_dragon && row < 6) row = (row + 2) % 6;     // the Dragon: digits on rows 0-1, letters from row 2
+    set(row, code & 7, down);
 }
 
 bool Keyboard::key(std::string n, bool down) {
@@ -259,7 +262,7 @@ void BitBanger::txLevel(uint64_t now, bool level) {
 // A frame is done ten bit times after its start bit: sample the middle of each data bit
 void BitBanger::decodeFrame(uint64_t now) {
     if (!m_inFrame) return;
-    const double bit = MASTER_HZ / m_baud;
+    const double bit = m_hz / m_baud;
     if ((double)(now - m_frameStart) < bit * 9.5) return;
     uint8_t v = 0;
     for (int i = 0; i < 8; ++i) {
@@ -354,8 +357,13 @@ void CartPort::getDeviceInfo(DeviceInfo& out) const {
 // ---------------------------------------------------------------------------
 // The system
 // ---------------------------------------------------------------------------
-System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vector<uint8_t> colorBasic)
+System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vector<uint8_t> colorBasic, Tv tv)
     : vdg(model == Model::CoCo2B), m_model(model) {
+    m_pal = tv == Tv::PAL || (tv == Tv::Default && isDragon(model));
+    m_masterHz = !m_pal ? MASTER_HZ : isDragon(model) ? DRAGON_PAL_HZ : COCO_PAL_HZ;
+    sound.setMasterHz(m_masterHz);
+    rs232.setMasterHz(m_masterHz);
+    tape.setMasterHz(m_masterHz);
     m_cfg = {16, 8, BusRole::DATA, false, 0xFFFF};
     m_rom.assign(0x4000, 0xFF);
     m_haveExt = !extBasic.empty();
@@ -366,7 +374,9 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
     m_ram.configure(ramKb);
 
     // The VDG's sync pulses: HS to PIA0 CA1 and the SAM, FS to PIA0 CB1 and the SAM
-    vdg.onHs = [this](bool level) { pia0.setCa1(level); sam.hsync(level); };
+    // (a PAL CoCo's board inverts HS on its way to the PIA)
+    const bool hsInvert = m_pal && !isDragon(model);
+    vdg.onHs = [this, hsInvert](bool level) { pia0.setCa1(level != hsInvert); sam.hsync(level); };
     vdg.onFs = [this](bool level) { pia0.setCb1(level); sam.fsync(level); };
     vdg.fetch = [this](uint16_t, int n, uint16_t* out) { fetchVideo(n, out); };
     sam.onVideoChange = [this]() { vdg.update(); };
@@ -390,6 +400,21 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
         soundChanged();
     };
     pia1.b.onControl = [this]() { soundChanged(); };          // CB2: the sound mux enable
+
+    // PAL: the board stops the VDG twice a frame for 50 blank lines in all
+    if (m_pal) {
+        Mc6847::PalPadding p;
+        if (isDragon(model)) {
+            p.stop0 = 262; p.delay0 = 25;
+            p.stop1 = 254; p.delay1 = 25;
+            p.hsInhibit = model == Model::Dragon64;
+        } else {
+            p.stop0 = 16; p.delay0 = 24;
+            p.stop1 = 256; p.delay1 = 26;
+        }
+        vdg.setPal(p);
+    }
+    if (isDragon(model)) wireDragon();
 }
 
 System::~System() = default;
@@ -421,6 +446,7 @@ void System::setCart(std::unique_ptr<Cart> cart) {
         if (m_cpu) m_cpu->setNmiLine(on);
     };
     m_cart->setHalt = [this](bool on) { m_halt = on; };
+    m_cart->setClockHz(m_masterHz);
     m_cart->reset();
 }
 
@@ -434,6 +460,14 @@ void System::resetButton() {
     pia0.a.inSource = 0;
     pia0.b.inSource = 0xFF;          // the keyboard's columns read high unless a key pulls one down
     pia1.a.inSource = pia1.b.inSource = 0;
+    if (dragon()) {
+        pia1.b.inSource |= 0x01;     // the printer's BUSY pulled up (and pulled low by a ready printer)
+        pia1.b.inSink &= (uint8_t)~0x01;
+        printer.reset();
+        m_ackLeft = 0;
+        pia1.setCa1(true);
+        if (m_acia) m_acia->reset();
+    }
     sam.reset();
     pia0.reset();
     pia1.reset();
@@ -442,6 +476,7 @@ void System::resetButton() {
     if (m_cart) m_cart->reset();
     m_halt = false;
     ramSizeUpdate();
+    if (dragon()) dragonRomSelect();
     m_level = soundLevel();
     if (m_cpu) m_cpu->reset();
     updateLines();
@@ -484,6 +519,7 @@ void System::joystickUpdate() {
 // PIA1 PB2 tells BASIC the RAM size: low with 4K chips, high with 16K, and
 // with 64K tied to PIA0 PB6 (which BASIC toggles to see whether it follows)
 void System::ramSizeUpdate() {
+    if (dragon()) { dragonRamSizeUpdate(); return; }
     const int kb = m_ram.kb();
     if (kb == 4) {
         pia1.b.inSink &= (uint8_t)~0x04;
@@ -542,7 +578,8 @@ void System::sync(uint64_t to) {
     if (tape.input() != tapeWas && tape.playing()) soundChanged();
     if (m_cart) m_cart->clock(d);
     keyboard.clock(d);
-    rs232.txLevel(m_dev, pia1.portA() & 2);
+    if (dragon()) dragonClock(d);
+    else rs232.txLevel(m_dev, pia1.portA() & 2);
 }
 
 uint8_t System::access(uint16_t a, bool write, uint8_t v) {
@@ -564,8 +601,12 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
             if (a >= 0x8000) { sync(start); vdg.update(); }
             if (uint8_t* p = m_ram.at(c.bank, c.row, c.col)) *p = v;
         }
-        if (c.s == Mc6883::S_IO0) pia0.write(a, v);
-        else if (c.s == Mc6883::S_IO1) pia1.write(a, v);
+        if (c.s == Mc6883::S_IO0) {
+            if (piaDecoded(a)) pia0.write(a, v);
+            else if (m_acia && (a & 4)) m_acia->ioWrite(nullptr, 0xFF00u | (a & 7), v);
+        } else if (c.s == Mc6883::S_IO1 && piaDecoded(a)) {
+            pia1.write(a, v);
+        }
         if (cartSees) {
             m_cart->write(a, cts, scs, v);
             soundChanged();
@@ -578,16 +619,15 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
             if (const uint8_t* p = m_ram.at(c.bank, c.row, c.col)) d = *p;
             break;
         case Mc6883::S_ROM0:
-            if (m_haveExt) d = m_rom[a & 0x1FFF];
-            break;
         case Mc6883::S_ROM1:
-            d = m_rom[0x2000 | (a & 0x1FFF)];
+            if (const uint8_t* r = romByte(c.s == Mc6883::S_ROM0 ? (uint16_t)(a & 0x1FFF) : (uint16_t)(0x2000 | (a & 0x1FFF)))) d = *r;
             break;
         case Mc6883::S_IO0:
-            d = pia0.read(a);
+            if (piaDecoded(a)) d = pia0.read(a);
+            else if (m_acia && (a & 4)) m_acia->ioRead(nullptr, 0xFF00u | (a & 7), &d);
             break;
         case Mc6883::S_IO1:
-            d = pia1.read(a);
+            if (piaDecoded(a)) d = pia1.read(a);
             break;
         default:
             break;
@@ -623,10 +663,15 @@ uint8_t System::peek8(uint32_t addr) {
             if (const uint8_t* p = m_ram.at(c.bank, c.row, c.col)) d = *p;
             break;
         }
-        case Mc6883::S_ROM0: if (m_haveExt) d = m_rom[a & 0x1FFF]; break;
-        case Mc6883::S_ROM1: d = m_rom[0x2000 | (a & 0x1FFF)]; break;
-        case Mc6883::S_IO0: d = pia0.peek(a); break;
-        case Mc6883::S_IO1: d = pia1.peek(a); break;
+        case Mc6883::S_ROM0:
+        case Mc6883::S_ROM1:
+            if (const uint8_t* r = romByte(s == Mc6883::S_ROM0 ? (uint16_t)(a & 0x1FFF) : (uint16_t)(0x2000 | (a & 0x1FFF)))) d = *r;
+            break;
+        case Mc6883::S_IO0:
+            if (piaDecoded(a)) d = pia0.peek(a);
+            else if (m_acia && (a & 4)) m_acia->ioPeek(nullptr, 0xFF00u | (a & 7), &d);
+            break;
+        case Mc6883::S_IO1: if (piaDecoded(a)) d = pia1.peek(a); break;
         default: break;
     }
     if (m_cart && (cts || scs || (a >= 0xFF60 && a < 0xFFC0))) {
@@ -695,6 +740,7 @@ void System::loadState(const uint8_t* buf) {
     pia1.loadState(p1);
     vdg.loadState(vd);
     m_reported = m_ticks / TICKS_SLOW;
+    if (dragon()) dragonRomSelect();
     soundChanged();
     updateLines();
 }
@@ -767,22 +813,41 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         }
         return std::unique_ptr<Cart>(new Fd500(std::move(rom)));
     }
+    if (device == "dragondos") {
+        std::vector<uint8_t> rom = loadDragonDosRom(option, err);
+        if (rom.empty()) return nullptr;
+        return std::unique_ptr<Cart>(new DragonDos(std::move(rom)));
+    }
     if (device == "rompak") {
         std::vector<uint8_t> rom;
         if (option.empty() || !readFile(option, rom) || rom.empty()) { err = "rompak needs the image's path"; return nullptr; }
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, rs232, fd500, rompak)";
+    err = "no cartridge '" + device + "' (mpi, orch90, rs232, fd500, dragondos, rompak)";
     return nullptr;
 }
 
 }  // namespace
 
-MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* roms) {
-    std::vector<uint8_t> color, ext;
-    std::string missing;
-    if (roms) {
+MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* roms, Tv tv) {
+    std::vector<uint8_t> color, ext, dragon, dragon64k;
+    std::string missing, notice;
+    const bool isD = isDragon(model);
+    if (isD && roms) {
+        dragon = roms->dragonBasic;
+        dragon64k = roms->dragon64k;
+        if (dragon.empty()) { if (err) *err = "no Dragon BASIC image"; return nullptr; }
+    } else if (isD) {
+        if (!loadDragonRoms(model, dragon, dragon64k, missing)) {
+            if (err) *err = missing;
+            std::fprintf(stderr, "%s\n", missing.c_str());
+            dragon = dragonPlaceholderRom();
+        } else {
+            notice = missing;                 // the Dragon 64 without its 64K-mode BASIC
+            missing.clear();
+        }
+    } else if (roms) {
         color = roms->colorBasic;
         ext = roms->extBasic;
         if (color.empty()) { if (err) *err = "no Color BASIC image"; return nullptr; }
@@ -804,18 +869,33 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         }
     }
 
+    const bool haveExt = !ext.empty();
+    auto* sys = new System(model, ramKb, std::move(ext), std::move(color), tv);
+    if (isD) sys->setDragonRoms(dragon, dragon64k);
+    const bool pal = sys->pal();
+
     auto* desc = new MachineDescriptor();
-    desc->machineId = model == Model::CoCo1 ? "coco1" : model == Model::CoCo2 ? "coco2" : "coco2b";
-    desc->displayName = model == Model::CoCo1 ? "TRS-80 Color Computer" : model == Model::CoCo2 ? "TRS-80 Color Computer 2" : "TRS-80 Color Computer 2B";
+    switch (model) {
+        case Model::CoCo1: desc->machineId = "coco1"; desc->displayName = "TRS-80 Color Computer"; break;
+        case Model::CoCo2: desc->machineId = "coco2"; desc->displayName = "TRS-80 Color Computer 2"; break;
+        case Model::CoCo2B: desc->machineId = "coco2b"; desc->displayName = "TRS-80 Color Computer 2B"; break;
+        case Model::Dragon32: desc->machineId = "dragon32"; desc->displayName = "Dragon 32"; break;
+        case Model::Dragon64:
+            desc->machineId = pal ? "dragon64" : "tano";
+            desc->displayName = pal ? "Dragon 64" : "Tano Dragon (NTSC Dragon 64)";
+            break;
+    }
+    if (!isD && pal) desc->displayName += " (PAL)";
+    if (model == Model::Dragon32 && !pal) desc->displayName += " (NTSC)";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = {"tape", "cartridge"};
-    desc->clockHz = MASTER_HZ / TICKS_SLOW;
+    desc->clockHz = sys->masterHz() / TICKS_SLOW;
     if (!missing.empty()) desc->warnings.push_back(missing);
-    else if (ext.empty() && !roms)
+    else if (!notice.empty()) desc->warnings.push_back(notice);
+    else if (!isD && !haveExt && !roms)
         desc->warnings.push_back("Extended Color BASIC (extbas11.rom) not found in " + firmwareDir() + ": Color BASIC only");
 
-    auto* sys = new System(model, ramKb, std::move(ext), std::move(color));
     auto* cpu = new M6809();
     cpu->setDataBus(sys);
     sys->setCpu(cpu);
@@ -828,7 +908,9 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     io->registerHandler(&sys->keyboard);
     io->registerHandler(&sys->sound);
     io->registerHandler(&sys->tape);
-    io->registerHandler(&sys->rs232);
+    if (!isD) io->registerHandler(&sys->rs232);
+    if (sys->acia()) io->registerHandler(&sys->aciaPort);
+    if (isD) io->registerHandler(&sys->printer);
     io->registerHandler(&sys->cartPort);
 
     // Keys; RESET and the artifact colours as buttons under the screen
@@ -846,8 +928,9 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     };
     desc->screenButtons = {
         {"RESET", {"reset"}, "The RESET button: BASIC restarts; the program in memory stays."},
-        {"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."},
     };
+    // A PAL set shows no artifact colours
+    if (!pal) desc->screenButtons.push_back({"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."});
 
     // Joysticks: 0 right, 1 left (the right one is most games')
     desc->joystickPorts = 2;
@@ -890,15 +973,24 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         MachineDescriptor::ExpansionSlot s;
         s.name = "cart";
         s.description = "The cartridge port (ROM Paks: the cart command)";
-        s.devices = {
-            {"mpi", "Multi-Pak Interface: 4 slots (expansion mpi1-mpi4); option: the switch position", {"1", "2", "3", "4"}, "4"},
-            {"orch90", "Orchestra-90 stereo DACs ($FF7A/$FF7B); option: its ROM image", {}, ""},
-            {"rs232", "Deluxe RS-232 Program Pak (6551 ACIA at $FF68; the serial command)", {}, ""},
-            {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
-            {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
-        };
-        s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
+        if (isD) {
+            s.devices = {
+                {"dragondos", "DragonDOS disk controller (WD2797 at $FF40, latch $FF48); option: the ROM", {}, ""},
+                {"rompak", "A ROM cartridge; option: the image (.rom, .dgn, .ccc)", {}, ""},
+            };
+        } else {
+            s.devices = {
+                {"mpi", "Multi-Pak Interface: 4 slots (expansion mpi1-mpi4); option: the switch position", {"1", "2", "3", "4"}, "4"},
+                {"orch90", "Orchestra-90 stereo DACs ($FF7A/$FF7B); option: its ROM image", {}, ""},
+                {"rs232", "Deluxe RS-232 Program Pak (6551 ACIA at $FF68; the serial command)", {}, ""},
+                {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
+                {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
+            };
+        }
+        s.install = [sys, isD](const std::string& device, const std::string& option, std::string& err) {
             if (device.empty()) { sys->setCart(nullptr); return true; }
+            const bool fits = isD ? (device == "dragondos" || device == "rompak") : device != "dragondos";
+            if (!fits) { err = "no cartridge '" + device + "' for this machine"; return false; }
             if (device == "mpi") {
                 const int pos = option.empty() ? 4 : std::atoi(option.c_str());
                 if (pos < 1 || pos > 4) { err = "the switch is 1-4"; return false; }
@@ -922,7 +1014,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         s.info = [sys]() { return sys->cart() ? sys->cart()->describe() : std::string(); };
         desc->expansionSlots.push_back(std::move(s));
     }
-    for (int n = 0; n < 4; ++n) {
+    for (int n = 0; n < (isD ? 0 : 4); ++n) {
         MachineDescriptor::ExpansionSlot s;
         s.name = "mpi" + std::to_string(n + 1);
         s.description = "Multi-Pak slot " + std::to_string(n + 1) + " (with expansion cart mpi)";
@@ -949,7 +1041,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         desc->expansionSlots.push_back(std::move(s));
     }
 
-    desc->symbolFiles.push_back(PathUtil::findResource("roms/coco/hardware.sym"));
+    desc->symbolFiles.push_back(PathUtil::findResource(isD ? "roms/dragon/hardware.sym" : "roms/coco/hardware.sym"));
 
     desc->onReset = [sys](MachineDescriptor&) { sys->powerOn(); };
     desc->schedulerStep = [sys](MachineDescriptor&) -> int { return sys->step(); };

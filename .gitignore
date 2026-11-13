@@ -55,3 +55,6 @@ roms/spectrum/esxmmc.bin
 # TRS-80 Color Computer ROMs (Color / Extended / Disk BASIC): local only (Microsoft/Tandy copyright); see doc/README-COCO.md
 roms/coco/*
 !roms/coco/hardware.sym
+# Dragon 32/64 ROMs (Dragon BASIC, DragonDOS): local only (Microsoft / Dragon Data copyright); see doc/README-DRAGON.md
+roms/dragon/*
+!roms/dragon/hardware.sym

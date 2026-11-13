@@ -68,6 +68,7 @@ void Mc6847::reset() {
     m_fetched = m_index = m_bit = 0;
     m_bytesLeft = is32() ? 32 : 16;
     m_pos = LEFT_BORDER;
+    m_padLeft = m_padTick = 0;
 }
 
 uint8_t Mc6847::borderColour() const {
@@ -114,16 +115,32 @@ void Mc6847::setMode(uint8_t mode) {
 
 void Mc6847::advance(uint64_t ticks) {
     while (ticks) {
-        const int next = m_tick < HS_RISE ? HS_RISE : LINE_TICKS;
-        const uint64_t step = std::min<uint64_t>(ticks, (uint64_t)(next - m_tick));
-        m_tick += (int)step;
+        // While the PAL board pads, its own line runs and the VDG's waits at tick 0
+        int& t = m_padLeft ? m_padTick : m_tick;
+        const int next = t < HS_RISE ? HS_RISE : LINE_TICKS;
+        const uint64_t step = std::min<uint64_t>(ticks, (uint64_t)(next - t));
+        t += (int)step;
         ticks -= step;
-        if (m_tick == HS_RISE && !m_hs) {
+        if (t == HS_RISE && !m_hs) {
             m_hs = true;
             if (onHs) onHs(true);
         }
-        if (m_tick >= LINE_TICKS) endLine();
+        if (t >= LINE_TICKS) {
+            if (m_padLeft) endPadLine();
+            else endLine();
+        }
     }
+}
+
+// A padding line ends: HS falls (unless inhibited); after the last the VDG
+// resumes the line it stopped at
+void Mc6847::endPadLine() {
+    m_padTick = 0;
+    if (!m_pal.hsInhibit) {
+        m_hs = false;
+        if (onHs) onHs(false);
+    }
+    --m_padLeft;
 }
 
 void Mc6847::endLine() {
@@ -158,6 +175,10 @@ void Mc6847::endLine() {
         if (onFs) onFs(true);
         if (onFrame) onFrame();
     }
+    // A PAL board stops the VDG here (its count of lines from FS rising: 262 is line 0)
+    if (m_pal.delay0 && m_line == m_pal.stop0 % FRAME_LINES) m_padLeft = m_pal.delay0;
+    else if (m_pal.delay1 && m_line == m_pal.stop1 % FRAME_LINES) m_padLeft = m_pal.delay1;
+    m_padTick = 0;
 }
 
 void Mc6847::byteBoundary() {
@@ -315,6 +336,7 @@ std::vector<uint8_t> Mc6847::saveState() const {
     put(v, m_bit); put(v, m_pos); put(v, m_g); put(v, m_sg); put(v, m_as); put(v, m_ext);
     put(v, m_fg); put(v, m_bg); put(v, m_sfg); put(v, m_sbg); put(v, m_cgBase); put(v, m_rmode);
     put(v, m_cssLatched); put(v, m_border); put(v, m_artifactLine); put(v, m_dots);
+    put(v, m_padLeft); put(v, m_padTick);
     return v;
 }
 
@@ -327,4 +349,6 @@ void Mc6847::loadState(const std::vector<uint8_t>& s) {
     get(p, e, m_bit); get(p, e, m_pos); get(p, e, m_g); get(p, e, m_sg); get(p, e, m_as); get(p, e, m_ext);
     get(p, e, m_fg); get(p, e, m_bg); get(p, e, m_sfg); get(p, e, m_sbg); get(p, e, m_cgBase); get(p, e, m_rmode);
     get(p, e, m_cssLatched); get(p, e, m_border); get(p, e, m_artifactLine); get(p, e, m_dots);
+    m_padLeft = m_padTick = 0;
+    get(p, e, m_padLeft); get(p, e, m_padTick);
 }

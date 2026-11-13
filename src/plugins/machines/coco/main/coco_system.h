@@ -18,10 +18,13 @@
 #include <vector>
 
 class M6809;
+class Acia6551;
 
 namespace coco {
 
 constexpr double MASTER_HZ = 14318180.0;      ///< the crystal; the SAM divides by 16 (0.89 MHz) or 8
+constexpr double DRAGON_PAL_HZ = 14218000.0;  ///< the Dragon 32/64's crystal (0.889 MHz)
+constexpr double COCO_PAL_HZ = 14237530.0;    ///< a PAL CoCo's
 constexpr int TICKS_SLOW = 16;
 
 /**
@@ -54,6 +57,13 @@ private:
  * Host keys by name (positional; Backspace is LEFT, Home is CLEAR, Esc
  * BREAK) and the GUI's shifted-symbol names (exclaim, dquote, ...), which
  * press SHIFT with the CoCo key that has the symbol.
+ *
+ * The Dragon has the same keys and columns, its rows in another order:
+ *   row 0  0 1 2 3 4 5 6 7        row 3  H I J K L M N O
+ *   row 1  8 9 : ; , - . /        row 4  P Q R S T U V W
+ *   row 2  @ A B C D E F G        row 5  X Y Z UP DOWN LEFT RIGHT SPACE
+ * (row 6 as the CoCo's): setDragonLayout moves keys pressed by name or
+ * typed; keyDown/keyUp are raw matrix positions.
  */
 class Keyboard : public IOHandler, public IKeyboardMatrix {
 public:
@@ -74,6 +84,9 @@ public:
 
     /** A key by name: false if the CoCo has no such key. */
     bool key(std::string name, bool down);
+    /** The Dragon's rows (see above). */
+    void setDragonLayout(bool on) { m_dragon = on; }
+    bool dragonLayout() const { return m_dragon; }
     void set(int row, int col, bool down);
     /** Rows pressed in a column (bit per row, SHIFT held by typing included). */
     uint8_t column(int col) const;
@@ -83,6 +96,7 @@ public:
 
 private:
     void pressChord(int code, bool down);
+    bool m_dragon = false;
     uint8_t m_matrix[8] = {};      // per column: rows held
     int m_shifts = 0;              // SHIFT held by shifted-symbol keys and typing
     std::deque<int> m_queue;       // typed keys: row << 3 | col, 0x100 = with SHIFT
@@ -111,9 +125,11 @@ public:
     /** PA1 at time `now` (ticks). */
     void txLevel(uint64_t now, bool level);
     void setBaud(int baud) { m_baud = baud > 0 ? baud : 600; }
+    void setMasterHz(double hz) { m_hz = hz; }
     std::vector<uint8_t> sent;            ///< everything decoded
 
 private:
+    double m_hz = MASTER_HZ;
     int m_baud = 600;
     bool m_level = true;
     uint64_t m_lastEdge = 0;
@@ -124,7 +140,34 @@ private:
     void decodeFrame(uint64_t end);
 };
 
-/** The audio, as the frontends pull it: 44.06 kHz mono. */
+/**
+ * The Dragon's parallel printer port: data on PIA0 port B (the keyboard's
+ * column lines), STROBE on PIA1 PA1 (a byte is taken as it rises), BUSY
+ * in on PIA1 PB0 (never busy here) and /ACK back on PIA1 CA1 (a 7 us low
+ * pulse). CLI `serial file:PATH` (or `printer:PATH`, `serial none`).
+ */
+class Printer : public IOHandler {
+public:
+    ~Printer() override;
+    const char* name() const override { return "Printer"; }
+    uint32_t baseAddr() const override { return 0; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override { m_strobe = true; }
+    void tick(uint64_t) override {}
+    bool attachSerial(const std::string& spec) override;
+
+    /** STROBE's level and the data lines: true when a byte was taken (ACK it). */
+    bool strobe(bool level, uint8_t data);
+    std::vector<uint8_t> printed;         ///< everything printed
+
+private:
+    bool m_strobe = true;
+    FILE* m_file = nullptr;
+};
+
+/** The audio, as the frontends pull it: 44.06 kHz mono (43.75 kHz on a Dragon). */
 class Sound : public IOHandler, public IAudioOutput {
 public:
     static constexpr int TICKS_PER_SAMPLE = 325;
@@ -135,19 +178,38 @@ public:
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override {}
     void tick(uint64_t) override {}
-    int nativeSampleRate() const override { return (int)(MASTER_HZ / TICKS_PER_SAMPLE); }
+    int nativeSampleRate() const override { return (int)(m_hz / TICKS_PER_SAMPLE); }
+    void setMasterHz(double hz) { m_hz = hz; }
     int pullSamples(float* buffer, int maxSamples) override;
     /** The output at `level` for `ticks`. */
     void run(uint64_t ticks, float level);
     size_t buffered() const { return m_samples.size(); }
 
 private:
+    double m_hz = MASTER_HZ;
     std::deque<float> m_samples;
     double m_sum = 0;
     uint64_t m_acc = 0;
 };
 
 class System;
+
+/** The Dragon 64's RS-232 port (its 6551) for the CLI `serial` (modem, loopback, tcp:PORT). */
+class AciaPort : public IOHandler {
+public:
+    explicit AciaPort(System* sys) : m_sys(sys) {}
+    const char* name() const override { return "RS-232"; }
+    uint32_t baseAddr() const override { return 0; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override {}
+    void tick(uint64_t) override {}
+    bool attachSerial(const std::string& spec) override;
+    void getDeviceInfo(DeviceInfo& out) const override;
+private:
+    System* m_sys;
+};
 
 /** The screen, as the frontends find it. */
 class Display : public IOHandler, public IVideoOutput {
@@ -198,10 +260,19 @@ private:
  * on it. Time is kept in 14.31818 MHz ticks: each CPU cycle takes what the
  * SAM gives it (16 slow, 8 fast), I/O cycles bring the devices up to time
  * first; the 6809's internal ("dead") cycles put $FFFF on the bus.
+ *
+ * The Dragons (dragon32, dragon64) are the same board with differences:
+ * the printer port instead of the bit banger, the keyboard's rows, PIA1
+ * PB2 (RAM size on the 32, the ROM select on the 64), PIA0 decoded at
+ * $FF00-$FF03 only (except on an unexpanded Dragon 32), and on the 64 a
+ * 6551 at $FF04-$FF07 and a second 16 KB BASIC. PAL boards pad the VDG to
+ * 312 lines (Mc6847::setPal) and run from their own crystal (masterHz);
+ * a PAL CoCo also inverts HS to PIA0 CA1.
  */
 class System : public IBus {
 public:
-    System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vector<uint8_t> colorBasic);
+    System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vector<uint8_t> colorBasic,
+           Tv tv = Tv::Default);
     ~System() override;
 
     // IBus
@@ -247,6 +318,18 @@ public:
     float soundLevel() const;
 
     Model model() const { return m_model; }
+    bool dragon() const { return isDragon(m_model); }
+    bool pal() const { return m_pal; }
+    /** The crystal: 14.31818 MHz (NTSC), 14.218 MHz (a PAL Dragon), 14.23753 MHz (a PAL CoCo). */
+    double masterHz() const { return m_masterHz; }
+
+    /** The Dragon's 16 KB BASIC at $8000; on the Dragon 64 also its 64K-mode BASIC. */
+    void setDragonRoms(const std::vector<uint8_t>& basic, const std::vector<uint8_t>& basic64k);
+    /** Dragon 64: the 64K-mode BASIC is in the map (PIA1 PB2 low). */
+    bool rom64kSelected() const { return m_rom64Sel; }
+    /** The Dragon 64's 6551 at $FF04-$FF07 (nullptr on others). */
+    Acia6551* acia() const { return m_acia.get(); }
+
     Mc6847 vdg;
     Mc6883 sam;
     Mc6821 pia0, pia1;
@@ -256,6 +339,8 @@ public:
     Sound sound;
     Display display{&vdg};
     CartPort cartPort{this};
+    Printer printer;
+    AciaPort aciaPort{this};
 
 private:
     std::vector<uint8_t> state() const;
@@ -267,12 +352,27 @@ private:
     void ramSizeUpdate();
     void fetchVideo(int n, uint16_t* out);
     void soundChanged();
+    // The Dragons (machine_dragon.cpp)
+    void wireDragon();
+    void dragonRamSizeUpdate();
+    void dragonRomSelect();
+    void printerStrobe();
+    void dragonClock(uint64_t ticks);
+    bool piaDecoded(uint16_t a) const;
+    const uint8_t* romByte(uint16_t a) const;
 
     Model m_model;
+    bool m_pal = false;
+    double m_masterHz = MASTER_HZ;
     BusConfig m_cfg;
     Ram m_ram;
     std::vector<uint8_t> m_rom;                // 16 KB: Extended BASIC at 0, Color BASIC at $2000
     bool m_haveExt = false;
+    std::vector<uint8_t> m_rom64;              // Dragon 64: the 64K-mode BASIC
+    bool m_rom64Sel = false;
+    std::unique_ptr<Acia6551> m_acia;          // Dragon 64
+    uint64_t m_aciaAcc = 0;
+    uint64_t m_ackLeft = 0;                    // printer /ACK low for this many more ticks
     std::unique_ptr<Cart> m_cart;
     M6809* m_cpu = nullptr;
 
@@ -289,5 +389,16 @@ private:
 
 /** The System behind a machine made by create() (nullptr if not a CoCo). */
 System* systemOf(MachineDescriptor* m);
+
+/**
+ * The Dragon's ROMs from dragonFirmwareDir() (machine_dragon.cpp): the
+ * 16 KB BASIC and, for the 64, its 64K-mode BASIC. False (and `missing`
+ * naming the file) without the BASIC.
+ */
+bool loadDragonRoms(Model model, std::vector<uint8_t>& basic, std::vector<uint8_t>& basic64k, std::string& missing);
+/** Without a Dragon BASIC: a stand-in at $8000 that says so on the screen. */
+std::vector<uint8_t> dragonPlaceholderRom();
+/** DragonDOS's ROM: `path`, or ddos12a.rom (...) from dragonFirmwareDir(); empty with `err` if none. */
+std::vector<uint8_t> loadDragonDosRom(const std::string& path, std::string& err);
 
 }  // namespace coco

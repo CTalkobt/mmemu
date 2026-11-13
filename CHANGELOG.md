@@ -34,6 +34,28 @@ The canonical version is defined in the `VERSION` file at the repository root.
   `MMEMU_COCO_FIRMWARE`; `roms/coco/hardware.sym` names the I/O. Tests use
   hand-assembled stand-in ROMs. See `doc/README-COCO.md`.
 
+### Dragon 32 / Dragon 64 and PAL timing (#331)
+
+- New machines `dragon32`, `dragon64` and `tano` (the NTSC Dragon 64) in
+  `mmemu-plugin-coco`, from the CoCo's code: the Dragon keyboard matrix
+  (rows rotated), 16 KB BASIC at `$8000`, the parallel printer port (PIA0
+  port B data, PIA1 PA1 STROBE, PB0 BUSY, CA1 /ACK; `serial file:`), PIA1
+  PB2 as the RAM size (Dragon 32) or ROM select (Dragon 64: the second,
+  64K-mode BASIC), PIAs decoded at A2 low, and the Dragon 64's 6551 at
+  `$FF04` (`serial loopback` / `tcp:` / `modem`).
+- **DragonDOS** cartridge (`expansion cart dragondos`): its ROM, a WD2797 at
+  `$FF40`, the latch at `$FF48` (drive, motor, density, precomp, NMI
+  enable), DRQ on CART (FIRQ) and INTRQ to /NMI; VDK/JVC/DMK images with
+  `disk mount 1` (or `-i`) = DragonDOS's drive 1. ROM cartridges `.dgn`.
+- **PAL timing** in the MC6847 (`setPal`, as XRoar's vdg_pal): the board
+  stops the VDG for 50 blank lines a frame (312 lines, 50 Hz; the Dragon 64
+  without HS during them); the PAL crystals (14.218 MHz Dragon, 14.23753 MHz
+  CoCo) time sound, tape `.wav`, disk and serial; no artifact colours. A PAL
+  CoCo too: `cocopal` (HS inverted to PIA0 CA1).
+- ROMs are the user's, in `roms/dragon/` (ignored) or
+  `MMEMU_DRAGON_FIRMWARE`; `roms/dragon/hardware.sym` names the I/O. See
+  `doc/README-DRAGON.md`.
+
 ### WD17xx floppy disk controller and disk images (#330, #331)
 
 - New device plugin `wd17xx`: the Western Digital FD1771, FD1791/1793/1795/1797,

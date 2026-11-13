@@ -191,3 +191,67 @@ TEST_CASE(mc6847t1_lower_case) {
     r.frame();
     ASSERT_EQ(r.vdg.activeDot(3, 3), Mc6847::GREEN);
 }
+
+// PAL padding (the Dragon's): 25 blank lines at line 0 and 25 at line 254
+// make a 312-line frame; FS rises every 312 x 912 ticks, HS falls on every
+// line, the active area keeps its 192 lines
+TEST_CASE(mc6847_pal_padding) {
+    Rig r;
+    Mc6847::PalPadding pal;
+    pal.stop0 = 262; pal.delay0 = 25;
+    pal.stop1 = 254; pal.delay1 = 25;
+    r.vdg.setPal(pal);
+    ASSERT(r.vdg.isPal());
+    ASSERT_EQ(r.vdg.frameLines(), 312);
+    // To the first FS rise after reset (no padding at reset's line 0)
+    uint64_t t = 0;
+    while (r.fsRises == 0) { r.vdg.advance(1); ++t; }
+    ASSERT_EQ(t, (uint64_t)912 * (262 + 25));
+    ASSERT_EQ(r.vdg.paddingLeft(), 25);      // stopped at line 0
+    // A whole frame: FS rise to FS rise
+    const int hs0 = r.hsFalls, fall0 = r.fsFalls;
+    t = 0;
+    while (r.fsRises == 1) { r.vdg.advance(1); ++t; }
+    ASSERT_EQ(t, (uint64_t)912 * 312);
+    ASSERT_EQ(r.hsFalls - hs0, 312);
+    ASSERT_EQ(r.fsFalls - fall0, 1);
+    // FS is low from line 230 to the frame's end: 32 VDG lines and 25 padding
+    Rig s;
+    s.vdg.setPal(pal);
+    s.frame();                                // 262 lines in: inside the line-254 padding
+    while (s.fsRises == 0) s.vdg.advance(1);
+    uint64_t low = 0;
+    while (s.vdg.fs()) s.vdg.advance(1);
+    while (!s.vdg.fs()) { s.vdg.advance(1); ++low; }
+    ASSERT_EQ(low, (uint64_t)912 * (32 + 25));
+}
+
+// The Dragon 64's PAL logic holds HS during its padding: 262 HS a frame;
+// the PAL CoCo's stops (24 at 16, 26 at 256) give 312 lines too
+TEST_CASE(mc6847_pal_hs_inhibit_and_coco_stops) {
+    Rig r;
+    Mc6847::PalPadding pal;
+    pal.stop0 = 262; pal.delay0 = 25;
+    pal.stop1 = 254; pal.delay1 = 25;
+    pal.hsInhibit = true;
+    r.vdg.setPal(pal);
+    while (r.fsRises == 0) r.vdg.advance(912);
+    const int hs0 = r.hsFalls;
+    uint64_t t = 0;
+    while (r.fsRises == 1) { r.vdg.advance(1); ++t; }
+    ASSERT_EQ(t, (uint64_t)912 * 312);
+    ASSERT_EQ(r.hsFalls - hs0, 262);
+    Rig c;
+    pal.stop0 = 16; pal.delay0 = 24;
+    pal.stop1 = 256; pal.delay1 = 26;
+    pal.hsInhibit = false;
+    c.vdg.setPal(pal);
+    while (c.fsRises == 0) c.vdg.advance(1);
+    t = 0;
+    while (c.fsRises == 1) { c.vdg.advance(1); ++t; }
+    ASSERT_EQ(t, (uint64_t)912 * 312);
+    // NTSC again
+    c.vdg.setPal(Mc6847::PalPadding());
+    ASSERT(!c.vdg.isPal());
+    ASSERT_EQ(c.vdg.frameLines(), 262);
+}

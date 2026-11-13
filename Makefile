@@ -196,6 +196,8 @@ PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
 PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/machines/coco/main/coco_cart.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
+	src/plugins/machines/coco/main/machine_dragon.cpp \
+	src/plugins/machines/coco/main/dragon_dos.cpp \
 	src/plugins/devices/mc6847/main/mc6847.cpp \
 	src/plugins/devices/mc6847/main/mc6847_font.cpp \
 	src/plugins/devices/mc6883/main/mc6883.cpp \
@@ -607,6 +609,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/mc6821/test/test_mc6821.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
+	src/plugins/machines/coco/test/test_dragon_machine.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -777,6 +780,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/coco/main/machine_coco.o \
 	src/plugins/machines/coco/main/coco_cart.o \
 	src/plugins/machines/coco/main/coco_tape.o \
+	src/plugins/machines/coco/main/machine_dragon.o \
+	src/plugins/machines/coco/main/dragon_dos.o \
 	src/plugins/devices/mc6847/main/mc6847.o \
 	src/plugins/devices/mc6847/main/mc6847_font.o \
 	src/plugins/devices/mc6883/main/mc6883.o \

@@ -12,7 +12,6 @@ namespace coco {
 
 namespace {
 
-constexpr double MASTER_HZ = 14318180.0;
 constexpr uint64_t HALF_SPLIT = (Tape::TICKS_BIT0 / 2 + Tape::TICKS_BIT1 / 2) / 2;   // short vs long half-cycle
 constexpr uint64_t GAP = 20000;              // a half-cycle longer than this is silence
 constexpr int WAV_RATE = 22050;
@@ -57,7 +56,7 @@ void Tape::controlTape(const std::string& op) {
 void Tape::loadCas(const std::vector<uint8_t>& bytes) {
     m_pulses.clear();
     m_pulses.reserve(bytes.size() * 16 + 1);
-    m_pulses.push_back({(uint32_t)(MASTER_HZ / 20), true});          // 50 ms of quiet tape first
+    m_pulses.push_back({(uint32_t)(m_hz / 20), true});          // 50 ms of quiet tape first
     for (uint8_t b : bytes) {
         for (int i = 0; i < 8; ++i) {
             const uint32_t half = ((b >> i) & 1 ? TICKS_BIT1 : TICKS_BIT0) / 2;
@@ -97,7 +96,7 @@ bool Tape::loadWav(const std::vector<uint8_t>& b) {
     const size_t frame = (size_t)channels * (bits / 8);
     const size_t n = dataLen / frame;
     m_pulses.clear();
-    const double ticksPerSample = MASTER_HZ / rate;
+    const double ticksPerSample = m_hz / rate;
     double acc = 0;
     bool positive = false;
     for (size_t i = 0; i < n; ++i) {
@@ -202,11 +201,11 @@ std::vector<uint8_t> Tape::recordedCas() const {
 std::vector<uint8_t> Tape::recordedWav() const {
     std::vector<uint8_t> samples;
     if (!m_rec.empty()) {
-        const uint64_t t0 = m_rec.front().first, t1 = m_rec.back().first + (uint64_t)MASTER_HZ / 10;
+        const uint64_t t0 = m_rec.front().first, t1 = m_rec.back().first + (uint64_t)m_hz / 10;
         size_t k = 0;
         uint8_t level = m_rec[0].second;
         for (uint64_t i = 0;; ++i) {
-            const uint64_t t = t0 + (uint64_t)((double)i * MASTER_HZ / WAV_RATE);
+            const uint64_t t = t0 + (uint64_t)((double)i * m_hz / WAV_RATE);
             if (t > t1) break;
             while (k < m_rec.size() && m_rec[k].first <= t) level = m_rec[k++].second;
             samples.push_back((uint8_t)(level * 4 + 2));

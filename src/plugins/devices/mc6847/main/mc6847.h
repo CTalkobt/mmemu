@@ -38,6 +38,16 @@ extern const uint8_t T1[1536];        ///< MC6847T1: 128 characters x 12 rows
  * and buff, each aligned pair of dots of the active area shows black,
  * white, or one of two colours by which dot is lit (XRoar's 2-bit LUT);
  * the phase picks which pair is red and which blue.
+ *
+ * PAL (setPal): the 6847 only knows NTSC's 262 lines; a PAL board (the
+ * Dragon, the PAL CoCo) stops its clock twice a frame and makes blank
+ * lines of its own, so the frame is 312 lines (50 Hz). Each stop is at the
+ * fall of HS that starts a line the board counts from FS rising: the VDG's
+ * line N waits there for `delay` lines of 912 ticks, each with an HS pulse
+ * (unless `hsInhibit`, as the Dragon 64 and Professional), then resumes.
+ * The padding lines are black and outside the output frame (XRoar's
+ * vdg_pal: the Dragon pads 25 at line 0 and 25 at 254, the CoCo 24 at 16
+ * and 26 at 256).
  */
 class Mc6847 {
 public:
@@ -49,6 +59,12 @@ public:
     };
     /** Artifact colours: off, or the two NTSC phases. */
     enum class Artifact { Off, BlueRed, RedBlue };
+    /** A PAL board's padding: two stops (lines from FS rising) and the blank lines at each. */
+    struct PalPadding {
+        int stop0 = 0, delay0 = 0;
+        int stop1 = 0, delay1 = 0;
+        bool hsInhibit = false;      ///< no HS pulses during the padding
+    };
 
     // Horizontal timing (ticks from the fall of HS)
     static constexpr int LINE_TICKS = 912;
@@ -94,6 +110,13 @@ public:
     /** Show text inverted (XRoar's "invert text" option, for green-on-black). */
     void setInvertedText(bool on) { m_invertText = on; }
     void setArtifact(Artifact a) { m_artifact = a; }
+    /** PAL: the board's padding lines (delays of 0: NTSC, the chip alone). */
+    void setPal(const PalPadding& p) { m_pal = p; m_padLeft = 0; m_padTick = 0; }
+    bool isPal() const { return m_pal.delay0 + m_pal.delay1 > 0; }
+    /** Lines a frame: 262, or 312 with PAL padding. */
+    int frameLines() const { return FRAME_LINES + m_pal.delay0 + m_pal.delay1; }
+    /** Padding lines still to run before the VDG resumes (0: running). */
+    int paddingLeft() const { return m_padLeft; }
     Artifact artifact() const { return m_artifact; }
     bool isT1() const { return m_t1; }
 
@@ -119,6 +142,7 @@ private:
     enum RenderMode : uint8_t { R_SG, R_CG, R_RG };
 
     void endLine();
+    void endPadLine();
     void render(int to);
     void byteBoundary();
     void commitLine();
@@ -142,6 +166,11 @@ private:
     unsigned m_nlpr = 12;
     uint16_t m_addr = 0;         // the VDG's own address counter
     uint64_t m_frames = 0;
+
+    // PAL padding
+    PalPadding m_pal;
+    int m_padLeft = 0;           // padding lines left (the VDG is stopped)
+    int m_padTick = 0;           // within the padding line
 
     // The line being drawn
     uint16_t m_vram[42] = {};

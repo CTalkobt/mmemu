@@ -7,6 +7,9 @@ Reference Manual; where those leave the behaviour open (the VDG mid-line,
 the SAM's video counter and rate changes) mmsim does what XRoar does
 (GPL-3.0-or-later; mmsim's own code).
 
+The Dragon 32 and Dragon 64 are built from the same code: see
+[README-DRAGON.md](README-DRAGON.md).
+
 ## Profiles
 
 | Profile | Machine |
@@ -15,6 +18,7 @@ the SAM's video counter and rate changes) mmsim does what XRoar does
 | `coco1` | Color Computer (1): MC6847, 32 KB; prefers Color BASIC 1.2 |
 | `coco2` | Color Computer 2: MC6847, 64 KB |
 | `coco2b` | Color Computer 2B: MC6847T1 (true lower case), 64 KB |
+| `cocopal` | A PAL Color Computer 2, 64 KB: 50 Hz, 312 lines (see [PAL](README-DRAGON.md#pal)) |
 
 RAM is 4, 16, 32 or 64 KB: `expansion ram ram 16K` (the machine powers on
 again). BASIC finds the size itself, from PIA1 PB2 (tied low with 4K chips,
@@ -81,6 +85,11 @@ first.
 The VDG: 912 ticks a line (57 slow cycles), 262 lines a frame (14934
 cycles, 59.92 Hz). HS goes to PIA0 CA1 and the SAM; FS to PIA0 CB1 and the
 SAM. PIA0's interrupts are the 6809's /IRQ, PIA1's its /FIRQ.
+
+PAL (`cocopal`, and the Dragons): the board pads the VDG to 312 lines
+(24 blank lines at line 16, 26 at line 256: 17784 cycles, 50 Hz), runs
+from a 14.23753 MHz crystal and inverts HS to PIA0 CA1; no artifact
+colours. See [README-DRAGON.md](README-DRAGON.md#pal).
 
 ## Video (MC6847)
 
@@ -168,9 +177,9 @@ mounts to DRIVE 0. Writes go back to the image file.
 
 ## Not done
 
-- The hi-res joystick interface; the Speech/Sound Pak; the Dragon 32/64.
+- The hi-res joystick interface; the Speech/Sound Pak.
 - The PIA's 1 µs IRQ delay, the SAM's video glitches beyond the divider
-  switches, the VDG's PAL timing.
+  switches.
 
 ## Tests
 

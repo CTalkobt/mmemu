@@ -25,7 +25,8 @@ namespace coco {
  * halves a 1, two long a 0, bytes aligned on the $3C sync byte after each
  * leader) or .wav by the file's extension.
  *
- * Time is in 14.31818 MHz ticks (16 a CPU cycle at 0.89 MHz).
+ * Time is in ticks of the machine's crystal (16 a CPU cycle at 0.89 MHz):
+ * 14.31818 MHz, or a PAL board's (setMasterHz) for .wav timing.
  */
 class Tape : public IOHandler {
 public:
@@ -57,6 +58,7 @@ public:
     std::vector<uint8_t> recordedWav() const;
 
     // The machine's side
+    void setMasterHz(double hz) { m_hz = hz; }
     void setMotor(bool on) { m_motor = on; }
     bool motor() const { return m_motor; }
     bool playing() const { return m_play && m_motor && m_pos < m_pulses.size(); }
@@ -76,6 +78,7 @@ private:
         uint32_t ticks;
         bool level;        // PA0 during the pulse
     };
+    double m_hz = 14318180.0;
     std::vector<Pulse> m_pulses;
     size_t m_pos = 0;
     uint64_t m_left = 0;

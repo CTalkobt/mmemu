@@ -123,6 +123,8 @@ void DeluxeRs232::clock(uint64_t ticks) {
     irqUpdate();
 }
 
+void DeluxeRs232::setClockHz(double hz) { m_acia->setClockHz((uint32_t)(hz / 16)); }
+
 bool DeluxeRs232::attachSerial(const std::string& spec) { return m_acia->attachSerial(spec); }
 
 // ---------------------------------------------------------------------------
@@ -182,6 +184,8 @@ void Fd500::write(uint16_t a, bool, bool scs, uint8_t d) {
 }
 
 void Fd500::clock(uint64_t ticks) { m_fdc->tick(ticks); }
+
+void Fd500::setClockHz(double hz) { m_fdc->setClockHz((uint32_t)hz); }
 
 bool Fd500::mountDisk(int drive, const std::string& path) {
     if (drive < 0 || drive > 3 || !m_fdc->mountDisk(drive, path)) return false;
@@ -258,6 +262,7 @@ void MultiPak::insert(int n, std::unique_ptr<Cart> cart) {
     m_nmi[n] = m_halt[n] = false;
     Cart* c = m_slots[n].get();
     if (!c) return;
+    c->setClockHz(m_hz);
     c->setCart = [this, n](bool level) {
         m_cart[n] = level;
         if (n == ctsSlot() && setCart) setCart(level);
@@ -317,6 +322,11 @@ void MultiPak::write(uint16_t a, bool cts, bool scs, uint8_t d) {
 
 void MultiPak::clock(uint64_t ticks) {
     for (auto& s : m_slots) if (s) s->clock(ticks);
+}
+
+void MultiPak::setClockHz(double hz) {
+    m_hz = hz;
+    for (auto& s : m_slots) if (s) s->setClockHz(hz);
 }
 
 float MultiPak::audio() const {
