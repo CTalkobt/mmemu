@@ -84,7 +84,18 @@ first.
 
 The VDG: 912 ticks a line (57 slow cycles), 262 lines a frame (14934
 cycles, 59.92 Hz). HS goes to PIA0 CA1 and the SAM; FS to PIA0 CB1 and the
-SAM. PIA0's interrupts are the 6809's /IRQ, PIA1's its /FIRQ.
+SAM. PIA0's interrupts are the 6809's /IRQ, PIA1's its /FIRQ. A PIA's
+flag is set on the active edge, its /IRQ output follows 1 µs (14 ticks,
+tRS3) later, as XRoar has it; the edge is timed from where the VDG's HS or
+FS fell, not from the instruction that was running.
+
+The SAM's video address counter is XRoar's divider chain: switching V
+mid-line re-routes the X and Y dividers under a running count, with the
+"glitches" of the paths between them (an input briefly from ground or B4)
+moving the address as the real chip does; a new F takes effect at the
+next FS; at R1 (1.78 MHz) the VDG shows the byte the CPU last addressed
+while the counter runs on. The tests replay mid-line switches against
+XRoar's model, address for address.
 
 PAL (`cocopal`, and the Dragons): the board pads the VDG to 312 lines
 (24 blank lines at line 16, 26 at line 256: 17784 cycles, 50 Hz), runs
@@ -122,6 +133,17 @@ The two analog joysticks (0 right, 1 left) go through the comparator on
 PIA0 PA7: BASIC's JOYSTK sets the 6-bit DAC and compares. A host joystick
 or game pad moves a stick to its ends (fire on PA0/PA1); the mouse moves
 the right stick (left button fires).
+
+**Hi-res joystick interface** (Radio Shack 26-3028): `expansion joyright
+hires` (or `joyleft`; `normal` takes it off). As MAME's
+`coco_tandy_hires_joy` (XRoar has no model of it): software writes the DAC
+(PIA1 PA2-PA7) 0 to start the interface's ramp, and counts until the
+comparator (PIA0 PA7) goes high, 560 µs + the stick's 10-bit position ×
+4856 µs / 1023 later (MAME's figures, tuned to the stock Multi-Vue), so a
+12-cycle loop reads about 360 steps against the DAC's 64. Any other DAC
+value stops the ramp; changing the selects (CA2 axis, CB2 port) after it
+has run out starts it again. The mouse moves the stick on a hi-res port
+(the left one if only it has the interface) at 256 steps a host pixel.
 
 Sound: the DAC (PIA1 PA2-PA7) through the analog multiplexer (PIA1 CB2
 on, PIA0 CA2/CB2 selecting DAC, cassette, cartridge), the single-bit
@@ -177,9 +199,9 @@ mounts to DRIVE 0. Writes go back to the image file.
 
 ## Not done
 
-- The hi-res joystick interface; the Speech/Sound Pak.
-- The PIA's 1 µs IRQ delay, the SAM's video glitches beyond the divider
-  switches.
+- The Speech/Sound Pak.
+- The CoCo Max 3 style hi-res adapter (only the Tandy interface is
+  modelled).
 
 ## Tests
 
@@ -188,5 +210,6 @@ mounts to DRIVE 0. Writes go back to the image file.
 assembled in `coco_test_rom.h`): the VDG's modes and timing, the SAM's
 register, map, memory sizes, rates and video counter, the PIA's flags,
 edges and Cx2 modes, the keyboard, joystick comparator, DAC sound,
-cartridge autostart, the Multi-Pak, cassette `.cas`/`.wav` round trips and
+cartridge autostart, the Multi-Pak, the hi-res joystick interface read
+by a timing loop, the PIA's IRQ delay, the SAM's mid-line V switches, cassette `.cas`/`.wav` round trips and
 the bit banger.

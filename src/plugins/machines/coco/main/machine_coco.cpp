@@ -373,18 +373,29 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
     }
     m_ram.configure(ramKb);
 
-    // The VDG's sync pulses: HS to PIA0 CA1 and the SAM, FS to PIA0 CB1 and the SAM
-    // (a PAL CoCo's board inverts HS on its way to the PIA)
+    // The VDG's sync pulses: HS to PIA0 CA1 and the SAM, FS to PIA0 CB1 and
+    // the SAM (a PAL CoCo's board inverts HS on its way to the PIA). The
+    // PIAs' /IRQ outputs follow their flags 1 us late (tRS3).
+    pia0.irqDelay = pia1.irqDelay = PIA_IRQ_DELAY;
     const bool hsInvert = m_pal && !isDragon(model);
-    vdg.onHs = [this, hsInvert](bool level) { pia0.setCa1(level != hsInvert); sam.hsync(level); };
-    vdg.onFs = [this](bool level) { pia0.setCb1(level); sam.fsync(level); };
+    vdg.onHs = [this, hsInvert](bool level) {
+        if (!level) ++m_vdgLines;
+        pia0.advance(vdgNow());
+        pia0.setCa1(level != hsInvert);
+        sam.hsync(level);
+    };
+    vdg.onFs = [this](bool level) {
+        pia0.advance(vdgNow());
+        pia0.setCb1(level);
+        sam.fsync(level);
+    };
     vdg.fetch = [this](uint16_t, int n, uint16_t* out) { fetchVideo(n, out); };
     sam.onVideoChange = [this]() { vdg.update(); };
 
     pia0.a.preRead = [this]() { keyboardUpdate(); joystickUpdate(); };
     pia0.b.preRead = [this]() { keyboardUpdate(); ramSizeUpdate(); };
-    pia0.a.onControl = [this]() { soundChanged(); };          // CA2, CB2: the joystick / sound selects
-    pia0.b.onControl = [this]() { soundChanged(); };
+    pia0.a.onControl = [this]() { soundChanged(); hiresTrigger(true); };   // CA2, CB2: the joystick / sound selects
+    pia0.b.onControl = [this]() { soundChanged(); hiresTrigger(true); };
     pia0.onIrq = [this]() { updateLines(); };
     pia1.onIrq = [this]() { updateLines(); };
     pia1.a.postWrite = [this]() {
@@ -392,6 +403,7 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
         soundChanged();
         tape.output((uint8_t)(pa >> 2));
         rs232.txLevel(m_dev, pa & 2);
+        hiresTrigger();
     };
     pia1.a.onControl = [this]() { tape.setMotor(pia1.ca2()); };   // CA2: the cassette relay
     pia1.b.preRead = [this]() { ramSizeUpdate(); };
@@ -475,6 +487,7 @@ void System::resetButton() {
     keyboard.reset();
     if (m_cart) m_cart->reset();
     m_halt = false;
+    m_ramp = false;
     ramSizeUpdate();
     if (dragon()) dragonRomSelect();
     m_level = soundLevel();
@@ -511,9 +524,43 @@ void System::joystickUpdate() {
     // CA2 X/Y) against the DAC (PIA1 PA2-PA7)
     const int port = pia0.cb2() ? 1 : 0;
     const int axis = pia0.ca2() ? 1 : 0;
-    const unsigned dac = (unsigned)((pia1.portA() & 0xFC) | 2) << 8;
-    if (m_axis[port][axis] >= dac) pia0.a.inSink |= 0x80;
+    bool high;
+    if (m_joyIf[port] == JoyInterface::HiRes) {
+        // The hi-res interface holds the comparator low until its ramp,
+        // started by writing the DAC 0, passes the stick's position
+        high = m_ramp && m_dev - m_rampStart >= hiresRampTicks(port, axis);
+    } else {
+        const unsigned dac = (unsigned)((pia1.portA() & 0xFC) | 2) << 8;
+        high = m_axis[port][axis] >= dac;
+    }
+    if (high) pia0.a.inSink |= 0x80;
     else pia0.a.inSink &= 0x7F;
+}
+
+// The hi-res interface's trigger, as MAME's coco_tandy_hires_joy: writing the
+// DAC (PIA1 PA2-PA7) 0 starts its ramp, anything else stops it. A change of
+// the selects (axis, port) with the DAC still 0 after the ramp has run out
+// starts it again (the software has moved to another axis).
+void System::hiresTrigger(bool selectsChanged) {
+    if (pia1.portA() & 0xFC) { m_ramp = false; return; }
+    const int port = pia0.cb2() ? 1 : 0, axis = pia0.ca2() ? 1 : 0;
+    if (!m_ramp) {
+        m_ramp = true;
+        m_rampStart = m_dev;
+    } else if (selectsChanged && m_dev - m_rampStart >= hiresRampTicks(port, axis)) {
+        m_rampStart = m_dev;
+    }
+}
+
+uint64_t System::hiresRampTicks(int port, int axis) const {
+    const double us = HIRES_OFFSET_US + (double)(m_axis[port][axis] >> 6) * HIRES_SPAN_US / 1023.0;
+    return (uint64_t)(us * m_masterHz / 1e6);
+}
+
+// The time of an HS / FS edge inside sync()'s vdg.advance(): lines ended
+// (each HS fall) and the tick in the line since it began
+uint64_t System::vdgNow() const {
+    return m_vdgFrom + (uint64_t)m_vdgLines * Mc6847::LINE_TICKS + (uint64_t)vdg.lineTick() - (uint64_t)m_vdgTick0;
 }
 
 // PIA1 PB2 tells BASIC the RAM size: low with 4K chips, high with 16K, and
@@ -569,6 +616,9 @@ void System::sync(uint64_t to) {
     if (to <= m_dev) return;
     const uint64_t d = to - m_dev;
     sound.run(d, m_level);
+    m_vdgFrom = m_dev;
+    m_vdgTick0 = vdg.lineTick();
+    m_vdgLines = 0;
     m_dev = to;
     vdg.advance(d);
     const bool tapeWas = tape.input();
@@ -580,6 +630,8 @@ void System::sync(uint64_t to) {
     keyboard.clock(d);
     if (dragon()) dragonClock(d);
     else rs232.txLevel(m_dev, pia1.portA() & 2);
+    pia0.advance(to);
+    pia1.advance(to);
 }
 
 uint8_t System::access(uint16_t a, bool write, uint8_t v) {
@@ -717,6 +769,8 @@ std::vector<uint8_t> System::state() const {
     put(v, m_ticks);
     put(v, m_dev);
     put(v, m_ram.kb());
+    put(v, m_ramp);
+    put(v, m_rampStart);
     return v;
 }
 
@@ -732,6 +786,8 @@ void System::loadState(const uint8_t* buf) {
     get(p, m_dev);
     int kb = 64;
     get(p, kb);
+    get(p, m_ramp);
+    get(p, m_rampStart);
     m_ram.configure(kb);
     if (b0.size() == m_ram.m_bank[0].size()) m_ram.m_bank[0] = b0;
     m_ram.m_bank[1] = b1;
@@ -940,14 +996,16 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         sys->setAxis(port, 1, !(bits & 0x01) ? 0 : !(bits & 0x02) ? 65535 : 32768);
         sys->setButton(port, !(bits & 0x10));
     };
-    // The mouse moves the right joystick (a host pixel = 256 steps of 65536)
+    // The mouse moves the right joystick, or the one on a hi-res interface
+    // (a host pixel = 256 steps of 65536, finer than either reads)
     desc->onMouse = [sys](int dx, int dy, uint8_t buttons, int) {
+        const int port = sys->mousePort();
         for (int axis = 0; axis < 2; ++axis) {
             const int d = axis ? dy : dx;
-            const int v = std::max(0, std::min(65535, (int)sys->axis(0, axis) + d * 256));
-            sys->setAxis(0, axis, (uint16_t)v);
+            const int v = std::max(0, std::min(65535, (int)sys->axis(port, axis) + d * 256));
+            sys->setAxis(port, axis, (uint16_t)v);
         }
-        sys->setButton(0, buttons & 1);
+        sys->setButton(port, buttons & 1);
     };
 
     // RAM: 4, 16, 32 or 64 KB
@@ -965,6 +1023,25 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             return true;
         };
         s.info = [sys]() { return "ram (" + std::to_string(sys->ramKb()) + "K)"; };
+        desc->expansionSlots.push_back(std::move(s));
+    }
+    // The joystick ports: the stick alone, or through the hi-res interface
+    for (int port = 0; port < 2; ++port) {
+        MachineDescriptor::ExpansionSlot s;
+        s.name = port ? "joyleft" : "joyright";
+        s.description = std::string("The ") + (port ? "left" : "right") + " joystick port: the stick read through the DAC, or the hi-res interface";
+        s.devices = {
+            {"normal", "The joystick on the port: 6 bits through the DAC and comparator", {}, ""},
+            {"hires", "Radio Shack 26-3028 Hi-Res Joystick Interface: a ramp from the cassette output, timed by software (about 10 bits)", {}, ""},
+        };
+        s.canEmpty = false;
+        s.install = [sys, port](const std::string& device, const std::string&, std::string& err) {
+            if (device == "normal" || device.empty()) sys->setJoyInterface(port, JoyInterface::Normal);
+            else if (device == "hires") sys->setJoyInterface(port, JoyInterface::HiRes);
+            else { err = "normal or hires"; return false; }
+            return true;
+        };
+        s.info = [sys, port]() { return sys->joyInterface(port) == JoyInterface::HiRes ? std::string("hires") : std::string("normal"); };
         desc->expansionSlots.push_back(std::move(s));
     }
     // The cartridge port: a Multi-Pak, the Orchestra-90, the Deluxe RS-232

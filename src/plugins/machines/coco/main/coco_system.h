@@ -26,6 +26,18 @@ constexpr double MASTER_HZ = 14318180.0;      ///< the crystal; the SAM divides 
 constexpr double DRAGON_PAL_HZ = 14218000.0;  ///< the Dragon 32/64's crystal (0.889 MHz)
 constexpr double COCO_PAL_HZ = 14237530.0;    ///< a PAL CoCo's
 constexpr int TICKS_SLOW = 16;
+constexpr int PIA_IRQ_DELAY = 14;             ///< tRS3, 1 us: a PIA's flag to its /IRQ output
+/** The hi-res joystick interface's ramp: the comparator rises HIRES_OFFSET_US + the stick's
+ *  10-bit position x HIRES_SPAN_US / 1023 after the DAC is written 0 (MAME's figures, tuned to
+ *  the stock Multi-Vue). */
+constexpr double HIRES_OFFSET_US = 560.0;
+constexpr double HIRES_SPAN_US = 4856.0;
+
+/** What a joystick port has on it. */
+enum class JoyInterface {
+    Normal,     ///< the stick's pots, read through the DAC and comparator (6 bits)
+    HiRes,      ///< the Radio Shack 26-3028 Hi-Res Joystick Interface: a timed ramp
+};
 
 /**
  * The CoCo's dynamic RAM as chips: 4K x1 (one bank of 4 KB), 16K x1 (16
@@ -313,6 +325,11 @@ public:
     void setAxis(int port, int axis, uint16_t v) { m_axis[port & 1][axis & 1] = v; }
     uint16_t axis(int port, int axis) const { return m_axis[port & 1][axis & 1]; }
     void setButton(int port, bool down) { m_button[port & 1] = down; }
+    /** The joystick interface on a port (0 right, 1 left). */
+    void setJoyInterface(int port, JoyInterface j) { m_joyIf[port & 1] = j; }
+    JoyInterface joyInterface(int port) const { return m_joyIf[port & 1]; }
+    /** The port the host mouse moves: the first with a hi-res interface, else the right. */
+    int mousePort() const { return m_joyIf[0] != JoyInterface::HiRes && m_joyIf[1] == JoyInterface::HiRes ? 1 : 0; }
 
     /** The level the sound circuit outputs now (-1..1). */
     float soundLevel() const;
@@ -349,6 +366,9 @@ private:
     void updateLines();
     void keyboardUpdate();
     void joystickUpdate();
+    void hiresTrigger(bool selectsChanged = false);
+    uint64_t hiresRampTicks(int port, int axis) const;
+    uint64_t vdgNow() const;
     void ramSizeUpdate();
     void fetchVideo(int n, uint16_t* out);
     void soundChanged();
@@ -384,6 +404,13 @@ private:
 
     uint16_t m_axis[2][2] = {{32768, 32768}, {32768, 32768}};
     bool m_button[2] = {};
+    JoyInterface m_joyIf[2] = {JoyInterface::Normal, JoyInterface::Normal};
+    bool m_ramp = false;                       // the hi-res ramp running (the DAC at 0)
+    uint64_t m_rampStart = 0;
+
+    // The VDG's place in the current sync(), to time its HS / FS edges
+    uint64_t m_vdgFrom = 0;
+    int m_vdgTick0 = 0, m_vdgLines = 0;
     float m_level = 0;
 };
 

@@ -145,3 +145,67 @@ TEST_CASE(mc6821_write_keeps_flags) {
     ASSERT(other.irqB());
     ASSERT_EQ(other.peek(3) & 0x80, 0x80);
 }
+
+// tRS3: /IRQ follows the active edge a microsecond late (14 ticks of
+// 14.31818 MHz, as XRoar); the flag reads set at once
+TEST_CASE(mc6821_irq_delay) {
+    Mc6821 pia;
+    pia.irqDelay = 14;
+    int calls = 0;
+    pia.onIrq = [&]() { ++calls; };
+    pia.advance(1000);
+    pia.write(3, 0x05);                   // CB1 falling edge, IRQ on
+    pia.setCb1(true);
+    calls = 0;
+    pia.setCb1(false);                    // the edge at 1000
+    calls = 0;
+    ASSERT_EQ(pia.read(3) & 0x80, 0x80);  // the flag at once
+    ASSERT(!pia.irqB());
+    pia.advance(1013);
+    ASSERT(!pia.irqB());
+    ASSERT_EQ(calls, 0);
+    pia.advance(1014);                    // 1 us on: /IRQB
+    ASSERT(pia.irqB());
+    ASSERT_EQ(calls, 1);
+    // A second edge while the flag is set doesn't push it back
+    pia.setCb1(true);
+    pia.setCb1(false);
+    ASSERT(pia.irqB());
+    (void)pia.read(2);                    // the port read clears flag and output at once
+    ASSERT(!pia.irqB());
+    // A flag set while disabled: enabling it later asserts at once
+    pia.write(3, 0x04);
+    pia.setCb1(true);
+    pia.setCb1(false);                    // at 1014
+    pia.advance(1100);
+    ASSERT(!pia.irqB());
+    pia.write(3, 0x05);
+    ASSERT(pia.irqB());
+    (void)pia.read(2);
+    // Cx2 input edges likewise (CA2: falling edge, IRQ on)
+    pia.write(1, 0x0C);
+    pia.a.c2InSink = true;
+    pia.updateCa2();
+    pia.a.c2InSink = false;
+    pia.updateCa2();                      // CA2's falling edge at 1100
+    ASSERT_EQ(pia.read(1) & 0x40, 0x40);
+    ASSERT(!pia.irqA());
+    pia.advance(1114);
+    ASSERT(pia.irqA());
+    // Snapshots keep the pending output
+    pia.write(3, 0x05);
+    pia.setCb1(true);
+    pia.setCb1(false);                    // at 1114
+    Mc6821 other;
+    other.irqDelay = 14;
+    other.loadState(pia.saveState());
+    ASSERT(!other.irqB());
+    other.advance(1128);
+    ASSERT(other.irqB());
+    // With no delay (the default) the output follows at once
+    Mc6821 plain;
+    plain.write(1, 0x05);
+    plain.setCa1(true);
+    plain.setCa1(false);
+    ASSERT(plain.irqA());
+}

@@ -9,6 +9,7 @@ void Mc6821::reset() {
     for (Side* s : {&a, &b}) {
         s->cr = s->ddr = s->out = 0;
         s->irq1 = s->irq2 = false;
+        s->irq1At = s->irq2At = 0;
         s->c2Out = true;
     }
     if (a.postWrite) a.postWrite();
@@ -18,12 +19,20 @@ void Mc6821::reset() {
     irqChanged();
 }
 
+void Mc6821::advance(uint64_t now) {
+    if (now <= m_now) return;
+    const bool was = irq();
+    m_now = now;
+    if (irq() != was) irqChanged();
+}
+
 void Mc6821::setC1(Side& s, bool level, bool isA) {
     (void)isA;
     if (level == s.c1) return;
     s.c1 = level;
     const bool activeHigh = s.cr & 0x02;
     if (level != activeHigh) return;
+    if (!s.irq1) s.irq1At = m_now + irqDelay;    // /IRQ follows tRS3 later
     s.irq1 = true;
     if ((s.cr & 0x38) == 0x20 && !s.c2Out) {     // handshake: Cx1 restores Cx2
         s.c2Out = true;
@@ -39,6 +48,7 @@ void Mc6821::updateC2(Side& s) {
     s.c2 = level;
     const bool activeHigh = s.cr & 0x10;
     if (level != activeHigh) return;
+    if (!s.irq2) s.irq2At = m_now + irqDelay;
     s.irq2 = true;
     irqChanged();
 }
@@ -148,6 +158,8 @@ std::vector<uint8_t> Mc6821::saveState() const {
         put(v, s->cr); put(v, s->ddr); put(v, s->out); put(v, s->c1); put(v, s->c2);
         put(v, s->irq1); put(v, s->irq2); put(v, s->c2Out);
     }
+    put(v, m_now);
+    for (const Side* s : {&a, &b}) { put(v, s->irq1At); put(v, s->irq2At); }
     return v;
 }
 
@@ -157,7 +169,11 @@ void Mc6821::loadState(const std::vector<uint8_t>& st) {
     for (Side* s : {&a, &b}) {
         get(p, e, s->cr); get(p, e, s->ddr); get(p, e, s->out); get(p, e, s->c1); get(p, e, s->c2);
         get(p, e, s->irq1); get(p, e, s->irq2); get(p, e, s->c2Out);
+        s->irq1At = s->irq2At = 0;
     }
+    m_now = 0;
+    get(p, e, m_now);
+    for (Side* s : {&a, &b}) { get(p, e, s->irq1At); get(p, e, s->irq2At); }
     if (a.postWrite) a.postWrite();
     if (b.postWrite) b.postWrite();
     if (a.onControl) a.onControl();

@@ -33,6 +33,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - BASIC ROMs are the user's, in `roms/coco/` (git-ignored) or
   `MMEMU_COCO_FIRMWARE`; `roms/coco/hardware.sym` names the I/O. Tests use
   hand-assembled stand-in ROMs. See `doc/README-COCO.md`.
+- The **Hi-Res Joystick Interface** (Radio Shack 26-3028) on either port
+  (`expansion joyright hires` / `joyleft hires`, `normal` to take it off):
+  as MAME's model, writing the DAC 0 starts a ramp and the comparator rises
+  560 µs + position × 4856 µs / 1023 later, so a timing loop reads the stick
+  far finer than the DAC's 64 steps; the host mouse moves the stick on it.
+- The MC6821's **IRQ delay** (tRS3): /IRQ follows an active Cx1/Cx2 edge 1
+  us later (as XRoar), timed from the VDG's HS/FS edge itself; the flags
+  read set at once.
+- The SAM's video counter under mid-line V changes (the divider "glitches")
+  and mid-frame F and rate changes, tested step for step against XRoar's
+  model.
 
 ### Dragon 32 / Dragon 64 and PAL timing (#331)
 

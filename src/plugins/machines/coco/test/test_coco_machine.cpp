@@ -180,6 +180,107 @@ TEST_CASE(coco_joystick_comparator) {
     delete m;
 }
 
+// The hi-res joystick interface: the cassette output (DAC above half
+// scale) starts a ramp; the comparator reads high once it passes the
+// stick. A stand-in for the driver's timing loop counts until it does.
+TEST_CASE(coco_hires_joystick) {
+    MachineDescriptor* m = make();
+    ASSERT(m);
+    run(m, 100000);
+    IBus* bus = m->buses[0].bus;
+    coco::System* sys = sysOf(m);
+    std::string err;
+    ASSERT(m->expansionSlot("joyright")->install("hires", "", err));
+    ASSERT_EQ(m->expansionSlot("joyright")->info(), std::string("hires"));
+    ASSERT(!m->expansionSlot("joyleft")->install("cocomax", "", err));
+    ASSERT(sys->joyInterface(1) == coco::JoyInterface::Normal);
+    ASSERT_EQ(sys->mousePort(), 0);
+
+    // At $1000: interrupts off, X/right selected, DAC non-zero (ramp held),
+    // then DAC 0 and count 12-cycle loops until PA7 rises; the count at $0800
+    cocotest::Asm a(0x1000, 0x40, 0x12);
+    a.emit({0x1A, 0x50});                        // ORCC #$50
+    a.emit({0x86, 0xFF, 0x1F, 0x8B});            // LDA #$FF; TFR A,DP
+    a.emit({0x86, 0x34, 0x97, 0x01});            // CRA $34: CA2 low (X)
+    a.emit({0x97, 0x03});                        // CRB $34: CB2 low (right)
+    a.emit({0x86, 0x82, 0x97, 0x20});            // DAC 32: the ramp held
+    a.emit({0x8E, 0x00, 0x00});                  // LDX #0
+    a.emit({0x86, 0x02, 0x97, 0x20});            // DAC 0: the ramp runs
+    const uint16_t loop = a.pc;
+    a.emit({0x30, 0x01});                        // LEAX 1,X (5)
+    a.emit({0x96, 0x00});                        // LDA <$00 (4)
+    a.branch(0x2A, loop);                        // BPL loop (3)
+    a.emit({0xBF, 0x08, 0x00});                  // STX $0800
+    const uint16_t spin = a.pc;
+    a.branch(0x20, spin);
+    // (Bus writes from outside run ahead of the CPU's clock: let it catch up)
+    auto poke = [&](uint16_t at, uint8_t v) { bus->write8(at, v); run(m, 20); };
+    for (size_t i = 0; i < a.b.size(); ++i) poke((uint16_t)(0x1000 + i), a.b[i]);
+    auto measure = [&](uint16_t pos) {
+        sys->setAxis(0, 0, pos);
+        poke(0x0800, 0xFF);
+        poke(0x0801, 0xFF);
+        m->cpus[0].cpu->setPc(0x1000);
+        run(m, 8000);
+        return (int)(bus->peek8(0x0800) << 8 | bus->peek8(0x0801));
+    };
+    // The ramp takes 560 us + the 10-bit position x 4856 us / 1023 (MAME's
+    // figures); the first read of $FF00 is 9 cycles after the DAC's write,
+    // then one every 12
+    auto expect = [](uint16_t pos) {
+        const double us = 560.0 + (double)(pos >> 6) * 4856.0 / 1023.0;
+        const int t = (int)(us * 14318180.0 / 1e6) / 16;
+        return t <= 9 ? 1 : (t - 9 + 11) / 12 + 1;
+    };
+    for (uint16_t pos : {0, 4096, 16384, 32768, 49152, 65535}) {
+        const int n = measure(pos);
+        ASSERT(n >= expect(pos) - 1 && n <= expect(pos) + 1);
+    }
+    ASSERT_EQ(expect(65535), 405);        // about 9 bits from this loop; tighter loops do better
+    // Finer than the DAC's 64 steps: 1/256 of the travel moves the count
+    const int q1 = measure(16384), q2 = measure(16384 + 256);
+    ASSERT(q2 > q1);
+    // The other port, without the interface, still compares with the DAC
+    sys->setAxis(1, 0, 65535);
+    bus->write8(0xFF20, 0x82);
+    bus->write8(0xFF03, 0x3C);                   // CB2 high: left
+    ASSERT((bus->read8(0xFF00) & 0x80) != 0);
+    sys->setAxis(1, 0, 0);
+    ASSERT((bus->read8(0xFF00) & 0x80) == 0);
+    // The mouse follows the hi-res port
+    ASSERT(m->expansionSlot("joyright")->install("normal", "", err));
+    ASSERT(m->expansionSlot("joyleft")->install("hires", "", err));
+    ASSERT_EQ(sys->mousePort(), 1);
+    const uint16_t before = sys->axis(1, 0);
+    m->onMouse(10, 0, 0, 0);
+    ASSERT_EQ(sys->axis(1, 0), (uint16_t)std::min(65535, before + 2560));
+    delete m;
+}
+
+// The PIA's /IRQ follows FS's fall on CB1 by 1 us (14 ticks): timed from
+// the edge itself, so frame after frame the IRQ comes exactly a frame on
+TEST_CASE(coco_pia_irq_delay) {
+    MachineDescriptor* m = make();
+    ASSERT(m);
+    run(m, 200000);                       // the stand-in counts FS IRQs, clearing the flag
+    coco::System* sys = sysOf(m);
+    ASSERT_EQ(sys->pia0.irqDelay, 14u);
+    std::vector<uint64_t> due;
+    uint64_t last = sys->pia0.b.irq1At;
+    while (due.size() < 4) {
+        m->schedulerStep(*m);
+        if (sys->pia0.b.irq1At != last) {
+            last = sys->pia0.b.irq1At;
+            due.push_back(last);
+            // Flag set at once, the output only 14 ticks on
+            ASSERT(sys->pia0.b.irq1);
+            ASSERT_EQ(sys->pia0.irqB(), sys->pia0.now() >= last);
+        }
+    }
+    for (size_t i = 1; i < due.size(); ++i) ASSERT_EQ(due[i] - due[i - 1], (uint64_t)(262 * 912));
+    delete m;
+}
+
 // Sound: the 6-bit DAC through the analog mux (PIA1 CB2 on, source 0),
 // the single-bit output (PIA1 PB1), and the Orchestra-90's DACs
 TEST_CASE(coco_dac_sound) {
