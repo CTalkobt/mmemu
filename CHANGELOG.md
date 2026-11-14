@@ -159,13 +159,37 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - The 6502 has an SO pin (`setOverflow`): the 1541's byte-ready sets V.
 - The 6522 VIA's T1 latches read back at `$x6`/`$x7`; the 1541 DOS loads T1
   from them.
-- The VICE runner uses the true drive for the list's `drive/` and `vdrive/`
-  programs (every disk with `MMEMU_VICE_TRUEDRIVE=1`). It mounts a scratch
-  copy of each disk, since `drive/format` formats its disk.
-- VICE testprogs pass: `drive/1541-testsuite` (both disks), `drive/defaults`,
-  `drive/format`, `drive/iecdelay`, `drive/skew/skew1`,
-  `vdrive/bustakeover`, `vdrive/sa-check`. 848 pass / 48 fail of 896, no
-  regressions.
+- The 6522 VIA's timers follow VICE's `viacore.c`:
+  - T1 counts N, ..., 0, `$FFFF`, then reloads, in one-shot mode too. Its
+    flag comes the cycle after it reads 0, armed by a T1CH write (once in
+    one-shot mode). PB7 follows T1.
+  - T2 counts through `$FFFF` with one IRQ per write. It is an 8-bit timer
+    with the shift register on it, and takes a cycle to switch to or from
+    PB6 counting.
+  - IER reads with bit 7 set. See `doc/README-6522.md`.
+- The drive's serial bus is timed exactly, for the fast loaders' 2-bit
+  transfers:
+  - each side's changes are stamped in a common time unit and seen from
+    then;
+  - the drive runs behind and catches up when the C64 touches the port;
+  - its VIA samples the port at the start of the cycle.
+- The drive's address decoding is a 1541's: RAM and the VIAs mirrored
+  through `$7FFF`, the rest open, reading the bus's last byte. The CPU's
+  dummy reads of RAM reach the bus.
+- The VICE runner uses the true drive for the `drive/`, `vdrive/` and
+  `general/fuxxortest` programs (every program with
+  `MMEMU_VICE_TRUEDRIVE=1`). It mounts a scratch copy of each disk, since
+  `drive/format` formats its disk.
+- VICE testprogs that pass:
+  - all 19 of `drive/viavarious`;
+  - `drive/1541-testsuite` (both disks), `defaults`, `diskid`, `format`,
+    `iecdelay`, `interrupts/timera`, `openbus`, `openbus2`, `rpm1`, `rpm2`,
+    `selftest`, `skew1`;
+  - `drive/scanner` 35, 40 and 42;
+  - `vdrive/bustakeover`, `vdrive/sa-check`;
+  - `general/fuxxortest/ef2-inst1`.
+
+  878 pass / 18 fail of 896 (was 840 / 56), no regressions.
 
 ### VICE's test programs: VIC-II collision IRQs and the sprite DMA state machine (#345, #342)
 

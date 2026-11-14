@@ -9,8 +9,11 @@
 #include <fstream>
 
 // ---------------------------------------------------------------------------
-// The drive's bus: RAM $0000-$07FF (mirrored to $1000), VIA1 $1800, VIA2
-// $1C00 (each mirrored through its 1K), the ROM $C000 (mirrored at $8000)
+// The drive's bus (VICE testprogs drive/openbus): below $8000, A11 and A12
+// low select the RAM ($0000-$07FF, again at $2000, $4000, $6000), both high
+// a VIA (A10: VIA1 $1800, VIA2 $1C00, 16 registers mirrored, again at $3800,
+// $5800, $7800); the rest is open, reading the bus's last byte. The ROM is
+// $C000-$FFFF, mirrored at $8000.
 // ---------------------------------------------------------------------------
 
 class Drive1541::Bus : public IBus {
@@ -27,31 +30,36 @@ public:
     void clearWriteLog() override {}
     const BusConfig& config() const override { return m_cfg; }
     const char* name() const override { return "drive"; }
-    uint8_t read8(uint32_t a) override { return access(a & 0xFFFF, false); }
+    uint8_t read8(uint32_t a) override { return m_last = access(a & 0xFFFF, false); }
     uint8_t peek8(uint32_t a) override { return access(a & 0xFFFF, true); }
     void write8(uint32_t a, uint8_t v) override {
         a &= 0xFFFF;
-        if (a < 0x1000) { m_d->m_ram[a & 0x7FF] = v; return; }
-        if (a >= 0x1800 && a < 0x1C00) { m_d->m_via1->ioWrite(this, 0x1800 | (a & 0xF), v); return; }
-        if (a >= 0x1C00 && a < 0x2000) { m_d->m_via2->ioWrite(this, 0x1C00 | (a & 0xF), v); return; }
+        m_last = v;
+        if (a >= 0x8000) return;
+        if ((a & 0x1800) == 0) { m_d->m_ram[a & 0x7FF] = v; return; }
+        if ((a & 0x1800) != 0x1800) return;
+        if (a & 0x0400) m_d->m_via2->ioWrite(this, 0x1C00 | (a & 0xF), v);
+        else            m_d->m_via1->ioWrite(this, 0x1800 | (a & 0xF), v);
     }
-    bool isPlainMemory(uint32_t a) const override { a &= 0xFFFF; return a < 0x1000 || a >= 0x8000; }
+    // Only the ROM: the CPU's dummy reads of RAM put its bytes on the bus,
+    // and an open read gets them (testprogs drive/openbus: LDA $07FF,X)
+    bool isPlainMemory(uint32_t a) const override { return (a & 0xFFFF) >= 0x8000; }
 private:
     uint8_t access(uint32_t a, bool peek) {
-        if (a < 0x1000) return m_d->m_ram[a & 0x7FF];
         if (a >= 0x8000) return m_d->m_rom[a & 0x3FFF];
-        uint8_t v = (uint8_t)(a >> 8);                  // open bus: the address's high byte
-        if (a >= 0x1800 && a < 0x1C00) {
-            if (peek) m_d->m_via1->ioPeek(this, 0x1800 | (a & 0xF), &v);
-            else      m_d->m_via1->ioRead(this, 0x1800 | (a & 0xF), &v);
-        } else if (a >= 0x1C00 && a < 0x2000) {
-            if (peek) m_d->m_via2->ioPeek(this, 0x1C00 | (a & 0xF), &v);
-            else      m_d->m_via2->ioRead(this, 0x1C00 | (a & 0xF), &v);
+        if ((a & 0x1800) == 0) return m_d->m_ram[a & 0x7FF];
+        uint8_t v = m_last;                             // open bus: the last byte on it
+        if ((a & 0x1800) == 0x1800) {
+            VIA6522* via = (a & 0x0400) ? m_d->m_via2.get() : m_d->m_via1.get();
+            const uint32_t r = ((a & 0x0400) ? 0x1C00 : 0x1800) | (a & 0xF);
+            if (peek) via->ioPeek(this, r, &v);
+            else      via->ioRead(this, r, &v);
         }
         return v;
     }
     Drive1541* m_d;
     BusConfig m_cfg{};
+    uint8_t m_last = 0xFF;          // the data bus's last value (open bus)
 };
 
 IBus* Drive1541::bus() const { return m_bus.get(); }

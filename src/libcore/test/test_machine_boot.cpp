@@ -1330,7 +1330,8 @@ TEST_CASE(c64_vice_testprogs) {
             else if (f[i].rfind("mountd64:", 0) == 0)
                 disk = std::string(root) + "/" + prg.substr(0, prg.find_last_of('/') + 1) + f[i].substr(9);
         }
-        const bool trueDrive = prg.rfind("drive/", 0) == 0 || prg.rfind("vdrive/", 0) == 0 || std::getenv("MMEMU_VICE_TRUEDRIVE");
+        const bool trueDrive = prg.rfind("drive/", 0) == 0 || prg.rfind("vdrive/", 0) == 0 ||
+                               prg.find("fuxxortest") != std::string::npos || std::getenv("MMEMU_VICE_TRUEDRIVE");
         const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia, disk, "", trueDrive);
         printf("  vice %-60s %s (%d)\n", prg.c_str(), code == 0 ? "pass" : "FAIL", code);
         return;
@@ -1375,7 +1376,9 @@ TEST_CASE(c64_vice_testprogs) {
         if (++index % shards != shard) continue;
         const std::string dir = std::string(root) + "/testbench/" + f[0];
         const std::string disk = !diskFile.empty() ? dir + diskFile : !loadName.empty() ? dir : "";
+        // VICE runs them all with its true drive; here the ones that talk to it
         const bool trueDrive = f[0].find("/drive/") != std::string::npos || f[0].find("/vdrive/") != std::string::npos ||
+                               f[0].find("/fuxxortest") != std::string::npos ||
                                (std::getenv("MMEMU_VICE_TRUEDRIVE") && !disk.empty());
         const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia, disk, loadName, trueDrive);
         if (code == 0) ++passed; else ++failed;

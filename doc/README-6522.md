@@ -17,8 +17,19 @@ The MOS 6522 is a highly flexible I/O chip featuring two 8-bit bidirectional por
 - **Input/Output Masking**: Correctly applies DDR masks during reads and writes.
 
 ### 2.2 Timers
-- **Timer 1**: Supports one-shot and continuous (auto-reload) modes. Sets the Interrupt Flag Register (IFR) bit 6 on underflow.
-- **Timer 2**: Supports one-shot interval mode. Sets IFR bit 5 on underflow.
+The timers follow VICE's `viacore.c` (#341), stepped a cycle at a time. A counter read sees the value of the current cycle. A write takes effect from the next cycle.
+
+- **Timer 1:**
+  - Counts N, N-1, …, 0, `$FFFF`, then reloads the latch: a period of N+2. It reloads in one-shot mode too, against the datasheet.
+  - IFR bit 6 is set in the cycle after the counter reads 0, while an IRQ is armed. A T1CH write arms it. A one-shot fires once per write. Free-running keeps firing, but switching to free-running doesn't re-arm a one-shot that has already fired.
+  - With ACR bit 7, PB7 shows the timer: low from a T1CH write, toggled at each IRQ. The latches read back at `$x6`/`$x7`.
+- **Timer 2:**
+  - Counts down from a T2CH write through `$FFFF`. IFR bit 5 is set once per write, the cycle after it reads `$0000`.
+  - With the shift register on it (ACR modes 1, 4, 5) it is an 8-bit timer. The low byte reloads from its latch the cycle after it shows `xxFF`, the high byte counts those underflows, and the 16-bit underflow still flags.
+  - Counting PB6 pulses (ACR bit 5) it stops: no pulses are modelled. Switching between the modes takes a cycle: one more decrement when stopping, a cycle's wait when starting.
+- IER reads with bit 7 set. The shift register itself doesn't shift yet.
+
+VICE testprogs `drive/viavarious` (19 programs, through the true 1541, README-1541) pass.
 
 ### 2.3 Control Lines & Signal API
 
