@@ -177,7 +177,9 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             break;
         case IRQ:
             // Bit 7 is set if any enabled IRQ source is active; bits 4-6
-            // aren't there and read 1 (VICE: irq_status | 0x70)
+            // aren't there and read 1 (VICE: irq_status | 0x70). The
+            // collisions so far count.
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
             *val = 0x70 | m_regs[IRQ] | ((m_regs[IRQ] & m_regs[IRQEN] & 0x0F) ? IRQ_ANY : 0);
             break;
         case SSCOL:
@@ -222,7 +224,8 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if (reg > 0x2E) return true; // writes to unused regs are ignored
 
     // The sprite sequencer runs to this cycle on the registers as they were
-    if ((reg <= MSIGX || reg == SPENA || reg == SPBGPR || reg == SPMC || reg == XXPAND || reg == YXPAND) &&
+    if ((reg <= MSIGX || reg == SPENA || reg == SPBGPR || reg == SPMC || reg == XXPAND || reg == YXPAND ||
+         reg == IRQ || reg == IRQEN) &&
         (m_regs[SPENA] || m_seq.active))
         evalCollisions(m_rasterLine, collReadT());
 
@@ -358,7 +361,15 @@ void VIC2::tick(uint64_t cycles) {
             }
             if (m_frameStartPending && m_cycleAccum >= 1) frameStart();
             if (m_lpPending && m_ticks >= m_lpAt) { m_lpPending = false; triggerLightPen(false); }
-            if (m_regs[SPENA] || m_seq.active) captureFetch((int)m_cycleAccum);
+            if (m_regs[SPENA] || m_seq.active) {
+                captureFetch((int)m_cycleAccum);
+                // A collision IRQ that is enabled and not yet flagged is
+                // raised in the cycle the collision happens, not when the
+                // line ends (testprogs interrupts/irq-ackn-bug/irq-ack-vicii)
+                if (((m_regs[IRQEN] & IRQ_MMC) && !(m_regs[IRQ] & IRQ_MMC)) ||
+                    ((m_regs[IRQEN] & IRQ_MBC) && !(m_regs[IRQ] & IRQ_MBC)))
+                    evalCollisions(m_rasterLine, collReadT());
+            }
         }
         return;
     }
