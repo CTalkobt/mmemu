@@ -7,6 +7,53 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### HD6309 CPU (#332)
+
+- New `HD6309` core (`src/plugins/6809/main/cpu6309.{h,cpp}`), core name
+  and disassembler ISA `6309`, and a `raw6309` machine. It subclasses
+  `M6809` and is a drop-in for it. The 6809 core is unchanged, except that
+  its internals are now protected rather than private.
+- Registers E, F, W, Q, V and MD. Emulation and native mode, counted bus
+  cycle by bus cycle: the 6809's counts in emulation mode and the 6309's in
+  native mode. Native-mode interrupt frames include E and F, and FM makes
+  FIRQ stack the entire state.
+- All the 6309 instructions: the E/F/W/D/Q group, the inter-register ops,
+  PSHSW/PULSW/PSHUW/PULUW, TFM (interruptible and restartable), the bit
+  ops, MULD/DIVD/DIVQ, SEXW, LDMD, BITMD and AIM/OIM/EIM/TIM. Also the W
+  indexed modes, the E/F/W offsets, and TFR/EXG with the 6309's register
+  codes.
+- Illegal-instruction and divide-by-zero traps through `$FFF0`, with MD bits
+  6 and 7.
+- `doc/README-6809.md` lists the references and the choices made where they
+  disagree. `test_cpu6309.cpp` checks emulation mode against the 6809 core on
+  random programs, and the cycle counts against Atkinson's table.
+
+### Color Computer 3 (#332)
+
+- The TCC1014 GIME (`src/plugins/devices/gime`): the MMU (two tasks of eight
+  8 KB page registers over 128 or 512 KB, 128 KB mirroring as on the board,
+  the constant page, the MC1/MC0 ROM maps, TY), the SAM bits it keeps (V, F,
+  R1 for 1.79 MHz, TY), the interrupt controller (`$FF92`/`$FF93`: TMR,
+  HBORD, VBORD, EI2, EI1 keyboard, EI0 cartridge; reads acknowledge), the
+  12-bit timer at the line rate or 3.58 MHz with the 1986 (+2) and 1987 (+1)
+  counts, and the video: 32/40/64/80-column text with attributes (colours,
+  underline, blink) in the GIME's font, 1/2/4-bit graphics at 16-160 bytes a
+  row up to 640x225x4 and 320x225x16, 192/200/225 lines, lines per row, the
+  vertical and horizontal offsets and the 256-byte virtual row, VSC, the
+  border, 50/60 Hz, the 64-colour palette on an RGB (CM-8) or composite
+  monitor, and the VDG-compatible modes through the palette with the GIME's
+  lower case. Horizontal timings per revision after XRoar's measurements.
+- `coco3` and `coco3p` (PAL) in the coco plugin: the CoCo 2's PIAs, keyboard,
+  joysticks (the hi-res interface and the mouse), sound, cassette, bit banger
+  and cartridge port (ROM Paks, the Multi-Pak, the FD-502 with Disk BASIC
+  1.1, the Deluxe RS-232 Pak, the Orchestra-90) around the GIME, its /IRQ
+  and /FIRQ with the PIAs'. `coco3.rom` (32 KB, user-supplied) from
+  `roms/coco/`; expansions `ram` (128K/512K), `monitor` (composite/rgb),
+  `gime` (1986/1987). `coco3h`: the same with the HD6309 and 512 KB.
+- Tests: the GIME's MMU, ROM modes, palette, timer and interrupts on both
+  revisions, each video mode family's pixels, the offsets, and a CoCo 3
+  running a stand-in ROM with a 40-column screen.
+
 ### VICE's test programs: VIC-II collision IRQs and the sprite DMA state machine (#345, #342)
 
 - `$D019` reads and writes, and `$D01A` writes, see the sprite collisions so

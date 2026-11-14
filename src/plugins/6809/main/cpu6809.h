@@ -84,7 +84,9 @@ public:
     uint16_t y() const { return m_y; }
     uint16_t u() const { return m_u; }
 
-private:
+protected:
+    // Protected rather than private so that the HD6309 (cpu6309.h) can share the
+    // register file, the flag helpers and the 8/16-bit arithmetic.
     enum Wait { WAIT_NONE, WAIT_CWAI, WAIT_SYNC };
 
     uint8_t rd(uint16_t a) { return m_bus ? m_bus->read8(a) : 0xFF; }

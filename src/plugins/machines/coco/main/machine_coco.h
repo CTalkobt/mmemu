@@ -12,9 +12,10 @@ namespace coco {
  * CoCo 1 (MC6847, 0.89 MHz), CoCo 2 (MC6847), CoCo 2B (MC6847T1: lower
  * case); the Dragon 32 and Dragon 64 (Dragon Data's: the same chips, their
  * own keyboard matrix, ROM, printer port and, on the 64, a 6551 and a
- * second BASIC).
+ * second BASIC); the Color Computer 3 (the TCC1014 GIME in place of the
+ * SAM and VDG, 128 or 512 KB, Super Extended Color BASIC).
  */
-enum class Model { CoCo1, CoCo2, CoCo2B, Dragon32, Dragon64 };
+enum class Model { CoCo1, CoCo2, CoCo2B, Dragon32, Dragon64, CoCo3 };
 
 inline bool isDragon(Model m) { return m == Model::Dragon32 || m == Model::Dragon64; }
 
@@ -32,6 +33,7 @@ struct Roms {
     std::vector<uint8_t> extBasic;     ///< 8 KB at $8000 (optional)
     std::vector<uint8_t> dragonBasic;  ///< Dragon: 16 KB at $8000 (required; the 64's 32K-mode BASIC)
     std::vector<uint8_t> dragon64k;    ///< Dragon 64: the 16 KB 64K-mode BASIC (PIA1 PB2 low)
+    std::vector<uint8_t> coco3Basic;   ///< CoCo 3: the 32 KB Super Extended Color BASIC (required on a CoCo 3)
 };
 
 /**
@@ -52,9 +54,14 @@ struct Roms {
  * Dragon 64's d64_1.rom (32K mode) and d64_2.rom (64K mode), 16 KB each;
  * DragonDOS ddos12a.rom (or ddos12, ddos10...) for its cartridge. A
  * Dragon 64 with `tv` NTSC is the Tano Dragon.
+ *
+ * The CoCo 3 (`ramKb` 128 or 512) runs coco3.rom (32 KB, Super Extended
+ * Color BASIC; a PAL coco3p prefers coco3p.rom) from the same directory;
+ * its FD-502 uses disk11.rom. `tv` PAL is the PAL CoCo 3's crystal.
+ * `hd6309` fits a Hitachi HD6309 in place of the MC6809E (coco3h).
  */
 MachineDescriptor* create(Model model, std::string* err = nullptr, int ramKb = 64, const Roms* roms = nullptr,
-                          Tv tv = Tv::Default);
+                          Tv tv = Tv::Default, bool hd6309 = false);
 
 /** Plug a ROM Pak (.rom / .ccc image) into the cartridge port (or, with a
  *  Multi-Pak fitted, the slot its switch selects). */

@@ -198,6 +198,9 @@ PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/machines/coco/main/machine_dragon.cpp \
 	src/plugins/machines/coco/main/dragon_dos.cpp \
+	src/plugins/machines/coco/main/machine_coco3.cpp \
+	src/plugins/devices/gime/main/gime.cpp \
+	src/plugins/devices/gime/main/gime_font.cpp \
 	src/plugins/devices/mc6847/main/mc6847.cpp \
 	src/plugins/devices/mc6847/main/mc6847_font.cpp \
 	src/plugins/devices/mc6883/main/mc6883.cpp \
@@ -230,6 +233,7 @@ PLUGIN_65816_SRCS = src/plugins/65816/main/cpu65816.cpp \
 PLUGIN_ARM_SRCS = src/plugins/arm/main/cpu_arm2.cpp \
 	src/plugins/arm/main/plugin_init.cpp
 PLUGIN_6809_SRCS = src/plugins/6809/main/cpu6809.cpp \
+	src/plugins/6809/main/cpu6309.cpp \
 	src/plugins/6809/main/plugin_init.cpp
 PLUGIN_6801_SRCS = src/plugins/6801/main/cpu6801.cpp \
 	src/plugins/6801/main/asm6801.cpp \
@@ -590,6 +594,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/z80/test/test_z80.cpp \
 	src/plugins/z80/test/test_z80_fuse.cpp \
 	src/plugins/6809/test/test_cpu6809.cpp \
+	src/plugins/6809/test/test_cpu6309.cpp \
 	src/plugins/arm/test/test_cpu_arm2.cpp \
 	src/plugins/65816/test/test_cpu65816.cpp \
 	src/plugins/devices/riot6532/test/test_riot6532.cpp \
@@ -637,6 +642,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6801/test/test_asm6801.cpp \
 	src/plugins/machines/mc10/test/test_mc10_machine.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
+	src/plugins/machines/coco/test/test_coco3_machine.cpp \
+	src/plugins/devices/gime/test/test_gime.cpp \
 	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
@@ -743,6 +750,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/c128/main/c128_carts.o \
 	src/plugins/z80/main/cpu_z80.o \
 	src/plugins/6809/main/cpu6809.o \
+	src/plugins/6809/main/cpu6309.o \
 	src/plugins/6801/main/cpu6801.o \
 	src/plugins/6801/main/asm6801.o \
 	src/plugins/machines/mc10/main/machine_mc10.o \
@@ -815,6 +823,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/coco/main/coco_tape.o \
 	src/plugins/machines/coco/main/machine_dragon.o \
 	src/plugins/machines/coco/main/dragon_dos.o \
+	src/plugins/machines/coco/main/machine_coco3.o \
+	src/plugins/devices/gime/main/gime.o \
+	src/plugins/devices/gime/main/gime_font.o \
 	src/plugins/machines/trs80/main/machine_trs80.o \
 	src/plugins/machines/trs80/main/trs80_system.o \
 	src/plugins/machines/trs80/main/trs80_font.o \

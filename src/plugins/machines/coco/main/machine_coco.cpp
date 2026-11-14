@@ -4,6 +4,7 @@
 
 #include "coco_system.h"
 #include "plugins/6809/main/cpu6809.h"
+#include "plugins/6809/main/cpu6309.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
@@ -326,6 +327,7 @@ int Sound::pullSamples(float* buffer, int maxSamples) {
 }
 
 void Display::renderFrame(uint32_t* buffer) {
+    if (m_gime) { m_gime->renderArgb(buffer); return; }
     std::memcpy(buffer, m_vdg->frame(), sizeof(uint32_t) * Mc6847::OUT_W * Mc6847::OUT_H);
 }
 
@@ -427,16 +429,24 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
         vdg.setPal(p);
     }
     if (isDragon(model)) wireDragon();
+    if (model == Model::CoCo3) wireCoco3(std::move(colorBasic), ramKb);
 }
 
 System::~System() = default;
 
 void System::setRamKb(int kb) {
+    if (m_gime) {
+        m_ram3.assign(kb >= 512 ? 0x80000 : 0x20000, 0);
+        m_gime->setRamKb(kb >= 512 ? 512 : 128);
+        m_gime->setRam(m_ram3.data());
+        return;
+    }
     m_ram.configure(kb);
     ramSizeUpdate();
 }
 
 uint8_t System::ramByte(uint32_t phys) const {
+    if (m_gime) return m_ram3[phys % m_ram3.size()];
     const auto& b = m_ram.m_bank[0];
     return b.empty() ? 0xFF : b[phys % b.size()];
 }
@@ -452,6 +462,7 @@ void System::setCart(std::unique_ptr<Cart> cart) {
     m_cart->setCart = [this](bool level) {
         m_cartLine = level;
         pia1.setCb1(level);
+        if (m_gime) m_gime->setInterruptInput(Gime::INT_EI0, !level);    // the GIME's EI0: CART falling
     };
     m_cart->setNmi = [this](bool on) {
         m_nmi = on;
@@ -464,6 +475,10 @@ void System::setCart(std::unique_ptr<Cart> cart) {
 
 void System::powerOn() {
     for (auto& b : m_ram.m_bank) std::fill(b.begin(), b.end(), 0);
+    std::fill(m_ram3.begin(), m_ram3.end(), 0);
+    if (m_gime) {
+        for (int i = 0; i < 16; ++i) m_gime->write((uint16_t)(0xFFA0 + i), 0);
+    }
     resetButton();
 }
 
@@ -481,6 +496,7 @@ void System::resetButton() {
         if (m_acia) m_acia->reset();
     }
     sam.reset();
+    if (m_gime) m_gime->reset();
     pia0.reset();
     pia1.reset();
     vdg.reset();
@@ -497,8 +513,9 @@ void System::resetButton() {
 
 void System::updateLines() {
     if (!m_cpu) return;
-    m_cpu->setIrqLine(pia0.irq());          // PIA0: HS, FS
-    m_cpu->setFirqLine(pia1.irq());         // PIA1: CD (RS-232 carrier), CART
+    const bool gIrq = m_gime && m_gime->irq(), gFirq = m_gime && m_gime->firq();
+    m_cpu->setIrqLine(pia0.irq() || gIrq);  // PIA0: HS, FS (and the CoCo 3's GIME)
+    m_setFirq(pia1.irq() || gFirq);         // PIA1: CD (RS-232 carrier), CART
 }
 
 void System::keyboardUpdate() {
@@ -620,7 +637,8 @@ void System::sync(uint64_t to) {
     m_vdgTick0 = vdg.lineTick();
     m_vdgLines = 0;
     m_dev = to;
-    vdg.advance(d);
+    if (m_gime) m_gime->advance(d);
+    else vdg.advance(d);
     const bool tapeWas = tape.input();
     tape.clock(d);
     if (tape.input()) pia1.a.inSink |= 0x01;
@@ -635,6 +653,7 @@ void System::sync(uint64_t to) {
 }
 
 uint8_t System::access(uint16_t a, bool write, uint8_t v) {
+    if (m_gime) return access3(a, write, v);
     const uint64_t start = m_ticks + m_instr;
     if (a >= 0xFF00) {
         sync(start);
@@ -706,6 +725,7 @@ void System::write8(uint32_t addr, uint8_t v) {
 
 uint8_t System::peek8(uint32_t addr) {
     const uint16_t a = (uint16_t)addr;
+    if (m_gime) return peek3(a);
     const uint8_t s = sam.select(a, false);
     const bool cts = s == Mc6883::S_CTS, scs = s == Mc6883::S_IO2;
     uint8_t d = 0xFF;
@@ -740,9 +760,11 @@ int System::step() {
     if (!m_halt && m_cpu) cycles = m_cpu->step();
     // Cycles without a bus access (the 6809's "don't care" cycles, a
     // halted CPU) put $FFFF on the bus
-    for (int dead = cycles - m_accesses; dead > 0; --dead) m_instr += (uint64_t)sam.access(0xFFFF, false).ticks;
+    for (int dead = cycles - m_accesses; dead > 0; --dead)
+        m_instr += m_gime ? (uint64_t)m_gime->cycleTicks() : (uint64_t)sam.access(0xFFFF, false).ticks;
     m_ticks += m_instr;
     sync(m_ticks);
+    if (m_gime) coco3Lines();
     updateLines();
     const uint64_t slow = m_ticks / TICKS_SLOW;
     const int r = (int)(slow - m_reported);
@@ -771,6 +793,10 @@ std::vector<uint8_t> System::state() const {
     put(v, m_ram.kb());
     put(v, m_ramp);
     put(v, m_rampStart);
+    if (m_gime) {
+        putBlob(v, m_ram3);
+        putBlob(v, m_gime->saveState());
+    }
     return v;
 }
 
@@ -788,6 +814,14 @@ void System::loadState(const uint8_t* buf) {
     get(p, kb);
     get(p, m_ramp);
     get(p, m_rampStart);
+    if (m_gime) {
+        auto r3 = getBlob(p);
+        auto g = getBlob(p);
+        if (r3.size() == 0x20000 || r3.size() == 0x80000) setRamKb((int)(r3.size() / 1024));
+        if (r3.size() == m_ram3.size()) m_ram3 = r3;
+        m_gime->loadState(g);
+        kb = 64;
+    }
     m_ram.configure(kb);
     if (b0.size() == m_ram.m_bank[0].size()) m_ram.m_bank[0] = b0;
     m_ram.m_bank[1] = b1;
@@ -849,6 +883,8 @@ std::vector<uint8_t> placeholderRom() {
     return r;
 }
 
+}  // namespace
+
 std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& option, std::string& err) {
     if (device == "orch90") {
         std::vector<uint8_t> rom;
@@ -857,7 +893,7 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         return std::unique_ptr<Cart>(new Orchestra90(std::move(rom)));
     }
     if (device == "rs232") return std::unique_ptr<Cart>(new DeluxeRs232());
-    if (device == "fd500") {
+    if (device == "fd500" || device == "fd502") {
         std::vector<uint8_t> rom;
         std::string found;
         if (!option.empty()) {
@@ -884,9 +920,17 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
     return nullptr;
 }
 
+namespace {
+/** The CPU on the board's bus, its lines wired to the System. */
+template <class Cpu> ICore* fitCpu(System* sys) {
+    auto* cpu = new Cpu();
+    cpu->setDataBus(sys);
+    sys->setCpu(cpu);
+    return cpu;
+}
 }  // namespace
 
-MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* roms, Tv tv) {
+MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* roms, Tv tv, bool hd6309) {
     std::vector<uint8_t> color, ext, dragon, dragon64k;
     std::string missing, notice;
     const bool isD = isDragon(model);
@@ -902,6 +946,15 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         } else {
             notice = missing;                 // the Dragon 64 without its 64K-mode BASIC
             missing.clear();
+        }
+    } else if (model == Model::CoCo3) {
+        if (roms) {
+            color = roms->coco3Basic;
+            if (color.empty()) { if (err) *err = "no Super Extended Color BASIC image"; return nullptr; }
+        } else if (!loadCoco3Rom(tv == Tv::PAL, color, missing)) {
+            if (err) *err = missing;
+            std::fprintf(stderr, "%s\n", missing.c_str());
+            color = coco3PlaceholderRom();
         }
     } else if (roms) {
         color = roms->colorBasic;
@@ -940,6 +993,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             desc->machineId = pal ? "dragon64" : "tano";
             desc->displayName = pal ? "Dragon 64" : "Tano Dragon (NTSC Dragon 64)";
             break;
+        case Model::CoCo3: desc->machineId = pal ? "coco3p" : "coco3"; desc->displayName = "Tandy Color Computer 3"; break;
     }
     if (!isD && pal) desc->displayName += " (PAL)";
     if (model == Model::Dragon32 && !pal) desc->displayName += " (NTSC)";
@@ -949,12 +1003,12 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     desc->clockHz = sys->masterHz() / TICKS_SLOW;
     if (!missing.empty()) desc->warnings.push_back(missing);
     else if (!notice.empty()) desc->warnings.push_back(notice);
-    else if (!isD && !haveExt && !roms)
+    else if (!isD && model != Model::CoCo3 && !haveExt && !roms)
         desc->warnings.push_back("Extended Color BASIC (extbas11.rom) not found in " + firmwareDir() + ": Color BASIC only");
 
-    auto* cpu = new M6809();
-    cpu->setDataBus(sys);
-    sys->setCpu(cpu);
+    // The CPU: an MC6809E, or the HD6309 upgrade (coco3h)
+    ICore* cpu = hd6309 ? fitCpu<HD6309>(sys) : fitCpu<M6809>(sys);
+    if (hd6309) desc->displayName += " (HD6309)";
     desc->buses.push_back({"system", sys});
     desc->cpus.push_back({"main", cpu, sys, sys, nullptr, true, 1});
 
@@ -985,8 +1039,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     desc->screenButtons = {
         {"RESET", {"reset"}, "The RESET button: BASIC restarts; the program in memory stays."},
     };
-    // A PAL set shows no artifact colours
-    if (!pal) desc->screenButtons.push_back({"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."});
+    // A PAL set shows no artifact colours (nor does the GIME here)
+    if (!pal && model != Model::CoCo3) desc->screenButtons.push_back({"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."});
 
     // Joysticks: 0 right, 1 left (the right one is most games')
     desc->joystickPorts = 2;
@@ -1008,8 +1062,10 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         sys->setButton(port, buttons & 1);
     };
 
-    // RAM: 4, 16, 32 or 64 KB
-    {
+    // RAM: 4, 16, 32 or 64 KB (the CoCo 3's: coco3Slots)
+    if (model == Model::CoCo3) {
+        coco3Slots(desc, sys);
+    } else {
         MachineDescriptor::ExpansionSlot s;
         s.name = "ram";
         s.description = "RAM fitted: 4K (4K x1 chips), 16K (16K x1), 32K or 64K (64K x1); BASIC finds the size at power on";
@@ -1063,6 +1119,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
                 {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
                 {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
             };
+            if (model == Model::CoCo3)
+                s.devices.insert(s.devices.begin() + 3, {"fd502", "FD-502 disk controller (WD1793 as the FD-500's) with Disk BASIC 1.1; option: the ROM", {}, ""});
         }
         s.install = [sys, isD](const std::string& device, const std::string& option, std::string& err) {
             if (device.empty()) { sys->setCart(nullptr); return true; }
@@ -1099,6 +1157,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"orch90", "Orchestra-90; option: its ROM image", {}, ""},
             {"rs232", "Deluxe RS-232 Program Pak", {}, ""},
             {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
+            {"fd502", "FD-502 disk controller (as the FD-500) with Disk BASIC 1.1; option: the ROM", {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
         };
         s.install = [sys, n](const std::string& device, const std::string& option, std::string& err) {

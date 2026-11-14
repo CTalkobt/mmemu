@@ -91,7 +91,7 @@ static const char* s_deps[] = { "6809", nullptr };
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
     "coco",
-    "TRS-80 Color Computer 1, 2 and 2B; Dragon 32 and 64",
+    "TRS-80 Color Computer 1, 2, 2B and 3; Dragon 32 and 64",
     "1.0.0",
     s_deps,
     nullptr,
@@ -103,10 +103,11 @@ static SimPluginManifest s_manifest = {
     3, s_carts
 };
 
-static void reg(const char* id, coco::Model model, int ramKb, const char* desc, coco::Tv tv = coco::Tv::Default) {
-    MachineRegistry::instance().registerMachine(id, [model, id, ramKb, tv]() -> MachineDescriptor* {
+static void reg(const char* id, coco::Model model, int ramKb, const char* desc, coco::Tv tv = coco::Tv::Default,
+                bool hd6309 = false) {
+    MachineRegistry::instance().registerMachine(id, [model, id, ramKb, tv, hd6309]() -> MachineDescriptor* {
         std::string err;
-        MachineDescriptor* m = coco::create(model, &err, ramKb, nullptr, tv);
+        MachineDescriptor* m = coco::create(model, &err, ramKb, nullptr, tv, hd6309);
         if (!m) LogRegistry::instance().getLogger("coco")->error("{}: {}", id, err);
         else m->machineId = id;     // without ROMs: made, with a warning (create() prints it)
         return m;
@@ -119,6 +120,10 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("coco2", coco::Model::CoCo2, 64, "TRS-80 Color Computer 2 (64 KB, Extended Color BASIC)");
     reg("coco2b", coco::Model::CoCo2B, 64, "TRS-80 Color Computer 2B (64 KB, MC6847T1 lower case)");
     reg("cocopal", coco::Model::CoCo2, 64, "TRS-80 Color Computer 2, PAL (50 Hz, 64 KB)", coco::Tv::PAL);
+    reg("coco3", coco::Model::CoCo3, 128, "Tandy Color Computer 3 (128 KB, GIME, Super Extended Color BASIC)");
+    reg("coco3p", coco::Model::CoCo3, 128, "Tandy Color Computer 3, PAL (128 KB)", coco::Tv::PAL);
+    reg("coco3h", coco::Model::CoCo3, 512, "Tandy Color Computer 3 with HD6309 (512 KB, NitrOS-9 6309 builds)",
+        coco::Tv::Default, true);
     reg("dragon32", coco::Model::Dragon32, 32, "Dragon 32 (PAL, 32 KB)");
     reg("dragon64", coco::Model::Dragon64, 64, "Dragon 64 (PAL, 64 KB, 6551 RS-232)");
     reg("tano", coco::Model::Dragon64, 64, "Tano Dragon (NTSC Dragon 64)", coco::Tv::NTSC);

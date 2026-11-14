@@ -3737,11 +3737,8 @@ void CliInterpreter::showRegisters() {
         
         uint32_t val = m_ctx.cpu->regRead(i);
         res << desc->name << ": ";
-        if (desc->width == RegWidth::R16) {
-            res << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(4) << val;
-        } else {
-            res << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(2) << val;
-        }
+        const int digits = desc->width == RegWidth::R32 ? 8 : desc->width == RegWidth::R16 ? 4 : 2;
+        res << "$" << std::hex << std::uppercase << std::setfill('0') << std::setw(digits) << val;
         res << "  ";
         if ((i + 1) % 4 == 0) res << "\n";
     }
