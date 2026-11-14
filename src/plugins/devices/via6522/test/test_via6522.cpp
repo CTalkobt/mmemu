@@ -175,3 +175,16 @@ TEST_CASE(via6522_port_a_input_pin_lines) {
     via.ioRead(nullptr, 0x9111, &v);
     ASSERT_EQ((int)v, 0x7F);
 }
+
+// The T1 latches read back at $x6/$x7 (#341): the 1541 DOS loads T1 with
+// LDA $1C07 / STA $1C05
+TEST_CASE(via_t1_latch_reads_back) {
+    VIA6522 via("VIA", 0x1C00);
+    uint8_t v = 0;
+    via.ioWrite(nullptr, 0x1C06, 0x34);
+    via.ioWrite(nullptr, 0x1C07, 0x3A);
+    via.ioRead(nullptr, 0x1C06, &v);
+    ASSERT_EQ((int)v, 0x34);
+    via.ioRead(nullptr, 0x1C07, &v);
+    ASSERT_EQ((int)v, 0x3A);
+}

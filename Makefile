@@ -427,6 +427,11 @@ PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
 	src/plugins/devices/ted/main/ted_sound.cpp \
 	src/plugins/devices/ted/main/plugin_init.cpp
 
+PLUGIN_DRIVE1541_SRCS = src/plugins/devices/drive1541/main/drive1541.cpp \
+	src/plugins/devices/drive1541/main/gcr.cpp \
+	src/plugins/devices/via6522/main/via6522.cpp \
+	src/plugins/devices/drive1541/main/plugin_init.cpp
+
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
 	src/plugins/devices/iec_drive/main/iec_drive.cpp \
@@ -689,6 +694,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/pet_video/test/test_pet_video.cpp \
 	src/plugins/devices/pia6520/test/test_pia6520.cpp \
 	src/plugins/devices/via6522/test/test_via6522.cpp \
+	src/plugins/devices/drive1541/test/test_drive1541.cpp \
 	src/plugins/devices/antic/test/test_antic.cpp \
 	src/plugins/devices/gtia/test/test_gtia.cpp \
 	src/plugins/devices/pokey/test/test_pokey.cpp \
@@ -884,6 +890,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
+	src/plugins/devices/drive1541/main/drive1541.o \
+	src/plugins/devices/drive1541/main/gcr.o \
 	src/plugins/devices/acia6551/main/acia6551.o \
 	src/plugins/devices/acia6551/main/hayes_modem.o \
 	src/plugins/machines/x16/main/machine_x16.o \
@@ -1060,6 +1068,7 @@ PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VERA_OBJS = $(PLUGIN_VERA_SRCS:.cpp=.o)
 PLUGIN_TED_OBJS = $(PLUGIN_TED_SRCS:.cpp=.o)
 PLUGIN_VIRTUALIEC_OBJS = $(PLUGIN_VIRTUALIEC_SRCS:.cpp=.o)
+PLUGIN_DRIVE1541_OBJS = $(PLUGIN_DRIVE1541_SRCS:.cpp=.o)
 PLUGIN_F018B_DMA_OBJS = $(PLUGIN_F018B_DMA_SRCS:.cpp=.o)
 PLUGIN_AUDIODMA_OBJS = $(PLUGIN_AUDIODMA_SRCS:.cpp=.o)
 PLUGIN_MAP_MMU_OBJS = $(PLUGIN_MAP_MMU_SRCS:.cpp=.o)
@@ -1136,6 +1145,7 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-ted.so \
         $(LIBDIR)/mmemu-plugin-datasette.so \
 	$(LIBDIR)/mmemu-plugin-virtual-iec.so \
+	$(LIBDIR)/mmemu-plugin-drive1541.so \
 	$(LIBDIR)/mmemu-plugin-f018b-dma.so \
 	$(LIBDIR)/mmemu-plugin-audio-dma.so \
 	$(LIBDIR)/mmemu-plugin-map-mmu.so \
@@ -1347,6 +1357,9 @@ $(LIBDIR)/mmemu-plugin-ted.so: $(PLUGIN_TED_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-drive1541.so: $(PLUGIN_DRIVE1541_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-f018b-dma.so: $(PLUGIN_F018B_DMA_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)

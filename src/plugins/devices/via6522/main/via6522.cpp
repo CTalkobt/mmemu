@@ -126,6 +126,11 @@ bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
             *val = (m_t1Counter >> 8) & 0xFF;
             break;
 
+        // The T1 latches read back (the 1541 DOS loads T1 from them:
+        // LDA $1C07 / STA $1C05)
+        case T1LL: *val = m_t1Latch & 0xFF; break;
+        case T1LH: *val = (m_t1Latch >> 8) & 0xFF; break;
+
         case T2CL:
             *val = m_t2Counter & 0xFF;
             if (peek) break;

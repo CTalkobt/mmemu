@@ -168,6 +168,9 @@ private:
     uint8_t m_lastBus = 0xFF;           // the last value read or written (lastBusData)
 public:
     int lastBusData() const override { return m_lastBus; }
+    /** The SO pin's falling edge sets V (the 1541's byte-ready: its read
+     *  loops wait with BVC *). */
+    void setOverflow() { m_state.p |= FLAG_V; }
 protected:
     void syncTo(int cycle);
     void pollInterrupts();

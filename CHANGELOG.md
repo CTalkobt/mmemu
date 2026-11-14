@@ -144,6 +144,28 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - Tests: the GIME's MMU, ROM modes, palette, timer and interrupts on both
   revisions, each video mode family's pixels, the offsets, and a CoCo 3
   running a stand-in ROM with a 40-column screen.
+### A true-drive 1541 (#341)
+
+- New device `drive1541` (`Drive1541`, plugin `mmemu-plugin-drive1541`): a
+  1541 at the chip level.
+  - Its own 6502 runs the DOS ROM (`roms/c64/dos1541.bin`, CBM DOS V2.6)
+    at 1 MHz against the host's clock.
+  - 2K RAM, VIA1 (the serial bus, with the ATN acknowledge XOR) and VIA2
+    (the head).
+  - A disk as GCR tracks: D64 encoded as the DOS formats it (error bytes
+    included), G64 as stored. Writes are decoded back into the D64.
+  - The computer's side is an `IPortDevice` for a CIA port. See
+    `doc/README-1541.md`.
+- The 6502 has an SO pin (`setOverflow`): the 1541's byte-ready sets V.
+- The 6522 VIA's T1 latches read back at `$x6`/`$x7`; the 1541 DOS loads T1
+  from them.
+- The VICE runner uses the true drive for the list's `drive/` and `vdrive/`
+  programs (every disk with `MMEMU_VICE_TRUEDRIVE=1`). It mounts a scratch
+  copy of each disk, since `drive/format` formats its disk.
+- VICE testprogs pass: `drive/1541-testsuite` (both disks), `drive/defaults`,
+  `drive/format`, `drive/iecdelay`, `drive/skew/skew1`,
+  `vdrive/bustakeover`, `vdrive/sa-check`. 848 pass / 48 fail of 896, no
+  regressions.
 
 ### VICE's test programs: VIC-II collision IRQs and the sprite DMA state machine (#345, #342)
 
