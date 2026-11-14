@@ -5,6 +5,7 @@
 #include "libdevices/main/isignal_line.h"
 #include "libmem/main/ibus.h"
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -68,6 +69,7 @@ public:
     uint8_t readPort() override;
     void writePort(uint8_t v) override { m_hostPra = v; hostLines(); }
     void setDdr(uint8_t d) override { m_hostDdr = d; hostLines(); }
+    uint8_t peekPort() override { return hostView(); }
 
     /** The drive's CPU, bus and VIAs (inspection, tests). */
     MOS6502* cpu() const { return m_cpu.get(); }
@@ -88,7 +90,9 @@ private:
     };
 
     void hostLines();
-    void busChanged();
+    void driveLines(bool clk, bool data, bool atna);
+    void catchUp();
+    uint8_t hostView() const;
     void runDevicesTo(uint64_t t);
     void diskCycle();
     void stepper(uint8_t phase);
@@ -104,6 +108,11 @@ private:
     uint64_t m_clock = 0;          // drive cycles run (instructions)
     uint64_t m_devClock = 0;       // drive cycles the VIAs and head have run
     uint64_t m_instrStart = 0;
+    uint64_t m_hostCycles = 0;     // host cycles ticked
+    // Exact time for the serial bus: a host cycle is 1,000,000 units, a
+    // drive cycle m_hostHz; an access is stamped with its cycle's end
+    uint64_t hostNow() const { return m_hostCycles * 1000000ULL; }
+    uint64_t driveAt(uint64_t devClock) const { return devClock * (uint64_t)m_hostHz; }
 
     std::unique_ptr<MOS6502> m_cpu;
     std::unique_ptr<Bus> m_bus;
@@ -117,11 +126,21 @@ private:
     uint8_t m_rom[0x4000] = {};
     bool m_romLoaded = false;
 
-    // The serial bus (true = pulled low)
+    // The serial bus (true = pulled low). Each side's changes are stamped
+    // with the time (in drive cycles) they happen and seen by the other side
+    // from that time: the drive runs a little behind and catches up when the
+    // computer reads or writes the port, so the fast loaders' 2-bit
+    // transfers, timed to the cycle, come out right.
+    struct HostLines { bool atn = false, clk = false, data = false; };
+    struct DriveLines { bool clk = false, data = false, atna = false; };
     uint8_t m_hostPra = 0, m_hostDdr = 0;
-    bool m_hostAtn = false, m_hostClk = false, m_hostData = false;
-    bool m_driveClk = false, m_driveData = false, m_atna = false;
-    bool m_atn = false, m_clk = false, m_data = false;
+    HostLines m_host;                          // the computer's, now
+    HostLines m_hostSeen;                      // ... as the drive sees them
+    DriveLines m_drive;                        // the drive's, now
+    DriveLines m_driveSeen;                    // ... as the computer sees them
+    std::deque<std::pair<uint64_t, HostLines>> m_hostEvents;
+    std::deque<std::pair<uint64_t, DriveLines>> m_driveEvents;
+    bool m_atnSeen = false;                    // ATN as VIA1 CA1 last got it
 
     // The disk
     std::string m_path;

@@ -67,10 +67,7 @@ private:
     void update() {
         // An input bit floats high, so its 7406 pulls the line (as a 1 does)
         const uint8_t out = (uint8_t)((m_orb & m_ddr) | ~m_ddr);
-        m_d->m_driveData = out & 0x02;
-        m_d->m_driveClk = out & 0x08;
-        m_d->m_atna = out & 0x10;
-        m_d->busChanged();
+        m_d->driveLines(out & 0x08, out & 0x02, out & 0x10);
     }
     Drive1541* m_d;
     uint8_t m_orb = 0, m_ddr = 0;
@@ -153,9 +150,13 @@ void Drive1541::reset() {
     m_via2->reset();
     m_cpu->reset();
     m_clock = m_devClock = m_target = 0;
+    m_hostCycles = 0;
     m_frac = 0;
     m_byteCycles = 0;
-    busChanged();
+    m_hostEvents.clear();
+    m_driveEvents.clear();
+    m_hostSeen = m_host;
+    m_driveSeen = m_drive;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +165,21 @@ void Drive1541::reset() {
 
 void Drive1541::tick(uint64_t cycles) {
     if (!m_romLoaded) return;
+    m_hostCycles += cycles;
     m_frac += cycles * 1000000ULL;
     m_target += m_frac / m_hostHz;
     m_frac %= m_hostHz;
+    // The drive stays up to an instruction behind; the computer's accesses
+    // to the port bring it up to their time
+    while (m_clock + 8 <= m_target) {
+        m_instrStart = m_clock;
+        const int n = m_cpu->step();
+        m_clock = m_instrStart + (uint64_t)(n > 0 ? n : 1);
+        runDevicesTo(m_clock);
+    }
+}
+
+void Drive1541::catchUp() {
     while (m_clock < m_target) {
         m_instrStart = m_clock;
         const int n = m_cpu->step();
@@ -177,6 +190,17 @@ void Drive1541::tick(uint64_t cycles) {
 
 void Drive1541::runDevicesTo(uint64_t t) {
     while (m_devClock < t) {
+        // The computer's line changes up to this cycle; ATN to VIA1 CA1
+        // (seen by this cycle's access if they came before the cycle began:
+        // the VIA samples its port early in the cycle)
+        while (!m_hostEvents.empty() && m_hostEvents.front().first <= driveAt(m_devClock)) {
+            m_hostSeen = m_hostEvents.front().second;
+            m_hostEvents.pop_front();
+        }
+        if (m_hostSeen.atn != m_atnSeen) {
+            m_atnSeen = m_hostSeen.atn;
+            if (ISignalLine* ca1 = m_via1->getSignalLine("ca1")) ca1->set(m_atnSeen);
+        }
         m_via1->tick(1);
         m_via2->tick(1);
         diskCycle();
@@ -192,38 +216,63 @@ void Drive1541::hostLines() {
     // Bits 3-5 drive ATN, CLK and DATA through 7406s; an input bit floats
     // high and so pulls its line too
     const uint8_t out = (uint8_t)((m_hostPra & m_hostDdr) | ~m_hostDdr);
-    m_hostAtn = out & 0x08;
-    m_hostClk = out & 0x10;
-    m_hostData = out & 0x20;
-    busChanged();
+    HostLines h;
+    h.atn = out & 0x08;
+    h.clk = out & 0x10;
+    h.data = out & 0x20;
+    m_host = h;
+    // The drive sees it from now (at once if it is already past)
+    if (driveAt(m_devClock) >= hostNow()) {
+        m_hostEvents.clear();
+        m_hostSeen = h;
+    } else {
+        m_hostEvents.emplace_back(hostNow(), h);
+    }
+    catchUp();
 }
 
-void Drive1541::busChanged() {
-    m_atn = m_hostAtn;
-    m_clk = m_hostClk || m_driveClk;
-    // The ATN acknowledge: DATA held low while ATN (as the drive reads it)
-    // and ATNA differ
-    m_data = m_hostData || m_driveData || (m_atn != m_atna);
-    // ATN to VIA1 CA1 (through the same inverter as PB7: high when asserted)
-    if (ISignalLine* ca1 = m_via1->getSignalLine("ca1")) {
-        if (ca1->get() != m_atn) ca1->set(m_atn);
-    }
+void Drive1541::driveLines(bool clk, bool data, bool atna) {
+    DriveLines d;
+    d.clk = clk; d.data = data; d.atna = atna;
+    m_drive = d;
+    // The computer sees it from this cycle on
+    // (the access is in the cycle the devices were brought through)
+    if (driveAt(m_devClock) <= hostNow()) { m_driveEvents.clear(); m_driveSeen = d; }
+    else m_driveEvents.emplace_back(driveAt(m_devClock), d);
 }
 
 uint8_t Drive1541::via1Pins() const {
+    // The bus as the drive sees it now: the computer's lines as they were at
+    // this cycle, its own as they are. DATA is also held low while ATN and
+    // ATNA differ (the ATN acknowledge)
+    const bool atn = m_hostSeen.atn;
+    const bool clk = m_hostSeen.clk || m_drive.clk;
+    const bool data = m_hostSeen.data || m_drive.data || (atn != m_drive.atna);
     uint8_t v = 0;
-    if (m_data) v |= 0x01;
-    if (m_clk) v |= 0x04;
+    if (data) v |= 0x01;
+    if (clk) v |= 0x04;
     v |= (uint8_t)(((m_unit - 8) & 3) << 5);
-    if (m_atn) v |= 0x80;
+    if (atn) v |= 0x80;
     return (uint8_t)(v | 0x1A);   // the output bits read back from ORB
 }
 
-uint8_t Drive1541::readPort() {
+uint8_t Drive1541::hostView() const {
+    const bool clk = m_host.clk || m_driveSeen.clk;
+    const bool data = m_host.data || m_driveSeen.data || (m_host.atn != m_driveSeen.atna);
     uint8_t v = 0x3F;
-    if (!m_clk) v |= 0x40;
-    if (!m_data) v |= 0x80;
+    if (!clk) v |= 0x40;
+    if (!data) v |= 0x80;
     return v;
+}
+
+uint8_t Drive1541::readPort() {
+    // The drive up to now, and its changes up to now
+    catchUp();
+    while (!m_driveEvents.empty() && m_driveEvents.front().first <= hostNow()) {
+        m_driveSeen = m_driveEvents.front().second;
+        m_driveEvents.pop_front();
+    }
+    return hostView();
 }
 
 // ---------------------------------------------------------------------------
