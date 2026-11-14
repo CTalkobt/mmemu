@@ -1,6 +1,7 @@
 #pragma once
 
 #include "libdevices/main/io_handler.h"
+#include "libdevices/main/iport_device.h"
 #include "plugins/devices/ieee488/main/cbm_host_dos.h"
 #include "plugins/devices/ieee488/main/cbm_image_dos.h"
 #include <cstdint>
@@ -36,7 +37,7 @@
  * computer (read), or for each CLK toggle of the drive (write), the status
  * when the computer pulls CLK after a written sector.
  */
-class IecDrive : public IOHandler {
+class IecDrive : public IOHandler, public IPortDevice {
 public:
     explicit IecDrive(int unit = 8);
     ~IecDrive() override = default;
@@ -58,7 +59,21 @@ public:
     std::string getMountedDiskPath(int unit) override;
 
     /** The machine's clock, for the protocol's microsecond timings. */
-    void setClockHz(double hz) { m_cyclesPerUs = hz / 1e6; }
+    void setClockHz(uint32_t hz) override { m_cyclesPerUs = hz / 1e6; }
+
+    /**
+     * IPortDevice: the computer's side of the bus on a CIA port (C64 and C128
+     * CIA2 port A). Bits 3-5 drive ATN, CLK and DATA through 7406 inverters
+     * (a 1 pulls the line low); bits 6 and 7 read CLK and DATA.
+     */
+    uint8_t readPort() override {
+        uint8_t v = 0x3F;
+        if (clkLine())  v |= 0x40;
+        if (dataLine()) v |= 0x80;
+        return v;
+    }
+    void writePort(uint8_t v) override { m_pra = v; portLines(); }
+    void setDdr(uint8_t d) override { m_ddr = d; portLines(); }
     /** What the computer drives (true = asserted / pulled low). */
     void setComputerLines(bool atn, bool clk, bool data);
     /** The bus levels (true = high, released): what the computer reads. */
@@ -109,6 +124,14 @@ private:
     void received(uint8_t b);
     bool busClk() const  { return m_cClk || m_dClk; }      // true = asserted
     bool busData() const { return m_cData || m_dData; }
+
+    // An input bit floats high (the CIA's pull-up), so its 7406 pulls the
+    // line low, as an output 1 does: with the DDR at 0 all three are asserted
+    void portLines() {
+        const uint8_t out = (uint8_t)((m_pra & m_ddr) | ~m_ddr);
+        setComputerLines(out & 0x08, out & 0x10, out & 0x20);
+    }
+    uint8_t m_pra = 0, m_ddr = 0;    // the CIA port, when wired as an IPortDevice
 
     std::string m_name = "Drive8";
     double m_cyclesPerUs = 1.0;

@@ -7,6 +7,24 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE's test programs: C64/autostart/defaults, loaded from disk (#348)
+
+- The C64's drive 8 is now the line-level 1541 the C128 and Plus/4 use
+  (`iec_drive`, `IecDrive`), in place of `VirtualIECBus`, whose loads stalled
+  after `LOADING`. `IecDrive` is an `IPortDevice` for a CIA port, and the C128
+  uses that instead of its own adapter. Its host-folder DOS also tries
+  `<name>.prg` for a name without an extension.
+- The VICE runner honours `mountd64:`, and a list comment asking for the
+  program to be loaded by name. It types `LOAD"NAME",8,1` and `RUN`, as
+  VICE's disk autostart does, instead of injecting the program.
+- CIA reset clears PRA and PRB to 0, as on a 6526; they were `$FF`.
+- An undriven CIA port bit floats high. On CIA1 Port A it no longer selects a
+  keyboard column. On the serial port its 7406 inverter pulls the line low.
+- The runner gives drive 8 a scratch folder (`/tmp/mmemu_vice_drive8`) when
+  nothing is mounted: `REU/QuickReuTest` saves its log to it.
+- VICE testprogs: both `C64/autostart/defaults` entries pass (835 pass / 41
+  fail, the `mountd64:` entry now run as well), no regressions.
+
 ### VICE's test programs: the SID's oscillators and envelopes as reSIDfp (#317)
 
 - The SID's waveform and envelope generators are ported from reSIDfp

@@ -38,6 +38,9 @@ public:
     /** Load address of a `$` listing: $0801 (X16, as x16-emulator), $0401
      *  (the PET's BASIC start, as Commodore's drives send it). */
     void setDirectoryLoadAddress(uint16_t a) { m_dirLoadAddr = a; }
+    /** Reading a name with no extension that isn't there also tries
+     *  "<name>.prg", as VICE's file-system drive does (off by default). */
+    void setPrgFallback(bool on) { m_prgFallback = on; }
     int unit() const override { return m_unit; }
     const std::string& rootPath() const { return m_rootSetting; }
     /** The current directory (after the folder is first used), else empty. */
@@ -107,6 +110,7 @@ protected:
     // Settings
     int m_unit = 8;
     uint16_t m_dirLoadAddr = 0x0801;
+    bool m_prgFallback = false;
     std::string m_rootSetting = ".", m_startinSetting;
 
     // State (x16-emulator ieee.c globals)

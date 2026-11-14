@@ -94,8 +94,10 @@ bool CIA6526::setOption(const std::string& key, const std::string& value, std::s
 }
 
 void CIA6526::reset() {
-    m_pra  = 0xFF;
-    m_prb  = 0xFF;
+    // Reset clears every register, the port latches too (VICE ciacore_reset;
+    // testprogs C64/autostart/defaults reads $DC01/$DD01 as outputs)
+    m_pra  = 0x00;
+    m_prb  = 0x00;
     m_ddra = 0x00;
     m_ddrb = 0x00;
 

@@ -1,5 +1,7 @@
 # mmemu Virtual IEC Bus Device
 
+> The C64's drive 8 is now `IecDrive` (`iec_drive`, `src/plugins/devices/iec_drive/`): the line-level 1541 the C128 and Plus/4 use, also an `IPortDevice` for a CIA port, registered by the same plugin as `virtual_iec`. Its host-folder DOS tries `<name>.prg` for a name without an extension, as VICE's file-system drive does. `VirtualIECBus` below stays available but no machine uses it; its loads stalled after `LOADING` (#348).
+
 `VirtualIECBus` provides Level 2 (protocol-level) Commodore Serial Bus (IEC) emulation. It handles the ATN/CLK/DATA handshake at the signal level so that standard KERNAL disk routines work without emulating a full 1541 drive internally.
 
 For a faster alternative that bypasses the serial protocol entirely, see the [CBM KERNAL HLE Plugin](README-CBM-HLE.md).

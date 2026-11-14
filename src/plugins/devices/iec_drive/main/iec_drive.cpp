@@ -18,6 +18,7 @@ IecDrive::IecDrive(int unit) {
     m_host.setUnit(unit);
     m_image.setUnit(unit);
     m_host.setDirectoryLoadAddress(0x0401);     // as Commodore's drives send it
+    m_host.setPrgFallback(true);                 // LOAD"NAME" finds name.prg
     m_name = "Drive" + std::to_string(unit);
 }
 
