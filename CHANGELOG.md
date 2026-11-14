@@ -7,6 +7,52 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Intel 8085 CPU (#334)
+
+- New `mmemu-plugin-8085.so` (`src/plugins/8085`) with the `I8085` core,
+  for the Tandy Model 100/102/200's Oki MSM80C85. It registers core `8085`,
+  an Intel-mnemonic disassembler and a line assembler for ISA `8085`, and a
+  `raw8085` machine with 64 KB of RAM.
+- The core has the 8080 set plus RIM/SIM, with the 8085's T-states. It also
+  has the undocumented DSUB, ARHL, RDEL, LDHI, LDSI, RSTV, SHLX, JNK, LHLX
+  and JK, and the undocumented V and K flags as Ken Shirriff's die analysis
+  describes them. As on the 8085, ANA sets AC and bit 3 reads 0.
+- Interrupts:
+  - TRAP is edge- and level-sensitive. RST 7.5 is a rising-edge latch.
+    RST 6.5 and 5.5 are level-triggered, and all three are masked by SIM.
+    INTR reads its vector (RST n or CALL nn) through a callback.
+  - The priorities are TRAP > 7.5 > 6.5 > 5.5 > INTR. EI's delay, RIM
+    (including the IE value after a TRAP) and waking from HLT are
+    emulated.
+  - An acknowledge hook reports each interrupt taken, and RIM/SIM expose
+    SID and SOD.
+- The GDB server reports the 8085's registers in GDB's Z80 order (AF BC DE
+  HL SP PC).
+- Tests cover every instruction group, the V/K flags, the cycle counts,
+  each interrupt kind and the assembler round trip. With
+  `MMEMU_8080_TESTS` set, they also run TST8080, 8080PRE, CPUTEST and Ian
+  Bartholomew's 8085 exerciser (8085EXM, real-8085 CRCs) under a CP/M BDOS
+  stub. See `doc/README-8085.md`.
+
+### Model 100 devices (#334)
+
+- The Tandy Model 100/102/200's peripheral chips as standalone devices,
+  ready for the machine plugin: the HD44102 column driver and the Model 100's
+  ten-chip 240x64 panel (`M100Lcd`, MAME/VirtualT geometry), the Model 200's
+  HD61830 controller (graphic and character modes; a generated stand-in for
+  the HD61830A's internal font), the 8155/MSM81C55 RAM-I/O-timer (all four
+  port C modes, the four timer output modes), the IM6402 UART, the
+  uPD1990AC clock (with the uPD4990A as a variant) and the Model 200's RP5C01
+  clock, both running on emulated time from host time plus an offset.
+- `SerialEndpoint` (`src/plugins/devices/serial_endpoint`): `none`,
+  `loopback`, `file:`, `tcp:` and registered schemes as one reusable object.
+- The Tandy Portable Disk Drive (TPDD and TPDD2) as a serial endpoint:
+  operation mode on a host directory (with TS-DOS sub-directories and the
+  DME request), the TPDD1's FDC mode and the TPDD2's sector cache on a
+  `.pdd1`/`.pdd2` or raw disk image.
+- `doc/README-M100.md` (devices); unit tests for each device, including the
+  composed Model 100 bitmap and a TPDD conversation through the IM6402.
+
 ### HD6309 CPU (#332)
 
 - New `HD6309` core (`src/plugins/6809/main/cpu6309.{h,cpp}`), core name

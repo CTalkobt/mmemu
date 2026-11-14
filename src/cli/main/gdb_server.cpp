@@ -45,7 +45,7 @@ uint8_t GdbServer::fromHex(char hi, char lo) {
 }
 
 // ---------------------------------------------------------------------------
-// Register layout: by the CPU (GDB's 6502 order, the SM83's as GDB's Z80, else the core's)
+// Register layout: by the CPU (GDB's 6502 order, the SM83's and 8085's as GDB's Z80, else the core's)
 // ---------------------------------------------------------------------------
 
 int GdbServer::findCoreReg(const char* name) const {
@@ -67,7 +67,7 @@ std::vector<GdbServer::GdbReg> GdbServer::regLayout() const {
     if (is6502Family()) {
         for (const char* n : {"A", "X", "Y", "SP", "PC", "P"})
             out.push_back({n, findCoreReg(n), std::strcmp(n, "PC") == 0 ? 2 : 1});
-    } else if (isa == "sm83") {
+    } else if (isa == "sm83" || isa == "8085") {
         for (const char* n : {"AF", "BC", "DE", "HL", "SP", "PC"}) out.push_back({n, findCoreReg(n), 2});
     } else {
         const int rc = m_cpu->regCount();

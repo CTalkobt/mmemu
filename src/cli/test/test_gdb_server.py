@@ -248,10 +248,57 @@ def run_sm83_tests():
         proc.wait(timeout=3)
 
 
+def run_8085_tests():
+    """The 8085 (raw8085): AF BC DE HL SP PC in GDB's Z80 order, a target description, p/P/G,
+    and `c` not stopping on $00 (NOP)."""
+    port = GDB_PORT + 2
+    proc = subprocess.Popen(
+        ['./bin/mmemu-cli', '-m', 'raw8085', '--speed', 'max', '--gdb-port', str(port)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+    try:
+        if not wait_for_port(port):
+            raise RuntimeError("GDB server did not start in time")
+        client = GdbRspClient(port=port)
+        print("--- GDB RSP Tests (raw8085) ---")
+
+        assert 'qXfer:features:read+' in client.command('qSupported')
+        xml = client.command('qXfer:features:read:target.xml:0,1000')
+        assert xml.startswith('l<?xml') and 'org.mmemu.8085' in xml and '<reg name="af" bitsize="16"/>' in xml, xml
+        assert 'name="pc" bitsize="16" type="code_ptr"' in xml and '"im"' not in xml, xml
+        print("  ✓ Target description OK")
+
+        # NOP x4; MVI A,$42; JMP $1004
+        assert client.command('M1000,9:000000003e42c30410') == 'OK'
+        assert client.command('P5=0010') == 'OK'
+        assert client.command('s') == 'S05'
+        assert client.command('p5') == '0110', "After a NOP, PC should be $1001"
+        assert client.command('Z0,1004,1') == 'OK'
+        assert client.command('c') == 'S05'
+        assert client.command('p5') == '0410', "Continue should run past the NOPs to $1004"
+        assert client.command('z0,1004,1') == 'OK'
+        assert client.command('s') == 'S05'
+        assert client.command('p0')[2:4] == '42', "After MVI A,$42, A should be $42"
+        print("  ✓ Step, breakpoint and continue past $00 OK")
+
+        assert client.command('G' + 'd5ff' + '3412' + '7856' + 'bc9a' + 'f0df' + '0010') == 'OK'
+        assert client.command('g') == 'd5ff34127856bc9af0df0010'
+        print("  ✓ Register verification and G OK")
+
+        assert client.command('D') == 'OK'
+        client.close()
+        print("ALL 8085 GDB RSP TESTS PASSED")
+    finally:
+        proc.stdin.write('quit\n')
+        proc.stdin.flush()
+        proc.terminate()
+        proc.wait(timeout=3)
+
+
 if __name__ == '__main__':
     try:
         run_tests()
         run_sm83_tests()
+        run_8085_tests()
     except Exception as e:
         print(f"TEST FAILED: {e}")
         import traceback
