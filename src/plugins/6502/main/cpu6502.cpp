@@ -131,11 +131,13 @@ uint8_t MOS6502::read(uint16_t addr) {
         if (!m_bus || !m_bus->isPlainMemory(addr)) syncTo(m_fetchCycle);
         ++m_fetchCycle;
     }
-    return m_bus ? m_bus->read8(addr) : 0;
+    m_lastBus = m_bus ? m_bus->read8(addr) : 0;
+    return m_lastBus;
 }
 
 void MOS6502::write(uint16_t addr, uint8_t val) {
     if (m_writeCycle >= 0) syncTo(m_writeCycle);
+    m_lastBus = val;
     if (m_bus) {
         m_bus->write8(addr, val);
     }

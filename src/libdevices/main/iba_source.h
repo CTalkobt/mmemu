@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 /**
  * A device that takes the bus from the CPU by pulling BA (RDY) low: the
  * VIC-II's character and sprite fetches.
@@ -21,4 +23,8 @@ public:
      *  current cycle, or -1 if it doesn't say. A 6510 write to $00/$01
      *  stores it in the RAM there (VICE zero_store, testprogs REU/cpuport). */
     virtual int phi1Value() const { return -1; }
+    /** Where the device finds what the CPU left on the bus in Phi2 (the
+     *  CPU's last access; -1 for none). The VIC-II's sprite data register
+     *  takes it in a sprite's Phi2 fetch cycles without DMA. */
+    virtual void setPhi2Source(std::function<int()> src) { (void)src; }
 };

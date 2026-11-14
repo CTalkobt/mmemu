@@ -30,6 +30,10 @@ void VIC2::reset() {
     m_sprSprColl = 0;
     m_sprBgColl  = 0;
     m_seq = SpriteSeq{};
+    m_sprDma = m_sprDisp = 0;
+    m_expFlop = 0xFF;
+    std::fill(std::begin(m_mc), std::end(m_mc), (uint8_t)0);
+    std::fill(std::begin(m_mcbase), std::end(m_mcbase), (uint8_t)0);
     m_vborder = true;
     m_lpLow = m_lpPending = m_lpTriggered = false;
     m_frameStartPending = false;
@@ -177,16 +181,18 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
             break;
         case IRQ:
             // Bit 7 is set if any enabled IRQ source is active; bits 4-6
-            // aren't there and read 1 (VICE: irq_status | 0x70)
+            // aren't there and read 1 (VICE: irq_status | 0x70). The
+            // collisions so far count.
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active || m_sprDma)) evalCollisions(m_rasterLine, collReadT());
             *val = 0x70 | m_regs[IRQ] | ((m_regs[IRQ] & m_regs[IRQEN] & 0x0F) ? IRQ_ANY : 0);
             break;
         case SSCOL:
-            if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active || m_sprDma)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprSprColl;
             if (!m_peeking) m_sprSprColl = 0; // cleared on read
             break;
         case SBCOL:
-            if (!m_peeking && (m_regs[SPENA] || m_seq.active)) evalCollisions(m_rasterLine, collReadT());
+            if (!m_peeking && (m_regs[SPENA] || m_seq.active || m_sprDma)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprBgColl;
             if (!m_peeking) m_sprBgColl = 0;
             break;
@@ -222,9 +228,24 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
     if (reg > 0x2E) return true; // writes to unused regs are ignored
 
     // The sprite sequencer runs to this cycle on the registers as they were
-    if ((reg <= MSIGX || reg == SPENA || reg == SPBGPR || reg == SPMC || reg == XXPAND || reg == YXPAND) &&
-        (m_regs[SPENA] || m_seq.active))
+    if ((reg <= MSIGX || reg == SPENA || reg == SPBGPR || reg == SPMC || reg == XXPAND || reg == YXPAND ||
+         reg == IRQ || reg == IRQEN) &&
+        (m_regs[SPENA] || m_seq.active || m_sprDma))
         evalCollisions(m_rasterLine, collReadT());
+
+    if (reg == YXPAND) {
+        // A cleared Y-expansion bit sets its flip-flop; cleared in cycle 15
+        // with the flop reset, MC gets the "sprite crunch" mix (VICE
+        // vicii-mem.c d017_store)
+        const int cur = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine);
+        for (int n = 0; n < 8; ++n) {
+            const uint8_t b = (uint8_t)(1 << n);
+            if ((val & b) || (m_expFlop & b)) continue;
+            if (cur == 14)
+                m_mc[n] = (uint8_t)((0x2A & (m_mcbase[n] & m_mc[n])) | (0x15 & (m_mcbase[n] | m_mc[n])));
+            m_expFlop |= b;
+        }
+    }
 
     switch (reg) {
         case IRQ:
@@ -281,6 +302,21 @@ bool VIC2::isBadline(int line) const {
 // matched Y, through 21 lines, 42 expanded); Y matches the raster's low 8
 // bits, so a sprite high enough comes round again below line 255
 bool VIC2::spriteDma(int n, int row) const {
+    const int cur = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine);
+    const uint8_t b = (uint8_t)(1 << n);
+    const int prevLine = m_rasterLine == 0 ? m_linesPerFrame - 1 : m_rasterLine - 1;
+    if (row == m_rasterLine) {
+        bool on = (m_sprDma & b) != 0;
+        const int dma2 = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 56 : 55;
+        if (cur < dma2) {                             // this line's checks to come
+            if (cur < 15 && (m_expFlop & b) && m_mc[n] == 63) on = false;
+            if (!on && (m_regs[SPENA] & b) && m_regs[SP0Y + 2 * n] == (row & 0xFF)) on = true;
+        }
+        return on;
+    }
+    if (row == prevLine && cur < 15) return (m_sprDma & b) != 0;
+    // Elsewhere: from Y, through 21 lines (42 expanded), if enabled
+    if (!(m_regs[SPENA] & b)) return false;
     const int y = m_regs[SP0Y + 2 * n];
     const int h = (m_regs[YXPAND] >> n) & 1 ? 42 : 21;
     for (int start = y; start < m_linesPerFrame; start += 256) {
@@ -294,7 +330,9 @@ bool VIC2::spriteDma(int n, int row) const {
 bool VIC2::baAt(int line, int cycle) const {
     if (cycle >= 11 && cycle <= 53) return isBadline(line);
     const uint8_t* tab = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? BA_NTSC : BA_PAL;
-    const uint8_t mask = (uint8_t)(tab[cycle % m_cyclesPerLine] & m_regs[SPENA]);
+    // A sprite's DMA, not its enable bit: one disabled while its DMA runs
+    // still takes the bus (VICE BaSpr from sprite_dma)
+    const uint8_t mask = tab[cycle % m_cyclesPerLine];
     if (!mask) return false;
     // Fetches at the start of a line belong to the previous line's DMA
     int row = cycle < 11 ? line - 1 : line;
@@ -337,7 +375,7 @@ bool VIC2::baLowForDma(int ahead) const {
     const int first = m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 55 : 54;
     if (c != first || !(m_regs[SPENA] & 1)) return true;
     const int y = m_regs[SP0Y];
-    const bool starts = (line & 0xFF) == y && !spriteDma(0, line == 0 ? m_linesPerFrame - 1 : line - 1);
+    const bool starts = (line & 0xFF) == y && !(m_sprDma & 1);
     return !starts;
 }
 
@@ -349,7 +387,7 @@ void VIC2::tick(uint64_t cycles) {
     // With sprites on, cycle by cycle: the graphics and sprite data are taken
     // as fetched, for the collisions (memory changed during a line counts
     // from the cycle it changed: VICE testprogs REU/bonzai checkchar)
-    if (m_regs[SPENA] || m_seq.active || m_lpPending) {
+    if (m_regs[SPENA] || m_seq.active || m_sprDma || m_lpPending) {
         while (cycles--) {
             ++m_ticks;
             if (++m_cycleAccum >= (uint64_t)m_cyclesPerLine) {
@@ -358,7 +396,16 @@ void VIC2::tick(uint64_t cycles) {
             }
             if (m_frameStartPending && m_cycleAccum >= 1) frameStart();
             if (m_lpPending && m_ticks >= m_lpAt) { m_lpPending = false; triggerLightPen(false); }
-            if (m_regs[SPENA] || m_seq.active) captureFetch((int)m_cycleAccum);
+            if (m_regs[SPENA] || m_seq.active || m_sprDma) {
+                spriteCycle((int)m_cycleAccum);
+                captureFetch((int)m_cycleAccum);
+                // A collision IRQ that is enabled and not yet flagged is
+                // raised in the cycle the collision happens, not when the
+                // line ends (testprogs interrupts/irq-ackn-bug/irq-ack-vicii)
+                if (((m_regs[IRQEN] & IRQ_MMC) && !(m_regs[IRQ] & IRQ_MMC)) ||
+                    ((m_regs[IRQEN] & IRQ_MBC) && !(m_regs[IRQ] & IRQ_MBC)))
+                    evalCollisions(m_rasterLine, collReadT());
+            }
         }
         return;
     }
@@ -379,10 +426,69 @@ void VIC2::captureFetch(int c) {
         uint8_t g; bool mc;
         if (gfxFetch(m_rasterLine, c - 15, g, mc)) m_gCap[c - 15] = (int16_t)(g | (mc ? 0x100 : 0));
     }
+    // A sprite's three data bytes from its pointer and MC, which counts on
+    // (VICE vicii-fetch.c sprite_dma_cycle_0/2, vicii_fetch_sprite_dma_1)
     const int n = sprDma0In(c == 0 ? m_cyclesPerLine - 1 : c - 1);
-    if (n >= 0) {
-        uint32_t data;
-        if (spriteData(n, c, data)) m_sCap[n] = (int32_t)data;
+    if (n >= 0 && ((m_sprDma >> n) & 1)) {
+        const uint32_t base = (uint32_t)dmaPeek(screenBase() + 0x03F8 + n) * 64;
+        uint32_t data = 0;
+        for (int k = 0; k < 3; ++k) {
+            data = (data << 8) | dmaPeek(base + m_mc[n]);
+            m_mc[n] = (uint8_t)((m_mc[n] + 1) & 0x3F);
+        }
+        m_sCap[n] = (int32_t)data;
+    } else if (n >= 0) {
+        // No DMA: the data register still loads, the Phi2 bytes with what the
+        // CPU left on the bus, the Phi1 one with an idle fetch (VICE
+        // sprite_dma_cycle_0/2, vicii_fetch_sprite_dma_1). A sprite whose
+        // display comes on before its first fetch shows it (testprogs
+        // general/fuxxortest ef2-inst2).
+        const int v = m_phi2 ? m_phi2() : -1;
+        const uint8_t bus = v >= 0 ? (uint8_t)v : 0xFF;
+        const uint8_t idle = dmaPeek((m_regs[SCR1] & SCR1_ECM) ? 0x39FF : 0x3FFF);
+        m_sCap[n] = (int32_t)(((uint32_t)bus << 16) | ((uint32_t)idle << 8) | bus);
+    }
+}
+
+// VICE vicii-cycle.c: MCBASE from MC in cycle 16 (where the expansion
+// flip-flop is set; DMA ends at 63), the DMA checks in cycles 55 and 56 (a
+// sprite enabled, Y the raster line's low byte and no DMA yet: DMA on, MCBASE
+// 0), the expansion flip-flops toggled in 56, and in 58 MC from MCBASE and
+// the display on (DMA, enabled, Y matching) or off (no DMA). PAL; NTSC's
+// DMA checks are in 56 and 57, its display check in 59. Cycles from 1 here,
+// from 0 in the code.
+void VIC2::spriteCycle(int c) {
+    const bool ntsc = m_cyclesPerLine == NTSC_CYCLES_PER_LINE;
+    const int dma1 = ntsc ? 55 : 54, dma2 = ntsc ? 56 : 55, exp = 55, disp = ntsc ? 58 : 57;
+    if (c == 15) {
+        for (int n = 0; n < 8; ++n) {
+            if (!((m_expFlop >> n) & 1)) continue;
+            m_mcbase[n] = m_mc[n];
+            if (m_mcbase[n] == 63) m_sprDma &= (uint8_t)~(1 << n);
+        }
+        return;
+    }
+    if (c == dma1 || c == dma2) {
+        for (int n = 0; n < 8; ++n) {
+            const uint8_t b = (uint8_t)(1 << n);
+            if ((m_regs[SPENA] & b) && m_regs[SP0Y + 2 * n] == (m_rasterLine & 0xFF) && !(m_sprDma & b)) {
+                m_sprDma |= b;
+                m_mcbase[n] = 0;
+                m_expFlop |= b;
+            }
+        }
+    }
+    if (c == exp) m_expFlop ^= (uint8_t)(m_sprDma & m_regs[YXPAND]);
+    if (c == disp) {
+        for (int n = 0; n < 8; ++n) {
+            const uint8_t b = (uint8_t)(1 << n);
+            m_mc[n] = m_mcbase[n];
+            if (m_sprDma & b) {
+                if ((m_regs[SPENA] & b) && m_regs[SP0Y + 2 * n] == (m_rasterLine & 0xFF)) m_sprDisp |= b;
+            } else {
+                m_sprDisp &= (uint8_t)~b;
+            }
+        }
     }
 }
 
@@ -419,29 +525,10 @@ bool VIC2::gfxFetch(int line, int col, uint8_t& g, bool& mc) const {
     return true;
 }
 
-// Sprite n's 24 data bits as fetched in cycle c (from 0) of this line, if its
-// DMA is on (sprites 3-7 fetch at the start of a line for the line before)
-bool VIC2::spriteData(int n, int c, uint32_t& data) const {
-    int fetchRow = c < 11 ? m_rasterLine - 1 : m_rasterLine;
-    if (fetchRow < 0) fetchRow += m_linesPerFrame;
-    const bool yExp = (m_regs[YXPAND] >> n) & 1;
-    const int y = m_regs[SP0Y + 2 * n], h = yExp ? 42 : 21;
-    int dd = -1;
-    for (int start = y; start < m_linesPerFrame && dd < 0; start += 256) {
-        int k = fetchRow - start;
-        if (k < 0) k += m_linesPerFrame;
-        if (k < h) dd = k;
-    }
-    if (dd < 0) return false;
-    const uint32_t a = (uint32_t)dmaPeek(screenBase() + 0x03F8 + n) * 64 + (yExp ? dd / 2 : dd) * 3;
-    data = ((uint32_t)dmaPeek(a) << 16) | ((uint32_t)dmaPeek(a + 1) << 8) | dmaPeek(a + 2);
-    return true;
-}
-
 // The end of a line: its collisions, then the next line's raster events
 void VIC2::nextLine() {
     {
-        if (m_regs[SPENA] || m_seq.active) evalCollisions(m_rasterLine, lineDots());
+        if (m_regs[SPENA] || m_seq.active || m_sprDma) evalCollisions(m_rasterLine, lineDots());
         m_collT = 0;
         std::fill(std::begin(m_gCap), std::end(m_gCap), (int16_t)-1);
         std::fill(std::begin(m_sCap), std::end(m_sCap), (int32_t)-1);
@@ -812,14 +899,10 @@ void VIC2::evalCollisions(int line, int tTo) {
         if (i == 3) q.halt |= dma0;
         if (i == 4) {
             if (c == (m_cyclesPerLine == NTSC_CYCLES_PER_LINE ? 58 : 57)) {   // ChkSprDisp
-                q.pending = 0;
-                for (int n = 0; n < 8; ++n)
-                    if ((m_regs[SPENA] >> n) & 1 && spriteDma(n, line)) q.pending |= (uint8_t)(1 << n);
+                q.pending = line == m_rasterLine ? m_sprDisp : 0;
             }
             if (d2 >= 0) {                                              // as fetched, if it was
-                uint32_t data;
                 if (line == m_rasterLine && m_sCap[d2] >= 0) q.sbuf[d2] = (uint32_t)m_sCap[d2];
-                else if (spriteData(d2, c, data)) q.sbuf[d2] = data;
             }
         }
         if (i == 6) { q.pri = m_regs[SPBGPR]; q.expx = m_regs[XXPAND]; }
@@ -906,8 +989,11 @@ int VIC2::phi1Value() const {
     if (prev >= 0) {
         int row = c < 11 ? line - 1 : line;
         if (row < 0) row += m_linesPerFrame;
-        if (!((m_regs[SPENA] >> prev) & 1) || !spriteDma(prev, row)) return idle;
-        return dmaPeek((uint32_t)dmaPeek(screenBase() + 0x3F8 + prev) * 64);
+        if (!spriteDma(prev, row)) return idle;
+        // The second data byte: MC as it was after the first (the three
+        // are counted in this cycle's tick)
+        const uint8_t at = (uint8_t)((m_mc[prev] - 2) & 0x3F);
+        return dmaPeek((uint32_t)dmaPeek(screenBase() + 0x3F8 + prev) * 64 + at);
     }
     if (c >= 10 && c <= 14)                                     // refresh: $3Fxx, 5 a line
         return dmaPeek(0x3F00 | ((0xFF - (line * 5 + (c - 10))) & 0xFF));

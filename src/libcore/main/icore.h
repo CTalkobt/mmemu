@@ -135,6 +135,9 @@ public:
     /** The video chip's Phi1 bus value (IBaSource::phi1Value): a 6510 write
      *  to $00/$01 puts it in the RAM under the port. Other cores ignore it. */
     virtual void setPhi1Source(std::function<int()> src) { (void)src; }
+    /** The value of the CPU's last bus access (read or written), or -1: what
+     *  the C64's VIC-II sees on the bus in Phi2 (VICE last_bus_phi2). */
+    virtual int lastBusData() const { return -1; }
     virtual bool isHalted() const { return false; }
 
     /** Return a named signal line output (e.g. "loram"/"hiram"/"charen" for MOS6510). */

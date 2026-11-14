@@ -311,9 +311,14 @@ protected:
     void nextLine();
     void captureFetch(int c);
     bool gfxFetch(int line, int col, uint8_t& g, bool& mc) const;
-    bool spriteData(int n, int c, uint32_t& data) const;
 public:
     int  phi1Value() const override;
+    /** Cycles ticked since reset. */
+    uint64_t cyclesRun() const { return m_ticks; }
+    void setPhi2Source(std::function<int()> src) override { m_phi2 = std::move(src); }
+private:
+    std::function<int()> m_phi2;        ///< the CPU's last bus value (sprite fetches without DMA)
+public:
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     void setLightPen(bool low) override;
 protected:
@@ -349,7 +354,18 @@ protected:
     // Bus contention (#20)
     int*     m_stallBacklog = nullptr;   // shared counter with scheduler
     bool     m_denOnLine30 = false;      // DEN seen on line $30 this frame: badlines allowed
+    /** Sprite n's DMA for the fetches of `row` (this line's, or the last
+     *  one's at the start of this line): the state machine below, with the
+     *  DMA checks still to come this line foreseen; other rows from Y. */
     bool     spriteDma(int n, int row) const;
+    // Sprite DMA and display (VICE viciisc vicii-cycle.c): stepped each
+    // cycle while a sprite is enabled or its DMA runs
+    uint8_t  m_sprDma = 0;               ///< DMA on (bit per sprite)
+    uint8_t  m_sprDisp = 0;              ///< display on (ChkSprDisp)
+    uint8_t  m_expFlop = 0xFF;           ///< the Y-expansion flip-flops
+    uint8_t  m_mc[8] = {}, m_mcbase[8] = {};
+    /** The sprite steps of cycle c (from 0) of this line. */
+    void     spriteCycle(int c);
     int      m_badlineExtra = 0;         // extra cycles per badline (0-3)
     bool     m_badlineEnable = true;     // badline emulation enabled
 
