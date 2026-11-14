@@ -1,3 +1,4 @@
+#include "plugins/devices/iec_drive/main/iec_drive.h"
 #include "test_harness.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
@@ -33,6 +34,10 @@
 #include <sstream>
 #include <vector>
 #include <algorithm>
+#include <cstdio>
+#include <cerrno>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <string>
 #include <cstring>
 
@@ -116,6 +121,8 @@ static void ensureBootTestRegistriesReady() {
         []() -> IOHandler* { return new Reu(); });
     DeviceRegistry::instance().registerDevice("datasette",
         []() -> IOHandler* { return new Datasette(); });
+    DeviceRegistry::instance().registerDevice("iec_drive",        // the C64's drive 8
+        []() -> IOHandler* { return new IecDrive(8); });
 
     // VIC-20 Devices
     DeviceRegistry::instance().registerDevice("6560",
@@ -1043,14 +1050,42 @@ TEST_CASE(c64_reu_waits_for_badlines) {
 }
 
 namespace {
+// How many times "READY." is on the C64's screen
+int readyCount(IBus* bus) {
+    static const uint8_t READY[] = {18, 5, 1, 4, 25, 46};   // screen codes
+    int n = 0;
+    for (uint16_t a = 0x0400; a + 6 <= 0x07E8; ++a) {
+        bool m = true;
+        for (int i = 0; i < 6 && m; ++i) m = (bus->peek8((uint16_t)(a + i)) & 0x7F) == READY[i];
+        n += m;
+    }
+    return n;
+}
+
+// Type `text` through the KERNAL's keyboard buffer, 10 keys at a time
+void typeKeys(MachineDescriptor* desc, IBus* bus, const std::string& text, uint64_t& cycles) {
+    for (size_t at = 0; at < text.size();) {
+        while (bus->peek8(0xC6) != 0) cycles += (uint64_t)desc->schedulerStep(*desc);
+        const size_t n = std::min<size_t>(10, text.size() - at);
+        for (size_t i = 0; i < n; ++i) bus->write8((uint16_t)(0x0277 + i), (uint8_t)text[at + i]);
+        bus->write8(0xC6, (uint8_t)n);
+        at += n;
+    }
+}
+
 // One of VICE's "exitcode" test programs on a PAL C64, as VICE's testbench
 // runs it: power on, autostart the PRG (injected, then RUN), and wait for the
 // debug cart at $D7FF. The exit code, or -1 if none came within `limit`
 // cycles of power on.
 // `expansion` is "" or an expansion port device and its size ("reu", "512K").
+// `disk` is a disk image for drive 8 (the list's "mountd64:") or a folder
+// it serves: the PRG is then loaded from it through the KERNAL,
+// LOAD"<NAME>",8,1 and RUN, as VICE's disk autostart does. `loadName` is the
+// file's name there (default: the PRG's, without its extension, in capitals).
 int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
                         const std::string& expansion = "", const std::string& size = "",
-                        bool newCia = false) {
+                        bool newCia = false, const std::string& disk = "",
+                        const std::string& loadName = "") {
     std::ifstream f(prgPath, std::ios::binary);
     if (!f) return -2;
     std::vector<uint8_t> prg((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -1072,12 +1107,25 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
             if (!c || !c->setOption("model", "6526A", err)) { delete desc; return -3; }
         }
     }
+    if (!disk.empty() && !desc->ioRegistry->mountDisk(8, disk)) { delete desc; return -2; }
     DebugCart cart;
     desc->ioRegistry->registerHandler(&cart);
     desc->onReset(*desc);
     IBus* bus = desc->buses[0].bus;
     uint64_t cycles = 0;
     while (cycles < 2500000) cycles += (uint64_t)desc->schedulerStep(*desc);   // to READY.
+    if (!disk.empty()) {
+        std::string name = loadName;
+        if (name.empty()) {
+            name = prgPath.substr(prgPath.find_last_of('/') + 1);
+            name = name.substr(0, name.find_last_of('.'));
+            for (char& c : name) c = (char)toupper((unsigned char)c);
+        }
+        const int ready = readyCount(bus);
+        typeKeys(desc, bus, "LOAD\"" + name + "\",8,1\r", cycles);
+        while (readyCount(bus) <= ready && cycles < limit) cycles += (uint64_t)desc->schedulerStep(*desc);
+        typeKeys(desc, bus, "RUN\r", cycles);
+    } else {
     const uint16_t load = (uint16_t)(prg[0] | (prg[1] << 8));
     const uint16_t end = (uint16_t)(load + prg.size() - 2);
     for (size_t i = 2; i < prg.size(); ++i) bus->write8((uint16_t)(load + i - 2), prg[i]);
@@ -1088,6 +1136,7 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
     const char* run = "RUN\r";
     for (int i = 0; i < 4; ++i) bus->write8(0x0277 + i, (uint8_t)run[i]);
     bus->write8(0xC6, 4);
+    }
     while (!cart.written() && cycles < limit) cycles += (uint64_t)desc->schedulerStep(*desc);
     const int code = cart.written() ? cart.code() : -1;
     if (std::getenv("MMEMU_VICE_RUN")) printf("  %llu cycles\n", (unsigned long long)cycles);
@@ -1112,6 +1161,50 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
     return code;
 }
 }  // namespace
+
+// The C64's drive 8 on CIA2 port A (#348): a bit the DDR leaves as an input
+// floats high, so its 7406 pulls the line low; outputs at 0 release them
+TEST_CASE(c64_iec_port_undriven_bits_assert_lines) {
+    IecDrive d(8);
+    d.setClockHz(985248);
+    d.setDdr(0x00);
+    ASSERT(!d.clkLine() && !d.dataLine() && !d.atnLine());
+    d.setDdr(0x3F);
+    d.writePort(0x00);
+    ASSERT(d.clkLine() && d.dataLine() && d.atnLine());
+    d.writePort(0x10);                              // CLK out
+    ASSERT(!d.clkLine() && d.dataLine());
+    ASSERT_EQ((int)(d.readPort() & 0xC0), 0x80);    // CLK reads low, DATA high
+}
+
+// A KERNAL LOAD over the serial bus from drive 8 serving a host folder (#348):
+// "NAME" finds name.prg, as VICE's file-system drive does
+TEST_CASE(c64_kernal_load_from_drive8_folder) {
+    ensureRegistriesAndLoad();
+    const std::string dir = "/tmp/mmemu_test_drive8_" + std::to_string((long)getpid());
+    ASSERT(::mkdir(dir.c_str(), 0700) == 0 || errno == EEXIST);
+    {
+        std::ofstream f(dir + "/hello.prg", std::ios::binary);
+        const uint8_t prg[] = {0x00, 0xC0, 0xDE, 0xAD, 0xBE, 0xEF};    // $C000: DE AD BE EF
+        f.write((const char*)prg, sizeof prg);
+    }
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    ASSERT(desc->ioRegistry->mountDisk(8, dir) != nullptr);
+    desc->onReset(*desc);
+    IBus* bus = desc->buses[0].bus;
+    uint64_t cycles = 0;
+    while (cycles < 2500000) cycles += (uint64_t)desc->schedulerStep(*desc);
+    const int ready = readyCount(bus);
+    typeKeys(desc, bus, "LOAD\"HELLO\",8,1\r", cycles);
+    while (readyCount(bus) <= ready && cycles < 20000000) cycles += (uint64_t)desc->schedulerStep(*desc);
+    EXPECT_EQ(bus->peek8(0xC000), 0xDE);
+    EXPECT_EQ(bus->peek8(0xC003), 0xEF);
+    EXPECT_EQ(bus->peek8(0xAE) | (bus->peek8(0xAF) << 8), 0xC004);   // the load's end
+    delete desc;
+    std::remove((dir + "/hello.prg").c_str());
+    ::rmdir(dir.c_str());
+}
 
 // VICE's exit-code test programs (#304), from VICE's testprogs tree: set
 // MMEMU_VICE_TESTPROGS to its root (with testbench/c64-testlist.in) and,
@@ -1138,7 +1231,7 @@ TEST_CASE(c64_vice_testprogs) {
         for (std::string t; std::getline(ss, t, ',');) f.push_back(t);
         const std::string prg = f.empty() ? "" : f[0];
         const uint64_t limit = f.size() > 1 ? std::stoull(f[1]) : 100000000;
-        std::string expansion, size;
+        std::string expansion, size, disk;
         bool newCia = false;
         for (size_t i = 2; i < f.size(); ++i) {
             const bool isReu = f[i].rfind("reu", 0) == 0, isGeo = f[i].rfind("geo", 0) == 0;
@@ -1147,8 +1240,10 @@ TEST_CASE(c64_vice_testprogs) {
                 size = f[i].substr(3);
                 for (char& c : size) c = (char)toupper((unsigned char)c);
             } else if (f[i] == "cia-new") newCia = true;
+            else if (f[i].rfind("mountd64:", 0) == 0)
+                disk = std::string(root) + "/" + prg.substr(0, prg.find_last_of('/') + 1) + f[i].substr(9);
         }
-        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia);
+        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia, disk);
         printf("  vice %-60s %s (%d)\n", prg.c_str(), code == 0 ? "pass" : "FAIL", code);
         return;
     }
@@ -1163,7 +1258,7 @@ TEST_CASE(c64_vice_testprogs) {
         for (std::string s; std::getline(ss, s, ',');) f.push_back(s);
         if (f.size() < 4 || f[2] != "exitcode") continue;
         bool ok = true, newCia = false;
-        std::string expansion, size;
+        std::string expansion, size, diskFile, loadName;
         for (size_t i = 4; i < f.size(); ++i) {
             // "reu512k", "reu16m", "geo512k": the expansion and its size
             const bool isReu = f[i].rfind("reu", 0) == 0, isGeo = f[i].rfind("geo", 0) == 0;
@@ -1173,6 +1268,14 @@ TEST_CASE(c64_vice_testprogs) {
                 for (char& c : size) c = (char)toupper((unsigned char)c);
             }
             else if (f[i] == "cia-new") newCia = true;
+            else if (f[i].rfind("mountd64:", 0) == 0) diskFile = f[i].substr(9);
+            else if (f[i].rfind("comment:load the test using \"", 0) == 0) {
+                // A program that must be LOADed by name (C64/autostart/defaults
+                // checks what the KERNAL's load leaves behind): from the disk,
+                // or else from its folder on drive 8
+                const size_t q = f[i].find('"') + 1;
+                loadName = f[i].substr(q, f[i].find('"', q) - q);
+            }
             else if (f[i] == "vicii-pal" || f[i] == "cia-old" || f[i] == "sid-old" ||
                      f[i].rfind("warn:", 0) == 0 || f[i].rfind("comment:", 0) == 0) {}
             else ok = false;               // NTSC, other carts, drives, CIA models...
@@ -1182,9 +1285,12 @@ TEST_CASE(c64_vice_testprogs) {
         const std::string path = std::string(root) + "/testbench/" + f[0] + f[1];
         if (!ok || (filter && path.find(filter) == std::string::npos)) continue;
         if (++index % shards != shard) continue;
-        const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia);
+        const std::string dir = std::string(root) + "/testbench/" + f[0];
+        const std::string disk = !diskFile.empty() ? dir + diskFile : !loadName.empty() ? dir : "";
+        const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia, disk, loadName);
         if (code == 0) ++passed; else ++failed;
-        printf("  vice %-60s %s (%d)\n", (f[0] + f[1]).c_str(), code == 0 ? "pass" : "FAIL", code);
+        printf("  vice %-60s %s (%d)\n", (f[0] + f[1] + (diskFile.empty() ? "" : " +" + diskFile)).c_str(),
+               code == 0 ? "pass" : "FAIL", code);
     }
     printf("  vice testprogs: %d passed, %d failed\n", passed, failed);
     EXPECT_EQ(failed, 0);

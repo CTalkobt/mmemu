@@ -56,15 +56,19 @@ public:
     IPortDevice* getRowPort()    { return &m_rowPort; }
 
 private:
-    // CIA1 Port A device: CPU writes column-select here.
+    // CIA1 Port A device: CPU writes column-select here. Only the bits the
+    // DDR makes outputs drive a column; inputs float high (the CIA's
+    // pull-ups), so they select nothing and read back as 1.
     class ColumnPort : public IPortDevice {
     public:
         explicit ColumnPort(KbdC64* p) : m_parent(p) {}
         uint8_t readPort() override { return m_val; }
-        void    writePort(uint8_t v) override { m_val = v; m_parent->updateMatrix(); }
-        void    setDdr(uint8_t) override {}
-        uint8_t m_val = 0xFF;
+        void    writePort(uint8_t v) override { m_latch = v; update(); }
+        void    setDdr(uint8_t d) override { m_ddr = d; update(); }
+        uint8_t m_val = 0xFF;      // the column lines
     private:
+        void update() { m_val = (uint8_t)((m_latch & m_ddr) | ~m_ddr); m_parent->updateMatrix(); }
+        uint8_t m_latch = 0xFF, m_ddr = 0xFF;
         KbdC64* m_parent;
     };
 

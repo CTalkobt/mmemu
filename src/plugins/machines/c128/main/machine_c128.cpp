@@ -674,28 +674,6 @@ private:
     uint64_t m_timer = 0;
 };
 
-/** The serial bus on CIA2 port A: bits 3-5 drive ATN, CLK and DATA through
- *  7406 inverters (a 1 pulls the line low), bits 6/7 read CLK and DATA. */
-class IecPort : public IPortDevice {
-public:
-    explicit IecPort(IecDrive* drive) : m_drive(drive) {}
-    uint8_t readPort() override {
-        uint8_t v = 0x3F;
-        if (m_drive->clkLine())  v |= 0x40;
-        if (m_drive->dataLine()) v |= 0x80;
-        return v;
-    }
-    void writePort(uint8_t v) override { m_pra = v; update(); }
-    void setDdr(uint8_t d) override { m_ddr = d; update(); }
-private:
-    void update() {
-        uint8_t out = m_pra & m_ddr;
-        m_drive->setComputerLines(out & 0x08, out & 0x10, out & 0x20);
-    }
-    IecDrive* m_drive;
-    uint8_t m_pra = 0, m_ddr = 0;
-};
-
 /**
  * The screen the frontends show: the VIC-II's 40 columns (scaled 2x) or the
  * VDC's 80, picked by the 40/80 key as VICE's single-window builds do
@@ -869,8 +847,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
     });
     auto* drive = new IecDrive(8);
     drive->setClockHz(clock);
-    auto* iecPort = new IecPort(drive);
-    cia2->setPortADevice(iecPort);
+    cia2->setPortADevice(drive);           // the serial bus on CIA2 port A
     // Fast serial: CIA1's shift register to and from a 1571 (MCR bit 3 sets
     // the direction)
     cia1->setSerialOut([bus, drive](uint8_t b) { if (bus->fastSerialOut()) drive->fastByteFromHost(b); });
@@ -903,7 +880,7 @@ MachineDescriptor* create(bool ntsc, std::string* err) {
 
     desc->deleters.push_back([=]() {
         delete display; delete vic; delete sid; delete cia1; delete cia2; delete vdc; delete kbd;
-        delete drive; delete tape; delete iecPort; delete vicBus; delete capsLine;
+        delete drive; delete tape; delete vicBus; delete capsLine;
         delete irq; delete nmi;
     });
 

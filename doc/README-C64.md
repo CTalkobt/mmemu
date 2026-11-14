@@ -79,7 +79,10 @@ The machine factory installs a CIA2 Port A write callback that updates `VIC2::se
 - **NMI** (wired-OR, edge-triggered): CIA2's interrupt output and the RESTORE key (`restore`, GUI Page Up). RUN/STOP+RESTORE warm-starts BASIC. The GUI's screen pane has **RUN/STOP + RESTORE** and **RESTORE** buttons under Capture Keyboard.
 
 ### 2.6 Keyboard Matrix
-CIA1 Port A drives columns (output, active-low); CIA1 Port B reads rows (input, active-low). The KERNAL scans by writing `\$FE`, `\$FD`, … to Port A and reading Port B.
+CIA1 Port A drives columns (output, active-low); CIA1 Port B reads rows (input, active-low). The KERNAL scans by writing `\$FE`, `\$FD`, … to Port A and reading Port B. Only Port A bits set as outputs in the DDR select a column; inputs float high.
+
+### 2.6.1 Drive 8
+`Drive8` is an `iec_drive` (`IecDrive`, README-IEC), the line-level 1541 the C128 and Plus/4 use, on CIA2 Port A: bits 3-5 drive ATN, CLK and DATA through 7406 inverters, and bits 6-7 read CLK and DATA. A bit the DDR leaves as an input floats high, so its line is pulled low. It serves a host folder (where `LOAD"NAME",8` also finds `name.prg`) or a mounted image. Loads usually go through the KERNAL trap at `$FFD5` instead (README-CBM-HLE); without it, they run over the bus at 1541 speed.
 
 Key name strings passed to `MachineDescriptor::onKey`:
 
@@ -296,7 +299,7 @@ MMEMU_VICE_TESTPROGS=../refs/vice-testprogs bin/mmemu-test c64_vice_testprogs
 MMEMU_VICE_TESTPROGS=../refs/vice-testprogs MMEMU_VICE_FILTER=Lorenz bin/mmemu-test c64_vice_testprogs
 ```
 
-Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. The runner fits what a program's list entry asks for: an REU or GeoRAM of the size given (`reu512k`, `geo512k`), the new CIA (`cia-new`: both CIAs set to the 6526A). Programs for NTSC, the 8580 SID (`sid-new`), drives, cartridges or other expansions are skipped, as are those VICE expects to fail or time out. `MMEMU_VICE_SHARD=k/n` runs every n-th program from the k-th, to split the list over n processes.
+Without `MMEMU_VICE_TESTPROGS` the test does nothing; the programs aren't in the repository. The runner fits what a program's list entry asks for: an REU or GeoRAM of the size given (`reu512k`, `geo512k`), the new CIA (`cia-new`: both CIAs set to the 6526A). A disk image (`mountd64:`) goes on drive 8, and the program is loaded from it through the KERNAL (`LOAD"NAME",8,1`, then `RUN`), as VICE's disk autostart does. So is a program whose entry says to load it by name (`comment:load the test using "TEST" as filename`), from its own folder. `C64/autostart/defaults` checks what that load leaves behind (CIA1 timer B, the name under `$A000`). Programs for NTSC, the 8580 SID (`sid-new`), true drives, cartridges or other expansions are skipped, as are those VICE expects to fail or time out. `MMEMU_VICE_SHARD=k/n` runs every n-th program from the k-th, to split the list over n processes.
 
 What passes: all of Lorenz 2.15 (294), `VICII/spritesteal`, `REU/reutiming`, all 28 `REU/reutiming2` exitcode programs, the CIA shift register (`CIA/shiftregister`, 77 runs on both CIA models), TOD (`CIA/tod`, 29) and interrupt (`interrupts/cia-int`) programs, and every `CPU/` program in the list (97), the unstable SHA/SHX/SHY/SHS and ANE included, and the VIC-II's sprite collision, gap and X programs (`VICII/spritecollisions`, `spritegap`, `spritex`; README-VIC2 §2.3.1). The `reutiming2` references without `-m2` come from a C64C, so the runner sets the REU's `glue` to `c64c` for those, as Denise's runner does; the `-m2` ones come from a breadbin. `MMEMU_VICE_SCREEN=1` prints a failing program's screen, and `MMEMU_VICE_DUMP=<file>` saves its 64K. `MMEMU_VICE_RUN=<path>[,<cycles>]` runs one program by its path under the tree, list or not, and with `MMEMU_VICE_DUMP` keeps its memory whatever the result: e.g. `interrupts/irqdma/record1.prg`, whose measurements can be diffed against the reference data in `test1.prg`.
 

@@ -921,6 +921,11 @@ int CbmHostDos::copen(int channel) {
         }
         auto resolved = resolvePathIso(*parsed, false, WILDCARD_PRG);
         if (!resolved) return -2;                   // error already set
+        if (m_prgFallback && ch.read && !ch.write && ::access(resolved->c_str(), F_OK) != 0 &&
+            parsed->find('.') == std::string::npos) {
+            auto prg = resolvePathIso(*parsed + ".prg", false, WILDCARD_PRG);
+            if (prg && ::access(prg->c_str(), F_OK) == 0) resolved = prg;
+        }
 
         if (m_pathExists && !m_overwrite && !append && !ch.read) {
             setError(0x63, 0, 0);                   // overwrite only when asked

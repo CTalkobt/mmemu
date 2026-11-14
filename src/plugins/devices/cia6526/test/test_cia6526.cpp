@@ -771,3 +771,20 @@ TEST_CASE(cia_decode_window) {
     ASSERT(!f.cia.ioRead(&f.bus, 0xDD00, &val));           // the next page isn't
     ASSERT(!f.cia.setOption("decode", "0x17", err));       // not a window mask
 }
+
+// Reset clears every register, the port latches too: a port switched to
+// output without being written drives 0 (VICE testprogs C64/autostart/defaults
+// reads $DC01/$DD01 that way after the KERNAL's start)
+TEST_CASE(cia_reset_clears_port_latches) {
+    CiaFixture f;
+    uint8_t val;
+    f.cia.ioWrite(&f.bus, 0xDC00, 0x5A);
+    f.cia.ioWrite(&f.bus, 0xDC01, 0xA5);
+    f.cia.reset();
+    f.cia.ioWrite(&f.bus, 0xDC02, 0xFF);
+    f.cia.ioWrite(&f.bus, 0xDC03, 0xFF);
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC00, &val));
+    ASSERT_EQ((int)val, 0x00);
+    ASSERT(f.cia.ioRead(&f.bus, 0xDC01, &val));
+    ASSERT_EQ((int)val, 0x00);
+}

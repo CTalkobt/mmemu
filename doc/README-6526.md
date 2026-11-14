@@ -23,7 +23,7 @@ Two 8-bit bidirectional ports (Port A and Port B), each with an independent Data
 | $x2 | DDRA | Port A direction (1 = output) |
 | $x3 | DDRB | Port B direction (1 = output) |
 
-Output bits come from the latch; input bits are read from the attached `IPortDevice`. Pull-up resistors make undriven inputs read as `1`.
+Output bits come from the latch; input bits are read from the attached `IPortDevice`. Pull-up resistors make undriven inputs read as `1`. Reset clears every register, PRA and PRB included, so a port switched to output without being written drives 0 (VICE testprogs `C64/autostart/defaults`).
 
 ### 2.2 Timers A and B
 

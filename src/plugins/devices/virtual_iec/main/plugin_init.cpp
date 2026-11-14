@@ -1,5 +1,6 @@
 #include "mmemu_plugin_api.h"
 #include "virtual_iec.h"
+#include "plugins/devices/iec_drive/main/iec_drive.h"
 
 static const SimPluginHostAPI* g_host = nullptr;
 
@@ -11,8 +12,12 @@ static IOHandler* createVirtualIEC() {
     return iec;
 }
 
+// A 1541 at the line level, as the C128's and Plus/4's (the C64's drive 8)
+static IOHandler* createIecDrive() { return new IecDrive(8); }
+
 static DevicePluginInfo s_devices[] = {
-    {"virtual_iec", createVirtualIEC}
+    {"virtual_iec", createVirtualIEC},
+    {"iec_drive", createIecDrive}
 };
 
 static SimPluginManifest s_manifest = {
@@ -24,7 +29,7 @@ static SimPluginManifest s_manifest = {
     nullptr,        // supportedMachineIds
     0, nullptr,
     0, nullptr,
-    1, s_devices,
+    2, s_devices,
     0, nullptr,
     0, nullptr,
     0, nullptr

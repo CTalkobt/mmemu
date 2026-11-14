@@ -406,6 +406,10 @@ PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
 
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
+	src/plugins/devices/iec_drive/main/iec_drive.cpp \
+	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
+	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
+	src/plugins/devices/ieee488/main/imd_disk.cpp \
 	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/cbm-loader/main/d64_parser.cpp \
 	src/plugins/cbm-loader/main/t64_parser.cpp \
