@@ -310,6 +310,7 @@ PLUGIN_VIC4_SRCS = src/plugins/devices/vic4/main/vic4.cpp \
 
 PLUGIN_SID6581_SRCS = src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
+	src/plugins/devices/sid6581/main/sid_voice.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
 	src/plugins/devices/sid6581/main/plugin_init.cpp
 
@@ -341,6 +342,7 @@ PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
 	src/plugins/devices/vic2/main/vic2.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
+	src/plugins/devices/sid6581/main/sid_voice.cpp \
 	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
 	src/plugins/devices/cia6526/main/cia6526.cpp \
 	src/plugins/devices/iec_drive/main/iec_drive.cpp \
@@ -461,6 +463,7 @@ PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
 	src/plugins/devices/sid_pair/main/sid_pair.cpp \
 	src/plugins/devices/sid6581/main/sid6581.cpp \
 	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
+	src/plugins/devices/sid6581/main/sid_voice.cpp \
 	src/plugins/45gs02/main/cpu45gs02.cpp \
 	src/plugins/45gs02/main/ca45_assembler.cpp \
 	src/plugins/devices/map_mmu/main/map_mmu.cpp \
@@ -845,6 +848,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/cia6526/main/cia6526.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
+	src/plugins/devices/sid6581/main/sid_voice.o \
 	src/plugins/devices/sid6581/main/combined_waveforms.o \
 	src/plugins/devices/sid6581/main/spectral_analyzer.o \
 	src/plugins/devices/sid6581/main/sid_validation_suite.o \
@@ -955,6 +959,7 @@ PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o) \
 	src/plugins/devices/cia6526/main/cia6526.o \
 	src/plugins/devices/vic2/main/vic2.o \
 	src/plugins/devices/sid6581/main/sid6581.o \
+	src/plugins/devices/sid6581/main/sid_voice.o \
 	src/plugins/devices/c64_pla/main/c64_pla.o
 PLUGIN_C64_GUI_OBJS  = src/plugins/machines/c64/main/plugin_init.o
 PLUGIN_PIA6520_OBJS  = $(PLUGIN_PIA6520_SRCS:.cpp=.o)

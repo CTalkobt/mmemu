@@ -4,6 +4,7 @@
 #include "libdevices/main/iaudio_output.h"
 #include "libdevices/main/iaudio_inspect.h"
 #include "combined_waveforms.h"
+#include "sid_voice.h"
 #include <cstdint>
 #include <string>
 
@@ -12,16 +13,20 @@
  *
  * Used as the audio chip in the Commodore 64 ($D400–$D41C).
  *
- * Implements (clocked every cycle, after reSID 0.16; #123):
+ * Implements (clocked every cycle; the oscillators and envelopes are reSIDfp's,
+ * see sid_voice.h; #123):
  *   - Three voices, each with:
  *       24-bit phase accumulator (advances by FREQ register each clock cycle)
  *       Four waveforms: Triangle, Sawtooth, Pulse (variable duty cycle), Noise
- *         (23-bit LFSR, taps 22 and 17, shifted when accumulator bit 19 rises)
+ *         (23-bit LFSR, taps 22 and 17, shifted in two phases after
+ *         accumulator bit 19 rises)
  *       Combined waveforms: pulldown model fitted to real chips (#119), with
  *         noise writeback (noise lockup)
- *       ADSR envelope: rate counter + exponential counter, ADSR delay bug
+ *       ADSR envelope: 15-bit rate LFSR + exponential counter, ADSR delay
+ *         bug, the state-change pipeline
  *       Hard sync and ring modulation from the previous voice
- *       Test bit: holds the oscillator at 0, reloads the LFSR
+ *       Test bit: holds the oscillator at 0; the LFSR fades to 1s
+ *       No waveform: the DAC input floats, then fades (OSC3)
  *   - State-variable filter (#120): measured 6581/8580 cutoff curves,
  *       Q = 0.707 + res/15, integrators limited by the op-amps' measured
  *       output swing (#121); LP/BP/HP mix, per-voice routing, voice 3 off
@@ -56,7 +61,10 @@ public:
     void setBaseAddr(uint32_t addr) override       { m_baseAddr = addr; }
     void setSampleRate(int hz)                     { m_sampleRate = hz; }
     void setClockHz(uint32_t hz) override          { m_clockHz = hz; }
-    void setFilterVariant(int variant)             { m_filterVariant = variant; } // 0=6581, 1=8580
+    void setFilterVariant(int variant) {           // 0=6581, 1=8580
+        m_filterVariant = variant;
+        for (auto& v : m_voices) v.wave.setChip(chipModel());
+    }
 
     // -----------------------------------------------------------------------
     // IOHandler interface  ($D400–$D41C, 29 registers)
@@ -144,42 +152,23 @@ private:
     // Per-voice state (clocked every cycle, #123)
     // -----------------------------------------------------------------------
     struct Voice {
-        // Oscillator
-        uint32_t phase    = 0;        // 24-bit phase accumulator
-        uint32_t lfsr     = 0x7FFFFF; // 23-bit noise LFSR
-        bool     msbRose  = false;    // accumulator MSB went 0 -> 1 this cycle (hard sync)
+        SidWave     wave;     // oscillator, noise shift register, OSC3
+        SidEnvelope env;      // envelope generator, ENV3
 
-        // Envelope generator (reSID model: rate counter, exponential counter)
-        enum class Env { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE };   // for inspection
-        enum class EnvState : uint8_t { ATTACK, DECAY_SUSTAIN, RELEASE };
-        EnvState envState  = EnvState::RELEASE;
-        uint8_t  envLevel  = 0;       // envelope counter 0-255
-        uint16_t rateCounter = 0;     // 15-bit, never reset (ADSR delay bug)
-        uint16_t ratePeriod  = 9;
-        uint8_t  expCounter  = 0;
-        uint8_t  expPeriod   = 1;
-        bool     holdZero    = true;  // counter frozen at 0 until the next attack
-
-        // Register mirrors
+        // Register mirrors (inspection)
         uint16_t freq  = 0;
         uint16_t pw    = 0;   // 12-bit pulse width
         uint8_t  cr    = 0;   // control
         uint8_t  ad    = 0;   // attack/decay nibbles
         uint8_t  sr    = 0;   // sustain/release nibbles
 
+        enum class Env { IDLE, ATTACK, DECAY, SUSTAIN, RELEASE };   // for inspection
         Env envPhase() const;
-        void clockEnvelope();
-
-        // Waveform output: 12-bit value (0–4095); combined waveforms follow
-        // the 6581 or 8580 model (CombinedWaveformTable, #119).
-        uint16_t waveOutput(bool syncReset, bool ringMsb, CombinedWaveformTable::Chip chip) const;
-        // Noise output bits {20,18,14,11,9,5,2,0} of LFSR → 12-bit value
-        uint16_t noiseOutput() const;
+        uint8_t envLevel() const { return env.output(); }
     };
 
     void    writeVoiceReg(Voice& v, int reg, uint8_t val);
     void    synthesize(uint64_t cycles);
-    bool    ringMsbFor(const Voice& v) const;   // source MSB if v's RING bit is set
     CombinedWaveformTable::Chip chipModel() const {
         return m_filterVariant == 0 ? CombinedWaveformTable::Chip::MOS6581
                                     : CombinedWaveformTable::Chip::MOS8580;
