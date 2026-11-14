@@ -61,8 +61,24 @@ Collisions come from a port of VICE's sprite sequencer (`viciisc/vicii-draw-cycl
 - **Graphics:** a foreground pixel (hires 1, multicolour `10`/`11`) is at X 24 + XSCROLL + 8 × column + bit, in the 40 columns of g-accesses. Text rows start on line `$30` + YSCROLL. The side border hides graphics but doesn't stop their collisions; the vertical border flip-flop does (VICE `draw_graphics8`). It is set on the bottom line for RSEL and cleared on the top one when DEN is set, so moving RSEL past the bottom line opens the border. Outside the display rows the graphics are the idle fetch (`$3FFF`, `$39FF` with ECM), which shows and collides in an opened border (VICE `REU/bonzai/spritetiming`).
 - **Fetches as they happen:** with sprites on, the VIC-II ticks cycle by cycle and keeps each g-access and each sprite's data as fetched; the sequencer uses those, so memory changed during a line (an REU streaming into a character) counts from the cycle it changed (`REU/bonzai/checkchar`).
 - **Registers:** two sprites' pixels meeting set `$D01E`, border included; a sprite pixel on foreground graphics sets `$D01F`. Each register raises its IRQ (`$D019` bit 2 / bit 1) when it goes from 0.
-- **Timing:** the sequencer runs lazily. A read of `$D01E`/`$D01F` runs it up to the cycle before the read, a write to a sprite register runs it up to the write first, and the end of each line runs the rest. So a read sees the pixels of the cycles before it (VICE `VICII/spritecollisions` `*-collision-cycle`).
-- **Not done:** the sprite DMA and display flags (`mc`, `mcbase`, the Y-expansion flop) are simplified, so a sprite restarted on its last line (VICE `VICII/spriterestart`) isn't right. Neither are the 6569R1's and 8565's own colour latencies; the 6569's is used.
+- **Timing:** the sequencer runs lazily. Each of these runs it up to the cycle before the access:
+  - a read of `$D01E`, `$D01F` or `$D019`;
+  - a write to a sprite register, `$D019` or `$D01A`.
+
+  The end of each line runs the rest. So a read sees the pixels of the cycles before it (VICE `VICII/spritecollisions` `*-collision-cycle`). While a collision IRQ is enabled and not yet flagged, it runs every cycle, so the IRQ comes in the cycle of the collision (`interrupts/irq-ackn-bug/irq-ack-vicii`).
+- **Sprite DMA and display** (VICE `vicii-cycle.c`) are a per-sprite state machine, stepped every cycle while a sprite is enabled or its DMA runs. In PAL cycles, counted from 1:
+  - 16: `mcbase` takes `mc` where the Y-expansion flop is set; DMA ends at 63.
+  - 55 and 56: DMA checks. A sprite that is enabled, whose Y equals the raster line's low byte, and whose DMA is off gets DMA on, `mcbase` 0 and its flop set.
+  - 56: the flops of expanded sprites toggle.
+  - 58: `mc` takes `mcbase`, and the display goes on (DMA, enabled, Y matching) or off (no DMA).
+
+  NTSC does its checks a cycle later. The fetches read three bytes at the pointer plus `mc`. Clearing a `$D017` bit sets its flop, with the "sprite crunch" in cycle 15. So:
+  - DMA runs its 21 (or 42) lines whatever Y does afterwards, and can start again right after it ends (`VICII/spriterestart`).
+  - Disabling a sprite doesn't stop its DMA, and BA follows the DMA.
+  - Without DMA, the data register still loads: its Phi2 bytes take what the CPU left on the bus, its Phi1 byte an idle fetch. A sprite whose display comes on before its first fetch shows that (`general/fuxxortest` `ef2-inst2`).
+
+  Other lines than this one and the last are worked out from Y (the unit tests' BA queries).
+- **Not done:** the 6569R1's and 8565's own colour latencies; the 6569's is used. The frame renderer still draws sprites from Y.
 
 ### 2.4 Raster IRQ
 

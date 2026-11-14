@@ -1135,6 +1135,8 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 clock->cpu = s.cpu;
                 s.cpu->setAccessSync([clock](int k) { return clock->advance(k); });
                 s.cpu->setPhi1Source([baSource]() { return baSource->phi1Value(); });
+                ICore* cpu = s.cpu;
+                baSource->setPhi2Source([cpu]() { return cpu->lastBusData(); });
                 break;
             }
         desc->schedulerStep = [baSource, clock](MachineDescriptor& d) {

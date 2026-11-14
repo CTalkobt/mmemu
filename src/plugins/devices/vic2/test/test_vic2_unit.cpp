@@ -848,3 +848,48 @@ TEST_CASE(vic2_light_pen) {
     f.vic.ioRead(nullptr, 0xD019, &v);
     ASSERT_EQ(v & 0x08, 0);
 }
+
+// Sprite DMA as VICE's state machine (#342): it starts in cycle 55/56 of the
+// line whose low byte is Y, runs its 21 lines whatever Y does after, ends at
+// MCBASE 63 in cycle 16, and can start again at once; disabling the sprite
+// doesn't stop it (testprogs VICII/spriterestart, fuxxortest ef2-inst2)
+TEST_CASE(vic2_sprite_dma_state_machine) {
+    VicFixture f;
+    const int L = VIC2::PAL_CYCLES_PER_LINE;
+    auto at = [&](int line, int cycle) { f.vic.tick((uint64_t)(line * L + cycle) - f.vic.cyclesRun()); };
+    f.vic.ioWrite(nullptr, 0xD001, 100);
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    at(100, 50);
+    ASSERT(f.vic.baAt(100, 54));                       // foreseen: the check is to come
+    at(100, 60);
+    f.vic.ioWrite(nullptr, 0xD001, 50);                // Y moves away: DMA runs on
+    at(110, 50);
+    ASSERT(f.vic.baAt(110, 54));
+    at(120, 50);
+    ASSERT(f.vic.baAt(120, 54));                       // the 21st line's fetches
+    at(121, 20);
+    ASSERT(!f.vic.baAt(121, 54));                      // MCBASE 63 in cycle 16: off
+    f.vic.ioWrite(nullptr, 0xD001, 121);               // and on again in this line
+    ASSERT(f.vic.baAt(121, 54));
+    at(125, 20);
+    f.vic.ioWrite(nullptr, 0xD015, 0x00);              // disabled: DMA runs on
+    at(126, 20);
+    ASSERT(f.vic.baAt(126, 54));
+    at(142, 20);
+    ASSERT(!f.vic.baAt(142, 54));
+}
+
+// The Y-expansion flip-flop: an expanded sprite's MCBASE moves every other
+// line, so its DMA lasts 42 lines
+TEST_CASE(vic2_sprite_dma_y_expanded) {
+    VicFixture f;
+    const int L = VIC2::PAL_CYCLES_PER_LINE;
+    auto at = [&](int line, int cycle) { f.vic.tick((uint64_t)(line * L + cycle) - f.vic.cyclesRun()); };
+    f.vic.ioWrite(nullptr, 0xD001, 100);
+    f.vic.ioWrite(nullptr, 0xD017, 0x01);
+    f.vic.ioWrite(nullptr, 0xD015, 0x01);
+    at(141, 50);
+    ASSERT(f.vic.baAt(141, 54));
+    at(142, 20);
+    ASSERT(!f.vic.baAt(142, 54));
+}

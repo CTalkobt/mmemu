@@ -7,6 +7,27 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE's test programs: VIC-II collision IRQs and the sprite DMA state machine (#345, #342)
+
+- `$D019` reads and writes, and `$D01A` writes, see the sprite collisions so
+  far. While a collision IRQ is enabled and unflagged, the collisions are
+  evaluated every cycle, so the IRQ comes in the cycle of the collision.
+  VICE testprogs `interrupts/irq-ackn-bug/irq-ack-vicii` passes.
+- Sprite DMA and display are VICE's per-sprite state machine:
+  - `mc`, `mcbase` and the Y-expansion flip-flop;
+  - the DMA checks in cycles 55 and 56 (56 and 57 on NTSC), MCBASE in 16,
+    the display check in 58;
+  - the `$D017` sprite crunch.
+
+  They replace working the DMA out from the Y register. DMA runs on when Y
+  moves or the sprite is disabled, and restarts straight after it ends; BA,
+  the Phi1 fetch value and the collisions follow it.
+- Without DMA, a sprite's data register loads the CPU's last bus value
+  (`ICore::lastBusData`, `IBaSource::setPhi2Source`) and an idle fetch.
+- VICE testprogs `VICII/spriterestart` and `general/fuxxortest/ef2-inst2`
+  pass. `test-fuxxored` still needs `ef2-inst1` (a true drive, #341).
+  840 pass / 56 fail of 896, no regressions.
+
 ### VICE's test programs: C64/autostart/defaults, loaded from disk (#348)
 
 - The C64's drive 8 is now the line-level 1541 the C128 and Plus/4 use
@@ -22,8 +43,11 @@ The canonical version is defined in the `VERSION` file at the repository root.
   keyboard column. On the serial port its 7406 inverter pulls the line low.
 - The runner gives drive 8 a scratch folder (`/tmp/mmemu_vice_drive8`) when
   nothing is mounted: `REU/QuickReuTest` saves its log to it.
-- VICE testprogs: both `C64/autostart/defaults` entries pass (835 pass / 41
-  fail, the `mountd64:` entry now run as well), no regressions.
+- VICE testprogs: both `C64/autostart/defaults` entries pass. Honouring
+  `mountd64:` adds 21 list entries: `defaults` and two `SID/resid-test`
+  programs pass, and 18 in `drive/` and `vdrive/` fail because those
+  directories aren't exported (#341). 837 pass / 59 fail of 896, no
+  regressions.
 
 ### VICE's test programs: the SID's oscillators and envelopes as reSIDfp (#317)
 

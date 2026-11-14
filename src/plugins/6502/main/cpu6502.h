@@ -165,6 +165,10 @@ private:
     bool m_nmiEdge = false;             // an NMI edge since the last poll (a pulse shorter than the poll interval counts)
     bool m_replay = false;              // the next read returns m_replayValue (SLO etc. use the RMW result)
     uint8_t m_replayValue = 0;
+    uint8_t m_lastBus = 0xFF;           // the last value read or written (lastBusData)
+public:
+    int lastBusData() const override { return m_lastBus; }
+protected:
     void syncTo(int cycle);
     void pollInterrupts();
     // RDY (VICE maincpu_steal_cycles): an interrupt asserted while BA holds
