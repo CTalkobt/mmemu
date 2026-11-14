@@ -1,4 +1,4 @@
-# mmemu-plugin-coco: TRS-80 Color Computer 1, 2 and 2B
+# mmemu-plugin-coco: TRS-80 Color Computer 1, 2, 2B and 3
 
 The Tandy TRS-80 Color Computer (#331): the MC6809E, the MC6883 SAM, the
 MC6847 VDG (the MC6847T1 on the CoCo 2B), two MC6821 PIAs and the cartridge
@@ -19,6 +19,9 @@ The Dragon 32 and Dragon 64 are built from the same code: see
 | `coco2` | Color Computer 2: MC6847, 64 KB |
 | `coco2b` | Color Computer 2B: MC6847T1 (true lower case), 64 KB |
 | `cocopal` | A PAL Color Computer 2, 64 KB: 50 Hz, 312 lines (see [PAL](README-DRAGON.md#pal)) |
+| `coco3` | Color Computer 3: the GIME, 128 KB (512 KB as an expansion), Super Extended Color BASIC (see [Color Computer 3](#color-computer-3)) |
+| `coco3p` | A PAL Color Computer 3 (its 14.2373 MHz crystal; 50 Hz is the GIME's H50 bit, set by a PAL ROM) |
+| `coco3h` | A Color Computer 3 with the HD6309 CPU upgrade and 512 KB |
 
 RAM is 4, 16, 32 or 64 KB: `expansion ram ram 16K` (the machine powers on
 again). BASIC finds the size itself, from PIA1 PB2 (tied low with 4K chips,
@@ -197,11 +200,128 @@ Fit it with `expansion cart fd500` (or in a Multi-Pak slot,
 numbered from 1 as on the other machines), and `load game.dsk` or `-i`
 mounts to DRIVE 0. Writes go back to the image file.
 
+## Color Computer 3
+
+The Color Computer 3 (#332) is the same board (PIAs, keyboard, joysticks,
+sound, cassette, bit banger, cartridge port) around a TCC1014 **GIME** in
+place of the SAM and the VDG: `src/plugins/devices/gime`. The GIME follows
+Sockmaster's GIME register reference and the CoCo 3 service manual; video
+timings and the VDG-compatible rendering are XRoar's measurements (its
+`tcc1014.c`, GPL; mmsim's own code).
+
+```
+bin/mmemu-cli -m coco3                       # Super Extended Color BASIC
+expansion ram ram 512K                       # the 512 KB upgrade
+expansion monitor rgb                        # a CM-8 (default: composite)
+expansion gime gime 1986                     # the first GIME (default 1987)
+expansion cart fd502 ; disk mount 1 os9.dsk  # the FD-502 and Disk BASIC 1.1
+```
+
+**ROMs**: `coco3.rom`, the 32 KB Super Extended Color BASIC (`$8000-$FFFF`
+in the ROM map; a PAL `coco3p` tries `coco3p.rom` first), and `disk11.rom`
+for the FD-502, in `roms/coco/` (not checked in) or `$MMEMU_COCO_FIRMWARE`.
+Without `coco3.rom` a stand-in says so on the screen.
+
+**MMU**: eight 8 KB slots, each mapped by a page register of task 0
+(`$FFA0-$FFA7`) or task 1 (`$FFA8-$FFAF`, `$FF91` TR) when `$FF90` MMUEN is
+set; otherwise pages `$38-$3F`. Pages are 6 bits (64 x 8 KB = 512 KB); on a
+128 KB machine only A0-A16 reach the RAM, so pages `$00-$2F` mirror
+`$30-$3F`, as on the hardware. `$FE00-$FEFF` with MC3 is page `$3F`
+whatever the map. The 1-2 MB Disto upgrades are not modelled.
+
+**ROM map** (TY clear, `$FFDE`): pages `$3C-$3F` are ROM by INIT0 MC1/MC0:
+`0x` 16K internal + 16K cartridge (`$C000-$FEFF` as on a CoCo 2), `10` 32K
+internal, `11` 32K cartridge. The ROM's address pins are on the CPU bus,
+so the byte read is CPU A0-A14 whichever ROM page is mapped. `$FFE0-$FFFF`
+(the vectors) always come from the internal ROM. TY set (`$FFDF`): all RAM.
+
+**I/O**: PIA0 at `$FF00` (mirrored to `$FF0F`), PIA1 at `$FF20` (to
+`$FF2F`); `$FF40-$FF4F` reaches the cartridge's /SCS only with INIT0 MC2;
+`$FF50-$FF5F` always; the cartridge decodes `$FF60-$FF8F` itself
+(Multi-Pak `$FF7F`, Deluxe RS-232 Pak `$FF68`, Orchestra-90 `$FF7A`). The
+GIME's registers: `$FF90-$FF9F` (write-only, but `$FF92`/`$FF93`), the page
+registers, the palette (`$FFB0-$FFBF`), the SAM's set/clear bits
+(`$FFC0-$FFDF`: V and F for the VDG modes, R1 `$FFD8/$FFD9` for 1.79 MHz,
+TY). Unmapped reads see the data bus's last byte.
+
+**Speed**: every cycle (RAM and ROM alike) is 16 ticks of 14.31818 MHz, or 8
+with R1 (the "double speed poke", `POKE 65497,0`).
+
+**Interrupts**: `$FF92` IRQENR and `$FF93` FIRQENR: TMR, HBORD (the right
+border starts), VBORD (the bottom border starts), EI2 (serial: not wired),
+EI1 (keyboard: any of PIA0 PA0-PA6 low, including the fire buttons), EI0
+(the cartridge's CART falling). An event sets its bit in either status it
+is enabled in; reading a register returns its status and clears it;
+writing it clears what it disables and raises what it newly enables while
+the condition holds (a key held, the timer stopped). /IRQ to the CPU is
+PIA0's or the GIME's (with IEN), /FIRQ PIA1's or the GIME's (with FEN).
+
+**Timer**: 12 bits (`$FF94` low nibble, `$FF95`), counted at the line rate
+(TINS 0, 63.695 us) or 3.58 MHz (TINS 1, 279.365 ns). Writing `$FF94`
+starts it; at zero it raises TMR, flips the text blink and reloads; 0 stops
+it. The 1986 GIME counts value + 2, the 1987 value + 1 (Sockmaster); the
+revisions' horizontal timings (HSYNC width, where VBORD falls on a line)
+also differ, after XRoar's scope measurements.
+
+**Video**: the frame is 704 x 240 (the 640-tick active area with 32 ticks
+of border each side; 512-tick modes are centred), in the GIME's six-bit
+colours through the monitor: RGB (R1 G1 B1 R0 G0 B0, each channel
+0/0x55/0xAA/0xFF) or composite (intensity bits 4-5, hue bits 0-3; hue 0
+grey; VMODE MOCH shows the intensity only). A line is drawn when its right
+border starts, from the registers as they are then.
+
+- CoCo 3 text: 32/40/64/80 columns (VRES HRES), with or without attribute
+  bytes (CRES bit 0: background palette 0-7 in bits 0-2, foreground 8-15
+  in bits 3-5, underline bit 6 on the row's last line, blink bit 7 with the
+  timer), the GIME's 128-character font (`gime_font.cpp`, 8 x 12; the
+  character's row is the row counter + 1). Lines per row from VMODE LPR
+  (1, 2, 8, 9, 10, 11, infinite).
+- CoCo 3 graphics: 16-160 bytes a row at 1, 2 or 4 bits a pixel (up to
+  640 x 225 x 4, 320 x 225 x 16), 192/200/225 lines (VRES LPF; "infinite"
+  set during the picture runs it on), the vertical offset (`$FF9D/$FF9E`,
+  address bits 3-18), the horizontal offset (`$FF9F`: X in 2-byte steps;
+  HVEN a 256-byte virtual row), VSC (`$FF9C`) for the first text row's
+  starting line, the border (`$FF9A`), 60 Hz or 50 Hz (VMODE H50: 263 or 314
+  lines).
+- VDG-compatible (INIT0 COCO): the mode from PIA1 port B as written to
+  `$FF22` (the GIME snoops the data bus), the SAM's V and F; text in the
+  GIME's font (GM0 gives lower case for codes `$00-$1F`, GM1 inverts, as an
+  MC6847T1), SG4, the CG and RG graphics, all through the palette (0-7 the
+  CG colours, 8-11 the RG pairs, 12-15 the text). The address is
+  `$FF9D/$FF9E` bits 16-18 and 3-8 with the SAM's F from bit 9. `$FF9C` is
+  the text rows' line count (`$0F`: 12). No artifact colours.
+
+**Expansions**: `expansion ram ram 512K`; the FD-502 (`fd502`, the FD-500's
+code with Disk BASIC 1.1), the Deluxe RS-232 Pak (`rs232`, the 6551 at
+`$FF68`; `serial`), the Orchestra-90 and ROM Paks, alone or in the
+Multi-Pak (`mpi`, slots `mpi1-mpi4`); the hi-res joystick interface
+(`expansion joyright hires`, which the host mouse drives) as on the CoCo 2.
+
+**CPU**: an MC6809E, or on `coco3h` the Hitachi HD6309 upgrade (512 KB;
+for NitrOS-9's 6309 builds). The HD6309 starts in emulation mode with the
+6809's timings, so Super Extended BASIC runs unchanged; see
+`doc/README-6809.md` for the core.
+
+**Where the references differ** (and what mmsim does):
+
+- TINS 1's rate: Sockmaster and XRoar 3.58 MHz (279.365 ns); MAME's code
+  counts at half that. mmsim: 3.58 MHz.
+- EI0: Sockmaster says the CART line's falling edge; XRoar raises it as
+  its cartridge asserts the line. mmsim: CART falling.
+- The timer offset: MAME applies the 1986 GIME's + 2 to both revisions
+  (its 1987 switch is compiled out); mmsim follows Sockmaster (+ 2 / + 1).
+- The internal ROM's address: the CPU's A0-A14 (XRoar; the ROM's pins are
+  on the CPU bus), not the MMU page.
+
 ## Not done
 
 - The Speech/Sound Pak.
 - The CoCo Max 3 style hi-res adapter (only the Tandy interface is
   modelled).
+- CoCo 3: composite artifact colours; mid-line GIME changes (a line is
+  drawn whole at its right border); the Disto 1-2 MB MMU extension
+  (`$FF9B`, page bits 6-7); the serial EI2 input; hard disk interfaces
+  and the CoCo SDC.
 
 ## Tests
 
@@ -212,4 +332,10 @@ register, map, memory sizes, rates and video counter, the PIA's flags,
 edges and Cx2 modes, the keyboard, joystick comparator, DAC sound,
 cartridge autostart, the Multi-Pak, the hi-res joystick interface read
 by a timing loop, the PIA's IRQ delay, the SAM's mid-line V switches, cassette `.cas`/`.wav` round trips and
-the bit banger.
+the bit banger. `src/plugins/devices/gime/test` and
+`src/plugins/machines/coco/test/test_coco3_machine.cpp` cover the GIME
+(MMU mapping, tasks, RAM-size mirroring, the constant page, the ROM
+modes, the speed bit, the palette, the timer on both revisions and both
+clocks, the interrupt enable/acknowledge rules, every video mode family's
+pixels, lines per row, the offsets and VSC, the VDG-compatible modes) and a
+CoCo 3 running a stand-in ROM that sets up a 40-column screen.

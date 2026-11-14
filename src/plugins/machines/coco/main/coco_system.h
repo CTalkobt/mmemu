@@ -11,13 +11,15 @@
 #include "plugins/devices/mc6821/main/mc6821.h"
 #include "plugins/devices/mc6847/main/mc6847.h"
 #include "plugins/devices/mc6883/main/mc6883.h"
+#include "plugins/devices/gime/main/gime.h"
+#include "libcore/main/icore.h"
 #include <cstdio>
+#include <functional>
 #include <deque>
 #include <memory>
 #include <string>
 #include <vector>
 
-class M6809;
 class Acia6551;
 
 namespace coco {
@@ -223,10 +225,11 @@ private:
     System* m_sys;
 };
 
-/** The screen, as the frontends find it. */
+/** The screen, as the frontends find it: the VDG's, or on a CoCo 3 the GIME's. */
 class Display : public IOHandler, public IVideoOutput {
 public:
     explicit Display(Mc6847* vdg) : m_vdg(vdg) {}
+    void setGime(Gime* g) { m_gime = g; }
     const char* name() const override { return "Video"; }
     uint32_t baseAddr() const override { return 0; }
     uint32_t addrMask() const override { return 0; }
@@ -234,10 +237,14 @@ public:
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override {}
     void tick(uint64_t) override {}
-    VideoDimensions getDimensions() const override { return {Mc6847::OUT_W, Mc6847::OUT_H, Mc6847::OUT_W, Mc6847::OUT_H}; }
+    VideoDimensions getDimensions() const override {
+        if (m_gime) return {Gime::OUT_W, Gime::OUT_H, Gime::OUT_W, Gime::OUT_H};
+        return {Mc6847::OUT_W, Mc6847::OUT_H, Mc6847::OUT_W, Mc6847::OUT_H};
+    }
     void renderFrame(uint32_t* buffer) override;
 private:
     Mc6847* m_vdg;
+    Gime* m_gime = nullptr;
 };
 
 /**
@@ -280,6 +287,13 @@ private:
  * 6551 at $FF04-$FF07 and a second 16 KB BASIC. PAL boards pad the VDG to
  * 312 lines (Mc6847::setPal) and run from their own crystal (masterHz);
  * a PAL CoCo also inverts HS to PIA0 CA1.
+ *
+ * The CoCo 3 (machine_coco3.cpp) is the same PIAs, keyboard, joysticks,
+ * sound, cassette and cartridge port around a GIME (TCC1014) in place of
+ * the SAM and VDG: its MMU over 128 or 512 KB, a 32 KB ROM, the PIAs at
+ * $FF00/$FF20 (mirrored to $FF1F / $FF3F), the GIME's own registers at
+ * $FF90-$FFDF. Every cycle runs at the GIME's rate (16 ticks, or 8 with
+ * R1); the CPU's /IRQ is PIA0's or the GIME's, /FIRQ PIA1's or the GIME's.
  */
 class System : public IBus {
 public:
@@ -305,11 +319,15 @@ public:
     void resetButton();
     /** One instruction (or a halted cycle); returns CPU cycles at 0.89 MHz elapsed. */
     int step();
-    void setCpu(M6809* cpu) { m_cpu = cpu; }
+    /** The CPU (an MC6809E, or anything with the same lines: an HD6309). */
+    template <class Cpu> void setCpu(Cpu* cpu) {
+        m_cpu = cpu;
+        m_setFirq = [cpu](bool on) { cpu->setFirqLine(on); };
+    }
     uint64_t ticks() const { return m_ticks; }
     uint64_t slowCycles() const { return m_ticks / TICKS_SLOW; }
 
-    /** Installed RAM (4, 16, 32 or 64 KB). */
+    /** Installed RAM (4, 16, 32 or 64 KB; on a CoCo 3 128 or 512). */
     void setRamKb(int kb);
     int ramKb() const { return m_ram.kb(); }
     /** The byte at a physical RAM address (bank 0), for tests and the debugger. */
@@ -335,6 +353,9 @@ public:
     float soundLevel() const;
 
     Model model() const { return m_model; }
+    bool coco3() const { return m_model == Model::CoCo3; }
+    /** The CoCo 3's GIME (nullptr on the others). */
+    Gime* gime() const { return m_gime.get(); }
     bool dragon() const { return isDragon(m_model); }
     bool pal() const { return m_pal; }
     /** The crystal: 14.31818 MHz (NTSC), 14.218 MHz (a PAL Dragon), 14.23753 MHz (a PAL CoCo). */
@@ -362,6 +383,11 @@ public:
 private:
     std::vector<uint8_t> state() const;
     uint8_t access(uint16_t a, bool write, uint8_t v);
+    // The CoCo 3 (machine_coco3.cpp)
+    void wireCoco3(std::vector<uint8_t> rom, int ramKb);
+    uint8_t access3(uint16_t a, bool write, uint8_t v);
+    uint8_t peek3(uint16_t a);
+    void coco3Lines();
     void sync(uint64_t to);
     void updateLines();
     void keyboardUpdate();
@@ -394,7 +420,13 @@ private:
     uint64_t m_aciaAcc = 0;
     uint64_t m_ackLeft = 0;                    // printer /ACK low for this many more ticks
     std::unique_ptr<Cart> m_cart;
-    M6809* m_cpu = nullptr;
+    ICore* m_cpu = nullptr;
+    std::function<void(bool)> m_setFirq;
+    // The CoCo 3
+    std::unique_ptr<Gime> m_gime;
+    std::vector<uint8_t> m_ram3;               // 128 or 512 KB
+    std::vector<uint8_t> m_rom3;               // 32 KB: Super Extended Color BASIC
+    uint8_t m_bus = 0xFF;                      // the data bus's last byte (what an unmapped read sees)
 
     uint64_t m_ticks = 0, m_dev = 0, m_reported = 0;
     uint64_t m_instr = 0;                      // ticks into the current instruction
@@ -413,6 +445,17 @@ private:
     int m_vdgTick0 = 0, m_vdgLines = 0;
     float m_level = 0;
 };
+
+/** The CoCo 3's ROM (machine_coco3.cpp): coco3.rom (a PAL board tries coco3p.rom
+ *  first), 32 KB, from firmwareDir(); false with `missing` naming the file. */
+bool loadCoco3Rom(bool pal, std::vector<uint8_t>& rom, std::string& missing);
+/** Without Super Extended Color BASIC: a 32 KB stand-in that says so on the screen. */
+std::vector<uint8_t> coco3PlaceholderRom();
+/** The CoCo 3's expansion slots of its own: RAM (128K, 512K), the monitor, the GIME's revision. */
+void coco3Slots(MachineDescriptor* desc, System* sys);
+
+/** A cartridge by name: orch90, rs232, fd500 (fd502), dragondos, rompak (`option` its ROM or image). */
+std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& option, std::string& err);
 
 /** The System behind a machine made by create() (nullptr if not a CoCo). */
 System* systemOf(MachineDescriptor* m);
