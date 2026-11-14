@@ -1108,6 +1108,13 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
         }
     }
     if (!disk.empty() && !desc->ioRegistry->mountDisk(8, disk)) { delete desc; return -2; }
+    if (disk.empty()) {
+        // Drive 8 otherwise serves the working directory, and some programs
+        // save there (REU/quickreutest's log): give it a scratch folder
+        static const std::string scratch = "/tmp/mmemu_vice_drive8";
+        ::mkdir(scratch.c_str(), 0700);
+        desc->ioRegistry->mountDisk(8, scratch);
+    }
     DebugCart cart;
     desc->ioRegistry->registerHandler(&cart);
     desc->onReset(*desc);

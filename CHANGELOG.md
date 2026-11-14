@@ -20,6 +20,8 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - CIA reset clears PRA and PRB to 0, as on a 6526; they were `$FF`.
 - An undriven CIA port bit floats high. On CIA1 Port A it no longer selects a
   keyboard column. On the serial port its 7406 inverter pulls the line low.
+- The runner gives drive 8 a scratch folder (`/tmp/mmemu_vice_drive8`) when
+  nothing is mounted: `REU/QuickReuTest` saves its log to it.
 - VICE testprogs: both `C64/autostart/defaults` entries pass (835 pass / 41
   fail, the `mountd64:` entry now run as well), no regressions.
 
