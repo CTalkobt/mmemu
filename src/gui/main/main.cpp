@@ -2311,7 +2311,10 @@ void MmemuFrame::setKeyCapture(bool active) {
                                           m_machine->machineId == "x16" ||
                                           m_machine->machineId.rfind("apple2", 0) == 0 ||
                                           m_machine->machineId.rfind("model", 0) == 0 ||   // Tandy Model 100/102/200
-                                          m_machine->machineId == "m100");   // PC-style / ASCII keyboards
+                                          m_machine->machineId == "m100" ||
+                                          m_machine->machineId.rfind("pc8201", 0) == 0 ||   // NEC PC-8201A
+                                          m_machine->machineId == "m10" ||                  // Olivetti M10
+                                          m_machine->machineId == "kc85");   // PC-style / ASCII keyboards
     } else {
         app->m_keyFilter.m_handler = nullptr;
         // Release any modifier keys that may have been left pressed (e.g., the

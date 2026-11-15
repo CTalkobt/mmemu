@@ -45,10 +45,11 @@ std::string extOf(const std::string& path) {
 }
 
 // Key codes: column << 3 | bit
-constexpr int SHIFTED = 0x100;
+constexpr int SHIFTED = KEY_SHIFTED;
 constexpr int K_SHIFT = 8 << 3 | 0;
 constexpr int K_CAPS = 8 << 3 | 5;
-constexpr double KEY_HOLD = 0.06, KEY_GAP = 0.04;      // typed keys: 60 ms down, 40 ms up
+// Typed keys when nothing scans the keyboard: SHIFT 20 ms ahead, 60 ms down, 40 ms up
+constexpr double KEY_SHIFT = 0.02, KEY_HOLD = 0.06, KEY_GAP = 0.04;
 
 int charCode(char c) {
     static const char* const COLS[6] = {"zxcvbnml", "asdfghjk", "qwertyui", "op[;',./", "12345678", "90-="};
@@ -103,10 +104,23 @@ private:
 void Keyboard::reset() {
     std::memset(m_cols, 0, sizeof m_cols);
     m_shifts = 0;
+    m_typedShift = false;
     m_caps = false;
+    m_held.clear();
     m_queue.clear();
     m_typing = -1;
-    m_wait = 0;
+    m_phase = Phase::Idle;
+    m_elapsed = 0;
+    m_phaseScans = 0;
+}
+
+void Keyboard::noteRead(uint16_t sel) {
+    // Each of the ROMs' scans reads columns 0-7 together ("any key down?":
+    // 100/102 $706F, 200 $88FE); nothing else in them does
+    if ((sel & 0xFF) == 0x00) {
+        ++m_scans;
+        ++m_phaseScans;
+    }
 }
 
 void Keyboard::set(int col, int bit, bool down) {
@@ -121,8 +135,9 @@ uint8_t Keyboard::read(uint16_t sel) const {
         if (sel & (1 << c)) continue;
         v |= m_cols[c];
         if (c == 8) {
-            if (m_shifts > 0) v |= 0x01;
-            if (m_caps) v |= 0x20;
+            const int sh = m_layout ? m_layout->shift : K_SHIFT, cl = m_layout ? m_layout->caps : K_CAPS;
+            if (m_shifts > 0) v |= (uint8_t)(1 << (sh & 7));
+            if (m_caps) v |= (uint8_t)(1 << (cl & 7));
         }
     }
     return (uint8_t)~v;
@@ -130,7 +145,7 @@ uint8_t Keyboard::read(uint16_t sel) const {
 
 void Keyboard::press(int code, bool down) {
     if (code & SHIFTED) m_shifts = std::max(0, m_shifts + (down ? 1 : -1));
-    if ((code & 0xFF) == K_CAPS) {             // CAPS LOCK locks: each press toggles it
+    if ((code & 0xFF) == (m_layout ? m_layout->caps : K_CAPS)) {   // CAPS LOCK locks: each press toggles it
         if (down) m_caps = !m_caps;
         return;
     }
@@ -139,6 +154,12 @@ void Keyboard::press(int code, bool down) {
 
 bool Keyboard::key(std::string n, bool down) {
     for (auto& c : n) c = (char)std::tolower((unsigned char)c);
+    if (m_layout) {
+        const int code = m_layout->keyCode(n);
+        if (code < 0) return false;
+        press(code, down);
+        return true;
+    }
     static const std::map<std::string, int> keys = {
         {"bracket_left", 3 << 3 | 2}, {"lbracket", 3 << 3 | 2}, {"bracket_right", (3 << 3 | 2) | SHIFTED},
         {"rbracket", (3 << 3 | 2) | SHIFTED}, {"semicolon", 3 << 3 | 3}, {"squote", 3 << 3 | 4},
@@ -154,7 +175,9 @@ bool Keyboard::key(std::string n, bool down) {
         {"shift", K_SHIFT}, {"left_shift", K_SHIFT}, {"right_shift", K_SHIFT}, {"lshift", K_SHIFT},
         {"rshift", K_SHIFT}, {"control", 8 << 3 | 1}, {"ctrl", 8 << 3 | 1}, {"left_ctrl", 8 << 3 | 1},
         {"right_ctrl", 8 << 3 | 1}, {"alt", 8 << 3 | 2}, {"left_alt", 8 << 3 | 2}, {"graph", 8 << 3 | 2},
-        {"right_alt", 8 << 3 | 3}, {"altgr", 8 << 3 | 3}, {"code", 8 << 3 | 3}, {"home", 8 << 3 | 4},
+        {"right_alt", 8 << 3 | 3}, {"altgr", 8 << 3 | 3}, {"code", 8 << 3 | 3},
+        {"restore", 8 << 3 | 3},                // the GUI's Page Up (wx cannot tell right Alt apart)
+        {"home", 8 << 3 | 4},
         {"num", 8 << 3 | 4}, {"caps_lock", K_CAPS}, {"caps", K_CAPS}, {"f12", 8 << 3 | 7},
         {"pause", 8 << 3 | 7}, {"break", 8 << 3 | 7},
         // The PC's shifted symbols, as the GUI names them in its unshifted mode
@@ -177,6 +200,9 @@ bool Keyboard::key(std::string n, bool down) {
         code = it->second;
     }
     if (code < 0) return false;
+    // The host repeats a held key as more downs: the key just stays down
+    // (the ROM repeats it itself) and a shifted symbol's SHIFT counts once
+    if (down ? !m_held.insert(code).second : !m_held.erase(code)) return true;
     press(code, down);
     return true;
 }
@@ -185,29 +211,80 @@ void Keyboard::enqueueText(const std::string& text) {
     for (size_t i = 0; i < text.size(); ++i) {
         char c = text[i];
         if (c == '\\' && i + 1 < text.size() && text[i + 1] == 'n') { c = '\n'; ++i; }
-        const int code = charCode(c);
+        const int code = m_layout ? m_layout->charCode(c) : charCode(c);
         if (code >= 0) m_queue.push_back(code);
     }
 }
 
+void Keyboard::enter(Phase p) {
+    m_phase = p;
+    m_elapsed = 0;
+    m_phaseScans = 0;
+}
+
 void Keyboard::clock(uint64_t ticks, double hz) {
-    if (m_typing < 0 && m_queue.empty()) return;
-    double t = (double)ticks / hz;
-    while (t > 0) {
-        if (m_wait > t) { m_wait -= t; return; }
-        t -= m_wait;
-        m_wait = 0;
-        if (m_typing >= 0) {
-            press(m_typing, false);
-            m_typing = -1;
-            m_wait = KEY_GAP;
-            continue;
+    if (m_phase == Phase::Idle && m_queue.empty()) return;
+    m_elapsed += (double)ticks / hz;
+    if (m_phase == Phase::Idle) {
+        // The ROM's type-ahead buffer is filling (BASIC is busy): wait, up to 2 s
+        if (m_aheadCount && m_elapsed < 2.0) {
+            const uint8_t n = m_aheadCount();
+            if (n >= TYPE_AHEAD_LIMIT && n <= 64) return;
         }
-        if (m_queue.empty()) return;
         m_typing = m_queue.front();
         m_queue.pop_front();
-        press(m_typing, true);
-        m_wait = KEY_HOLD;
+        const bool shifted = m_typing & SHIFTED;
+        if (shifted != m_typedShift) {
+            m_typedShift = shifted;
+            m_shifts = std::max(0, m_shifts + (shifted ? 1 : -1));
+            enter(shifted ? Phase::ShiftDown : Phase::ShiftUp);
+        } else {
+            press(m_typing & 0xFF, true);
+            enter(Phase::KeyDown);
+        }
+        return;
+    }
+    // Each phase: the scans it waits for, its shortest time, and its time
+    // when nothing scans the keyboard (the fixed pace)
+    uint64_t scans = GAP_SCANS;
+    double minT = 0.010, fallback = KEY_GAP;
+    if (m_phase == Phase::ShiftDown || m_phase == Phase::ShiftUp) {
+        scans = SHIFT_SCANS;
+        minT = 0.005;
+        fallback = KEY_SHIFT;
+    } else if (m_phase == Phase::KeyDown) {
+        scans = HOLD_SCANS;
+        fallback = KEY_HOLD;
+    }
+    const bool done = (m_phaseScans >= scans && m_elapsed >= minT) || (m_phaseScans == 0 && m_elapsed >= fallback) ||
+                      m_elapsed >= 0.5;
+    if (!done) return;
+    switch (m_phase) {
+    case Phase::ShiftDown:
+    case Phase::ShiftUp:
+        if (m_typing >= 0) {
+            press(m_typing & 0xFF, true);
+            enter(Phase::KeyDown);
+        } else {
+            enter(Phase::Idle);
+        }
+        break;
+    case Phase::KeyDown:
+        press(m_typing & 0xFF, false);
+        m_typing = -1;
+        enter(Phase::KeyUp);
+        break;
+    case Phase::KeyUp:
+        // SHIFT stays down between shifted keys; let go of it at the end
+        if (m_queue.empty() && m_typedShift) {
+            m_typedShift = false;
+            m_shifts = std::max(0, m_shifts - 1);
+            enter(Phase::ShiftUp);
+        } else {
+            enter(Phase::Idle);
+        }
+        break;
+    case Phase::Idle: break;
     }
 }
 
@@ -256,8 +333,11 @@ Printer::~Printer() {
 }
 
 bool Printer::attachSerial(const std::string& spec) {
-    if (spec.rfind("printer:", 0) != 0) return false;
-    const std::string path = spec.substr(8);
+    bool autoLf = true;
+    std::string path;
+    if (spec.rfind("printer:", 0) == 0) path = spec.substr(8);
+    else if (spec.rfind("printer-raw:", 0) == 0) { path = spec.substr(12); autoLf = false; }
+    else return false;
     FILE* f = nullptr;
     if (path != "none" && !path.empty()) {
         f = std::fopen(path.c_str(), "wb");
@@ -265,19 +345,81 @@ bool Printer::attachSerial(const std::string& spec) {
     }
     if (m_file) std::fclose(m_file);
     m_file = f;
+    m_autoLf = autoLf;
+    m_lastCr = false;
     return true;
 }
 
 void Printer::write(uint8_t b) {
     printed.push_back(b);
-    if (m_file) { std::fputc(b, m_file); std::fflush(m_file); }
+    const bool lfAfterCr = m_lastCr && b == 0x0A;
+    m_lastCr = b == 0x0D;
+    if (!m_file) return;
+    if (!m_autoLf) std::fputc(b, m_file);
+    else if (!lfAfterCr) {
+        std::fputc(b, m_file);
+        if (b == 0x0D) std::fputc(0x0A, m_file);     // the printer's auto line feed
+    }
+    std::fflush(m_file);
 }
 
 bool SerialPort::attachSerial(const std::string& spec) {
-    if (spec.rfind("printer:", 0) == 0) return false;
-    const bool ok = m_sys->isT200() ? m_sys->usart.attachSerial(spec) : m_sys->uart.attachSerial(spec);
-    if (ok) m_spec = spec;
-    return ok;
+    if (spec.rfind("printer:", 0) == 0 || spec.rfind("printer-raw:", 0) == 0 || spec.rfind("modem:", 0) == 0 || spec.rfind("barcode:", 0) == 0) return false;
+    // The RS-232 connector's far end, behind the RS-232 / modem switch
+    auto ep = makeSerialEndpoint(spec);
+    if (!ep) return false;
+    m_sys->serialMux->rs232 = std::shared_ptr<SerialEndpoint>(std::move(ep));
+    if (m_sys->isT200()) m_sys->usart.setEndpoint(m_sys->serialMux);
+    else m_sys->uart.setEndpoint(m_sys->serialMux);
+    m_spec = spec;
+    return true;
+}
+
+// The modem and the bar code wand, as the frontends attach them ------------
+bool ModemPort::attachSerial(const std::string& spec) {
+    if (spec.rfind("modem:", 0) != 0 || !m_sys->hasModem()) return false;
+    const std::string arg = spec.substr(6);
+    if (arg == "originate" || arg == "answer") {        // the Model 100's ORIG/ANS switch
+        if (m_sys->isT200()) return false;
+        m_sys->m100Originate = arg == "originate";
+        m_sys->modem.setOriginate(m_sys->m100Originate);
+        return true;
+    }
+    return m_sys->modem.attachLine(arg);
+}
+
+void ModemPort::getDeviceInfo(DeviceInfo& out) const {
+    const Mc14412& m = m_sys->modem;
+    out.name = "Modem (MC14412, 300 baud)";
+    out.baseAddr = m_sys->isT200() ? 0xB2 : 0xA0;
+    out.addrMask = 0;
+    out.state.push_back({"Line", m.line() ? m.line()->describe() : "none"});
+    out.state.push_back({"Selected", m_sys->modemSelected() ? "modem" : "RS-232"});
+    out.state.push_back({"Enabled", m.enabled() ? "yes" : "no"});
+    out.state.push_back({"Hook", m.offHook() ? "off hook" : "on hook"});
+    out.state.push_back({"Mode", m.originate() ? "originate" : "answer"});
+    out.state.push_back({"Carrier", m.carrier() ? "yes" : "no"});
+    out.state.push_back({"Dialled", m.dialled().empty() ? "-" : m.dialled()});
+}
+
+bool BarcodePort::attachSerial(const std::string& spec) {
+    if (spec.rfind("barcode:", 0) != 0) return false;
+    const std::string code = spec.substr(8);
+    if (code == "none") { m_sys->wandPlugged = false; return true; }
+    const auto modules = BarcodeWand::parse(code);
+    if (modules.empty()) return false;
+    m_sys->wandPlugged = true;
+    m_sys->wand.swipe(modules);
+    return true;
+}
+
+void BarcodePort::getDeviceInfo(DeviceInfo& out) const {
+    out.name = "Bar code reader (RST 5.5, port C bit 3)";
+    out.baseAddr = 0xB3;
+    out.addrMask = 0;
+    out.state.push_back({"Wand", m_sys->wandPlugged ? (m_sys->wand.scanning() ? "swiping" : "plugged in")
+                                                    : "not plugged in"});
+    out.state.push_back({"Swipes", std::to_string(m_sys->wand.swipes())});
 }
 
 void SerialPort::getDeviceInfo(DeviceInfo& out) const {
@@ -366,20 +508,111 @@ System::System(Model model, std::vector<uint8_t> rom) : m_model(model), m_rom(st
     rtc200.setInputHz(CPU_HZ);
     rtc200.syncToHost();
     tape.setMasterHz(CPU_HZ);
-    m_ram.assign(isT200() ? 72 * 1024 : 32 * 1024, 0);
+    keyboard.setLayout(keyLayout(model));
+    m_ram.assign(isT200() ? 72 * 1024 : isPc8201() ? 96 * 1024 : 32 * 1024, 0);
+    // Recordings at 44.1 kHz: at the CoCo's 22.05 kHz a sample (45 us) of
+    // jitter on the 2400 Hz half-cycles (208 us) is enough for CLOAD to misread
+    // bits of a CSAVE (checked with the real ROM); 44.1 kHz loads cleanly
+    tape.setWavRate(44100);
+    // The HD61830's busy flag: MAME's per-instruction clock counts at its
+    // 1.2288 MHz (4.9152 MHz / 4, MAME kyocera_v.cpp), two CPU clocks each.
+    // The ROM polls it before each access (t200 $8EAB: IN $FF / RAL / JC).
+    lcdc.setClockScale(2);
+    // The HD44102s' busy time is left at 0: no reference gives it (MAME
+    // lists the flag as unsupported, VirtualT never sets it). The 100/102
+    // ROM polls it before every access ($750B: IN $FE / RAL / JC), and
+    // still draws correctly with a 200-clock busy time.
+    // Typing waits while the ROM's type-ahead buffer fills: the ROMs' key
+    // repeat starts "LDA count / CPI 2 / RNC" (100/102 $70B0: $FFAA; 200
+    // $893F: $FD1E). Found in the ROM, so stand-ins and other ROMs are left alone.
+    const size_t mainRom = isT200() ? 0xA000 : 0x8000;
+    for (size_t i = 0; i + 6 <= mainRom; ++i) {
+        if (m_rom[i] == 0x3A && m_rom[i + 3] == 0xFE && m_rom[i + 4] == 0x02 && m_rom[i + 5] == 0xD0 &&
+            m_rom[i + 2] >= 0xA0) {
+            const uint16_t count = (uint16_t)(m_rom[i + 1] | m_rom[i + 2] << 8);
+            keyboard.setTypeAheadCounter([this, count]() { return peek8(count); });
+            break;
+        }
+    }
+    serialMux->modem = &modem;
+    uart.setEndpoint(serialMux);
+    usart.setEndpoint(serialMux);
 }
 
 System::~System() = default;
 
+// The add-ons ----------------------------------------------------------------
+bool System::fitRampac(const std::string& path, std::string& err) {
+    auto r = std::make_unique<Rampac>();
+    if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
+    m_rampac = std::move(r);
+    return true;
+}
+
+void System::removeRampac() { m_rampac.reset(); }      // (its destructor writes the file)
+
+bool System::fitRex(Rex::Kind kind, const std::string& path, std::string& err) {
+    auto r = std::make_unique<Rex>(kind);
+    if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
+    m_rex = std::move(r);
+    return true;
+}
+
+void System::removeRex() { m_rex.reset(); }
+
+void System::flushAddons() {
+    if (m_rampac) m_rampac->flush();
+    if (m_rex) m_rex->flush();
+}
+
+void System::modemLines() {
+    serialMux->modemSelected = modemSelected();
+    switch (m_model) {
+    case Model::M100:
+        // The ROM (TELCOM's dialler, $5359 and $540A in the Model 100 ROM):
+        // $A0 bit 0 connects the modem to the line (MAME / VirtualT's relay)
+        // and, with the modem selected, port B bit 7 holds the line (0) or
+        // opens it (1): the dial pulses. $A0 bit 1 (MAME's EN) is only pulsed
+        // for a few microseconds as the line is seized, then set to send
+        // the carrier once the far end's tone is heard ($52F9-$530B): it is
+        // the transmitter's enable. The ORIG/ANS switch picks the mode.
+        modem.setOriginate(m100Originate);
+        modem.setEnable(m_modem & 0x02);
+        modem.setOffHook((m_modem & 0x01) && (m_pb & 0x08) && !(m_pb & 0x80));
+        break;
+    case Model::M200:                       // port B: 1 ORIG/ANS, 6 MEN, 7 CALL (MAME i8155_pb_w)
+        modem.setOriginate(m_pb & 0x02);
+        modem.setEnable(m_pb & 0x40);
+        modem.setOffHook(m_pb & 0x80);
+        break;
+    default:
+        modem.setEnable(false);
+        modem.setOffHook(false);
+        break;
+    }
+}
+
+uint8_t System::optionRead(uint16_t a, bool peek) {
+    if (m_rex) return peek ? m_rex->peek(a) : m_rex->read(a, m_ticks);
+    return m_opt.empty() ? 0xFF : m_opt[a];
+}
+
 void System::setCpu(I8085* cpu) {
     m_cpu = cpu;
     if (!cpu) return;
+    if (isPc8201()) {
+        // The PC-8201A's modulator makes the tones from SOD; its comparator isn't inverted
+        cpu->setSodCallback([this](bool v) { m_sod = v; });
+        cpu->setSidCallback([this]() { return !tape.input(); });
+        return;
+    }
     cpu->setSodCallback([this](bool v) { tape.output(v ? 63 : 0); });
     cpu->setSidCallback([this]() { return tape.input(); });
 }
 
 void System::setRamKb(int kb) {
     if (isT200()) kb = kb <= 24 ? 24 : kb <= 48 ? 48 : 72;
+    else if (isPc8201()) kb = kb <= 16 ? 16 : kb <= 32 ? 32 : kb <= 64 ? 64 : 96;
     else kb = std::max(8, std::min(32, (kb + 7) / 8 * 8));
     m_ram.assign((size_t)kb * 1024, 0);
 }
@@ -390,7 +623,7 @@ void System::setOptionRom(std::vector<uint8_t> rom, const std::string& label) {
     m_optLabel = m_opt.empty() ? "" : label;
 }
 
-int System::romBank() const { return isT200() ? (m_bankReg & 3) : (m_ctrl & 1); }
+int System::romBank() const { return isT200() || isPc8201() ? (m_bankReg & 3) : (m_ctrl & 1); }
 
 bool System::pixel(int x, int y) const {
     if (!isT200()) return lcd.pixel(x, y);
@@ -430,6 +663,7 @@ void System::portBOut(uint8_t v) {
     m_pb = v;
     m_keyLatch = (uint16_t)((m_keyLatch & 0xFF) | ((v & 1) << 8));
     if (!isT200()) lcd.setSelectFromPorts(m_pa, m_pb);
+    modemLines();
     // Bit 4: the auto power-off (100/102) or power cut (200)
     if ((v & 0x10) && !(old & 0x10)) powerDown();
     if (!isT200()) {
@@ -442,16 +676,35 @@ void System::portBOut(uint8_t v) {
 }
 
 uint8_t System::portCIn() {
-    uint8_t v = 0x02;                       // the printer: not busy (VirtualT)
+    // Bit 1 /BUSY high, bit 2 BUSY low: a ready printer, the state the ROMs
+    // wait for before a strobe (100/102 $6D47: IN $BB / ANI 6 / XRI 2 / JNZ;
+    // MAME kc85 i8155_pc_r and VirtualT agree on the bits)
+    uint8_t v = 0x02;
+    if (wandData()) v |= 0x08;              // the bar code reader
     if (isT200()) {
         v |= 0x01;                          // /LPS: the batteries are fine
         SerialEndpoint* ep = usart.endpoint();
-        if (ep && ep->dcd()) v |= 0x10;
+        // CD: with the modem selected, the line's signal (the ROM times its
+        // edges to detect the carrier, $876B in the Tandy 200 ROM, as the 100
+        // does on $D0 bit 0); otherwise the RS-232 DCD
+        if (modemSelected() ? modem.lineSignal() : (ep && ep->dcd())) v |= 0x10;
         return v;
     }
     if (rtc.dataOut()) v |= 0x01;
     SerialEndpoint* ep = uart.endpoint();
-    if (!(ep && ep->cts())) v |= 0x10;      // /CTS, /DSR: low when asserted
+    // /CTS, /DSR: low when asserted, high with nothing connected (MAME's
+    // RS-232 lines are active low, idle 1; VirtualT sets these bits when the
+    // host's CTS / DSR are off). The ROM's own RS-232 output paces itself by
+    // TBRE and XON/XOFF, not these; bit 4 is read by the modem routines
+    // ($6EF6, $52E4)
+    if (modemSelected()) {
+        // With the modem selected the ROM reads bit 4 as ORIG/ANS (0
+        // originate: listen for 2225 Hz, then send; 1 answer: send, then
+        // listen for 1270 Hz; TELCOM $52E4): the side switch (unverified wiring)
+        if (!m100Originate) v |= 0x10;
+    } else if (!(ep && ep->cts())) {
+        v |= 0x10;                          // /CTS, /DSR: low when asserted
+    }
     if (!(ep && ep->dsr())) v |= 0x20;
     return v;
 }
@@ -471,8 +724,13 @@ void System::controlOut(uint8_t v) {
 
 uint8_t System::uartStatus() const {
     // 0 CD (the modem's: no carrier), 1 OE, 2 FE, 3 PE, 4 TBRE, 5 RP and
-    // 6 +5 V (pulled up, MAME), 7 /LPS (power fine, VirtualT)
+    // 6 +5 V (MAME's annotations: RP pulled up, bit 6 tied to +5 V; VirtualT
+    // reads them 0), 7 /LPS (power fine; both agree). The ROMs read only
+    // bits 0-4 here ($6DBE, $6E40); bit 0 only by counting its toggles to
+    // find a modem carrier ($6ED6, $6F0A), so its idle level does not matter
     uint8_t v = 0xE0;
+    if (modem.lineSignal()) v |= 0x01;      // the line's signal (the ROM detects the carrier tone itself)
+    if (modem.ring()) v &= (uint8_t)~0x20;  // RP: the ring line, pulled up (low while ringing: unverified)
     if (uart.oe()) v |= 0x02;
     if (uart.fe()) v |= 0x04;
     if (uart.pe()) v |= 0x08;
@@ -483,12 +741,18 @@ uint8_t System::uartStatus() const {
 // Time ----------------------------------------------------------------------
 void System::advance(uint64_t t) {
     m_ticks += t;
+    // TIMER OUT clocks the UART at 16x the bit rate. On the 200 this is the
+    // 8251's TxC/RxC: its ROM sets the 8251 to x16 ($4A, $8440) and loads the
+    // 81C55 timer from a table of 153600 / baud counts ($86CC: 2048 for 75
+    // baud ... 8 for 19200), as the 100's does for the IM6402. The 8251's
+    // /CTS is left asserted: how the 200 wires it is not in the references.
     const uint64_t edges = pio.tick(t);
     if (edges) {
         if (isT200()) usart.tick(edges);
         else uart.tick16x(edges);
     }
     if (isT200()) {
+        lcdc.tick(t);
         rtc200.tick(t);
         // RST 7.5: 4.9152 MHz / 2 / 8192, a 300 Hz toggle (MAME tandy200_tp_tick)
         m_tpAcc += t;
@@ -503,10 +767,23 @@ void System::advance(uint64_t t) {
             lcdc.frame();
         }
     } else {
+        lcd.tick(t);
         rtc.tick(t);
+        if (isPc8201()) cmtClock(t);
     }
     tape.clock(t);
     keyboard.clock(t, CPU_HZ);
+    if (hasModem()) modem.tick(t);
+    if (wandPlugged) wand.tick(t);
+    if (wandRst55() != m_rst55) {
+        m_rst55 = wandRst55();
+        if (m_cpu) m_cpu->setRst55(m_rst55);
+    }
+    m_flushAcc += t;
+    if (m_flushAcc >= (uint64_t)CPU_HZ) {   // the battery-backed images: to their files once a second
+        m_flushAcc = 0;
+        flushAddons();
+    }
     sound.run(t, m_powered && speaker() ? 0.3f : 0.0f);
     if (m_holdup) {
         if (m_holdup > t) m_holdup -= t;
@@ -530,6 +807,9 @@ void System::hardwareReset() {
     m_ctrl = 0;
     m_bankReg = 0;
     m_modem = 0;
+    m_scp = 0;
+    m_casRomSel = false;
+    modemLines();
     uart.masterReset();
     usart.reset();
     tape.setMotor(false);
@@ -584,13 +864,14 @@ void System::powerDown() {
 // Memory --------------------------------------------------------------------
 uint8_t System::read8(uint32_t addr) { return access((uint16_t)addr, false, 0); }
 void System::write8(uint32_t addr, uint8_t v) { access((uint16_t)addr, true, v); }
-uint8_t System::peek8(uint32_t addr) { return access((uint16_t)addr, false, 0); }
+uint8_t System::peek8(uint32_t addr) { return access((uint16_t)addr, false, 0, true); }
 
-uint8_t System::access(uint16_t a, bool write, uint8_t v) {
+uint8_t System::access(uint16_t a, bool write, uint8_t v, bool peek) {
+    if (isPc8201()) return accessPc8201(a, write, v);
     if (!isT200()) {
         if (a < 0x8000) {
             if (write) return 0;
-            if (m_ctrl & 1) return m_opt.empty() ? 0xFF : m_opt[a];
+            if (m_ctrl & 1) return optionRead(a, peek);
             return m_rom[a];
         }
         const size_t base = 0x10000 - m_ram.size();
@@ -604,7 +885,7 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
         switch (m_bankReg & 3) {
         case 0: return m_rom[a];
         case 1: return m_rom[0xA000 + a];
-        case 2: return m_opt.empty() ? 0xFF : m_opt[a];
+        case 2: return optionRead(a, peek);
         default: return 0xFF;
         }
     }
@@ -618,7 +899,9 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
 
 // Ports ---------------------------------------------------------------------
 uint8_t System::peekPort(uint8_t port) {
+    if (m_rampac && Rampac::decodes(port)) return m_rampac->peek(port);
     const int blk = port & 0xF0;
+    if (uint8_t r; isPc8201() && inPc8201(port, r)) return r;
     if (blk == 0xB0) return pio.peekIo(port & 7);
     if (blk == 0xE0) return keyboard.read(m_keyLatch);
     if (isT200()) {
@@ -639,20 +922,25 @@ uint8_t System::peekPort(uint8_t port) {
 }
 
 uint8_t System::in(uint8_t port) {
+    if (m_rampac && Rampac::decodes(port)) return m_rampac->in(port);
     const int blk = port & 0xF0;
     if (blk == 0xB0) return pio.readIo(port & 7);
     if (isT200()) {
         if (blk == 0xC0) return usart.read(port & 1);
         if (blk == 0xF0) return lcdc.read(port & 1);
+        if (blk == 0xE0) keyboard.noteRead(m_keyLatch);
         return peekPort(port);
     }
     if (blk == 0xC0) return uart.readData();
     if (blk == 0xF0) return lcd.read(port & 1);
+    if (blk == 0xE0) keyboard.noteRead(m_keyLatch);
     return peekPort(port);
 }
 
 void System::out(uint8_t port, uint8_t v) {
+    if (m_rampac && Rampac::decodes(port)) { m_rampac->out(port, v); return; }
     const int blk = port & 0xF0;
+    if (isPc8201() && outPc8201(port, v)) return;
     if (blk == 0xB0) { pio.writeIo(port & 7, v); return; }
     if (blk == 0xE0) { controlOut(v); return; }
     if (isT200()) {
@@ -666,7 +954,7 @@ void System::out(uint8_t port, uint8_t v) {
         return;
     }
     switch (blk) {
-    case 0xA0: if (m_model == Model::M100) m_modem = v; break;
+    case 0xA0: if (m_model == Model::M100) { m_modem = v; modemLines(); } break;
     case 0xC0: uart.writeTbr(v); break;
     case 0xD0: uart.writeControl(v & 0x1F); break;
     case 0xF0: lcd.write(port & 1, v); break;
@@ -695,6 +983,8 @@ std::vector<uint8_t> System::state() const {
     putBlock(v, usart.saveState());
     putBlock(v, rtc.saveState());
     putBlock(v, rtc200.saveState());
+    if (isPc8201()) putPc8201(v);
+    putBlock(v, addonState());
     return v;
 }
 
@@ -712,11 +1002,37 @@ void System::loadState(const uint8_t* buf) {
     usart.loadState(getBlock(p));
     rtc.loadState(getBlock(p));
     rtc200.loadState(getBlock(p));
+    if (isPc8201()) getPc8201(p);
+    loadAddonState(p);
     if (!isT200()) lcd.setSelectFromPorts(m_pa, m_pb);
+    modemLines();
     if (m_cpu) {
         m_cpu->setRst75(m_rst75);
         m_cpu->setRst65(m_rst65);
     }
+}
+
+// The add-ons' state: the modem, the wand, and the RAMPAC's and REX's
+// memories (each block empty when the device is not fitted)
+std::vector<uint8_t> System::addonState() const {
+    std::vector<uint8_t> v;
+    putBlock(v, modem.saveState());
+    put(v, wandPlugged);
+    putBlock(v, m_rampac ? m_rampac->saveState() : std::vector<uint8_t>{});
+    putBlock(v, m_rex ? m_rex->saveState() : std::vector<uint8_t>{});
+    return v;
+}
+
+void System::loadAddonState(const uint8_t*& p) {
+    const auto blk = getBlock(p);
+    if (blk.size() < 4) return;
+    const uint8_t* q = blk.data();
+    modem.loadState(getBlock(q));
+    get(q, wandPlugged);
+    const auto r = getBlock(q);
+    if (m_rampac && !r.empty()) m_rampac->loadState(r);
+    const auto x = getBlock(q);
+    if (m_rex && !x.empty()) m_rex->loadState(x);
 }
 
 System* systemOf(MachineDescriptor* m) {

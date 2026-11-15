@@ -15,7 +15,7 @@ std::string baseName(const std::string& path) {
 }
 
 /** Option ROMs (.rom, .bin up to 32 KB) into the socket: the CLI `cart` and
- *  `load`/-i (.rom), the GUI's Attach Cartridge. Only a Model 100/102/200 takes them. */
+ *  `load`/-i (.rom), the GUI's Attach Cartridge. Only a Model 100 or a sibling takes them. */
 class OptRomHandler : public ICartridgeHandler {
 public:
     explicit OptRomHandler(std::string path) : m_path(std::move(path)) {}
@@ -58,7 +58,7 @@ static const char* s_deps[] = { "8085", nullptr };
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
     "m100",
-    "Tandy Model 100, 102 and 200",
+    "Tandy Model 100, 102 and 200; NEC PC-8201A; Olivetti M10; Kyotronic 85",
     "1.0.0",
     s_deps,
     nullptr,
@@ -85,5 +85,9 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("m100", m100::Model::M100, "Tandy Model 100 (alias of model100)");
     reg("model102", m100::Model::M102, "Tandy Model 102 (32 KB)");
     reg("model200", m100::Model::M200, "Tandy 200 (72 KB in three banks)");
+    reg("pc8201a", m100::Model::PC8201, "NEC PC-8201A (up to 96 KB in banks)");
+    reg("pc8201", m100::Model::PC8201, "NEC PC-8201A (alias of pc8201a)");
+    reg("m10", m100::Model::M10, "Olivetti M10 (32 KB, European keyboard)");
+    reg("kc85", m100::Model::KC85, "Kyocera Kyotronic 85 (32 KB)");
     return &s_manifest;
 }

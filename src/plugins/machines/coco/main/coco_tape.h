@@ -17,7 +17,7 @@ namespace coco {
  * least significant first: a 1 a short cycle of about 2 kHz, a 0 a long
  * one of about 1.1 kHz, the timings XRoar uses), and .wav (8/16-bit PCM,
  * any rate, mono or stereo: played by its zero crossings; saved as 8-bit
- * mono at 22050 Hz).
+ * mono at 22050 Hz, or the rate setWavRate sets).
  *
  * Playback runs while PLAY is down (mounting presses it) and the motor is
  * on. Recording (startTapeRecord) captures the DAC while the motor is on;
@@ -54,11 +54,14 @@ public:
     bool loadWav(const std::vector<uint8_t>& bytes);
     /** The recording decoded to .cas bytes. */
     std::vector<uint8_t> recordedCas() const;
-    /** The recording as an 8-bit mono 22050 Hz WAV file. */
+    /** The recording as an 8-bit mono WAV file (22050 Hz unless setWavRate). */
     std::vector<uint8_t> recordedWav() const;
 
     // The machine's side
     void setMasterHz(double hz) { m_hz = hz; }
+    /** The sample rate recordings are saved at as .wav (default 22050 Hz). */
+    void setWavRate(int hz) { m_wavRate = hz > 0 ? hz : DEFAULT_WAV_RATE; }
+    static constexpr int DEFAULT_WAV_RATE = 22050;
     void setMotor(bool on) { m_motor = on; }
     bool motor() const { return m_motor; }
     bool playing() const { return m_play && m_motor && m_pos < m_pulses.size(); }
@@ -79,6 +82,7 @@ private:
         bool level;        // PA0 during the pulse
     };
     double m_hz = 14318180.0;
+    int m_wavRate = DEFAULT_WAV_RATE;
     std::vector<Pulse> m_pulses;
     size_t m_pos = 0;
     uint64_t m_left = 0;

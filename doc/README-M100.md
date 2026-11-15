@@ -19,9 +19,13 @@ follows.
 ## Machines
 
 ```
-./bin/mmemu-cli -m model100          # or m100, model102, model200
+./bin/mmemu-cli -m model100          # or m100, model102, model200, pc8201a, m10, kc85
 ./bin/mmemu-gui -m model100
 ```
+
+Its siblings from the same Kyocera design are there too: the NEC PC-8201A
+(`pc8201a`), the Olivetti M10 (`m10`) and the Kyocera Kyotronic 85 (`kc85`);
+see their sections below.
 
 The 8085 runs at 2.4576 MHz (the 4.9152 MHz crystal halved); time in the
 machine is counted in its clocks.
@@ -37,6 +41,9 @@ the repository. Put them in `roms/m100/` (gitignored, except
 | `model100` | `m100.rom`   | 32 KB | MAME `m100rom.m12`, VirtualT `M100rom.bin` |
 | `model102` | `m102.rom`   | 32 KB | `m102rom.m12`, `M102rom.bin` |
 | `model200` | `t200.rom`   | 72 KB | VirtualT's `T200rom.bin`; MAME's 96 KB region; MAME's three chips `rom 1-1.m15` (32 KB), `rom 1-2.m13` (8 KB), `rom 2.m14` (32 KB) |
+| `pc8201a`  | `pc8201a.rom` | 32 KB | MAME `pc8201rom.rom`, VirtualT `PC8201rom.bin` |
+| `m10`      | `m10.rom`    | 32 KB | MAME `m10rom.m12`, VirtualT `M10rom.bin` (32 KB + 16 bytes: the extra 16 are dropped) |
+| `kc85`     | `kc85.rom`   | 32 KB | MAME / VirtualT `kc85rom.bin`, `KC85rom.bin` |
 
 The Model 200's 72 KB file is VirtualT's layout: the 40 KB main ROM
 (`$0000-$9FFF`) then the 32 KB second ROM (MULTIPLAN, bank 1). Without its
@@ -57,10 +64,11 @@ I/O ports (each block mirrored over its 16 ports):
 
 | port      | read | write |
 |-----------|------|-------|
-| `$A0`     | -    | Model 100: the modem's control (stored; the modem is not emulated) |
+| `$A0`     | -    | Model 100: the modem's control: 0 the line relay (off hook), 1 the MC14412's enable (see [Add-ons](#add-ons)) |
+| `$81`, `$83` (`$85` written) | a RAMPAC, if fitted | a RAMPAC, if fitted |
 | `$B0-$BF` | the 81C55 (`port & 7`) | the 81C55 |
 | `$C0-$CF` | the IM6402's received byte (and clears DR) | the byte to send |
-| `$D0-$DF` | status: 0 CD, 1 OE, 2 FE, 3 PE, 4 TBRE, 5 RP, 6 +5 V, 7 /LPS | the IM6402's control (bits 0-4: stop bits, even parity, no parity, word length) |
+| `$D0-$DF` | status: 0 the modem line's signal (MAME's CD; see [Add-ons](#add-ons)), 1 OE, 2 FE, 3 PE, 4 TBRE, 5 RP, 6 +5 V, 7 /LPS | the IM6402's control (bits 0-4: stop bits, even parity, no parity, word length) |
 | `$E0-$EF` | the keyboard rows (active low) | 0 option ROM, 1 printer /STROBE, 2 the RTC's STB, 3 cassette motor |
 | `$F0-$FF` | the LCD (A0 low: status; high: data) of every selected HD44102, ORed | instruction (A0 low) or data (A0 high) to every selected HD44102 |
 
@@ -75,7 +83,7 @@ count of 8 is 19200 baud).
 
 Interrupts: RST 7.5 is the uPD1990AC's TP (the ROM sets 256 Hz: the
 keyboard scan and the clock); RST 6.5 the IM6402's DR; RST 5.5 the bar code
-reader (not fitted: never); TRAP the power switch.
+reader (the wand's output inverted; low with no wand); TRAP the power switch.
 
 ### Model 200
 
@@ -90,19 +98,94 @@ I/O: `$90-$9F` the RP5C01 clock, `$A0` the tone dialler (ignored),
 `$B0-$BF` the 81C55 (port A the keyboard columns and printer data; port B
 0 column 8, 2 /BUZZER, 4 power cut, 5 BELL; port C 0 /LPS, 1-2 printer, 3
 bar code, 4 CD), `$C0`/`$C1` the 8251 USART (data; mode/command and
-status), `$D0` the bank register (it reads back), `$E0` the keyboard rows /
+status; TxC and RxC from the 81C55's TIMER OUT, as on the 100), `$D0` the bank register (it reads back), `$E0` the keyboard rows /
 0 printer strobe, 1 cassette motor, `$F0`/`$F1` the HD61830 (data;
 instruction and status). RST 7.5 is a 300 Hz toggle of the clock divided by
 8192 (150 rising edges a second, as MAME); RST 6.5 the 8251's RxRDY.
+
+### NEC PC-8201A
+
+`pc8201a` (alias `pc8201`; issue #358): the same 8085, 81C55, uPD1990AC,
+IM6402 and ten HD44102s as the Model 100, wired the same way (port A/B
+selects, RST 7.5 from the RTC's TP, RST 6.5 from DR), with NEC's memory
+banking and its own ports (MAME `pc8201_state`, VirtualT):
+
+| address       | port `$A0` bits 0-1 (`$0000-$7FFF`) / bits 2-3 (`$8000-$FFFF`) |
+|---------------|------|
+| `$0000-$7FFF` | 0 the 32 KB ROM, 1 the option ROM (`$FF` if none), 2 / 3 RAM bank 2 / 3 (writable) |
+| `$8000-$FFFF` | 0 the internal RAM (16 or 32 KB, ending at `$FFFF`), 1 nothing, 2 / 3 RAM bank 2 / 3 |
+
+RAM: 16, 32, 64 or 96 KB (default 96: the internal 32 KB and the two 32 KB
+banks; a bank that isn't fitted reads `$FF`). I/O differences:
+
+| port      | read | write |
+|-----------|------|-------|
+| `$80-$8F` | `$8C`: the 128 KB ROM cassette's data (none: `$FF`) | `$80` A16 and ROM select, `$84` A0-A7, `$88` A8-A15 (latched) |
+| `$90-$9F` | - | 3 cassette motor, 4 the RTC's STB, 5 printer strobe (a byte goes as it rises), 6-7 the serial select |
+| `$A0-$AF` | the bank register (bits 0-3), `$90`'s bits 6-7 | the bank register |
+| `$E0-$EF` | the keyboard rows | - (no option ROM bit, printer or motor here) |
+
+`$A0` is not a modem port. The cassette's tones are made in hardware (MAME's
+`cmt_tick`): from a 19200 Hz clock, SOD low gives 1200 Hz and SOD high
+2400 Hz; SID reads the comparator without the Model 100's inversion. The
+option ROM socket is ROM bank 1 (`rom optrom FILE`).
+
+Keyboard (MAME `pc8201a`): five function keys f.1-f.5 (F1-F5), STOP (F8
+or F12), GRPH (Alt), PAST/INS (Insert or F9), ESC, TAB, the four arrows, a
+JIS-style symbol layout: `@` and `[` right of P (the PC's `[` and `=`
+keys), `\` and `]` (the PC's `]` and `\`), `;` and `:` right of L, `-`
+right of 0; Shift+2 is `"`, Shift+0 `_`, Shift+`-` `=`, Shift+`;` `+`,
+Shift+`:` `*`. `type TEXT` uses that layout.
+
+### Olivetti M10 and Kyotronic 85
+
+`m10` and `kc85`: the Kyotronic 85 (Kyocera's own) is the Model 100 without
+its modem port (MAME's `kc85`), and the Olivetti M10 is the Kyotronic 85 with
+a European keyboard wired as a different matrix (MAME's `olivm10`, VirtualT's
+`MODEL_M10`):
+
+```
+col 0  Q W ` 1 2 3 4 5          col 5  E R T U I O P SPACE
+col 1  Y 6 7 8 9 0 - =          col 6  LEFT RIGHT UP DOWN BKSP TAB ENTER PASTE
+col 2  ] [ ; ' / . , M          col 7  F1-F8
+col 3  A \ Z X C V B N          col 8  LABEL PRINT SHIFT CTRL GRAPH NUM CAPS BREAK
+col 4  S D F G H J K L
+```
+
+(the keys by their place on a PC keyboard). The M10's ROM (MAME's
+`m10rom.m12`, "3256C02-4B3/I") types an AZERTY layout from it: the Q and W
+places are `a` and `z`, A is `q`, Z `w`, the `;` place `m`, the M place
+`,`; the digits are on Shift (unshifted: `£ é " ' ( - è _ ç à`), `$`/`*` left
+of 1, `)` and `=`/`+` right of 0. `type TEXT` follows the ROM's layout (so
+`type PRINT 2+2` works); the accented letters are not typed. The M10 has no
+ESC or CODE key. Memory, RAM sizes (8-32 KB), the option ROM socket and
+the other ports are the Model 100's.
 
 ### Keyboard
 
 The matrix is MAME's (nine columns strobed by the 81C55, eight rows read at
 `$E0`); the Model 200 has the same one. The GUI sends keys positionally (the
-Model 100's layout is a PC's: Shift+2 is `@`). Special keys: Esc is ESC, Alt
-GRAPH, right Alt CODE, Home NUM, F1-F8 the function keys, F9 PASTE, F10
-LABEL, F11 PRINT, F12 PAUSE/BREAK, Backspace/Delete DEL/BKSP; CAPS LOCK
-latches as the real key does. `type TEXT` holds SHIFT where it is needed.
+Model 100's layout is a PC's: Shift+2 is `@`); a PC symbol key with no
+Model 100 key of its own (`]`) is sent with SHIFT. Special keys: Esc is
+ESC, Alt GRAPH, right Alt or Page Up CODE (the GUI cannot tell the two Alt
+keys apart), Home NUM, F1-F8 the function keys, F9 PASTE, F10 LABEL, F11
+PRINT, F12 PAUSE/BREAK, Backspace/Delete DEL/BKSP; CAPS LOCK latches as the
+real key does. A key the host repeats while held stays down once, so the
+ROM's own key repeat runs (as on the machine) and a shifted symbol does
+not leave SHIFT stuck.
+
+`type TEXT` (and pasting) holds SHIFT where it is needed and keeps pace
+with the ROM's keyboard scan: every scan reads `$E0` once with columns 0-7
+all selected (the "any key?" test, `$706F` on the 100/102, `$88FE` on the
+200), the ROMs scan every third 256 Hz tick (the 200: every third RST 7.5),
+read SHIFT once a scan and take a key when two scans agree. So SHIFT goes
+down 2 scans before its key and up 2 scans after, a key is held 3 scans
+and released 2 (about 17 characters a second on the 100). Pressing SHIFT
+with the key, as before, lost it now and then ("PRInT"). While the ROM's
+type-ahead count (found in the ROM by its key-repeat test, `$FFAA` on the
+100/102, `$FD1E` on the 200) holds 8 keys, typing waits, so a pasted
+program is not lost while BASIC stores lines. A program that reads the
+keyboard its own way gets a fixed 20 / 60 / 40 ms pace.
 
 ### Display and sound
 
@@ -121,8 +204,9 @@ ROM II, TS-DOS, the ROM2 / REX images, ...): CLI `rom optrom FILE.bin`
 `rom_socket`, or as a cartridge: `cart FILE.bin`, `-i FILE.rom` (a `.bin`
 given to `-i` is loaded into memory as a raw binary, as on every machine).
 On the 100/102 the ROM's own code (or BASIC's `CALL 63012`) switches it in
-with port `$E0` bit 0; on the 200 it is ROM bank 2. REX's flash writes are
-not emulated.
+with port `$E0` bit 0; on the 200 it is ROM bank 2. A REX / REX# flash card
+goes in the same socket through the `rex` expansion slot (see
+[Add-ons](#add-ons)); its flash writes are emulated.
 
 ### RS-232, TPDD, printer, cassette
 
@@ -138,15 +222,26 @@ TPDD use: `serial tpdd:/home/me/m100files`, then load TS-DOS (from an
 option ROM, or a DOS-on-demand loader)
 or any TPDD client; files in the directory appear as `NAME  .BA`, `.DO`,
 `.CO`, and sub-directories as TS-DOS's `NAME.<>` entries. Saving creates
-files there.
+files there. `serial tpdd:DISK.pdd1` serves a TPDD1 disk image the same
+way, through the drive's own file system on the disk (see
+[TPDD](#tpdd--tpdd2-tpdd)).
 
 `serial printer:PATH` sends what is printed to a host file
-(`printer:none` stops); the printer is always ready.
+(`printer:none` stops); the printer is always ready (port C bit 1 /BUSY
+high, bit 2 BUSY low: what the ROM waits for, `$6D47`). The ROMs end a
+printed line with CR alone, leaving the line feed to the printer's auto-LF
+switch, so `printer:` acts as such a printer and writes each CR as CR LF
+(an LF straight after a CR is not doubled): the file reads as text on the
+host. `serial printer-raw:PATH` writes the bytes exactly as sent.
 
 The cassette is `.wav` only (the Model 100's 1200/2400 Hz FSK as audio):
 `tape mount FILE.wav` (play), `tape record` / `tape save FILE.wav`. SOD drives
 the output and SID reads the comparator; the motor relay is port `$E0` bit 3
-(the 200: bit 1). Uses the CoCo plugin's recorder (`coco_tape.cpp`).
+(the 200: bit 1). Uses the CoCo plugin's recorder (`coco_tape.cpp`),
+recording at 44.1 kHz: at its default 22.05 kHz the jitter of a sample on
+the 2400 Hz half-cycles was enough for `CLOAD` to misread a `CSAVE` (one
+token of a short program). Any PCM `.wav` plays (8 or 16 bits, any rate,
+read by its zero crossings).
 
 ### Power
 
@@ -157,6 +252,120 @@ restarts the 8085 with RAM kept, as the batteries do. The ROM's automatic
 power-off (port B bit 4) also turns it off: press POWER to wake it.
 **RESET** is the reset button on the back (RAM kept). The frontends'
 `reset` is that button.
+
+### Add-ons
+
+Issue #358. Each says where its behaviour comes from; what no reference
+settles is marked unverified.
+
+**The built-in modem** (Model 100 and Tandy 200; the 102 has none). An
+MC14412 300-baud FSK modem (`mc14412/`) between the UART and a "phone
+line", which is any serial endpoint: `serial modem:tcp:6400` (a terminal
+program or a BBS bridge connects to localhost:6400), `serial
+modem:file:PATH`, `serial modem:loopback`, `serial modem:none`. The
+UART's data goes to the modem while port B bit 3 is set (MAME's
+`DCD/_RD`, `_RS232C`; VirtualT's "serial toggle"), to the RS-232 connector
+otherwise; the handshake lines are always the RS-232 connector's.
+
+How the ROMs use it was read from their TELCOM code (Model 100 ROM
+`$52B4-$5440`, `$6EEF`; Tandy 200 ROM `$874A`) where MAME and VirtualT
+only name the bits:
+- Model 100: `$A0` bit 0 connects the modem to the line (the relay);
+  with the modem selected, port B bit 7 holds the line (0) or opens it (1;
+  the dial pulses: 63 ms open / 35 ms closed at 10 pps); `$A0` bit 1 (MAME's
+  "EN") turns the modem's own carrier on - TELCOM sets it only after it has
+  heard the far end (originate) or as it answers. `$D0` bit 0 is the line's
+  signal squared up, not a carrier flag: the ROM times its edges and
+  wants about a thousand half-periods in band (the answer tone, 2225 Hz,
+  when originating; 1270 Hz when answering) before it goes on line. Port C
+  bit 4 (the RS-232 /CTS otherwise) reads as ORIG/ANS while the modem is
+  selected: 0 originate (listen, then send), 1 answer (send, then
+  listen). mmsim gives it the side switch, `serial modem:originate`
+  (default) or `serial modem:answer`; that the switch is what is wired
+  there is unverified.
+- Tandy 200: port B bit 1 ORIG/ANS (1 originate), 6 MEN (the carrier on),
+  7 CALL (the line held; also the dial pulses), and port C bit 4 (MAME's
+  "CD") is the line's signal while the modem is selected, timed by the ROM
+  the same way (MAME `i8155_pb_w`, `i8155_pc_r`).
+- The far end is a modem in the other mode. 100 ms (mmsim's choice) after
+  the line is held with a far end (a TCP client connected; always for
+  `loopback` and `file:`), its mark tone is on the line; it goes at once
+  when the line is dropped. Bytes pass once the computer's carrier is on
+  too; before that what the UART sends is lost. Space tones and data
+  timing are not modelled (bytes pass whole, paced by the UART).
+- Pulse dialling is decoded and shown by `devinfo Modem` ("Dialled");
+  the digits don't pick a destination (the line is whatever `modem:`
+  names).
+- Ringing: a TCP client connecting while on hook rings (2 s on, 4 s off)
+  on `$D0` bit 5 ("RP", pulled up; low while ringing: unverified). The
+  ROMs' auto-answer has not been tried.
+- Checked with the real ROMs: TELCOM `Stat M7I1E,10pps`, `Call 21<`
+  dials "21", hears the tone, turns its carrier on and goes to terminal
+  mode; typed text reaches the `modem:` line (and comes back from a
+  loopback), on the Model 100 and the Tandy 200. (Without `<` at the end of
+  the number TELCOM dials and hands the line back to the telephone, as the
+  manual describes.)
+
+**The bar code reader** (`barcode/`). A wand on port C bit 3, its inverse
+on RST 5.5 (MAME's note "!RxDB -> RST5.5"; VirtualT and MAME read the bit
+but have no wand). `serial barcode:code39:HELLO`, `barcode:ean13:DIGITS`
+(12 or 13 digits), `barcode:upca:DIGITS` (11 or 12) or `barcode:bits:1011...`
+(raw modules) plugs the wand in and swipes it once across that code, a
+module a millisecond with 10 modules of quiet zone each side;
+`barcode:none` unplugs it. The output is 1 over a light space or with the
+wand lifted and 0 over a bar (an open-collector HEDS-3050-type wand;
+unverified); with no wand the bit reads 0 as before. The ROMs have no bar
+code software (RST 5.5 goes through the RAM hook at `$F5F9`), so this is
+for the bar code programs that were sold for it.
+
+**RAMPAC / Node Datapac** (`rampac/`, VirtualT's `RAMPAC_SECTOR_PORT` /
+`RAMPAC_DATA_PORT`). 256 KB of battery-backed RAM on the system bus:
+`OUT $81` (or `$85`) selects a 1 KB sector and clears the byte counter,
+`IN $81` reads the sector back, `IN`/`OUT $83` read or write a byte and
+step the counter (into the next sector after 1024; 255 wraps to 0).
+`expansion sysbus rampac FILE` (or `datapac`) fits it, backed by `FILE`
+(raw 256 KB, VirtualT's layout; made, zeroed, if missing); the file is
+written a second after a change and when the card is removed
+(`expansion sysbus remove`) or the machine goes; `expansion sysbus save
+PATH` writes a copy. Unverified: whether the cards decode fewer address
+lines (mirrors in `$80-$8F`), and any difference between the RAMPAC and
+the Datapac (treated alike); the 64/128 KB Datapacs are not offered.
+Checked with stand-in programs only (no RAMPAC software here).
+
+**REX and REX#** (`rex/`, after VirtualT's `rex_read` and
+`amd_flash_write`). A 1 MB AMD-type flash in the option ROM socket,
+commanded by reads (the socket has no write line): reads at
+`$0000-$7FFF` return the selected 32 KB sector; the key sequence (reads
+whose low address bytes are `$B8 $F2 $34 $B0 $31 $BF`) enters command
+mode, where a read's address bits 0-2 are a command: 0 leave, 1 set the
+sector (and flash select), 2 / 5 / 6 bus writes to the flash ($AAA/$AA,
+$555/$55, a program address and data), 3 status (busy, select, sector),
+4 read the flash, 7 the ID (`$11` REX, `$13` REX#). REX# takes the data
+before the address (it has no address latch). The flash takes the JEDEC
+program, unlock-bypass program, sector erase (bottom-boot layout: 16, 8,
+8, 32 KB then 64 KB sectors) and chip erase sequences, with VirtualT's
+busy times. `expansion rex rex FILE` (or `rexsharp`) fits it, replacing
+any option ROM while it is in; `FILE` is the 1 MB image (VirtualT's
+`.bin`; made erased if missing), written back a second after a change and
+on removal. REX2's RAM, the REXCPM and the flash's autoselect / CFI reads
+are not modelled. The REX firmware images are not included: make or
+bring your own. Checked locally (not in the tests: the firmware is not
+ours) with a flash image laid out as VirtualT's "create flash" makes it:
+the Model 100's `CALL 63012` starts REX Manager 4.8, which installs its
+files, lists the RAM image and refreshes its backup (32 KB programmed into
+the flash and its directory updated, written back to the image file).
+REX# and the Tandy 200 were checked with the stand-in programs only.
+
+**The Disk/Video Interface** (26-3806: one or two 5.25" drives and a 40/80
+column composite video output on the system bus) is not emulated. None of
+the references here (MAME, VirtualT, the Technical Reference Manual)
+describes how the computer talks to it: which ports or bus cycles, what
+the DVI's own controller and video chip are, and the protocol its ROM
+(DVI DISK-BASIC, loaded into the computer from the box) uses. Emulating it
+needs the DVI service manual's schematic and port map, and a DVI ROM dump
+to test with; neither is available here, and guessing a bus protocol would
+not run the real ROM. (VirtualT's "TDock" is a different, VirtualT-only
+video device.)
 
 ### Snapshots
 
@@ -174,29 +383,79 @@ bank 1) starts, and TS-DOS 4.00 as an option ROM (`CALL 63012`) lists a
 `serial tpdd:DIR` directory. A cold start sets the clock to 00:00:00 on
 01/01/00 (the ROM does it); set it with BASIC's `TIME$` / `DATE$`.
 
+Checked for #358 (with the real ROMs, and the ROM code read where it
+decides):
+
+- Typing: a mixed-case line with symbols, doubled letters and shifted /
+  unshifted alternation (`AAbbCCdd... "x"(1+2)*3 llllmmmm ZzZz`) types
+  exactly on all three models, and 15 pasted 70-character BASIC lines are
+  all stored intact on the 100 and the 200; with the old 60 / 40 ms pace
+  the same paste on the 100 kept 5 of 15 (SHIFTs lost). The pace follows
+  the ROM's scan (see [Keyboard](#keyboard)). Holding a key in BASIC
+  repeats it, also while the host sends its own repeated presses.
+- Port C (`$BB`): bit 1 /BUSY high and bit 2 BUSY low is a ready printer:
+  the ROM waits for exactly that before each strobe (`$6D47`: `IN $BB`,
+  `ANI 6`, `XRI 2`), as MAME's `i8155_pc_r` (SLCT, BUSY) and VirtualT
+  read it. /CTS (bit 4) and /DSR (bit 5) are active low and read 1 with
+  nothing connected: MAME's RS-232 lines are active low, VirtualT sets the
+  bits when the host's CTS / DSR are off. The ROM's RS-232 output paces by
+  TBRE and XON/XOFF, not these; bit 4 is read only by the modem routines.
+- `$D0` status: the ROMs read only bits 0-4 (`$6DBE`, `$6E40`). Bits 5
+  and 6 read 1 (MAME's annotations: RP pulled up, +5 V; VirtualT reads
+  0), bit 7 /LPS 1 (power fine; both agree). Bit 0 is read only by
+  counting its toggles to find a modem carrier (`$6ED6`, `$6F0A`), so its
+  idle level (0) does not matter.
+- The Model 200's 8251 clock: TxC/RxC are TIMER OUT. Its ROM sets the
+  8251 to x16 (`$4A`, `$8440`) and loads the 81C55's timer from a table of
+  153600 / baud counts (`$86CC`: 2048 for 75 baud to 8 for 19200), as
+  the 100 does for the IM6402; MAME gives the 8251 only its CLK.
+- `LPRINT`: the ROMs send CR alone at a line end (`LPRINT "CD"` sends C D
+  CR; the printer routine, 100/102 `$4B7A` and 200 `$5A3E`, also filters
+  an LF after a CR). Real printers were set to auto-LF; `printer:` does
+  the same for the file, `printer-raw:` keeps the bytes.
+- `CSAVE` / `CLOAD`: a BASIC program saved to `.wav` and loaded back runs
+  on the 100 and the 200. The same recording re-made as a tape deck would
+  play it (half-sine cycles, 16-bit, at 48 kHz 1.5 % fast and at 22.05 kHz
+  1.5 % slow, with noise and level wobble) also loads. Played with its
+  polarity inverted it does not: the ROM's sync search wants the phase
+  asymmetry the 100 records (`$6F9E`-`$6FC9`). Whether a real Model 100
+  rejects an inverted tape too is unverified. No recording from a real
+  machine was available.
+- The LCD busy flags: the 200's ROM polls the HD61830 before each access
+  (`$8EAB`: `IN $FF`, `RAL`, `JC`) and draws correctly with MAME's busy
+  counts and twice them, but not with ten times them; the 100/102 ROM
+  polls each HD44102 access (`$750B`) and draws correctly even with a
+  200-clock busy time.
+- TPDD on a disk image: TS-DOS 4.00 lists the files of a `.pdd1` built
+  from pdd.sh's layout (with a file chained over non-adjacent sectors),
+  with the right sizes and free space, and saves a file to it that an
+  independent reader of the layout finds intact.
+- The GUI's positional mode (`model100`, `m100`, `model102`, `model200`):
+  the names it sends all map; host key repeat and CODE (Page Up) fixed.
+
+The siblings, by hand with VirtualT's `PC8201rom.bin`, `M10rom.bin` and
+`KC85rom.bin`: each boots to its menu (PC-8201A "#1", 28758 bytes free with
+96 KB, 12374 with 16 KB; M10 and Kyotronic 85 29638 bytes free). BASIC
+runs `PRINT 2+2` with a line of symbols typed through `type`, plus a
+`FOR` loop. On the PC-8201A, `LPRINT` reaches `serial printer:`. The
+PC-8201A's ROM shows the year as 2083: the uPD1990AC has no year, and
+VirtualT patches the ROM's default year instead. Unchecked on the siblings:
+switching the PC-8201A to RAM banks #2/#3 from its menu (the bank port is
+unit-tested), the cassette (`CSAVE` / `CLOAD`), RS-232 and the ROM
+cassette.
+
 The parts most likely to need tuning:
 
-- The keyboard timing: typed keys are held 60 ms with 40 ms gaps (fine for
-  BASIC and the menus; key repeat and fast typing not checked).
-- Port C's printer and RS-232 handshake polarity (/BUSY, BUSY, /CTS, /DSR)
-  and the `$D0` status bits 0 and 5-7: VirtualT and MAME disagree (MAME
-  reads `$60`, never sets bit 7 /LPS and leaves its error bits unfinished;
-  VirtualT reads bit 7 set and 5-6 clear). mmsim sets 5-7 (no low-battery
-  warning) and 0 clear (no modem carrier).
 - The Model 200's RST 7.5 rate: MAME's 150 Hz divider is followed;
   VirtualT ticks every model at about 256 Hz.
-- The Model 200's 8251 clock: the 81C55's TIMER OUT is assumed to clock
-  TxC/RxC (as VirtualT's baud rate from the timer implies); MAME does not
-  wire it. /CTS is not modelled.
-- The LCD's busy flag (always ready) and the HD61830A's internal font (a
-  stand-in: the Model 200 uses graphic mode).
-- `LPRINT` ends a line with CR only on the printer file; whether the ROM
-  should send LF is unchecked.
-- The cassette (`.wav`) has not been tried with `CSAVE` / `CLOAD`.
-- The modem, the bar code reader (RST 5.5), the Disk/Video Interface, the
-  RAMPAC and REX flash writes are not emulated; nor are the NEC PC-8201A
-  and the Olivetti M10 (MAME's `pc8201`, `m10`), which share most of the
-  design.
+- The Model 200's 8251 /CTS: held asserted. How the 200 wires it (RS-232
+  CTS, or tied) is in none of the references.
+- The HD44102's busy time: 0 (no reference gives it; MAME lists the flag
+  as unsupported). The HD61830's per-instruction counts are MAME's, which
+  MAME itself leaves disabled. The HD61830A's internal font is a stand-in
+  (the Model 200 uses graphic mode).
+- The add-ons' unverified points are listed under [Add-ons](#add-ons);
+  the Disk/Video Interface is not emulated.
 
 ## Devices
 
@@ -212,7 +471,9 @@ column, wrapping 49 -> 0 (up) or 0 -> 49 (down). Reads come through an
 output latch, so the first read after setting the address is a dummy, as
 the data sheet says and VirtualT's "fresh pointer" logic produces. A busy
 time per access (in the caller's units, `setBusyTime` + `tick`) is
-optional; it defaults to 0 since neither VirtualT nor MAME model it.
+optional; it defaults to 0 since neither VirtualT nor MAME model it. The
+machine ticks the chips with the CPU clock, so a busy time set there is
+in CPU clocks.
 
 `M100Lcd` composes the 240 x 64 panel from ten of them. The geometry
 (MAME `set_screen_offsets((i % 5) * 50, (i / 5) * 32)`, VirtualT
@@ -237,8 +498,13 @@ instruction register / status (bit 7 busy), offset 0 data (the Model 200's
 `$F1` / `$F0`). Instructions `$0` mode, `$1` character pitch, `$2` number
 of characters, `$3` time divisions, `$4` cursor line, `$8`/`$9` display
 start, `$A`/`$B` cursor address (with the low-byte carry quirk), `$C`
-write, `$D` read (dummy-read latch), `$E`/`$F` clear/set bit. The display
-RAM is external (the Model 200's 8 KB; `setRamSize`). `render(w, h)` draws
+write, `$D` read (dummy-read latch), `$E`/`$F` clear/set bit. Busy
+(status bit 7) follows each executed instruction for MAME's
+per-instruction clock counts (4 for the set-up instructions, 6 for data
+write, 36 for clear/set bit; `setClockScale`: the Model 200 runs it at
+1.2288 MHz, two CPU clocks a count); data written while busy is ignored.
+The display RAM is external (the Model 200's 8 KB; `setRamSize`).
+`render(w, h)` draws
 graphic mode (the Model 200's: 40 bytes of 6 dots, 64 + 64 rows) and
 character mode with cursor, cursor blink and character blink (`frame()`
 toggles the blink every 32 frames, as MAME).
@@ -285,16 +551,29 @@ for both); a received character lands at the centre of its first stop bit.
 
 `I8251`: the Model 200's RS-232 port (`$C0` data, `$C1` mode/command and
 status). After a reset (or a command with IR) the first control write is
-the mode: baud factor (x1, x16, x64; 00 synchronous, accepted but not run),
-5-8 bits, parity, 1/1.5/2 stop bits; then commands: TxEN, DTR, RxE, SBRK,
-ER (clears the errors), RTS, IR, EH. Status: TxRDY (the buffer is free:
-not gated by /CTS or TxEN, as the data sheet says), RxRDY, TxEMPTY, PE,
-OE, FE, SYNDET (0), DSR (the far end's). The transmitter and receiver
-count TxC/RxC (`tick`, `tickTx`, `tickRx`; the Model 200 drives both
-from the 81C55's TIMER OUT); a character lands at the middle of its first
-stop bit, RxRDY (`onRxRdy`, the Model 200's RST 6.5) rises if RxE is set,
-and a receiver without RxE ignores the line. /CTS is not modelled. The far
-end is a `SerialEndpoint`.
+the mode: baud factor (x1, x16, x64; 00 synchronous), 5-8 bits, parity,
+1/1.5/2 stop bits; then commands: TxEN, DTR, RxE, SBRK, ER (clears the
+errors), RTS, IR, EH. Status: TxRDY (the buffer is free: not gated by /CTS
+or TxEN, as the data sheet says), RxRDY, TxEMPTY, PE, OE, FE,
+SYNDET/BRKDET, DSR (the far end's). The transmitter and receiver count
+TxC/RxC (`tick`, `tickTx`, `tickRx`; the Model 200 drives both from the
+81C55's TIMER OUT); a character lands at the middle of its first stop bit,
+RxRDY (`onRxRdy`, the Model 200's RST 6.5) rises if RxE is set, and a
+receiver without RxE ignores the line. /CTS (`setCts`) gates the start of
+each character and the TxRDY pin (the Model 200 holds it asserted). The
+far end is a `SerialEndpoint`.
+
+Synchronous mode (data sheet): bit 6 of the mode is ESD (external sync
+detect), bit 7 SCS (one sync character, else two); the next one or two
+control writes are the sync characters. A character is (length + parity)
+clocks with no start or stop bits. The transmitter sends nothing until
+the first character is written; after that an empty buffer at the end of
+a character sends the sync character(s) as fill (TxEMPTY reads 1). The
+receiver hunts after the mode and after EH: since the link carries bytes,
+whole characters are compared with the sync character(s) in turn (on the
+chip it is bit by bit); a match ends the hunt and sets SYNDET, which a
+status read clears, and what follows is data. With ESD the SYNDET pin
+(`setSyndetPin`) ends the hunt and status bit 6 reads the pin.
 
 ### Serial endpoints (`serial_endpoint/`)
 
@@ -347,14 +626,56 @@ the `M1\r` holds across other requests, such as the status TS-DOS asks for
 in between, until the CRs TS-DOS sends after the answer).
 
 Storage: operation mode works on a host directory; files appear in 6.2
-form (`HELLO .BA`), longer host names as-is. Sector-level access (the
+form (`HELLO .BA`), longer host names as-is. On a TPDD1 disk image
+operation mode uses the drive's own file system, as pdd.sh documents it:
+sector 0 holds 40 file control blocks of 31 bytes (24-byte name,
+attribute, size big-endian, 2 reserved bytes, head and tail sector) and,
+at 1240, the space management table (20 bytes of used-sector flags, bit
+`$80 >> 2 (p % 4)` of byte `p / 4`, then the count used); a file fills
+1280-byte sectors from its head, each sector's ID byte 0 naming the next
+(`$FF` the last). Directory listings are in FCB order with each file's
+own attribute; writes re-lay the file into free sectors and write the
+image back (a sector a file touches gets LSC 0); format writes an empty
+table with every other sector LSC 1 (pdd.sh's OPR-format). Sector-level access (the
 TPDD1's FDC mode: `M`, `D`, `F/G`, `A`, `B/C`, `R`, `W/X`, `S`, answered
 with 8 hex characters; the TPDD2's sector cache) works on a disk image:
 pdd.sh's `.pdd1`/`.pdd2` (per sector: size code, 12 ID bytes, 1280 data
 bytes) or a raw 100 KB / 200 KB dump, written back on every change.
 
-Limits: the drive's on-disk file system is not interpreted, so operation
-mode on an image (rather than a directory) reports "no disk" for file
-commands; both TPDD2 banks see the same directory; format leaves a host
+Limits: the TPDD2's on-disk file system is not interpreted (how its
+chain bytes number its 160 sectors is in none of the references), so
+operation mode on a TPDD2 image reports "no disk" for file commands, as
+does a TPDD1 with no image file; both TPDD2 banks see the same directory; format leaves a host
 directory alone; mechanical timing is not modelled (answers are queued
 at once and paced by the UART).
+
+### MC14412 modem (`mc14412/`)
+
+`Mc14412` is a `SerialEndpoint` (the UART side) with a phone line that is
+another endpoint (`setLine`, `attachLine(spec)`). Inputs `setEnable` (the
+modem's carrier on), `setOffHook`, `setOriginate`; outputs `carrier()`
+(the far end's tone present), `lineSignal()` (that tone as a square wave:
+2225 Hz heard when originating, 1270 Hz when answering), `connected()`
+(bytes pass: carrier and enabled), `ring()`, and the pulse-dialled digits
+`dialled()`. Time by `tick(clocks)` at the rate given to the constructor.
+
+### Bar code wand (`barcode/`)
+
+`BarcodeWand`: `code39`, `ean13`, `upca`, `fromBits` and `parse(spec)`
+make a module pattern (true = bar); `swipe()` plays it once with quiet
+zones at `MODULE_SECONDS` a module (`setModuleTime`); `data()` is the
+output (true over a space or lifted).
+
+### RAMPAC (`rampac/`)
+
+`Rampac`: 256 sectors of 1 KB behind ports `$81` (sector; `$85` also
+sets it), `$83` (data, stepping); `open(path)` / `flush()` / `saveTo()`
+for the battery-backed file.
+
+### REX / REX# (`rex/`)
+
+`AmdFlash`: the JEDEC command state machine (program, unlock bypass,
+sector and chip erase, reset; busy times). `Rex`: the read-driven card
+interface over a 1 MB `AmdFlash` (`read(addr, now)` for CPU reads,
+`peek` for the debugger), the key sequence, the eight commands, REX#'s
+data-then-address order, and the image file (`open`, `flush`, `saveTo`).

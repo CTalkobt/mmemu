@@ -79,7 +79,14 @@ void Hd61830::writeData(uint8_t v) {
     default:
         return;    // $5-$7 undefined; $D takes no data (reads do the work)
     }
-    m_busyLeft = m_busyTime;
+    m_busyLeft = m_clockScale ? (uint64_t)busyClocks(m_ir) * m_clockScale : m_busyTime;
+}
+
+int Hd61830::busyClocks(uint8_t ir) {
+    // MAME hd61830.cpp CYCLES[]: 4 for the set-up instructions, 6 for data
+    // write/read, 36 for clear/set bit
+    static const int CYCLES[16] = {4, 4, 4, 4, 4, 0, 0, 0, 4, 4, 4, 4, 6, 6, 36, 36};
+    return CYCLES[ir & 0x0F];
 }
 
 void Hd61830::frame() {

@@ -7,6 +7,85 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100/200 add-ons: modem, bar code wand, RAMPAC, REX flash (#358)
+
+- The built-in 300-baud modem (Model 100 and Tandy 200): an MC14412
+  between the UART and a "phone line" that is any serial endpoint (`serial
+  modem:tcp:PORT`, `modem:file:PATH`, `modem:loopback`). Port B bit 3
+  switches the UART between RS-232 and the modem; the 100's `$A0` (line
+  relay, carrier on) and port B bit 7 (the line, dial pulses), the 200's
+  ORIG/ANS, MEN and CALL bits drive it. The far modem's tone is played on
+  `$D0` bit 0 (the 200: port C bit 4), which the ROMs time to detect the
+  carrier themselves; the 100's ORIG/ANS switch reads on port C bit 4
+  (`serial modem:originate` / `modem:answer`). Pulse dialling is decoded;
+  a TCP caller rings. With the real ROMs TELCOM dials, connects and
+  goes on line on the 100 and the 200.
+- The bar code reader: a wand on port C bit 3 and RST 5.5, swiped over a
+  Code 39, EAN-13, UPC-A or raw pattern (`serial barcode:code39:TEXT`).
+- RAMPAC / Node Datapac: 256 KB at ports `$81`/`$83`, persisted to a host
+  file (`expansion sysbus rampac FILE`).
+- REX and REX#: the option-socket flash card's read-driven command
+  interface and AMD-style program / erase, the 1 MB image written back to
+  its file (`expansion rex rex FILE`, `rexsharp`). REX Manager 4.8 runs
+  and refreshes its RAM backup into the flash (checked locally).
+- The Disk/Video Interface is documented as not emulated (no reference
+  for its bus protocol). Details in README-M100 "Add-ons".
+
+### Model 100/102/200: verification and tuning; 8251 sync mode, LCD busy timing, TPDD image file system (#358)
+
+- Typed and pasted text keeps pace with the ROM's keyboard scan (columns
+  0-7 read together, once a scan): SHIFT goes down 2 scans before its key
+  and up 2 after, keys are held 3 scans and released 2, and typing waits
+  while the ROM's type-ahead count (found in the ROM) is high. With the
+  real ROMs a mixed-case line types exactly on all three models and 15
+  pasted BASIC lines are stored intact (the old 60 / 40 ms pace, with SHIFT
+  pressed together with the key, kept 5 of 15). A key the host repeats
+  stays down once, so the ROM's own key repeat runs and SHIFT no longer
+  sticks; the GUI's Page Up is CODE.
+- Port polarity checked against the ROMs' code: port C's /BUSY high and
+  BUSY low is the ready printer the ROM waits for; /CTS and /DSR active
+  low (MAME, VirtualT); `$D0` bits 5-7 read 1 and bit 0 is only counted
+  for a modem carrier. The Model 200's 8251 is clocked by the 81C55's
+  TIMER OUT at x16 (its ROM's baud table); its /CTS stays asserted
+  (wiring unknown).
+- `LPRINT` sends CR alone at a line end, as the ROMs do: `serial
+  printer:PATH` now writes CR LF (an auto-LF printer), `printer-raw:PATH`
+  the bytes as sent.
+- `CSAVE` / `CLOAD` with `.wav` checked on the 100 and the 200; cassette
+  recordings are saved at 44.1 kHz (at 22.05 kHz `CLOAD` misread a bit),
+  and a re-synthesised analog tape at 22.05 and 48 kHz with speed error
+  loads. `coco::Tape::setWavRate`.
+- LCD busy flags: the HD61830 holds busy for MAME's per-instruction clock
+  counts (`setClockScale`; the Model 200 at 1.2288 MHz); the HD44102s are
+  ticked with the CPU clock (busy time still 0: no reference gives it).
+- The 8251's synchronous mode: sync characters, fill on an empty buffer,
+  hunt / SYNDET (internal or the ESD pin), EH; and its /CTS input.
+- TPDD: operation mode on a TPDD1 disk image uses the drive's own file
+  system (pdd.sh's FCB table, space management table and sector chain):
+  directory, open / read / write / append, delete, rename, format. TS-DOS
+  lists and saves to such an image.
+
+### NEC PC-8201A, Olivetti M10, Kyotronic 85 (#358)
+
+- Three new machines join the Model 100 family, all built on the same
+  `m100::System`: `pc8201a` (alias `pc8201`), `m10` and `kc85`. The Model
+  100/102/200 behave as before.
+- PC-8201A: port `$A0` switches the banks. `$0000-$7FFF` can be the ROM,
+  the option ROM or RAM bank 2 or 3; `$8000-$FFFF` can be internal RAM,
+  nothing, or bank 2 or 3. RAM is 16, 32, 64 or 96 KB. Port `$90` drives
+  the cassette motor, the RTC's STB, the printer strobe and the serial
+  select. Ports `$80-$8F` are the ROM cassette's address latches. The
+  cassette tones (1200 or 2400 Hz, picked by SOD) come from MAME's
+  hardware modulator. The keyboard has its own JIS-style layout, with
+  five function keys and STOP (MAME `pc8201a`).
+- M10 and Kyotronic 85: the Model 100 without its modem port. The M10's
+  matrix is wired differently (MAME `olivm10`) and its ROM types AZERTY;
+  `type` follows that layout.
+- ROMs: `pc8201a.rom`, `m10.rom`, `kc85.rom` in `roms/m100/`. VirtualT's
+  `PC8201rom.bin`, `M10rom.bin` and `KC85rom.bin` are accepted too. New
+  tests use stand-in ROMs only (`test_kyocera_siblings.cpp`). See
+  README-M100.
+
 ### VICE test programs: G64 and P64 disks on the true drive (#364)
 
 - The 1541 reads P64 images (flux pulses): BeRo's P64 reference decoder

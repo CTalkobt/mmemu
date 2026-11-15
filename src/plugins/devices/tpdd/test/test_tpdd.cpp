@@ -426,3 +426,100 @@ TEST_CASE(tpdd_through_im6402) {
     ASSERT(!uart.oe());
     ASSERT_EQ(uart.endpoint()->describe().substr(0, 5), "tpdd:");
 }
+
+// Operation mode on a TPDD1 image: the drive's own file system (pdd.sh's
+// FCB table and SMT in sector 0, sectors chained through ID byte 0)
+TEST_CASE(tpdd_image_file_system) {
+    TempDir t("imgfs");
+    const std::string img = (t.path / "fs.pdd1").string();
+    Tpdd d;
+    ASSERT(d.loadImage(img));
+    ASSERT_EQ(err(xfer(d, 0x06)), 0x00);               // format
+    ASSERT_EQ(d.sectors()[0].lsc, 0);
+    ASSERT_EQ(d.sectors()[1].lsc, 1);
+    auto r = xfer(d, 0x00, nameField("", 1));           // first: nothing
+    ASSERT_EQ(r[0], 0x11);
+    ASSERT_EQ(r[2], 0);
+    ASSERT_EQ(r[2 + 27], 79);                           // free data sectors
+    // Write 2000 bytes: two sectors
+    std::vector<uint8_t> data(2000);
+    for (size_t i = 0; i < data.size(); ++i) data[i] = (uint8_t)(i * 7);
+    xfer(d, 0x00, nameField("HELLO .DO", 0));
+    ASSERT_EQ(err(xfer(d, 0x01, {0x01})), 0x00);
+    for (size_t o = 0; o < data.size(); o += 125)
+        ASSERT_EQ(err(xfer(d, 0x04, std::vector<uint8_t>(data.begin() + (long)o, data.begin() + (long)o + 125))), 0x00);
+    ASSERT_EQ(err(xfer(d, 0x02)), 0x00);
+    // The layout pdd.sh reads
+    const auto& s0 = d.sectors()[0].data;
+    ASSERT_EQ(std::string(s0.begin(), s0.begin() + 9), "HELLO .DO");
+    ASSERT_EQ(s0[24], 'F');
+    ASSERT_EQ(s0[25] << 8 | s0[26], 2000);
+    ASSERT_EQ(s0[29], 1);                               // head
+    ASSERT_EQ(s0[30], 2);                               // tail
+    ASSERT_EQ(d.sectors()[1].id[0], 2);
+    ASSERT_EQ(d.sectors()[2].id[0], 0xFF);
+    ASSERT_EQ(s0[1240], 0x28);                          // sectors 1 and 2 used: bits $20, $08
+    ASSERT_EQ(s0[1260], 2);
+    ASSERT_EQ(d.sectors()[1].lsc, 0);
+    // Listed with its size; read back (from a fresh drive on the same file)
+    r = xfer(d, 0x00, nameField("", 1));
+    ASSERT_EQ(entryName(r).substr(0, 9), "HELLO .DO");
+    ASSERT_EQ(r[2 + 25] << 8 | r[2 + 26], 2000);
+    ASSERT_EQ(r[2 + 27], 77);
+    Tpdd e;
+    ASSERT(e.loadImage(img));
+    xfer(e, 0x00, nameField("HELLO .DO", 0));
+    ASSERT_EQ(err(xfer(e, 0x01, {0x03})), 0x00);
+    std::vector<uint8_t> back;
+    for (;;) {
+        r = xfer(e, 0x03);
+        if (r[0] != 0x10) {
+            ASSERT_EQ(err(r), 0x3F);
+            break;
+        }
+        back.insert(back.end(), r.begin() + 2, r.begin() + 2 + r[1]);
+    }
+    ASSERT(back == data);
+    xfer(e, 0x02);
+    // Append, rename, delete
+    ASSERT_EQ(err(xfer(e, 0x01, {0x02})), 0x00);
+    ASSERT_EQ(err(xfer(e, 0x04, std::vector<uint8_t>(129, 0xAB))), 0x36);   // more than 128
+    ASSERT_EQ(err(xfer(e, 0x04, std::vector<uint8_t>(100, 0xAB))), 0x00);
+    xfer(e, 0x02);
+    std::vector<uint8_t> to = nameField("BYE   .DO", 0);
+    to.resize(25);
+    ASSERT_EQ(err(xfer(e, 0x0D, to)), 0x00);
+    r = xfer(e, 0x00, nameField("BYE   .DO", 0));
+    ASSERT_EQ(r[2 + 25] << 8 | r[2 + 26], 2100);
+    ASSERT_EQ(err(xfer(e, 0x05)), 0x00);
+    r = xfer(e, 0x00, nameField("", 1));
+    ASSERT_EQ(r[2], 0);
+    ASSERT_EQ(r[2 + 27], 79);
+    ASSERT_EQ(e.sectors()[0].data[1260], 0);
+    // A file laid out elsewhere: chained out of order
+    Tpdd f;
+    ASSERT(f.loadImage(img));
+    auto& g0 = f.sectors()[0].data;
+    const std::string nm = "ODD   .BA               ";
+    std::copy(nm.begin(), nm.end(), g0.begin() + 31);
+    g0[31 + 24] = 'F';
+    g0[31 + 25] = 0x05;                                 // 1300 bytes
+    g0[31 + 26] = 0x14;
+    g0[31 + 29] = 9;
+    g0[31 + 30] = 4;
+    f.sectors()[9].id[0] = 4;
+    f.sectors()[4].id[0] = 0xFF;
+    f.sectors()[9].data[0] = 0x11;
+    f.sectors()[4].data[19] = 0x22;
+    xfer(f, 0x00, nameField("ODD   .BA", 0));
+    ASSERT_EQ(err(xfer(f, 0x01, {0x03})), 0x00);
+    back.clear();
+    for (r = xfer(f, 0x03); r[0] == 0x10; r = xfer(f, 0x03)) back.insert(back.end(), r.begin() + 2, r.begin() + 2 + r[1]);
+    ASSERT_EQ(back.size(), 1300u);
+    ASSERT_EQ(back[0], 0x11);
+    ASSERT_EQ(back[1299], 0x22);
+    // A TPDD2 image has no operation-mode file system here
+    Tpdd h(Tpdd::Model::Tpdd2);
+    ASSERT(h.loadImage((t.path / "two.pdd2").string()));
+    ASSERT_EQ(err(xfer(h, 0x00, nameField("", 1))), 0x70);
+}

@@ -152,3 +152,108 @@ TEST_CASE(i8251_dsr_and_state) {
     ASSERT_EQ(v.sent.size(), 1u);
     ASSERT_EQ(v.sent[0], 0x77);
 }
+
+// Sync mode: one sync character; the transmitter idles until the first
+// character, then fills with SYNC; the receiver hunts, SYNDET until a status read
+TEST_CASE(i8251_sync_single) {
+    I8251 u;
+    u.write(1, 0x8C);                // sync, 8 bits, no parity, one sync character (SCS)
+    ASSERT(u.synchronous());
+    ASSERT_EQ(u.syncCount(), 1);
+    u.write(1, 0x16);                // the sync character
+    u.write(1, I8251::CMD_TXEN | I8251::CMD_RXE);
+    ASSERT_EQ(u.command(), I8251::CMD_TXEN | I8251::CMD_RXE);
+    ASSERT_EQ(u.syncChar(0), 0x16);
+    ASSERT_EQ(u.frameClocks(), 8);   // no start or stop bits, a bit a clock
+    u.tickTx(100);
+    ASSERT(u.sent.empty());          // nothing until the first character
+    u.write(0, 0x41);
+    u.tickTx(8);
+    ASSERT_EQ(u.sent.size(), 1u);
+    ASSERT_EQ(u.sent[0], 0x41);
+    ASSERT(u.status() & I8251::ST_TXEMPTY);    // sending fill
+    u.tickTx(16);
+    ASSERT_EQ(u.sent.size(), 3u);
+    ASSERT_EQ(u.sent[1], 0x16);
+    ASSERT_EQ(u.sent[2], 0x16);
+    u.write(0, 0x42);                // waits for the fill character to end
+    u.tickTx(8);
+    ASSERT_EQ(u.sent[3], 0x16);
+    u.tickTx(8);
+    ASSERT_EQ(u.sent[4], 0x42);
+    // Receive: hunting skips to the sync character; the next is data
+    ASSERT(u.hunting());
+    u.receive('X');
+    u.receive(0x16);
+    u.receive('H');
+    u.tickRx(16);
+    ASSERT(!(u.status() & I8251::ST_RXRDY));
+    ASSERT(!u.hunting());
+    ASSERT(u.status() & I8251::ST_SYNDET);
+    u.tickRx(8);
+    ASSERT(u.status() & I8251::ST_RXRDY);
+    ASSERT(u.read(1) & I8251::ST_SYNDET);
+    ASSERT(!(u.read(1) & I8251::ST_SYNDET)); // cleared by the read
+    ASSERT_EQ(u.read(0), 'H');
+    // EH: hunt again
+    u.write(1, I8251::CMD_TXEN | I8251::CMD_RXE | I8251::CMD_EH);
+    ASSERT(u.hunting());
+    ASSERT(!(u.command() & I8251::CMD_EH));
+}
+
+// Two sync characters, in order; external sync detect
+TEST_CASE(i8251_sync_double_and_external) {
+    I8251 u;
+    u.write(1, 0x0C);                // sync, 8 bits, two sync characters
+    u.write(1, 0x16);
+    ASSERT(u.expectingMode() == false);
+    u.write(1, 0x17);
+    u.write(1, I8251::CMD_RXE);
+    ASSERT_EQ(u.command(), I8251::CMD_RXE);
+    for (uint8_t b : {0x16, 0x5A, 0x17, 0x16, 0x17, 0x51}) u.receive(b);
+    u.tickRx(5 * 8);
+    ASSERT(!(u.status() & I8251::ST_RXRDY));
+    ASSERT(u.status() & I8251::ST_SYNDET);
+    u.tickRx(8);
+    ASSERT_EQ(u.read(0), 0x51);
+    // ESD: the SYNDET pin ends the hunt; the status bit is the pin
+    I8251 e;
+    e.write(1, 0xCC);                // sync, 8 bits, ESD, one sync character
+    e.write(1, 0x16);
+    e.write(1, I8251::CMD_RXE);
+    ASSERT(e.externalSync());
+    e.receive(0x16);
+    e.tickRx(8);
+    ASSERT(e.hunting());
+    e.setSyndetPin(true);
+    ASSERT(!e.hunting());
+    ASSERT(e.read(1) & I8251::ST_SYNDET);
+    ASSERT(e.read(1) & I8251::ST_SYNDET);       // the pin, not a latch
+    e.receive(0x33);
+    e.tickRx(8);
+    ASSERT_EQ(e.read(0), 0x33);
+    // A snapshot keeps the sync state
+    I8251 v;
+    v.loadState(u.saveState());
+    ASSERT(v.synchronous());
+    ASSERT_EQ(v.syncChar(1), 0x17);
+}
+
+// /CTS: the transmitter waits for it; the TxRDY pin is masked, the status bit is not
+TEST_CASE(i8251_cts) {
+    I8251 u;
+    bool pin = false;
+    u.onTxRdy = [&](bool v) { pin = v; };
+    u.setCts(false);
+    u.write(1, MODE_8N1_X16);
+    u.write(1, CMD_ON);
+    ASSERT(!pin);
+    ASSERT(u.status() & I8251::ST_TXRDY);
+    u.write(0, 0x55);
+    u.tickTx(1000);
+    ASSERT(u.sent.empty());
+    u.setCts(true);
+    u.tickTx(160);
+    ASSERT_EQ(u.sent.size(), 1u);
+    ASSERT(pin);
+}

@@ -43,7 +43,8 @@
  * format mismatch, 3F end of file, 41 checksum (ID CRC), 50 write
  * protected, 60 directory full, 61 disk full, 6E file too long, 70 no disk.
  *
- * Storage, operation mode: a host directory (`setRootDirectory`). Files
+ * Storage, operation mode: a host directory (`setRootDirectory`), or a
+ * TPDD1 disk image's own file system (below). Directory files
  * are listed in the Model 100's 6.2 form ("NAME  .BA", padded to 24);
  * a host name that does not fit is listed as-is (up to 24 characters).
  * Names match case-insensitively. Sub-directories appear as TS-DOS
@@ -77,6 +78,25 @@
  * Errors: 11/12 logical sector below/above range, 13 physical sector
  * above range, 21 bad parameter, 3C ID not found, B0 write protected,
  * C0 invalid command, D1 no disk (pdd.sh's experimentally found codes).
+ *
+ * Operation mode on a TPDD1 disk image (`loadImage`, no directory): the
+ * drive's own file system, as pdd.sh documents it (read_fcb, read_smt and
+ * the sector ID notes). Physical sector 0 holds 40 file control blocks of
+ * 31 bytes (24-byte name, attribute, size big-endian, 2 reserved, head
+ * sector, tail sector; a name starting with a zero byte is a free slot)
+ * and after them, at 1240, the space management table: 20 bytes of
+ * bit flags, sector p used when byte p / 4 has bit $80 >> 2 (p % 4) set,
+ * then the count of used sectors. A file's data fills 1280-byte sectors
+ * from its head sector; each sector's ID byte 0 names the next one ($FF
+ * the last; 0 a free sector). Listings are in FCB order with each FCB's
+ * own attribute; the free count is the data sectors (1-79) not in use.
+ * Writes re-lay the file into free sectors (lowest first) and write the
+ * image back; a sector a file touches gets LSC 0. Format writes an empty
+ * table with every sector LSC 1 but sector 0 (pdd.sh: "OPR-format writes
+ * LSC 1 to all untouched sectors"). Files are at most 65534 bytes
+ * (PDD1_MAX_FLEN). TPDD2 images still answer "no disk" in operation
+ * mode: how its chain bytes number the 160 sectors is not documented in
+ * the references, and a blank disk with no image file stays "no disk".
  *
  * Timing: answers are queued at once; the UART paces them at its baud
  * rate. The drive's mechanical delays are not modelled.
@@ -145,6 +165,8 @@ private:
         bool dir = false;
         bool exists = true;
         uint32_t size = 0;
+        uint8_t attr = 'F';
+        int fcb = -1;        // disk image: the FCB slot
     };
 
     // Operation mode
@@ -168,6 +190,19 @@ private:
     void opMemWrite(const std::vector<uint8_t>& d);
     void opMemRead(const std::vector<uint8_t>& d);
     void closeFile();
+
+    // The TPDD1 file system on a disk image
+    bool imageFs() const { return m_root.empty() && !m_imagePath.empty() && m_model == Model::Tpdd1; }
+    std::vector<Entry> imageListing() const;
+    bool sectorUsed(int p) const;
+    void setSectorUsed(int p, bool used);
+    std::vector<int> fileChain(int fcb) const;
+    std::vector<uint8_t> readImageFile(int fcb) const;
+    /** Lays `data` out as FCB `fcb`'s file; false (nothing changed) if the disk is full. */
+    bool writeImageFile(int fcb, const std::vector<uint8_t>& data);
+    void freeChain(int fcb);
+    void formatImageFs();
+    void opOpenImage(int mode);
 
     // FDC mode
     void fdcByte(uint8_t b);
@@ -194,6 +229,9 @@ private:
     int m_openMode = 0;
     bool m_lastOpenDir = false;
     std::vector<Entry> m_listing;
+    std::vector<uint8_t> m_imgFile;    // disk image: the open file's contents
+    size_t m_imgPos = 0;
+    int m_imgFcb = -1;
     int m_listPos = -1;
 
     // Sector storage
