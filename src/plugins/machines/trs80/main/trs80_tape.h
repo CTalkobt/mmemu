@@ -37,7 +37,9 @@ public:
     /** The speed a .cas image plays at. */
     enum class Speed { Baud250, Baud500, Baud1500 };
 
-    const char* name() const override { return "Tape"; }
+    const char* name() const override { return m_name; }
+    /** The handler's name (the Model I's second recorder: "Tape 2"). */
+    void setName(const char* n) { m_name = n; }
     uint32_t baseAddr() const override { return 0; }
     uint32_t addrMask() const override { return 0; }
     bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
@@ -104,6 +106,7 @@ private:
     bool nextTransition();
     uint64_t us(double us) const { return (uint64_t)(us * m_hz / 1e6 + 0.5); }
 
+    const char* m_name = "Tape";
     double m_hz = 10644480.0;
     std::string m_path;
     bool m_play = false, m_motor = false;

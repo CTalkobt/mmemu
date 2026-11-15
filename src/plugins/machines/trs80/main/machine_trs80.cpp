@@ -123,6 +123,8 @@ Config defaultConfig(Model model) {
     case Model::M3: c.ramKb = 48; c.rs232 = true; break;
     case Model::M4: case Model::M4P: c.ramKb = 128; c.rs232 = true; break;
     }
+    // The hard disk interface answers only with a drive mounted (as xtrs)
+    c.hardDisk = model != Model::M1Level1;
     return c;
 }
 
@@ -144,6 +146,41 @@ MachineDescriptor::ExpansionSlot flagSlot(System* sys, const std::string& name, 
     };
     s.info = [sys, dev, flag]() { return sys->cfg().*flag ? dev : std::string(); };
     return s;
+}
+
+// The Model I RS-232 board's sense switches (xtrs's trs_uart.h): bits 2-0
+// the baud rate, 3 no parity, 4 two stop bits, 6-5 the word length, 7 even
+const double BAUDS[8] = {110, 150, 300, 600, 1200, 2400, 4800, 9600};
+
+std::string describeSwitches(uint8_t v) {
+    static const int WORD[4] = {5, 7, 6, 8};
+    char b[32];
+    std::snprintf(b, sizeof b, "%g-%d%c%d", BAUDS[v & 7], WORD[(v >> 5) & 3],
+                  (v & 0x08) ? 'N' : (v & 0x80) ? 'E' : 'O', (v & 0x10) ? 2 : 1);
+    return b;
+}
+
+bool parseSwitches(std::string s, int& out) {
+    if (!s.empty() && (s[0] == '$' || (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')))) {
+        char* end = nullptr;
+        const long v = std::strtol(s.c_str() + (s[0] == '$' ? 1 : 2), &end, 16);
+        if (!end || *end || v < 0 || v > 255) return false;
+        out = (int)v;
+        return true;
+    }
+    for (auto& c : s) c = (char)std::toupper((unsigned char)c);
+    const auto dash = s.find('-');
+    if (dash == std::string::npos || s.size() != dash + 4) return false;
+    const double baud = std::atof(s.substr(0, dash).c_str());
+    int b = -1;
+    for (int i = 0; i < 8; ++i) if (BAUDS[i] == baud) b = i;
+    const char w = s[dash + 1], par = s[dash + 2], stop = s[dash + 3];
+    static const char WORDS[4] = {'5', '7', '6', '8'};
+    int wi = -1;
+    for (int i = 0; i < 4; ++i) if (WORDS[i] == w) wi = i;
+    if (b < 0 || wi < 0 || (par != 'N' && par != 'E' && par != 'O') || (stop != '1' && stop != '2')) return false;
+    out = b | (par == 'N' ? 0x08 : 0) | (stop == '2' ? 0x10 : 0) | (wi << 5) | (par == 'E' ? 0x80 : 0);
+    return true;
 }
 
 }  // namespace
@@ -173,6 +210,11 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms) {
 
     auto* sys = new System(model, defaultConfig(model), std::move(rom));
     if (!gen.empty()) sys->setCharGen(gen);
+    if (isModel1(model) && !roms) {
+        // The Exatron Stringy Floppy's ROM (optional; at $3000-$37DF)
+        std::vector<uint8_t> esf;
+        if (loadOne(firmwareDir(), {"esf.rom", "esfrom.bin"}, 0x100, 0x7E0, esf)) sys->setStringyRom(esf);
+    }
 
     auto* desc = new MachineDescriptor();
     switch (model) {
@@ -204,9 +246,12 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms) {
     io->registerHandler(&sys->keyboard);
     io->registerHandler(&sys->sound);
     io->registerHandler(&sys->tape);
+    if (model == Model::M1Level2) io->registerHandler(&sys->tape2);
     io->registerHandler(&sys->uart);
     io->registerHandler(&sys->printer);
     io->registerHandler(&sys->disks);
+    io->registerHandler(&sys->hard);
+    if (isModel1(model)) io->registerHandler(&sys->stringy);
 
     desc->onKey = [sys](const std::string& name, bool down) {
         if (name == "reset") { if (down) sys->resetButton(); return true; }
@@ -288,10 +333,78 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms) {
     if (model == Model::M3)
         desc->expansionSlots.push_back(flagSlot(sys, "fdc", "The disk controller board", "fdc",
             "FD1793 at $F0-$F3, drive select $F4, INTRQ to NMI, DRQ ending WAIT; 4 drives", &Config::fdc));
-    if (model != Model::M1Level1)
+    if (model == Model::M1Level2) {
+        // The Model I's board has sense switches ($E9): the option sets them
+        MachineDescriptor::ExpansionSlot s;
+        s.name = "rs232";
+        s.description = "The RS-232 interface (in the Expansion Interface)";
+        s.devices = {{"rs232", "TR1602 UART and BR1941 baud rate generator at $E8-$EB (the serial command); "
+                      "option: the sense switches, as baud-bits-parity-stop (9600-8N1) or a byte ($6F)",
+                      {"9600-8N1", "300-8N1", "1200-7E1", "$6F"}, "9600-8N1"}};
+        s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
+            Config c = sys->cfg();
+            if (device.empty()) { c.rs232 = false; sys->configure(c); return true; }
+            if (device != "rs232") { err = "the slot takes 'rs232'"; return false; }
+            if (!c.expansion) { err = "it needs the Expansion Interface (expansion ei ei)"; return false; }
+            int sw = -1;
+            if (!parseSwitches(option.empty() ? "9600-8N1" : option, sw)) {
+                err = "switches: baud-bits-parity-stop (e.g. 9600-8N1, 300-7E2) or a byte ($6F)";
+                return false;
+            }
+            c.rs232 = true;
+            c.switches = (uint8_t)sw;
+            sys->configure(c);
+            return true;
+        };
+        s.info = [sys]() -> std::string {
+            if (!sys->cfg().rs232) return "";
+            char b[48];
+            std::snprintf(b, sizeof b, "rs232 (switches $%02X: %s)", sys->cfg().switches, describeSwitches(sys->cfg().switches).c_str());
+            return b;
+        };
+        desc->expansionSlots.push_back(std::move(s));
+    } else if (model != Model::M1Level1) {
         desc->expansionSlots.push_back(flagSlot(sys, "rs232", "The RS-232 interface", "rs232",
-            "TR1602 UART and BR1941 baud rate generator at $E8-$EB (the serial command)", &Config::rs232,
-            model == Model::M1Level2));
+            "TR1602 UART and BR1941 baud rate generator at $E8-$EB (the serial command)", &Config::rs232));
+    }
+    desc->expansionSlots.push_back(flagSlot(sys, "orchestra", isModel1(model) ? "The Orchestra-85 music card" : "The Orchestra-90 music card",
+        "orchestra", isModel1(model) ? "Two 8-bit DACs: left $B9, right $B5 (heard mixed, with the cassette motor off)"
+                                     : "Two 8-bit DACs: left $79, right $75 (heard mixed, with the cassette motor off)",
+        &Config::orchestra));
+    if (model != Model::M1Level1)
+        desc->expansionSlots.push_back(flagSlot(sys, "harddisk", "The Radio Shack hard disk interface", "harddisk",
+            "WD1010 at $C8-$CF, write protect $C0, control $C1; up to 4 drives, Reed .hdv images (disk mount 1-4 x.hdv hard)",
+            &Config::hardDisk, model == Model::M1Level2));
+    if (model == Model::M1Level2)
+        desc->expansionSlots.push_back(flagSlot(sys, "stringy", "The Exatron Stringy Floppy", "stringy",
+            "8 wafer drives at $F0-$F7 (.esf: disk mount 1-8 x.esf stringy), its ROM at $3000 (esf.rom)",
+            &Config::stringy));
+    if (!isModel1(model)) {
+        MachineDescriptor::ExpansionSlot s;
+        s.name = "hires";
+        s.description = "A hi-res graphics board (640 x 240)";
+        s.devices = {
+            {"tandy", "Radio Shack's (26-1126): ports $80-$83, the Model 4's offsets and overlay at $8C-$8E", {}, ""},
+            {"grafyx", "Micro-Labs' Grafyx Solution: ports $80-$83 (mode bit 1 text off); on the Model III also through port $FF and video RAM", {}, ""},
+        };
+        s.install = [sys](const std::string& device, const std::string&, std::string& err) {
+            Config c = sys->cfg();
+            if (device.empty()) c.hires = HiresBoard::None;
+            else if (device == "tandy") c.hires = HiresBoard::Tandy;
+            else if (device == "grafyx") c.hires = HiresBoard::MicroLabs;
+            else { err = "tandy or grafyx"; return false; }
+            sys->configure(c);
+            return true;
+        };
+        s.info = [sys]() -> std::string {
+            switch (sys->cfg().hires) {
+            case HiresBoard::Tandy: return "tandy";
+            case HiresBoard::MicroLabs: return "grafyx";
+            default: return "";
+            }
+        };
+        desc->expansionSlots.push_back(std::move(s));
+    }
 
     if (isModel4(model)) {
         // `speed 2` / `speed 4` (warp is the frontends' max speed)
