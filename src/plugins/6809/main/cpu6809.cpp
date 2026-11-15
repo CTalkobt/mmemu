@@ -369,7 +369,9 @@ int M6809::execPage0(uint8_t op) {
                 if (r & 0x100) m_cc |= CC_C;
                 m_a = (uint8_t)r;
                 nz8(m_a);
-                flag(CC_V, false);
+                // V: the data sheet leaves it undefined; on real parts it is bit 7
+                // of the result XOR the new C (hoglet67's 6809Decoder, op_fn_DAA)
+                flag(CC_V, ((r >> 7) & 1) ^ ((m_cc & CC_C) ? 1 : 0));
                 return 2;
             }
             case 0xA: m_cc |= fetch(); return 3;                                  // ORCC

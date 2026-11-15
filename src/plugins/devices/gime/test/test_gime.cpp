@@ -17,7 +17,15 @@ struct Rig {
     /** Two frames: the mode is latched at a frame's start, then a whole frame drawn. */
     void frames(int n = 2) { g.advance(FRAME * (uint64_t)n); }
     void setY(uint32_t addr) { g.write(0xFF9D, (uint8_t)(addr >> 11)); g.write(0xFF9E, (uint8_t)(addr >> 3)); }
+    /** To the start (HSYNC falling) of scan line `sl`. */
+    void toLine(int sl) {
+        do g.advance((uint64_t)(Gime::LINE_TICKS - g.lineTick()));
+        while (g.scanline() != sl);
+    }
 };
+
+uint32_t red(uint32_t c) { return (c >> 16) & 0xFF; }
+uint32_t blue(uint32_t c) { return c & 0xFF; }
 
 uint8_t rd(Gime& g, uint16_t a) {
     uint8_t v = 0;
@@ -543,4 +551,216 @@ TEST_CASE(gime_state_roundtrip) {
     ASSERT_EQ(q.g.palette(4), 0x15);
     ASSERT(q.g.fast());
     ASSERT_EQ(q.g.now(), r.g.now());
+}
+
+// Mid-line changes: the palette written part way along a line shows from
+// the next byte the beam reaches after the write's cycle; the border is
+// taken where the line's left border starts
+TEST_CASE(gime_midline_palette_and_border) {
+    Rig r;
+    r.g.write(0xFF98, 0x80);
+    r.g.write(0xFF99, 0x08);                    // 256 x 192 x 2: 16 ticks a byte
+    r.setY(0x60000);
+    for (uint32_t i = 0; i < 0x2000; ++i) r.at(0x60000 + i) = 0xFF;
+    r.g.write(0xFFB1, 0x12);
+    r.g.write(0xFF9A, 0x09);
+    r.frames();
+    const int x0 = r.g.activeX(), y0 = r.g.activeY(), y = y0 + 10;
+    ASSERT_EQ(x0, 94);
+    r.toLine(19 + y);
+    // The active area starts 239 ticks after HSYNC (1987, 32-byte graphics);
+    // a write at 339 ends its cycle at 355, inside the byte from 351
+    r.g.advance(239 + 100);
+    r.g.write(0xFFB1, 0x24);
+    r.g.write(0xFF9A, 0x2D);
+    r.g.advance((uint64_t)Gime::LINE_TICKS * 2);
+    ASSERT_EQ(r.g.pixel(x0 + 100, y), 0x12);
+    ASSERT_EQ(r.g.pixel(x0 + 127, y), 0x12);
+    ASSERT_EQ(r.g.pixel(x0 + 128, y), 0x24);
+    ASSERT_EQ(r.g.pixel(x0 + 500, y), 0x24);
+    ASSERT_EQ(r.g.pixel(x0 + 500, y - 1), 0x12);
+    ASSERT_EQ(r.g.pixel(x0, y + 1), 0x24);
+    // The border: the old colour to the line's end, the new one from the next
+    ASSERT_EQ(r.g.pixel(x0 + 520, y), 0x09);
+    ASSERT_EQ(r.g.pixel(x0 - 1, y + 1), 0x2D);
+    ASSERT_EQ(r.g.pixel(x0 + 520, y + 1), 0x2D);
+    // A mode change part way: graphics to 32-column text
+    r.toLine(19 + y + 20);
+    r.g.advance(239 + 200);
+    r.g.write(0xFF98, 0x00);
+    r.g.advance(Gime::LINE_TICKS);
+    // Up to the write's byte: graphics (palette 1); after it, text: the
+    // character $FF's font row in palette 1 on palette 0
+    ASSERT_EQ(r.g.pixel(x0 + 150, y + 20), 0x24);
+    bool sawText = false;
+    for (int x = x0 + 240; x < x0 + 500; ++x) sawText = sawText || r.g.pixel(x, y + 20) == r.g.palette(0);
+    ASSERT(sawText);
+}
+
+// The VDG-compatible mode's CSS (PIA1 PB3, snooped) part way along a line
+TEST_CASE(gime_midline_vdg_css) {
+    Rig r;
+    r.g.write(0xFF90, 0x80);
+    r.setY(0x70000);
+    r.g.write(0xFFC9, 0);                       // SAM F1: $0400
+    r.g.write(0xFFC3, 0);
+    r.g.write(0xFFC5, 0);                       // V 6: PMODE 4
+    for (int i = 0; i < 16; ++i) r.g.write((uint16_t)(0xFFB0 + i), (uint8_t)(0x30 + i));
+    for (uint32_t i = 0; i < 0x1800; ++i) r.at(0x70400 + i) = 0xFF;
+    r.g.snoopPia1(0xFF23, 0x34);
+    r.g.snoopPia1(0xFF22, 0xF0);
+    r.frames();
+    const int x0 = r.g.activeX(), y0 = r.g.activeY(), y = y0 + 30;
+    ASSERT_EQ(x0, 96);
+    r.toLine(19 + y);
+    r.g.advance(239 + 100);
+    r.g.snoopPia1(0xFF22, 0xF8);
+    r.g.advance(Gime::LINE_TICKS);
+    ASSERT_EQ(r.g.pixel(x0 + 127, y), 0x39);    // palette 9 (CSS 0's foreground)
+    ASSERT_EQ(r.g.pixel(x0 + 128, y), 0x3B);    // palette 11
+    ASSERT_EQ(r.g.pixel(x0 + 300, y), 0x3B);
+    ASSERT_EQ(r.g.pixel(x0 - 1, y), 0x39);      // the border from the line's start
+}
+
+// Disto 1-2 MB: page register bits 6-7 bank the RAM in 512K; $FF9B the video's bank
+TEST_CASE(gime_disto_mmu) {
+    Rig r(2048);
+    ASSERT_EQ(r.g.ramMask(), 0x1FFFFFu);
+    r.g.write(0xFFA2, 0xC5);
+    ASSERT_EQ(r.g.decode(0x4010).phys, (0x3Au << 13) | 0x10);     // MMU off: bank 0, page $3A
+    r.g.write(0xFF90, 0x40);
+    ASSERT_EQ(r.g.decode(0x4010).phys, (3u << 19) | (0x05u << 13) | 0x10);
+    ASSERT_EQ(r.g.datBank(2), 0xC0);
+    ASSERT_EQ(rd(r.g, 0xFFA2), 0xC5);
+    ASSERT_EQ(r.g.readMask(0xFFA2), 0xFF);
+    // The constant page is bank 0's page $3F
+    r.g.write(0xFFA7, 0x90);
+    r.g.write(0xFF90, 0x48);
+    ASSERT_EQ(r.g.decode(0xFE10).phys, (0x3Fu << 13) | 0x1E10);
+    ASSERT_EQ(r.g.decode(0xE000).phys, (2u << 19) | (0x10u << 13));
+    // The video's bank
+    r.g.write(0xFF9B, 0xFE);
+    uint8_t v = 0;
+    ASSERT(r.g.peek(0xFF9B, v));
+    ASSERT_EQ(v, 2);
+    ASSERT_EQ(r.g.readMask(0xFF9B), 0x03);
+    ASSERT_EQ(r.g.videoBank(), 2);
+    r.g.write(0xFF98, 0x80);
+    r.g.write(0xFF99, 0x08);
+    r.g.write(0xFFB1, 0x3F);
+    r.setY(0x10000);
+    r.at((2u << 19) | 0x10000) = 0x80;
+    r.frames();
+    ASSERT_EQ(r.g.pixel(r.g.activeX(), r.g.activeY()), 0x3F);
+    r.g.write(0xFF9B, 0x00);
+    r.frames();
+    ASSERT_EQ(r.g.pixel(r.g.activeX(), r.g.activeY()), 0x00);
+    // 1 MB: bit 6 only
+    Rig m(1024);
+    m.g.write(0xFF90, 0x40);
+    m.g.write(0xFFA0, 0xC5);
+    ASSERT_EQ(m.g.datBank(0), 0x40);
+    ASSERT_EQ(rd(m.g, 0xFFA0), 0x45);
+    ASSERT_EQ(m.g.decode(0x0000).phys, (1u << 19) | (0x05u << 13));
+    m.g.write(0xFF9B, 0x03);
+    ASSERT_EQ(m.g.videoBank(), 1);
+    // 512K: no board; six bits, $FF9B nothing
+    Rig n(512);
+    n.g.write(0xFFA0, 0xC5);
+    ASSERT_EQ(rd(n.g, 0xFFA0), 0x05);
+    ASSERT_EQ(n.g.readMask(0xFFA0), 0x3F);
+    ASSERT(!n.g.peek(0xFF9B, v));
+    // Snapshots keep the bank bits
+    Rig q(2048);
+    q.g.loadState(r.g.saveState());
+    ASSERT_EQ(q.g.datBank(2), 0xC0);
+}
+
+// NTSC artifact colours in the VDG-compatible graphics: PMODE 4's black and
+// white dot pairs decode to colours on composite, by phase; runs of one
+// colour stay their colour; RGB and PAL show the dots
+TEST_CASE(gime_composite_artifacts) {
+    Rig r;
+    r.g.write(0xFF90, 0x80);
+    r.setY(0x70000);
+    r.g.write(0xFFC9, 0);
+    r.g.write(0xFFC3, 0);
+    r.g.write(0xFFC5, 0);
+    r.g.write(0xFFBA, 0x00);                    // CSS 1: black and white
+    r.g.write(0xFFBB, 0x3F);
+    for (uint32_t row = 0; row < 192; ++row)
+        for (uint32_t b = 0; b < 32; ++b) r.at(0x70400 + row * 32 + b) = row == 1 ? 0xFF : b < 16 ? 0x55 : 0xAA;
+    r.g.snoopPia1(0xFF23, 0x34);
+    r.g.snoopPia1(0xFF22, 0xF8);
+    r.frames();
+    const int x0 = r.g.activeX(), y0 = r.g.activeY();
+    ASSERT(r.g.artifactLine(y0));
+    std::vector<uint32_t> img((size_t)Gime::OUT_W * Gime::OUT_H);
+    auto at = [&](int x, int y) { return img[(size_t)y * Gime::OUT_W + (size_t)x]; };
+    // Off: the dots
+    r.g.renderArgb(img.data());
+    ASSERT_EQ(at(x0, y0), Gime::composite(0x00));
+    ASSERT_EQ(at(x0 + 2, y0), Gime::composite(0x3F));
+    // Blue-red: black-white pairs blue, white-black red; a white row white
+    r.g.setArtifact(Gime::Artifact::BlueRed);
+    r.g.renderArgb(img.data());
+    ASSERT(blue(at(x0 + 100, y0)) > red(at(x0 + 100, y0)) + 100);
+    ASSERT(blue(at(x0 + 101, y0)) > red(at(x0 + 101, y0)) + 100);
+    ASSERT(red(at(x0 + 356, y0)) > blue(at(x0 + 356, y0)) + 100);
+    ASSERT_EQ(at(x0 + 100, y0 + 1), Gime::composite(0x3F));
+    ASSERT_EQ(at(x0 - 10, y0), Gime::composite(0x3F));          // the border (the foreground)
+    // Red-blue: the other phase
+    r.g.setArtifact(Gime::Artifact::RedBlue);
+    r.g.renderArgb(img.data());
+    ASSERT(red(at(x0 + 100, y0)) > blue(at(x0 + 100, y0)) + 100);
+    ASSERT(blue(at(x0 + 356, y0)) > red(at(x0 + 356, y0)) + 100);
+    // VMODE BPI inverts the burst: blue-red shows red-blue's colours
+    r.g.setArtifact(Gime::Artifact::BlueRed);
+    r.g.write(0xFF98, 0x20);
+    r.frames();
+    r.g.renderArgb(img.data());
+    ASSERT(red(at(x0 + 100, y0)) > blue(at(x0 + 100, y0)) + 100);
+    r.g.write(0xFF98, 0x00);
+    r.frames();
+    // RGB and PAL: no artifacts
+    r.g.setMonitor(Gime::Monitor::Rgb);
+    r.g.renderArgb(img.data());
+    ASSERT_EQ(at(x0 + 100, y0), Gime::rgb(0x00));
+    ASSERT_EQ(at(x0 + 102, y0), Gime::rgb(0x3F));
+    r.g.setMonitor(Gime::Monitor::Composite);
+    r.g.setPal(true);
+    r.g.renderArgb(img.data());
+    ASSERT_EQ(at(x0 + 102, y0), Gime::palComposite(0x3F));
+    r.g.setPal(false);
+    // CoCo 3 modes aren't decoded
+    r.g.write(0xFF90, 0x00);
+    r.g.write(0xFF98, 0x80);
+    r.g.write(0xFF99, 0x08);
+    r.frames();
+    ASSERT(!r.g.artifactLine(r.g.activeY()));
+}
+
+// PAL composite: the RGB signals at their measured levels; MOCH (the GIME's
+// own composite) doesn't reach a PAL set
+TEST_CASE(gime_pal_composite) {
+    ASSERT_EQ(Gime::palComposite(0x00), 0xFF000000u);
+    ASSERT_EQ(Gime::palComposite(0x3F), 0xFFFFFFFFu);
+    ASSERT_EQ(Gime::palComposite(0x24), 0xFFFF0000u);
+    ASSERT_EQ(Gime::palComposite(0x20), 0xFFCC0000u);
+    ASSERT_EQ(Gime::palComposite(0x04), 0xFF800000u);
+    ASSERT_EQ(Gime::palComposite(0x12), 0xFF00FF00u);
+    Rig r;
+    r.g.setPal(true);
+    ASSERT_EQ(r.g.colour(0x14), Gime::palComposite(0x14));
+    ASSERT(r.g.colour(0x14) != Gime::composite(0x14));
+    r.g.setMonitor(Gime::Monitor::Rgb);
+    ASSERT_EQ(r.g.colour(0x14), Gime::rgb(0x14));
+    r.g.setMonitor(Gime::Monitor::Composite);
+    r.g.write(0xFFB1, 0x15);
+    r.g.write(0xFF98, 0x90);                    // MOCH
+    r.g.write(0xFF99, 0x08);
+    r.setY(0x60000);
+    r.at(0) = 0x80;
+    r.frames();
+    ASSERT_EQ(r.g.pixel(r.g.activeX(), r.g.activeY()), 0x15);
 }

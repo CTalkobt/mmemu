@@ -53,7 +53,14 @@ extern const uint8_t GLYPHS[128][12];
  * TMR, flips the text blink and reloads; a value of 0 stops it. The 1986
  * GIME counts value + 2 and the 1987 value + 1 (Sockmaster).
  *
- * Video: see renderLine(). The VDG-compatible mode (INIT0 COCO) takes its
+ * Disto 1-2 MB (a DAT board beside the GIME, as XRoar models it): with
+ * more than 512 KB the RAM is banks of 512 KB. The board latches bits 6-7
+ * of each page register write (bit 6 only on 1 MB) as the bank of that
+ * page, and $FF9B bits 0-1 as the bank the video comes from; with the MMU
+ * off (or in the constant page) the CPU sees bank 0. Both read back
+ * ($FFA0-$FFAF bits 6-7, $FF9B bits 0-1).
+ *
+ * Video: see renderTo(). The VDG-compatible mode (INIT0 COCO) takes its
  * mode from PIA1 port B as written ($FF22, snooped by the GIME) and the
  * SAM's V and F bits; the CoCo 3 modes from VMODE ($FF98), VRES ($FF99),
  * BRDR ($FF9A), VSC ($FF9C), the vertical offset ($FF9D/$FF9E: address
@@ -68,6 +75,9 @@ public:
     enum class Revision { G1986, G1987 };
     /** What a pixel's six bits mean: an RGB monitor (CM-8) or composite (a TV). */
     enum class Monitor { Rgb, Composite };
+    /** NTSC artifact colours in the VDG-compatible graphics modes (composite only):
+     *  off, or the colour subcarrier in either phase against the dots. */
+    enum class Artifact { Off, BlueRed, RedBlue };
 
     static constexpr int LINE_TICKS = 912;     ///< a scan line in pixel-clock ticks
     static constexpr int OUT_W = 704;          ///< the frame: the 640-tick active area and 32 ticks of border each side
@@ -88,14 +98,20 @@ public:
 
     void setRevision(Revision r) { m_rev = r; }
     Revision revision() const { return m_rev; }
-    /** The RAM fitted: 128 or 512 KB. The machine owns the RAM (setRam). */
-    void setRamKb(int kb) { m_ramMask = kb >= 512 ? 0x7FFFF : 0x1FFFF; }
+    /** The RAM fitted: 128 or 512 KB, or 1 / 2 MB with the Disto extension.
+     *  The machine owns the RAM (setRam). */
+    void setRamKb(int kb);
+    int ramKb() const { return m_ramKb; }
+    /** The mask of the RAM's physical addresses (0x1FFFF ... 0x1FFFFF). */
     uint32_t ramMask() const { return m_ramMask; }
     void setRam(const uint8_t* ram) { m_ram = ram; }
     void setMonitor(Monitor m) { m_monitor = m; }
     Monitor monitor() const { return m_monitor; }
     /** A PAL board: composite is made from the RGB signals (no NTSC hues). */
     void setPal(bool pal) { m_pal = pal; }
+    bool pal() const { return m_pal; }
+    void setArtifact(Artifact a) { m_artifact = a; }
+    Artifact artifact() const { return m_artifact; }
 
     /** /RESET: every register 0 (ROM mapped, MMU off, COCO clear), the SAM bits 0. */
     void reset();
@@ -106,6 +122,10 @@ public:
      *  be read); reading IRQENR / FIRQENR acknowledges. */
     bool read(uint16_t a, uint8_t& v);
     bool peek(uint16_t a, uint8_t& v) const;
+    /** The data bits a read() of `a` drives (the GIME six, the Disto board two more). */
+    uint8_t readMask(uint16_t a) const;
+    /** A write lands at the end of its CPU cycle (XRoar): what the beam has
+     *  passed by then is drawn with the old registers. */
     void write(uint16_t a, uint8_t v);
     /** The GIME watches writes to PIA1 ($FF22 data, $FF23 control) for the VDG mode lines. */
     void snoopPia1(uint16_t a, uint8_t v);
@@ -130,6 +150,9 @@ public:
     // State, for tests and the debugger
     uint8_t reg(int n) const { return m_reg[n & 15]; }
     uint8_t mmu(int n) const { return m_mmu[n & 15]; }
+    /** The Disto board's bank bits of a page register (0, $40, $80, $C0) and the video bank (0-3). */
+    uint8_t datBank(int n) const { return m_dat[n & 15]; }
+    int videoBank() const { return m_datVideo >> 6; }
     uint8_t palette(int n) const { return m_palette[n & 15]; }
     uint16_t samBits() const { return m_sam; }
     bool coco() const { return m_reg[0] & 0x80; }
@@ -152,14 +175,21 @@ public:
     int activeX() const { return m_activeX; }
     /** The first frame line of the active area (from the current mode). */
     int activeY() const;
-    /** The frame as 0xAARRGGBB through the monitor's colours. */
+    /** The frame as 0xAARRGGBB through the monitor's colours (and on NTSC
+     *  composite with artifacts on, the VDG-compatible graphics lines through
+     *  a composite decoder). */
     void renderArgb(uint32_t* out) const;
     /** A colour on an RGB monitor (R1 G1 B1 R0 G0 B0 -> 0x00, 0x55, 0xAA, 0xFF). */
     static uint32_t rgb(uint8_t c);
     /** A colour on an NTSC composite monitor (intensity bits 4-5, hue 0-3; hue 0 grey). */
     static uint32_t composite(uint8_t c);
+    /** A colour on a PAL CoCo 3's composite output: its RGB signals encoded by
+     *  the board, at their measured levels (0, 1, 1.6, 2 V: 0, 0x80, 0xCC, 0xFF). */
+    static uint32_t palComposite(uint8_t c);
     /** The colour on the monitor fitted (and MOCH: grey on composite). */
     uint32_t colour(uint8_t c) const;
+    /** True if frame line y was drawn (in part) in a VDG-compatible graphics mode. */
+    bool artifactLine(int y) const { return y >= 0 && y < OUT_H && (m_lineFlags[(size_t)y] & LF_VDG_GFX); }
 
     std::vector<uint8_t> saveState() const;
     void loadState(const std::vector<uint8_t>& s);
@@ -172,6 +202,7 @@ private:
         int tLB[2][2][2];       // [hi-res][40-byte][gfx]
         int tAA[2];             // [40-byte]
         int tHsVb[2][2][2];     // [hi-res][40-byte][gfx]
+        int tFP[2][2];          // [hi-res][gfx]: the front porch
     };
     static const Timing TIMING[2];
     const Timing& timing() const { return TIMING[m_rev == Revision::G1987 ? 1 : 0]; }
@@ -186,8 +217,17 @@ private:
     void hsFall();
     void vbPoint();
     void hbPoint();
-    void renderLine();
+    void lineStart();
+    void renderTo(uint32_t beam);
+    void renderByte(uint8_t* out);
+    void plot(uint8_t* out, uint32_t tick, uint8_t c) const {
+        const int x = (int)tick - m_xOrigin;
+        if (x >= 0 && x < OUT_W) out[x] = c;
+    }
+    void decodeNtscLine(const uint8_t* in, int y, uint32_t* out, const uint32_t* lut) const;
     uint8_t fetch();
+    uint32_t videoPhys(uint32_t a) const;
+    uint8_t compositeMask() const;
     int hiRes() const { return coco() ? 0 : (m_reg[9] >> 4) & 1; }
     int wide() const { return coco() ? 0 : (m_reg[9] >> 2) & 1; }
     int gfx() const { return (m_reg[8] & 0x80) ? 1 : 0; }
@@ -195,7 +235,13 @@ private:
     Revision m_rev;
     Monitor m_monitor = Monitor::Composite;
     bool m_pal = false;
+    Artifact m_artifact = Artifact::Off;
+    int m_ramKb = 128;
     uint32_t m_ramMask = 0x1FFFF;
+    // The Disto board: bank bits by page register, the video's bank, the bits fitted
+    uint8_t m_dat[16] = {};
+    uint8_t m_datVideo = 0;
+    uint8_t m_datMask = 0;
     const uint8_t* m_ram = nullptr;
 
     uint8_t m_reg[16] = {};
@@ -239,6 +285,18 @@ private:
     uint8_t m_cache = 0;
     uint32_t m_fetchX = 0;
 
+    // The line being drawn, in ticks from HSYNC falling: the left border
+    // starts, the active area starts, the front porch starts; drawn so far
+    uint32_t m_tLb = 0, m_tAaStart = 0, m_tFp = 0, m_npix = 0;
+    int m_xOrigin = 0;                   // the tick of frame column 0
+    bool m_rendering = false;
+    int m_renderY = 0;
+    int m_lineY = -1;                    // the frame line this scan line shows (-1 none)
+
     int m_activeX = 32;
     std::vector<uint8_t> m_frame;
+    // Per frame line: what the composite decoder needs
+    enum : uint8_t { LF_VDG_GFX = 1, LF_BPI = 2 };
+    std::vector<uint8_t> m_lineFlags;
+    std::vector<int16_t> m_lineOrigin;
 };

@@ -7,6 +7,79 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo storage: the CoCo SDC and Burke & Burke hard disk interface (#356)
+
+- The CoCo SDC (`expansion cart sdc FOLDER[,FIRMWARE[,BANK]]`, or a
+  Multi-Pak slot; CoCo 1, 2 and 3), after the CoCo SDC User Guide v4: a
+  host folder as the SD card; FDC emulation as an FD-502 (the latch and a
+  WD1793 whose drives 0-1 are the mounted images); command mode (`$43` to
+  `$FF40`) with the guide's commands, parameters and status bits: logical
+  sector read / write (single-sided LSN flag, 8- or 16-bit transfers),
+  stream, mount / mount raw / mount new, image info and size, set / get
+  directory, listings, make directory, delete, disk sets, version.
+  DSK (geometry by size; over 2880 sectors a hard disk), JVC, VDK and SDF
+  images; STARTUP.CFG; 8 x 16 KB flash banks with the DIP switches' bank
+  at reset. Not yet checked with SDC-DOS or a real card.
+- Burke & Burke CoCo XT (`expansion cart burke IMAGE[,ROM]`): the
+  register map from its manual (`$FF50` data, `$FF51` status / reset,
+  `$FF52` jumpers / start, `$FF53` select mode; no interrupts), the
+  controller's BIOS ROM socket at `$C000` with A4-A6 inverted, and a
+  WD1002-style XT controller with two raw image drives (its protocol is
+  not in the manual: unverified).
+- The Disto SC-II / SCSI adapter is not done: no reference documents it.
+
+### CoCo 3 GIME: mid-line changes, artifact colours, PAL composite, Disto 1-2 MB, serial EI2 (#356)
+
+- Mid-line GIME changes: a line is drawn as the beam goes (XRoar's
+  model), up to where the beam is when a write's cycle ends, before each
+  write to the GIME's registers, the palette, the SAM bits or PIA1 port B;
+  palette, mode, CSS and offset changes part way along a line show from the
+  next byte on. The border and horizontal timing are taken at the line's
+  left border, as on XRoar.
+- NTSC artifact colours in the VDG-compatible graphics modes on composite
+  (`expansion monitor composite bluered` / `redblue`, or the Artifact
+  button): the line through a composite encoder and decoder, a sample a
+  pixel tick; runs of one colour keep their colour; VMODE BPI swaps the
+  phase. The GIME's subcarrier phase against the dots is unmeasured, so it
+  is the setting.
+- PAL composite (`coco3p`): the RGB outputs at their measured levels (0, 1,
+  1.6, 2 V) rather than the RGB monitor's; MOCH doesn't affect it.
+- Disto 1-2 MB (`expansion ram ram 1M` / `2M`): page register bits 6-7 bank
+  the RAM in 512 KB, `$FF9B` bits 0-1 the video's bank; both read back.
+- Serial EI2: the bit banger's receive line (PIA1 PB0, `serial in:FILE`,
+  8N1 at the port's rate) raises EI2 at each start bit; its polarity is
+  documented as unverified.
+- Checked against XRoar: VSC row heights, reset state, interrupt and timer
+  rules match; the keyboard's EI1 is now re-read on each PIA0 write, and a
+  CM-8 pulls PIA1 PB3 low (monitor detect).
+- Tests: mid-line palette, border, mode and CSS changes, the Disto banks,
+  the artifact decoder, PAL composite, the receive line, EI2 on the machine,
+  2 MB through the bus, the monitor options.
+
+### HD6309: DAA, undefined postbytes, prefix pairs, PC as an operand (#356)
+
+These follow hoglet67's 6809Decoder, whose rules were checked against real
+parts.
+- DAA: with C set and A in `$80`-`$99`, the 6309 adds its own correction
+  (C=1 A=`$80` gives `$00`; the 6809 gives `$E0`). V is now bit 7 of the
+  result XOR C, on the 6809 core too.
+- The seven indexed postbytes the 6309 leaves undefined (`[,-R]`, and
+  `[n16]` with R bits other than 00) take the illegal-instruction trap: MD.IL
+  is set and the CPU vectors through `$FFF0`, in 21 cycles (23 native). The
+  disassembler shows them as `???`.
+- `$10`/`$11` after a page prefix traps, as on a real 6309. It no longer
+  chains as on the 6809.
+- In ADDR ... CMPR, PC reads one byte further on (the prefetch), and
+  ADDR/ADCR leave H alone. TFM with a bad register now takes 23/25 cycles
+  and sets Z from W.
+- Cycles were checked against the decoder's measured 6309 table, every
+  opcode in both modes and all 256 indexed postbytes. This fixed TIM (4 /
+  5+ / 5), ORCC/ANDCC (3 in native mode as well) and JSR indexed in native
+  mode (6+).
+- Not modelled, and listed in `doc/README-6809.md`: PC as an inter-register
+  destination landing late, the native-mode SYNC flag bug, and SWI
+  interrupted by NMI.
+
 ### TRS-80: the real ROMs and DOSes boot (#354)
 
 - `test_trs80_roms.cpp`: with the user's ROMs in `roms/trs80/`, Level I and

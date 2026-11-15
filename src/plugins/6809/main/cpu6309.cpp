@@ -50,6 +50,15 @@ bool branchTaken(uint8_t cc, int lo) {
         case 0xE: return !z && n == v;   default: return z || n != v;
     }
 }
+
+// The seven postbytes the 6309 leaves undefined: [,-R] ($92 $B2 $D2 $F2)
+// and [n16] with R bits other than 00 ($BF $DF $FF). Every other postbyte
+// means something; $90 $B0 $D0 $F0 ([,R+] on the 6809) are the [W] modes.
+// From hoglet67's 6809Decoder (postbyte_cycles_6309_*: "on the 6309 there
+// are 7"), measured on real parts.
+bool illegalIndexPostbyte(uint8_t pb) {
+    return (pb & 0x9F) == 0x92 || pb == 0xBF || pb == 0xDF || pb == 0xFF;
+}
 }  // namespace
 
 HD6309::HD6309() { reset(); }
@@ -191,6 +200,7 @@ uint16_t HD6309::eaExtended() {
 // $EF $AF and their indirect forms $90 $D0 $F0 $B0), and E,R F,R W,R.
 uint16_t HD6309::eaIndexed() {
     const uint8_t pb = imm8();
+    if (illegalIndexPostbyte(pb)) illegalPostbyte();
     uint16_t& r = indexReg(pb >> 5);
     if (!(pb & 0x80)) {                                                       // 5-bit offset
         idle(2);
@@ -317,6 +327,16 @@ void HD6309::illegal() {
     vectorTo(CC_I | CC_F, 0x0);
 }
 
+// An undefined indexed postbyte (hoglet67): the trap's stacking starts one
+// cycle after the postbyte's own, three dead cycles after it, so LDA [,-X]
+// takes 21 cycles (23 native) as an undefined page-2 opcode does. The index
+// register is left alone and the stacked PC is the byte after the postbyte
+// (neither is visible in the decoder's captures: unverified).
+void HD6309::illegalPostbyte() {
+    illegal();
+    throw Abandon{};
+}
+
 bool HD6309::serviceInterrupt() {
     const bool nmi = m_nmiPending && m_nmiArmed;
     const bool firq = m_firq && !(m_cc & CC_F);
@@ -394,15 +414,23 @@ int HD6309::step() {
             m_observer->onStepLite(this, m_pc);
         }
     }
-    uint8_t op = imm8();
-    if (op == 0x10 || op == 0x11) {
-        // Page selectors chain: the last one before a real opcode picks the page
-        uint8_t page = op;
-        op = imm8();
-        for (int n = 0; (op == 0x10 || op == 0x11) && n < 64; ++n) { page = op; op = imm8(); }
-        if (page == 0x10) execPage2(op); else execPage3(op);
-    } else {
-        execPage0(op);
+    try {
+        uint8_t op = imm8();
+        if (op == 0x10 || op == 0x11) {
+            // Unlike the 6809's, the 6309's page prefixes do not chain: $10
+            // or $11 after a prefix is an undefined opcode and traps, 21
+            // cycles (23 native), as hoglet67's measured opcode table has it.
+            // (XRoar lets them chain as the 6809's do.)
+            const uint8_t page = op;
+            op = imm8();
+            if (op == 0x10 || op == 0x11) illegal();
+            else if (page == 0x10) execPage2(op);
+            else execPage3(op);
+        } else {
+            execPage0(op);
+        }
+    } catch (const Abandon&) {
+        // an undefined indexed postbyte: the trap has been taken
     }
     m_cycles += (uint64_t)m_cyc;
     return m_cyc;
@@ -415,12 +443,20 @@ void HD6309::execPage0(uint8_t op) {
         if (lo == 0x1 || lo == 0x2 || lo == 0x5 || lo == 0xB) {               // OIM AIM EIM TIM
             const uint8_t im = imm8();
             m_m = im;                                                         // M is the immediate (hoglet67)
+            if (lo == 0xB) {
+                // TIM: 4 direct, 5+ indexed, 5 extended in both modes, no
+                // dead cycles (hoglet67's measured table; a capture shows
+                // TIM #$08,S+ in 7). Atkinson has 6 / 7+ / 7.
+                const uint16_t a = mode == 1 ? (uint16_t)(m_dp << 8 | imm8()) : mode == 2 ? eaIndexed() : imm16();
+                logic8((uint8_t)(r8(a) & im));
+                return;
+            }
             const uint16_t a = ea(mode);
             const uint8_t v = r8(a);
             const uint8_t r = logic8(lo == 0x1 ? (uint8_t)(v | im) : lo == 0x5 ? (uint8_t)(v ^ im) : (uint8_t)(v & im));
-            if (lo == 0xB) idle(); else w8(a, r);
-            // Atkinson: 6 direct, 7+ indexed, 7 extended in both modes. XRoar
-            // and MAME each guess differently; the reference's counts are used.
+            w8(a, r);
+            // Atkinson and hoglet67: 6 direct, 7+ indexed, 7 extended in both
+            // modes. XRoar and MAME each guess differently.
             if (mode == 2 || nativeMode()) idle();
             return;
         }
@@ -464,20 +500,35 @@ void HD6309::execPage0(uint8_t op) {
                 return;
             }
             case 0x9: {                                                       // DAA
+                // The 6809's correction, except that with C set and A in
+                // $80-$99 the 6309 adds a different one ($80-$8F +$20 more,
+                // $90-$97 +$10, $98 $68, $99 $68 - H), so C=1 A=$80 gives $00
+                // where the 6809 gives $E0. V is bit 7 of the result XOR the
+                // new C, on both CPUs. hoglet67's 6809Decoder (op_fn_DAA),
+                // checked there exhaustively against a real 6309.
                 const uint8_t lsn = m_a & 0x0F, msn = m_a >> 4;
-                uint8_t cf = 0;
-                if ((m_cc & CC_H) || lsn > 9) cf |= 0x06;
+                const int h = (m_cc & CC_H) ? 1 : 0;
+                unsigned cf = 0;
+                if (h || lsn > 9) cf |= 0x06;
                 if ((m_cc & CC_C) || msn > 9 || (msn > 8 && lsn > 9)) cf |= 0x60;
+                if ((m_cc & CC_C) && m_a >= 0x80 && m_a <= 0x99) {
+                    if (m_a == 0x99) cf = (unsigned)(0x68 - h);
+                    else if (m_a == 0x98) cf = 0x68;
+                    else if (m_a >= 0x90) cf += 0x10;
+                    else cf += 0x20;
+                }
                 const unsigned r = m_a + cf;
                 if (r & 0x100) m_cc |= CC_C;
                 m_a = (uint8_t)r;
                 nz8(m_a);
-                flag(CC_V, false);
+                flag(CC_V, ((r >> 7) & 1) ^ ((m_cc & CC_C) ? 1 : 0));
                 emu();
                 return;
             }
-            case 0xA: m_cc |= imm8(); emu(); return;                          // ORCC
-            case 0xC: m_cc &= imm8(); emu(); return;                          // ANDCC
+            // ORCC/ANDCC: 3 cycles in both modes (Atkinson, and hoglet67's
+            // measured table); XRoar and MAME have 2 in native mode
+            case 0xA: m_cc |= imm8(); idle(); return;                         // ORCC
+            case 0xC: m_cc &= imm8(); idle(); return;                         // ANDCC
             case 0xD: m_a = (m_b & 0x80) ? 0xFF : 0x00; nz16(d()); emu(); return;   // SEX
             case 0xE: {                                                       // EXG
                 const uint8_t pb = imm8();
@@ -619,7 +670,9 @@ void HD6309::execPage0(uint8_t op) {
                     return;
                 }
                 const uint16_t a = ea(mode);                                  // JSR
-                idle(2);
+                // indexed: 7+ / 6+ (hoglet67's table); direct and extended
+                // already lose their dead cycle in eaDirect / eaExtended
+                if (mode == 2) { idle(); emu(); } else idle(2);
                 psh16(m_s, m_pc);
                 m_pc = a;
                 return;
@@ -653,14 +706,24 @@ void HD6309::execPage0(uint8_t op) {
 // (M the internal latch, hoglet67; Atkinson says DP:$00); an 8-bit one takes
 // a 16-bit source's low byte. With CC as the destination the result is
 // stored before the flags are set over it (Atkinson, inter-register ops).
+//
+// PC as an operand (hoglet67's decoder, get_r_pc): it reads one ahead of the
+// next instruction's address, through pipelining, in both modes; as a
+// destination it reads the same way and the result is written to PC at once.
+// On a real part the write lands late, on the next instruction's second byte
+// ("cannot safely write to the PC"); that is not modelled. ADDR and ADCR
+// leave H alone (hoglet67), as the other six do.
 void HD6309::interRegister(uint8_t op) {
     const uint8_t pb = imm8();
     idle();
     const int src = pb >> 4, dst = pb & 15, k = op & 7;
     const int carry = m_cc & CC_C;
+    const uint8_t h = m_cc & CC_H;
     const uint8_t mask = (k >= 4 && k <= 6) ? (CC_N | CC_Z | CC_V) : (CC_N | CC_Z | CC_V | CC_C);
+    const uint16_t pcSeen = (uint16_t)(m_pc + 1);
+    auto rd16r = [&](int code) { return code == 0x5 ? pcSeen : tfrRead(code); };
     if (!(dst & 8)) {
-        const uint16_t a = tfrRead(dst);
+        const uint16_t a = rd16r(dst);
         uint16_t b;
         switch (src) {
             case 0x8: case 0x9: b = d(); break;
@@ -668,7 +731,7 @@ void HD6309::interRegister(uint8_t op) {
             case 0xB: b = (uint16_t)(m_dp << 8 | m_m); break;
             case 0xC: case 0xD: b = 0; break;
             case 0xE: case 0xF: b = w(); break;
-            default: b = tfrRead(src); break;
+            default: b = rd16r(src); break;
         }
         uint16_t r;
         switch (k) {
@@ -694,11 +757,11 @@ void HD6309::interRegister(uint8_t op) {
         case 0xF: dreg = &m_f; break;
     }
     const uint8_t a = dreg ? *dreg : 0;
-    const uint8_t b = (uint8_t)tfrRead(src);                                  // 8-bit: both halves; 16-bit: low byte
+    const uint8_t b = (uint8_t)rd16r(src);                                    // 8-bit: both halves; 16-bit: low byte
     uint8_t r;
     switch (k) {
-        case 0: r = add8(a, b, 0); break;
-        case 1: r = add8(a, b, carry); break;
+        case 0: r = add8(a, b, 0); m_cc = (uint8_t)((m_cc & ~CC_H) | h); break;
+        case 1: r = add8(a, b, carry); m_cc = (uint8_t)((m_cc & ~CC_H) | h); break;
         case 2: r = sub8(a, b, 0); break;
         case 3: r = sub8(a, b, carry); break;
         case 4: r = logic8(a & b); break;
@@ -906,8 +969,14 @@ void HD6309::execPage3(uint8_t op) {
     switch (op) {
         case 0x38: case 0x39: case 0x3A: case 0x3B: {                         // TFM
             const uint8_t pb = imm8();
+            if ((pb >> 4) > 4 || (pb & 15) > 4) {                             // only D X Y U S (Atkinson)
+                // 23 cycles (25 native), Z from W (hoglet67's decoder)
+                flag(CC_Z, w() == 0);
+                idle();
+                illegal();
+                return;
+            }
             idle(3);
-            if ((pb >> 4) > 4 || (pb & 15) > 4) { illegal(); return; }        // only D X Y U S (Atkinson)
             m_cc &= (uint8_t)~CC_Z;
             m_tfmOp = op;
             m_tfmPost = pb;
@@ -999,6 +1068,7 @@ struct Dis {
     IBus* bus;
     uint32_t pc;
     int len = 0;
+    bool bad = false;                       // an undefined indexed postbyte was met
     uint8_t byte() { return bus ? bus->peek8((pc + len++) & 0xFFFF) : 0; }
     uint16_t word() { const uint8_t h = byte(); return (uint16_t)(h << 8 | byte()); }
     static std::string hex2(unsigned v) { char b[8]; std::snprintf(b, sizeof b, "$%02X", v & 0xFF); return b; }
@@ -1007,6 +1077,7 @@ struct Dis {
         static const char* R[4] = {"X", "Y", "U", "S"};
         const uint8_t pb = byte();
         const std::string r = R[(pb >> 5) & 3];
+        if (illegalIndexPostbyte(pb)) { bad = true; return ""; }
         if (!(pb & 0x80)) {
             const int o = (pb & 0x10) ? (int)(pb & 0x1F) - 32 : (pb & 0x1F);
             return std::to_string(o) + "," + r;
@@ -1196,6 +1267,7 @@ int HD6309::disassembleOne(IBus* bus, uint32_t addr, char* buf, int bufsz) {
             s = std::string(bSide ? ACCB[lo] : ACCA[lo]) + " " + d.operand(mode, wide);
         }
     }
+    if (d.bad) s = "???";
     std::snprintf(buf, (size_t)bufsz, "%s", s.c_str());
     return d.len;
 }

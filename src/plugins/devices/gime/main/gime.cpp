@@ -53,24 +53,37 @@ template <class T> void get(const uint8_t*& p, const uint8_t* end, T& x) {
 
 // Horizontal timing, pixel ticks from HSYNC falling (XRoar's scope
 // measurements of each revision): sync, back porch, left border, active
-// area, and where the vertical events (VBORD, FSYNC) fall on a line
+// area, where the vertical events (VBORD, FSYNC) fall on a line, and the
+// front porch (the right border runs to it)
 const Gime::Timing Gime::TIMING[2] = {
     // 1986
     {2, 80,
      {{61, 57}, {63, 63}},
      {{{106, 110}, {44, 48}}, {{104, 104}, {42, 42}}},
      {512, 640},
-     {{{225, 221}, {161, 157}}, {{227, 227}, {163, 163}}}},
+     {{{225, 221}, {161, 157}}, {{227, 227}, {163, 163}}},
+     {{27, 31}, {25, 25}}},
     // 1987
     {1, 72,
      {{61, 57}, {63, 63}},
      {{{106, 110}, {42, 48}}, {{106, 106}, {42, 42}}},
      {512, 640},
-     {{{137, 133}, {137, 133}}, {{139, 139}, {139, 139}}}},
+     {{{137, 133}, {137, 133}}, {{139, 139}, {139, 139}}},
+     {{35, 39}, {33, 33}}},
 };
 
-Gime::Gime(Revision rev) : m_rev(rev), m_frame((size_t)OUT_W * OUT_H, 0) {
+Gime::Gime(Revision rev)
+    : m_rev(rev), m_frame((size_t)OUT_W * OUT_H, 0), m_lineFlags(OUT_H, 0), m_lineOrigin(OUT_H, 0) {
     reset();
+}
+
+// 128K, 512K; 1M and 2M are 512K banks through the Disto board
+void Gime::setRamKb(int kb) {
+    m_ramKb = kb >= 2048 ? 2048 : kb >= 1024 ? 1024 : kb >= 512 ? 512 : 128;
+    m_ramMask = (uint32_t)m_ramKb * 1024u - 1u;
+    m_datMask = m_ramKb >= 2048 ? 0xC0 : m_ramKb >= 1024 ? 0x40 : 0x00;
+    for (auto& d : m_dat) d &= m_datMask;
+    m_datVideo &= m_datMask;
 }
 
 void Gime::reset() {
@@ -93,6 +106,8 @@ void Gime::reset() {
     m_row = 0;
     m_haveCache = false;
     m_vbDone = m_hbDone = m_hsRisen = false;
+    m_rendering = false;
+    m_lineY = -1;
     samChanged();
     m_tVb = timing().tHsVb[0][0][0];
     m_tRb = 1000;
@@ -106,12 +121,20 @@ void Gime::reset() {
 Gime::Decode Gime::decode(uint16_t a) const {
     if (a < 0xFF00) {
         const bool constant = a >= 0xFE00 && (m_reg[0] & 0x08);
-        const unsigned page = constant ? 0x3F : (m_reg[0] & 0x40) ? m_mmu[(m_reg[1] & 1) * 8 + (a >> 13)] : (0x38u | (a >> 13));
+        const bool mmu = !constant && (m_reg[0] & 0x40);
+        const unsigned slot = (m_reg[1] & 1) * 8 + (a >> 13);
+        const unsigned page = constant ? 0x3F : mmu ? m_mmu[slot] : (0x38u | (a >> 13));
         if (!constant && !m_ty && page >= 0x3C) {
             const bool external = (m_reg[0] & 0x02) ? (m_reg[0] & 0x01) != 0 : page >= 0x3E;
             return {external ? S_CTS : S_ROM, 0};
         }
-        return {S_RAM, ((uint32_t)page << 13 | (a & 0x1FFFu)) & m_ramMask};
+        const uint32_t z = (uint32_t)page << 13 | (a & 0x1FFFu);
+        if (m_datMask) {
+            // The Disto board's bank: the page register's bits 6-7 (bank 0 without the MMU)
+            const uint32_t bank = mmu ? (uint32_t)(m_dat[slot] >> 6) : 0u;
+            return {S_RAM, (bank << 19 | (z & 0x7FFFFu)) & m_ramMask};
+        }
+        return {S_RAM, z & m_ramMask};
     }
     if (a < 0xFF40) return {(a & 0x10) ? S_NONE : (a & 0x20) ? S_PIA1 : S_PIA0, 0};
     if (a < 0xFF60) return {((m_reg[0] & 0x04) || a >= 0xFF50) ? S_SCS : S_NONE, 0};
@@ -123,9 +146,16 @@ Gime::Decode Gime::decode(uint16_t a) const {
 bool Gime::peek(uint16_t a, uint8_t& v) const {
     if (a == 0xFF92) { v = m_irqState; return true; }
     if (a == 0xFF93) { v = m_firqState; return true; }
-    if (a >= 0xFFA0 && a < 0xFFB0) { v = m_mmu[a & 15]; return true; }
+    if (a >= 0xFFA0 && a < 0xFFB0) { v = (uint8_t)(m_mmu[a & 15] | m_dat[a & 15]); return true; }
     if (a >= 0xFFB0 && a < 0xFFC0) { v = m_palette[a & 15]; return true; }
+    if (a == 0xFF9B && m_datMask) { v = (uint8_t)(m_datVideo >> 6); return true; }
     return false;     // the rest are write-only
+}
+
+uint8_t Gime::readMask(uint16_t a) const {
+    if (m_datMask && a >= 0xFFA0 && a < 0xFFB0) return 0xFF;
+    if (m_datMask && a == 0xFF9B) return 0x03;
+    return 0x3F;
 }
 
 bool Gime::read(uint16_t a, uint8_t& v) {
@@ -136,8 +166,13 @@ bool Gime::read(uint16_t a, uint8_t& v) {
 }
 
 void Gime::write(uint16_t a, uint8_t v) {
+    // The line so far in the old registers (the page registers aren't the video's)
+    if (a >= 0xFF90 && a < 0xFFE0 && !(a >= 0xFFA0 && a < 0xFFB0)) renderTo(m_lineTick + (uint32_t)cycleTicks());
     if (a >= 0xFF90 && a < 0xFFA0) writeReg(a & 15, v);
-    else if (a >= 0xFFA0 && a < 0xFFB0) m_mmu[a & 15] = v & 0x3F;
+    else if (a >= 0xFFA0 && a < 0xFFB0) {
+        m_mmu[a & 15] = v & 0x3F;
+        m_dat[a & 15] = v & m_datMask;
+    }
     else if (a >= 0xFFB0 && a < 0xFFC0) m_palette[a & 15] = v & 0x3F;
     else if (a >= 0xFFC0 && a < 0xFFE0) {
         const uint16_t bit = (uint16_t)(1u << ((a >> 1) & 15));
@@ -151,6 +186,7 @@ void Gime::snoopPia1(uint16_t a, uint8_t v) {
     if ((a & 3) == 3) {
         m_pia1bData = v & 0x04;
     } else if ((a & 3) == 2 && m_pia1bData) {
+        renderTo(m_lineTick + (uint32_t)cycleTicks());
         m_pia1b = v & 0xF8;
         modeChanged();
     }
@@ -178,6 +214,9 @@ void Gime::writeReg(int r, uint8_t v) {
         }
         case 4:                             // timer MSB: restarts it
             restartTimer();
+            break;
+        case 0xB:                           // the Disto board's video bank
+            m_datVideo = (uint8_t)(((v & 3) << 6) & m_datMask);
             break;
         case 8: case 9: case 0xA: case 0xC: case 0xF:
             modeChanged();
@@ -290,6 +329,14 @@ void Gime::advance(uint64_t ticks) {
 
 // HSYNC falls: a new line (the timer counts here at the line rate)
 void Gime::hsFall() {
+    renderTo(LINE_TICKS);                   // the rest of the line ending
+    if (m_lineY >= 0) {
+        // The colour burst's phase (VMODE BPI) as the line ends
+        uint8_t& f = m_lineFlags[(size_t)m_lineY];
+        f = (uint8_t)((f & ~LF_BPI) | ((m_reg[8] & 0x20) ? LF_BPI : 0));
+    }
+    m_rendering = false;
+    m_lineY = -1;
     m_hsRisen = m_vbDone = m_hbDone = false;
     m_haveCache = false;
     ++m_scanline;
@@ -332,8 +379,13 @@ void Gime::vbPoint() {
     const Timing& t = timing();
     const int hr = hiRes(), w = wide(), g = gfx();
     m_tAa = t.tAA[w];
-    m_tRb = t.tHS + t.tBP[hr][g] + t.tLB[hr][w][g] + m_tAa;
+    m_tLb = (uint32_t)(t.tHS + t.tBP[hr][g]);
+    m_tAaStart = m_tLb + (uint32_t)t.tLB[hr][w][g];
+    m_tRb = (int)m_tAaStart + m_tAa;
+    m_tFp = (uint32_t)(LINE_TICKS - t.tFP[hr][g]);
     m_activeX = 32 + (t.tLB[hr][w][g] - t.tLB[hr][1][g]);
+    m_xOrigin = (int)m_tAaStart - m_activeX;
+    m_npix = m_tLb;
 
     ++m_lcount;
     const unsigned lpf = (m_reg[9] >> 5) & 3;
@@ -377,11 +429,30 @@ void Gime::vbPoint() {
             raise(INT_VBORD);
         }
     }
+    lineStart();
 }
 
-// The right border starts: the line is drawn, the row counts on, HBORD
+// The line's picture begins at the left border: a border or blank line is
+// filled now (its colour was latched above); an active one is drawn as the
+// beam goes (renderTo), so writes part way along it show from there on
+void Gime::lineStart() {
+    m_rendering = false;
+    m_lineY = frameLine((int)m_scanline);
+    if (m_lineY < 0) return;
+    m_lineFlags[(size_t)m_lineY] = 0;
+    m_lineOrigin[(size_t)m_lineY] = (int16_t)m_xOrigin;
+    uint8_t* out = &m_frame[(size_t)m_lineY * OUT_W];
+    if (!m_active || m_sync) {
+        std::fill(out, out + OUT_W, m_sync && !m_active ? 0 : m_border);
+        return;
+    }
+    m_rendering = true;
+    m_renderY = m_lineY;
+}
+
+// The right border starts: the active area is done, the row counts on, HBORD
 void Gime::hbPoint() {
-    renderLine();
+    renderTo((uint32_t)m_tRb);
     m_rowAdvance = false;
     if (m_active) {
         m_row = (m_row + 1) & 15;
@@ -399,10 +470,22 @@ uint8_t Gime::fetch() {
     }
     const uint32_t a = (m_b + (m_fetchX & 0xFF)) & ~1u;
     m_fetchX += 2;
-    const uint8_t hi = m_ram ? m_ram[a & m_ramMask] : 0xFF;
-    m_cache = m_ram ? m_ram[(a + 1) & m_ramMask] : 0xFF;
+    const uint8_t hi = m_ram ? m_ram[videoPhys(a)] : 0xFF;
+    m_cache = m_ram ? m_ram[videoPhys(a + 1)] : 0xFF;
     m_haveCache = true;
     return hi;
+}
+
+// The video's address in the RAM: 19 bits, in the Disto board's video bank
+uint32_t Gime::videoPhys(uint32_t a) const {
+    if (m_datMask) return ((uint32_t)(m_datVideo >> 6) << 19 | (a & 0x7FFFFu)) & m_ramMask;
+    return a & m_ramMask;
+}
+
+// MOCH: the GIME's composite output gives only the intensity (a PAL board
+// makes its composite from the RGB outputs, which MOCH doesn't touch)
+uint8_t Gime::compositeMask() const {
+    return ((m_reg[8] & 0x10) && m_monitor == Monitor::Composite && !m_pal) ? 0x30 : 0x3F;
 }
 
 int Gime::frameLine(int scanline) const {
@@ -433,131 +516,144 @@ int Gime::activeY() const {
  * attributes, palette 1 on palette 0. CoCo 3 graphics: 1, 2 or 4 bits a
  * pixel, the leftmost the most significant, through palette 0-1, 0-3 or
  * 0-15. MOCH on composite shows only the intensity (grey).
+ *
+ * The line is drawn as the beam goes (XRoar's model): up to where it is
+ * before each write that could change it (the GIME's registers, the
+ * palette, the SAM bits, PIA1 port B), at the right border and at the
+ * line's end. Each byte fetched is drawn whole from the registers as they
+ * are when the beam reaches it, so a change shows from the next byte (the
+ * next character, or 2-32 ticks on) after the write's cycle ends. The
+ * border colour and the line's horizontal timing are taken where the left
+ * border starts (vbPoint), as on XRoar.
  */
-void Gime::renderLine() {
-    const int y = frameLine((int)m_scanline);
-    if (y < 0) return;
-    uint8_t* out = &m_frame[(size_t)y * OUT_W];
-    if (!m_active || m_sync) {
-        std::fill(out, out + OUT_W, m_sync && !m_active ? 0 : m_border);
-        return;
+void Gime::renderTo(uint32_t beam) {
+    if (!m_rendering) return;
+    if (beam > m_tFp) beam = m_tFp;
+    uint8_t* out = &m_frame[(size_t)m_renderY * OUT_W];
+    while (m_npix < beam) {
+        if (m_npix < m_tAaStart || m_npix >= (uint32_t)m_tRb) {
+            plot(out, m_npix, m_border);
+            plot(out, m_npix + 1, m_border);
+            m_npix += 2;
+        } else {
+            renderByte(out);
+        }
     }
-    std::fill(out, out + OUT_W, m_border);
+}
+
+// One byte's worth of the active area (with its attribute byte in text
+// with attributes), in the registers as they are now
+void Gime::renderByte(uint8_t* out) {
     const bool cc = coco();
     const bool gm0 = m_pia1b & 0x10, gm1 = m_pia1b & 0x20, css = m_pia1b & 0x08, gna = m_pia1b & 0x80;
-    const uint8_t cmask = ((m_reg[8] & 0x10) && m_monitor == Monitor::Composite) ? 0x30 : 0x3F;
+    const uint8_t cmask = compositeMask();
     const unsigned hres = (m_reg[9] >> 2) & 7, cres = m_reg[9] & 3;
-    int x = m_activeX;
-    int produced = 0;
     uint8_t c[8];
-    while (produced < m_tAa) {
-        const uint8_t v = fetch();
-        if (cc) {
-            const unsigned fontRow = m_row & 15;
-            enum { SG, CG, RG, RG2 } mode;
-            uint8_t g, fg = 0, bg = 0, cgBase = 0;
-            if (gna) {
-                g = v;
-                fg = css ? P_RG1_FG : P_RG0_FG;
-                bg = css ? P_RG1_BG : P_RG0_BG;
-                cgBase = css ? P_WHITE : P_GREEN;
-                if (!gm0) mode = CG;
-                else mode = (m_resolution || (m_pia1b & 0x70) == 0x70) ? RG : RG2;
-            } else if (v & 0x80) {
-                g = fontRow < 6 ? (uint8_t)(v >> 2) : v;
-                fg = (v >> 4) & 7;
-                bg = P_RG0_BG;
-                mode = SG;
-            } else {
-                bool inv = ((v & 0x40) != 0) != gm1;
-                uint8_t ch = v & 0x7F;
-                if (ch < 0x20) {
-                    ch |= gm0 ? 0x60 : 0x40;
-                    inv = inv != gm0;
-                } else if (ch >= 0x60) {
-                    ch ^= 0x40;
-                }
-                g = fontRow < 12 ? gime_font::GLYPHS[ch][fontRow] : 0;
-                if (inv) g = (uint8_t)~g;
-                fg = css ? P_TEXT1_FG : P_TEXT_FG;
-                bg = css ? P_TEXT1_BG : P_TEXT_BG;
-                mode = RG;
-            }
-            for (int half = 0; half < 2; ++half) {
-                uint8_t* q = c + half * 4;
-                switch (mode) {
-                    case SG:
-                        q[0] = q[1] = q[2] = q[3] = m_palette[(g & 2) ? fg : bg];
-                        g = (uint8_t)(g << 1);
-                        break;
-                    case CG:
-                        q[0] = q[1] = m_palette[cgBase + ((g >> 6) & 3)];
-                        q[2] = q[3] = m_palette[cgBase + ((g >> 4) & 3)];
-                        g = (uint8_t)(g << 4);
-                        break;
-                    case RG:
-                        for (int i = 0; i < 4; ++i) q[i] = m_palette[(g & (0x80 >> i)) ? fg : bg];
-                        g = (uint8_t)(g << 4);
-                        break;
-                    case RG2:
-                        q[0] = q[1] = m_palette[(g & 0x40) ? fg : bg];
-                        q[2] = q[3] = m_palette[(g & 0x10) ? fg : bg];
-                        g = (uint8_t)(g << 4);
-                        break;
-                }
-            }
-        } else if (m_reg[8] & 0x80) {
-            // CoCo 3 graphics; 16 colours at 16 bytes a row lose each second byte
-            if (hres == 0 && cres >= 2) m_cache = 0;
-            for (int i = 0; i < 8; ++i) {
-                switch (cres) {
-                    case 0: c[i] = m_palette[(v >> (7 - i)) & 1]; break;
-                    case 1: c[i] = m_palette[(v >> (6 - (i / 2) * 2)) & 3]; break;
-                    default: c[i] = m_palette[(v >> (4 - (i / 4) * 4)) & 15]; break;
-                }
-                c[i] &= cmask;
-            }
+    const uint8_t v = fetch();
+    if (cc) {
+        if (gna) m_lineFlags[(size_t)m_renderY] |= LF_VDG_GFX;
+        const unsigned fontRow = m_row & 15;
+        enum { SG, CG, RG, RG2 } mode;
+        uint8_t g, fg = 0, bg = 0, cgBase = 0;
+        if (gna) {
+            g = v;
+            fg = css ? P_RG1_FG : P_RG0_FG;
+            bg = css ? P_RG1_BG : P_RG0_BG;
+            cgBase = css ? P_WHITE : P_GREEN;
+            if (!gm0) mode = CG;
+            else mode = (m_resolution || (m_pia1b & 0x70) == 0x70) ? RG : RG2;
+        } else if (v & 0x80) {
+            g = fontRow < 6 ? (uint8_t)(v >> 2) : v;
+            fg = (v >> 4) & 7;
+            bg = P_RG0_BG;
+            mode = SG;
         } else {
-            // CoCo 3 text
-            unsigned fontRow = (m_row + 1) & 15;
-            if (fontRow > 11) fontRow = 0;
-            uint8_t g = gime_font::GLYPHS[v & 0x7F][fontRow];
-            uint8_t fg = 1, bg = 0;
-            if (cres & 1) {
-                const uint8_t attr = fetch();
-                fg = (uint8_t)(8 | ((attr >> 3) & 7));
-                bg = attr & 7;
-                if ((attr & 0x80) && m_blink) fg = bg;
-                if ((attr & 0x40) && (fontRow & m_rowMask) == m_rowMask) g = 0xFF;
+            bool inv = ((v & 0x40) != 0) != gm1;
+            uint8_t ch = v & 0x7F;
+            if (ch < 0x20) {
+                ch |= gm0 ? 0x60 : 0x40;
+                inv = inv != gm0;
+            } else if (ch >= 0x60) {
+                ch ^= 0x40;
             }
-            for (int i = 0; i < 8; ++i) c[i] = (uint8_t)(m_palette[(g & (0x80 >> i)) ? fg : bg] & cmask);
+            g = fontRow < 12 ? gime_font::GLYPHS[ch][fontRow] : 0;
+            if (inv) g = (uint8_t)~g;
+            fg = css ? P_TEXT1_FG : P_TEXT_FG;
+            bg = css ? P_TEXT1_BG : P_TEXT_BG;
+            mode = RG;
         }
-
-        // Spread the eight over the line
         for (int half = 0; half < 2; ++half) {
-            const uint8_t* q = c + half * 4;
-            switch (m_resolution) {
-                case 0:
-                    for (int i = 0; i < 16; ++i) if (x >= 0 && x < OUT_W) out[x++] = q[i / 4]; else ++x;
-                    produced += 16;
+            uint8_t* q = c + half * 4;
+            switch (mode) {
+                case SG:
+                    q[0] = q[1] = q[2] = q[3] = m_palette[(g & 2) ? fg : bg];
+                    g = (uint8_t)(g << 1);
                     break;
-                case 1:
-                    for (int i = 0; i < 8; ++i) if (x >= 0 && x < OUT_W) out[x++] = q[i / 2]; else ++x;
-                    produced += 8;
+                case CG:
+                    q[0] = q[1] = m_palette[cgBase + ((g >> 6) & 3)];
+                    q[2] = q[3] = m_palette[cgBase + ((g >> 4) & 3)];
+                    g = (uint8_t)(g << 4);
                     break;
-                case 2:
-                    for (int i = 0; i < 4; ++i) if (x >= 0 && x < OUT_W) out[x++] = q[i]; else ++x;
-                    produced += 4;
+                case RG:
+                    for (int i = 0; i < 4; ++i) q[i] = m_palette[(g & (0x80 >> i)) ? fg : bg];
+                    g = (uint8_t)(g << 4);
                     break;
-                default:
-                    if (x >= 0 && x < OUT_W) out[x] = q[0];
-                    if (x + 1 >= 0 && x + 1 < OUT_W) out[x + 1] = q[2];
-                    x += 2;
-                    produced += 2;
+                case RG2:
+                    q[0] = q[1] = m_palette[(g & 0x40) ? fg : bg];
+                    q[2] = q[3] = m_palette[(g & 0x10) ? fg : bg];
+                    g = (uint8_t)(g << 4);
                     break;
             }
+        }
+    } else if (m_reg[8] & 0x80) {
+        // CoCo 3 graphics; 16 colours at 16 bytes a row lose each second byte
+        if (hres == 0 && cres >= 2) m_cache = 0;
+        for (int i = 0; i < 8; ++i) {
+            switch (cres) {
+                case 0: c[i] = m_palette[(v >> (7 - i)) & 1]; break;
+                case 1: c[i] = m_palette[(v >> (6 - (i / 2) * 2)) & 3]; break;
+                default: c[i] = m_palette[(v >> (4 - (i / 4) * 4)) & 15]; break;
+            }
+            c[i] &= cmask;
+        }
+    } else {
+        // CoCo 3 text
+        unsigned fontRow = (m_row + 1) & 15;
+        if (fontRow > 11) fontRow = 0;
+        uint8_t g = gime_font::GLYPHS[v & 0x7F][fontRow];
+        uint8_t fg = 1, bg = 0;
+        if (cres & 1) {
+            const uint8_t attr = fetch();
+            fg = (uint8_t)(8 | ((attr >> 3) & 7));
+            bg = attr & 7;
+            if ((attr & 0x80) && m_blink) fg = bg;
+            if ((attr & 0x40) && (fontRow & m_rowMask) == m_rowMask) g = 0xFF;
+        }
+        for (int i = 0; i < 8; ++i) c[i] = (uint8_t)(m_palette[(g & (0x80 >> i)) ? fg : bg] & cmask);
+    }
+
+    // Spread the eight over the line
+    uint32_t t = m_npix;
+    for (int half = 0; half < 2; ++half) {
+        const uint8_t* q = c + half * 4;
+        switch (m_resolution) {
+            case 0:
+                for (int i = 0; i < 16; ++i) plot(out, t++, q[i / 4]);
+                break;
+            case 1:
+                for (int i = 0; i < 8; ++i) plot(out, t++, q[i / 2]);
+                break;
+            case 2:
+                for (int i = 0; i < 4; ++i) plot(out, t++, q[i]);
+                break;
+            default:
+                plot(out, t, q[0]);
+                plot(out, t + 1, q[2]);
+                t += 2;
+                break;
         }
     }
+    m_npix = t;
 }
 
 // ---------------------------------------------------------------------------
@@ -574,13 +670,14 @@ uint32_t Gime::rgb(uint8_t c) {
 // For each intensity, the grey level and the colour signal's low and high
 // levels (volts above blank at the composite port, XRoar's measurements);
 // the hue is the colour signal's phase in GIME clock edges, 16 to a
-// colour cycle for 15 hues (a gap between hues 11 and 12).
-uint32_t Gime::composite(uint8_t c) {
+// colour cycle for 15 hues (a gap between hues 11 and 12). As Y, U, V
+// (U = amplitude x sin(phase), V = amplitude x cos(phase)).
+static void compositeYuv(uint8_t c, double& y, double& u, double& v) {
     static const double GREY[4] = {0.000, 0.170, 0.380, 0.750};
     static const double LOW[4] = {-0.210, 0.000, 0.170, 0.380};
     static const double HIGH[4] = {0.380, 0.580, 0.750, 0.750};
     const int in = (c >> 4) & 3, hue = c & 15;
-    double y, u = 0, v = 0;
+    u = v = 0;
     if (hue == 0 || (c & 0x3F) == 63) {
         y = GREY[in] / 0.75;
     } else {
@@ -591,20 +688,116 @@ uint32_t Gime::composite(uint8_t c) {
         u = amp * std::sin(phase);
         v = amp * std::cos(phase);
     }
+}
+
+static uint32_t yuvArgb(double y, double u, double v) {
     auto ch = [](double x) { return (uint32_t)std::lround(std::max(0.0, std::min(1.0, x)) * 255.0); };
     const uint32_t r = ch(y + 1.140 * v), g = ch(y - 0.395 * u - 0.581 * v), b = ch(y + 2.032 * u);
     return 0xFF000000u | r << 16 | g << 8 | b;
 }
 
+uint32_t Gime::composite(uint8_t c) {
+    double y, u, v;
+    compositeYuv(c, y, u, v);
+    return yuvArgb(y, u, v);
+}
+
+// A PAL CoCo 3 doesn't use the GIME's composite output: the board encodes
+// its RGB outputs for the TV (XRoar: "PAL CoCo 3s only emit the RGB
+// palette, even over composite"). The levels are XRoar's measurements of
+// the RGB outputs, 0, 1, 1.6 and 2 V, scaled to full range; the board's
+// encoder itself is unmeasured (XRoar too only approximates it).
+uint32_t Gime::palComposite(uint8_t c) {
+    static const uint32_t LEVEL[4] = {0x00, 0x80, 0xCC, 0xFF};
+    const unsigned r = ((c >> 4) & 2) | ((c >> 2) & 1);
+    const unsigned g = ((c >> 3) & 2) | ((c >> 1) & 1);
+    const unsigned b = ((c >> 2) & 2) | (c & 1);
+    return 0xFF000000u | LEVEL[r] << 16 | LEVEL[g] << 8 | LEVEL[b];
+}
+
 uint32_t Gime::colour(uint8_t c) const {
-    if (m_monitor == Monitor::Rgb || m_pal) return rgb(c);
-    return composite(c);
+    if (m_monitor == Monitor::Rgb) return rgb(c);
+    return m_pal ? palComposite(c) : composite(c);
+}
+
+/*
+ * NTSC artifact colours: a line drawn in a VDG-compatible graphics mode
+ * is made into the composite signal a TV sees, one sample a pixel tick (4
+ * a colour subcarrier cycle: a 912-tick line is exactly 228 cycles, so
+ * the phase is the same every line), and decoded again: luma through a
+ * low-pass that nulls the subcarrier and its second harmonic (1 2 3 4 3 2
+ * 1, /16), U and V by demodulating against the subcarrier through the same
+ * filter. A run of one colour decodes to exactly its composite colour; a
+ * pattern at the subcarrier's rate (PMODE 4's 2-tick dots in pairs) becomes
+ * a colour. Which colours depends on the subcarrier's phase against the
+ * dots: the GIME's is fixed, but not measured here, so it is a setting
+ * (BlueRed: a black dot then a white one shows blue, as on a CoCo 2 in that
+ * phase); VMODE BPI inverts the burst and so swaps them.
+ */
+void Gime::decodeNtscLine(const uint8_t* in, int y, uint32_t* out, const uint32_t* lut) const {
+    static const int W[7] = {1, 2, 3, 4, 3, 2, 1};
+    // The subcarrier's phase at tick 0 of the VDG-compatible active area for
+    // BlueRed: chosen so that black-white decodes to the hue of a CoCo 2's
+    // artifact blue (#0080FF)
+    static const double BETA = [] {
+        const double ay = 0.299 * 0.0 + 0.587 * (128.0 / 255.0) + 0.114;
+        const double au = 0.492 * (1.0 - ay), av = 0.877 * (0.0 - ay);
+        const double n = std::sqrt(au * au + av * av);
+        const double ca = au / n, sa = av / n;
+        return std::atan2(-(ca - sa), -(ca + sa));
+    }();
+    double ys[64], us[64], vs[64];
+    for (int i = 0; i < 64; ++i) compositeYuv((uint8_t)i, ys[i], us[i], vs[i]);
+    double phase = BETA;
+    if (m_artifact == Artifact::RedBlue) phase += M_PI;
+    if (m_lineFlags[(size_t)y] & LF_BPI) phase += M_PI;
+    // The VDG-compatible active area starts at a tick of 3 mod 4 on both revisions
+    const int origin = m_lineOrigin[(size_t)y] + 1;
+    double s4[4], c4[4];
+    for (int k = 0; k < 4; ++k) {
+        s4[k] = std::sin(M_PI / 2.0 * k + phase);
+        c4[k] = std::cos(M_PI / 2.0 * k + phase);
+    }
+    double sig[OUT_W], sn[OUT_W], cs[OUT_W];
+    for (int x = 0; x < OUT_W; ++x) {
+        const int k = (x + origin) & 3;
+        const uint8_t c = in[x] & 0x3F;
+        sn[x] = s4[k];
+        cs[x] = c4[k];
+        sig[x] = ys[c] + us[c] * sn[x] + vs[c] * cs[x];
+    }
+    for (int x = 0; x < OUT_W; ++x) {
+        bool solid = true;
+        for (int k = -3; k <= 3 && solid; ++k) {
+            const int i = std::max(0, std::min(OUT_W - 1, x + k));
+            solid = in[i] == in[x];
+        }
+        if (solid) { out[x] = lut[in[x] & 0x3F]; continue; }
+        double fy = 0, fu = 0, fv = 0;
+        for (int k = -3; k <= 3; ++k) {
+            const int i = std::max(0, std::min(OUT_W - 1, x + k));
+            const double w = W[k + 3] / 16.0;
+            fy += w * sig[i];
+            fu += w * sig[i] * sn[i];
+            fv += w * sig[i] * cs[i];
+        }
+        out[x] = yuvArgb(fy, 2.0 * fu, 2.0 * fv);
+    }
 }
 
 void Gime::renderArgb(uint32_t* out) const {
     uint32_t lut[64];
     for (int i = 0; i < 64; ++i) lut[i] = colour((uint8_t)i);
-    for (size_t i = 0; i < m_frame.size(); ++i) out[i] = lut[m_frame[i] & 0x3F];
+    const bool ntsc = m_monitor == Monitor::Composite && !m_pal && m_artifact != Artifact::Off;
+    for (int y = 0; y < OUT_H; ++y) {
+        const uint8_t* in = &m_frame[(size_t)y * OUT_W];
+        uint32_t* o = out + (size_t)y * OUT_W;
+        if (ntsc && (m_lineFlags[(size_t)y] & LF_VDG_GFX)) {
+            decodeNtscLine(in, y, o, lut);
+        } else {
+            for (int x = 0; x < OUT_W; ++x) o[x] = lut[in[x] & 0x3F];
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -624,6 +817,9 @@ std::vector<uint8_t> Gime::saveState() const {
     put(v, m_lF); put(v, m_lTB); put(v, m_lAA); put(v, m_sync); put(v, m_active); put(v, m_lcount);
     put(v, m_b); put(v, m_row); put(v, m_rowAdvance); put(v, m_xoff); put(v, m_stride);
     put(v, m_border); put(v, m_fetchX); put(v, m_activeX);
+    put(v, m_tLb); put(v, m_tAaStart); put(v, m_tFp); put(v, m_npix); put(v, m_xOrigin);
+    put(v, m_rendering); put(v, m_renderY); put(v, m_lineY);
+    put(v, m_dat); put(v, m_datVideo);
     return v;
 }
 
@@ -643,6 +839,13 @@ void Gime::loadState(const std::vector<uint8_t>& s) {
     get(p, end, m_lF); get(p, end, m_lTB); get(p, end, m_lAA); get(p, end, m_sync); get(p, end, m_active); get(p, end, m_lcount);
     get(p, end, m_b); get(p, end, m_row); get(p, end, m_rowAdvance); get(p, end, m_xoff); get(p, end, m_stride);
     get(p, end, m_border); get(p, end, m_fetchX); get(p, end, m_activeX);
+    get(p, end, m_tLb); get(p, end, m_tAaStart); get(p, end, m_tFp); get(p, end, m_npix); get(p, end, m_xOrigin);
+    get(p, end, m_rendering); get(p, end, m_renderY); get(p, end, m_lineY);
+    get(p, end, m_dat); get(p, end, m_datVideo);
+    for (auto& d : m_dat) d &= m_datMask;
+    m_datVideo &= m_datMask;
+    if (m_renderY < 0 || m_renderY >= OUT_H) m_rendering = false;
+    if (m_lineY >= OUT_H) m_lineY = -1;
     m_haveCache = false;
     samChanged();
     outputs();

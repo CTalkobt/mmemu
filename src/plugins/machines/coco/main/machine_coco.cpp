@@ -3,6 +3,7 @@
 // (dragon/dragon.c, dragon/coco.c; GPL-3.0-or-later), mmsim's own code.
 
 #include "coco_system.h"
+#include "coco_storage.h"
 #include "plugins/6809/main/cpu6809.h"
 #include "plugins/6809/main/cpu6309.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
@@ -229,12 +230,49 @@ bool BitBanger::attachSerial(const std::string& spec) {
         m_file = std::fopen(spec.substr(5).c_str(), "ab");
         return m_file != nullptr;
     }
-    if (spec == "none" && m_file) {
-        std::fclose(m_file);
+    if (spec.rfind("in:", 0) == 0) {
+        std::FILE* f = std::fopen(spec.substr(3).c_str(), "rb");
+        if (!f) return false;
+        std::vector<uint8_t> bytes;
+        for (int c; (c = std::fgetc(f)) != EOF;) bytes.push_back((uint8_t)c);
+        std::fclose(f);
+        receive(bytes);
+        return true;
+    }
+    if (spec == "none" && (m_file || !m_rxQueue.empty())) {
+        if (m_file) std::fclose(m_file);
         m_file = nullptr;
+        m_rxQueue.clear();
+        m_rxConnected = false;
         return true;
     }
     return false;
+}
+
+// 8N1, LSB first: the start bit at space (low), the stop bit and the idle line at mark
+bool BitBanger::rxLevel(uint64_t now) {
+    const double bit = m_hz / m_baud;
+    for (;;) {
+        if (!m_rxBusy) {
+            if (m_rxQueue.empty()) {
+                m_rxPoll = now;
+                return true;
+            }
+            m_rxByte = m_rxQueue.front();
+            m_rxQueue.pop_front();
+            m_rxBusy = true;
+            m_rxStart = m_rxEnd > m_rxPoll ? m_rxEnd : now;     // back to back, or from now
+        }
+        const double t = (double)(now - m_rxStart) / bit;
+        if (t >= 10.0) {
+            m_rxEnd = m_rxStart + (uint64_t)(bit * 10.0);
+            m_rxBusy = false;
+            continue;
+        }
+        m_rxPoll = now;
+        const int i = (int)t;
+        return i == 0 ? false : i <= 8 ? ((m_rxByte >> (i - 1)) & 1) != 0 : true;
+    }
 }
 
 bool BitBanger::setOption(const std::string& key, const std::string& value, std::string& err) {
@@ -436,8 +474,9 @@ System::~System() = default;
 
 void System::setRamKb(int kb) {
     if (m_gime) {
-        m_ram3.assign(kb >= 512 ? 0x80000 : 0x20000, 0);
-        m_gime->setRamKb(kb >= 512 ? 512 : 128);
+        // 128K, 512K, or the Disto board's 1M / 2M
+        m_gime->setRamKb(kb);
+        m_ram3.assign((size_t)m_gime->ramKb() * 1024, 0);
         m_gime->setRam(m_ram3.data());
         return;
     }
@@ -817,7 +856,8 @@ void System::loadState(const uint8_t* buf) {
     if (m_gime) {
         auto r3 = getBlob(p);
         auto g = getBlob(p);
-        if (r3.size() == 0x20000 || r3.size() == 0x80000) setRamKb((int)(r3.size() / 1024));
+        if (r3.size() == 0x20000 || r3.size() == 0x80000 || r3.size() == 0x100000 || r3.size() == 0x200000)
+            setRamKb((int)(r3.size() / 1024));
         if (r3.size() == m_ram3.size()) m_ram3 = r3;
         m_gime->loadState(g);
         kb = 64;
@@ -885,6 +925,11 @@ std::vector<uint8_t> placeholderRom() {
 
 }  // namespace
 
+namespace {
+const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
+const char* const BURKE_DESC = "Burke & Burke CoCo XT hard disk interface ($FF50-$FF53); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
+}  // namespace
+
 std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& option, std::string& err) {
     if (device == "orch90") {
         std::vector<uint8_t> rom;
@@ -910,13 +955,47 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         if (rom.empty()) return nullptr;
         return std::unique_ptr<Cart>(new DragonDos(std::move(rom)));
     }
+    if (device == "sdc") {
+        // Option: the SD card's folder, then ",firmware" (else sdc-dos.rom from the firmware dir)
+        const auto comma = option.find(',');
+        const std::string card = option.substr(0, comma);
+        std::vector<uint8_t> flash;
+        std::string fw = comma == std::string::npos ? "" : option.substr(comma + 1);
+        int bank = 0;
+        const auto comma2 = fw.find(',');
+        if (comma2 != std::string::npos) {
+            bank = std::atoi(fw.c_str() + comma2 + 1);
+            fw = fw.substr(0, comma2);
+            if (bank < 0 || bank > 7) { err = "the CoCo SDC's flash bank is 0-7"; return nullptr; }
+        }
+        if (!fw.empty()) {
+            if (!readFile(fw, flash) || flash.empty()) { err = "can't read the CoCo SDC firmware " + fw; return nullptr; }
+        } else {
+            for (const char* n : {"sdc-dos.rom", "sdcdos.rom", "cocosdc.rom"})
+                if (readFile(firmwareDir() + "/" + n, flash) && !flash.empty()) break;
+        }
+        return std::unique_ptr<Cart>(new CocoSdcCart(std::move(flash), card, bank));
+    }
+    if (device == "burke") {
+        // Option: drive 0's image, then ",ROM" for the controller's BIOS socket (an XT-ROM)
+        const auto comma = option.find(',');
+        const std::string image = option.substr(0, comma);
+        std::vector<uint8_t> rom;
+        if (comma != std::string::npos && (!readFile(option.substr(comma + 1), rom) || rom.empty())) {
+            err = "can't read the ROM " + option.substr(comma + 1);
+            return nullptr;
+        }
+        std::unique_ptr<BurkeBurke> c(new BurkeBurke(std::move(rom)));
+        if (!image.empty() && !c->mountDisk(0, image)) { err = "can't open the hard disk image " + image; return nullptr; }
+        return std::unique_ptr<Cart>(c.release());
+    }
     if (device == "rompak") {
         std::vector<uint8_t> rom;
         if (option.empty() || !readFile(option, rom) || rom.empty()) { err = "rompak needs the image's path"; return nullptr; }
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, rs232, fd500, dragondos, rompak)";
+    err = "no cartridge '" + device + "' (mpi, orch90, rs232, fd500, sdc, burke, dragondos, rompak)";
     return nullptr;
 }
 
@@ -1027,7 +1106,12 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     desc->onKey = [sys](const std::string& name, bool down) {
         if (name == "reset") { if (down) sys->resetButton(); return true; }
         if (name == "artifact") {
-            if (down) {
+            if (down && sys->gime()) {
+                Gime* g = sys->gime();
+                const auto a = g->artifact();
+                g->setArtifact(a == Gime::Artifact::Off ? Gime::Artifact::BlueRed
+                               : a == Gime::Artifact::BlueRed ? Gime::Artifact::RedBlue : Gime::Artifact::Off);
+            } else if (down) {
                 const auto a = sys->vdg.artifact();
                 sys->vdg.setArtifact(a == Mc6847::Artifact::Off ? Mc6847::Artifact::BlueRed
                                      : a == Mc6847::Artifact::BlueRed ? Mc6847::Artifact::RedBlue : Mc6847::Artifact::Off);
@@ -1039,8 +1123,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     desc->screenButtons = {
         {"RESET", {"reset"}, "The RESET button: BASIC restarts; the program in memory stays."},
     };
-    // A PAL set shows no artifact colours (nor does the GIME here)
-    if (!pal && model != Model::CoCo3) desc->screenButtons.push_back({"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."});
+    // A PAL set shows no artifact colours (on the CoCo 3: on composite, in the VDG-compatible modes)
+    if (!pal) desc->screenButtons.push_back({"Artifact", {"artifact"}, "PMODE 4 artifact colours: off, blue-red, red-blue (NTSC phase)."});
 
     // Joysticks: 0 right, 1 left (the right one is most games')
     desc->joystickPorts = 2;
@@ -1117,6 +1201,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
                 {"orch90", "Orchestra-90 stereo DACs ($FF7A/$FF7B); option: its ROM image", {}, ""},
                 {"rs232", "Deluxe RS-232 Program Pak (6551 ACIA at $FF68; the serial command)", {}, ""},
                 {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
+                {"sdc", SDC_DESC, {}, ""},
+                {"burke", BURKE_DESC, {}, ""},
                 {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
             };
             if (model == Model::CoCo3)
@@ -1158,6 +1244,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"rs232", "Deluxe RS-232 Program Pak", {}, ""},
             {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
             {"fd502", "FD-502 disk controller (as the FD-500) with Disk BASIC 1.1; option: the ROM", {}, ""},
+            {"sdc", SDC_DESC, {}, ""},
+            {"burke", BURKE_DESC, {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
         };
         s.install = [sys, n](const std::string& device, const std::string& option, std::string& err) {

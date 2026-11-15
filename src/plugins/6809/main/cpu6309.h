@@ -18,7 +18,11 @@
  * SEXW, AIM/OIM/EIM/TIM, the W indexed modes (,W ,W++ ,--W n16,W and their
  * indirect forms), E/F/W accumulator offsets, TFR/EXG with the 6309's
  * register numbering, and the illegal-instruction and divide-by-zero traps
- * through the vector at $FFF0.
+ * through the vector at $FFF0. The seven undefined indexed postbytes
+ * ([,-R] and [n16] with R bits other than 00), and a page prefix followed by
+ * another page prefix, take the illegal-instruction trap too (hoglet67).
+ * DAA has the 6309's own corrections when C is set and A is $80-$99, and in
+ * the inter-register ops PC reads one ahead and H is left alone (hoglet67).
  *
  * Timing is counted bus cycle by bus cycle, after XRoar's HD6309 (whose
  * sequences follow David Banks' measurements of real parts): in emulation
@@ -26,7 +30,8 @@
  * reduced 6309 counts, and the native-mode interrupt frames include E and F
  * (two bytes longer, RTI pulls them back). Where XRoar and MAME both differ
  * from Darren Atkinson's "6809 and 6309 Programming Reference" only by an
- * acknowledged guess (AIM/OIM/EIM/TIM, TSTE/TSTF) the reference is followed.
+ * acknowledged guess (AIM/OIM/EIM, TSTE/TSTF) the reference is followed;
+ * TIM, ORCC/ANDCC and JSR indexed follow hoglet67's measured table.
  *
  * The interface is M6809's: construct with new HD6309(), set the data bus,
  * step() returns the cycles used.
@@ -110,6 +115,10 @@ private:
     void stackFast();
     void vectorTo(uint8_t mask, int vec);
     void illegal();
+    /** An undefined indexed postbyte: the illegal-instruction trap, then the
+     *  rest of the instruction abandoned (thrown to step()). */
+    [[noreturn]] void illegalPostbyte();
+    struct Abandon {};
     bool serviceInterrupt();
     void tfmStep();
     void endTfm();

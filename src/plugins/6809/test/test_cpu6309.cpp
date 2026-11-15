@@ -7,6 +7,7 @@
 #include "plugins/6809/main/cpu6309.h"
 #include "libmem/main/memory_bus.h"
 #include "libtoolchain/main/idisasm.h"
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -71,14 +72,15 @@ TEST_CASE(hd6309_registers) {
 }
 
 // Emulation mode runs 6809 code exactly as the 6809 core: random documented
-// instructions (no SYNC/CWAI, no undefined opcodes or postbytes, TFR/EXG
+// instructions (no SYNC/CWAI/DAA, no undefined opcodes or postbytes, TFR/EXG
 // between same-size registers), registers, memory and cycles compared
 TEST_CASE(hd6309_emulation_matches_6809) {
     auto valid0 = [](uint8_t op) {
         const int hi = op >> 4, lo = op & 15;
         if (hi == 0x0 || hi == 0x6 || hi == 0x7) return lo != 1 && lo != 2 && lo != 5 && lo != 0xB;
         if (hi == 0x4 || hi == 0x5) return lo != 1 && lo != 2 && lo != 5 && lo != 0xB && lo != 0xE;
-        if (hi == 0x1) return lo == 2 || lo == 6 || lo == 7 || lo == 9 || lo == 0xA || lo == 0xC || lo == 0xD || lo == 0xE || lo == 0xF;
+        // (not DAA: the 6309's corrections differ, see hd6309_daa)
+        if (hi == 0x1) return lo == 2 || lo == 6 || lo == 7 || lo == 0xA || lo == 0xC || lo == 0xD || lo == 0xE || lo == 0xF;
         if (hi == 0x2) return true;
         if (hi == 0x3) return lo != 8 && lo != 0xC && lo != 0xE;
         return op != 0x87 && op != 0x8F && op != 0xC7 && op != 0xCD && op != 0xCF;
@@ -104,7 +106,7 @@ TEST_CASE(hd6309_emulation_matches_6809) {
             if (!(pb & 0x80)) return pb;
             const int lo = pb & 15;
             if (lo == 7 || lo == 0xA || lo == 0xE) continue;
-            if (lo == 0xF) { if (pb & 0x10) return pb; continue; }
+            if (lo == 0xF) { if (pb == 0x9F) return pb; continue; }   // $BF $DF $FF trap on the 6309
             if ((pb & 0x1F) == 0x10 || (pb & 0x1F) == 0x12) continue;
             return pb;
         }
@@ -178,7 +180,11 @@ TEST_CASE(hd6309_cycle_counts) {
         {{0x3A}, 3, 1, 0, 0},                                // ABX
         {{0x1D}, 2, 1, 0, 0},                                // SEX
         {{0x19}, 2, 1, 0, 0},                                // DAA
-        {{0x1A, 0x00}, 3, 2, 0, 0},                          // ORCC (XRoar, MAME)
+        {{0x1A, 0x00}, 3, 3, 0, 0},                          // ORCC (Atkinson, hoglet67)
+        {{0x1C, 0xFF}, 3, 3, 0, 0},                          // ANDCC
+        {{0xAD, 0x84}, 7, 6, 0, 0},                          // JSR ,X (hoglet67)
+        {{0xAD, 0x80}, 9, 7, 0, 0},                          // JSR ,X+
+        {{0x6B, 0x0F, 0xE0}, 7, 6, 0, 0},                    // TIM ,S+ (hoglet67's capture: 7)
         {{0x83, 0x00, 0x01}, 4, 3, 0, 0},                    // SUBD #
         {{0x9C, 0x10}, 6, 4, 0, 0},                          // CMPX <
         {{0xA6, 0x84}, 4, 4, 0, 0},                          // LDA ,X
@@ -243,8 +249,8 @@ TEST_CASE(hd6309_cycle_counts) {
         {{0x62, 0x0F, 0x84}, 7, 7, 0, 0},                    // AIM ,X
         {{0x72, 0x0F, 0x20, 0x00}, 7, 7, 0, 0},              // AIM ext
         {{0x01, 0x0F, 0x10}, 6, 6, 0, 0},                    // OIM <
-        {{0x0B, 0x0F, 0x10}, 6, 6, 0, 0},                    // TIM <
-        {{0x7B, 0x0F, 0x20, 0x00}, 7, 7, 0, 0},              // TIM ext
+        {{0x0B, 0x0F, 0x10}, 4, 4, 0, 0},                    // TIM < (hoglet67)
+        {{0x7B, 0x0F, 0x20, 0x00}, 5, 5, 0, 0},              // TIM ext
         {{0x11, 0x30, 0x40, 0x10}, 7, 6, 0, 0},              // BAND
         {{0x11, 0x36, 0x40, 0x10}, 7, 6, 0, 0},              // LDBT
         {{0x11, 0x37, 0x40, 0x10}, 8, 7, 0, 0},              // STBT
@@ -623,6 +629,185 @@ TEST_CASE(hd6309_illegal_trap) {
     EXPECT_TRUE(r.cpu.nativeMode());
     EXPECT_TRUE(r.cpu.md() & HD6309::MD_FM);
     EXPECT_TRUE(r.cpu.cc() & M6809::CC_Z);
+}
+
+// The undefined indexed postbytes: exactly seven on the 6309 ([,-R] and
+// [n16] with R bits other than 00), each taking the illegal-instruction trap,
+// 21 cycles (23 native) for a page-0 opcode, the index register untouched
+// (hoglet67's 6809Decoder). All 256 are tried with LDA.
+TEST_CASE(hd6309_illegal_postbytes) {
+    const uint8_t bad[] = {0x92, 0xB2, 0xD2, 0xF2, 0xBF, 0xDF, 0xFF};
+    for (int pb = 0; pb < 256; ++pb) {
+        const bool illegal = std::find(std::begin(bad), std::end(bad), (uint8_t)pb) != std::end(bad);
+        for (int native = 0; native < 2; ++native) {
+            Rig6309 r;
+            r.poke16(0xFFF0, 0x2800);
+            r.load(0x1000, {0xA6, (uint8_t)pb, 0x00, 0x00});
+            r.set(HD6309::R_X, 0x3000); r.set(HD6309::R_Y, 0x3100); r.set(HD6309::R_U, 0x3200);
+            r.set(HD6309::R_S, 0x8000); r.set(HD6309::R_W, 0x3300);
+            r.set(HD6309::R_MD, native ? HD6309::MD_NM : 0);
+            const int cyc = r.cpu.step();
+            const bool trapped = r.cpu.pc() == 0x2800 && (r.cpu.md() & HD6309::MD_IL);
+            if (trapped != illegal) std::fprintf(stderr, "postbyte $%02X: trapped %d\n", pb, trapped);
+            EXPECT_EQ(trapped, illegal);
+            if (!illegal) continue;
+            EXPECT_EQ(cyc, native ? 23 : 21);
+            EXPECT_EQ(r.cpu.sp(), 0x8000u - (native ? 14 : 12));
+            EXPECT_EQ(r.mem.peek8(0x8000 - 2) << 8 | r.mem.peek8(0x8000 - 1), 0x1002);   // stacked PC
+            EXPECT_EQ(r.cpu.x() + r.cpu.y() + r.cpu.u(), 0x3000 + 0x3100 + 0x3200);
+            EXPECT_EQ(r.dis(0x1000), std::string("???"));
+        }
+    }
+    // Through LEA, a page-2 opcode (one more cycle for the prefix) and AIM
+    struct Case { std::vector<uint8_t> code; int emu; };
+    const Case cases[] = {{{0x30, 0x92}, 21}, {{0x10, 0xAE, 0xF2}, 22}, {{0x11, 0xA6, 0xBF}, 22}, {{0x62, 0x01, 0xDF}, 22}};
+    for (const auto& c : cases) {
+        Rig6309 r;
+        r.poke16(0xFFF0, 0x2800);
+        r.load(0x1000, c.code);
+        r.set(HD6309::R_S, 0x8000);
+        EXPECT_EQ(r.cpu.step(), c.emu);
+        EXPECT_EQ(r.cpu.pc(), 0x2800u);
+        EXPECT_TRUE(r.cpu.md() & HD6309::MD_IL);
+    }
+    // The 6309 disassembles the legal neighbours as before; the illegal ones
+    // take no displacement bytes
+    Rig6309 r;
+    r.load(0x1000, {0xA6, 0xBF, 0x12, 0x34});
+    char b[64];
+    EXPECT_EQ(r.cpu.disassembleOne(&r.mem, 0x1000, b, sizeof b), 2);
+    r.load(0x1000, {0xA6, 0x9F, 0x12, 0x34});
+    EXPECT_EQ(r.dis(0x1000), std::string("LDA [$1234]"));
+    r.load(0x1000, {0xA6, 0x93});
+    EXPECT_EQ(r.dis(0x1000), std::string("LDA [,--X]"));
+}
+
+// A page prefix after a page prefix is an undefined opcode on the 6309
+// (hoglet67), not a chain as on the 6809: 21 cycles, 23 native
+TEST_CASE(hd6309_prefix_pairs_trap) {
+    for (const uint8_t a : {0x10, 0x11}) {
+        for (const uint8_t b2 : {0x10, 0x11}) {
+            for (int native = 0; native < 2; ++native) {
+                Rig6309 r;
+                r.poke16(0xFFF0, 0x2800);
+                r.load(0x1000, {a, b2, 0x86, 0x55});      // [prefix] [prefix] LDA #$55
+                r.set(HD6309::R_S, 0x8000);
+                r.set(HD6309::R_MD, native ? HD6309::MD_NM : 0);
+                EXPECT_EQ(r.cpu.step(), native ? 23 : 21);
+                EXPECT_EQ(r.cpu.pc(), 0x2800u);
+                EXPECT_TRUE(r.cpu.md() & HD6309::MD_IL);
+                EXPECT_EQ(r.mem.peek8(0x8000 - 2) << 8 | r.mem.peek8(0x8000 - 1), 0x1002);
+                EXPECT_EQ(r.dis(0x1000), std::string("???"));
+            }
+        }
+    }
+}
+
+// DAA: the 6809's corrections, except with C set and A in $80-$99, where the
+// 6309 adds its own (hoglet67's exhaustive test on a real part). V is bit 7
+// of the result XOR C on both.
+TEST_CASE(hd6309_daa) {
+    struct Case { uint8_t a; bool h; uint8_t want; };
+    const Case quirks[] = {{0x80, false, 0x00}, {0x8F, false, 0x15}, {0x8A, false, 0x10}, {0x90, false, 0x00},
+                           {0x98, false, 0x00}, {0x99, false, 0x01}, {0x80, true, 0x06},  {0x8F, true, 0x15},  {0x90, true, 0x06},
+                           {0x97, true, 0x0D},  {0x98, true, 0x00},  {0x99, true, 0x00}};
+    for (const auto& q : quirks) {
+        Rig6309 r;
+        r.load(0x1000, {0x19});
+        r.set(HD6309::R_A, q.a);
+        r.set(HD6309::R_CC, M6809::CC_C | (q.h ? M6809::CC_H : 0));
+        r.run(1);
+        if (r.cpu.a() != q.want) std::fprintf(stderr, "DAA C=1 H=%d A=$%02X: $%02X\n", q.h, q.a, r.cpu.a());
+        EXPECT_EQ(r.cpu.a(), q.want);
+        EXPECT_TRUE(r.cpu.cc() & M6809::CC_C);
+    }
+    // Everywhere else the two CPUs agree, flags included
+    for (int in = 0; in < 0x400; ++in) {
+        const uint8_t a = (uint8_t)in, cc = (uint8_t)(((in >> 8) & 1 ? M6809::CC_C : 0) | ((in >> 9) & 1 ? M6809::CC_H : 0));
+        Rig6309 r;
+        r.load(0x1000, {0x19});
+        r.set(HD6309::R_A, a); r.set(HD6309::R_CC, cc);
+        r.run(1);
+        FlatMemoryBus m{"m", 16};
+        m.write8(0x1000, 0x19);
+        M6809 c;
+        c.setDataBus(&m);
+        c.regWrite(M6809::R_A, a); c.regWrite(M6809::R_CC, cc); c.setPc(0x1000);
+        c.step();
+        if ((cc & M6809::CC_C) && a >= 0x80 && a <= 0x99) {
+            EXPECT_TRUE(r.cpu.a() != c.a());
+            continue;
+        }
+        EXPECT_EQ(r.cpu.a(), c.a());
+        EXPECT_EQ(r.cpu.cc(), c.cc());
+    }
+    // V = bit 7 of the result XOR C: $7A + $06 = $80 sets N and V
+    Rig6309 r;
+    r.load(0x1000, {0x19});
+    r.set(HD6309::R_A, 0x7A); r.set(HD6309::R_CC, 0);
+    r.run(1);
+    EXPECT_EQ(r.cpu.a(), 0x80);
+    EXPECT_EQ(r.cpu.cc() & 0x0F, M6809::CC_N | M6809::CC_V);
+    EXPECT_EQ(cyclesOf({0x19}, false), 2);
+    EXPECT_EQ(cyclesOf({0x19}, true), 1);
+}
+
+// PC as an inter-register operand: TFR/EXG see the next instruction's address,
+// ADDR ... CMPR one more (pipelining, hoglet67), in both modes. ADDR/ADCR
+// leave H alone.
+TEST_CASE(hd6309_pc_operand) {
+    Rig6309 r;
+    r.load(0x1000, {0x1F, 0x51,             // TFR PC,X     X = $1002
+                    0x10, 0x30, 0x52,       // ADDR PC,Y    Y += $1006
+                    0x10, 0x30, 0x58,       // ADDR PC,A    A += $09 (low byte of $1009)
+                    0x10, 0x37, 0x51});     // CMPR PC,X    X - $100C
+    r.set(HD6309::R_Y, 0x0100); r.set(HD6309::R_A, 0x01);
+    r.run(1);
+    EXPECT_EQ(r.cpu.x(), 0x1002);
+    r.run(1);
+    EXPECT_EQ(r.cpu.y(), 0x1106);
+    r.run(1);
+    EXPECT_EQ(r.cpu.a(), 0x0A);
+    r.set(HD6309::R_X, 0x100C);
+    r.run(1);
+    EXPECT_TRUE(r.cpu.cc() & M6809::CC_Z);
+    // ADDR X,PC: PC = (the address after the instruction + 1) + X
+    r.load(0x1000, {0x10, 0x30, 0x15});
+    r.set(HD6309::R_X, 0x0100);
+    r.run(1);
+    EXPECT_EQ(r.cpu.pc(), 0x1104u);
+    // EXG X,PC: a jump, X gets the return address
+    r.load(0x1000, {0x1E, 0x15});
+    r.set(HD6309::R_X, 0x2000);
+    r.run(1);
+    EXPECT_EQ(r.cpu.pc(), 0x2000u);
+    EXPECT_EQ(r.cpu.x(), 0x1002);
+    // H: kept set without a half carry, kept clear with one
+    r.load(0x1000, {0x10, 0x30, 0x89, 0x10, 0x31, 0x89});   // ADDR A,B; ADCR A,B
+    r.set(HD6309::R_A, 0x01); r.set(HD6309::R_B, 0x01); r.set(HD6309::R_CC, M6809::CC_H);
+    r.run(1);
+    EXPECT_TRUE(r.cpu.cc() & M6809::CC_H);
+    r.set(HD6309::R_A, 0x0F); r.set(HD6309::R_B, 0x01); r.set(HD6309::R_CC, 0);
+    r.run(1);
+    EXPECT_EQ(r.cpu.b(), 0x10);
+    EXPECT_TRUE(!(r.cpu.cc() & M6809::CC_H));
+}
+
+// TFM with a register other than D X Y U S: 23 cycles (25 native), Z from W
+TEST_CASE(hd6309_tfm_bad_register) {
+    for (int native = 0; native < 2; ++native) {
+        for (const uint16_t w : {0, 5}) {
+            Rig6309 r;
+            r.poke16(0xFFF0, 0x2800);
+            r.load(0x1000, {0x11, 0x38, 0x56});           // TFM PC+,W+
+            r.set(HD6309::R_S, 0x8000); r.set(HD6309::R_W, w);
+            r.set(HD6309::R_MD, native ? HD6309::MD_NM : 0);
+            EXPECT_EQ(r.cpu.step(), native ? 25 : 23);
+            EXPECT_EQ(r.cpu.pc(), 0x2800u);
+            const uint8_t stackedCc = r.mem.peek8(r.cpu.sp());
+            EXPECT_EQ((bool)(stackedCc & M6809::CC_Z), w == 0);
+        }
+    }
 }
 
 // TFM in its four forms; 6 + 3n cycles; Z set at the end

@@ -45,6 +45,7 @@ at their directory:
 | `extbas11.rom` (or `extbas10.rom`) | Extended Color BASIC, 8 KB at `$8000` (optional: without it the machine runs Color BASIC alone, with a warning) |
 | `disk11.rom` (or `disk10.rom`) | Disk Extended Color BASIC, 8 KB, for the FD-500 cartridge |
 | `orch90.rom` | The Orchestra-90 program (optional) |
+| `sdc-dos.rom` (or `sdcdos.rom`, `cocosdc.rom`) | The CoCo SDC's flash: SDC-DOS (16 KB, bank 0) or the whole 128 KB (optional) |
 
 Without Color BASIC the machine is still made (so the debugger and the
 plugin checks work), with a warning naming the file it looked for and
@@ -64,7 +65,7 @@ message on the screen.
 | `$C000-$FEFF` | Cartridge (/CTS) | RAM |
 | `$FF00-$FF1F` | PIA0 (every 4 bytes) | |
 | `$FF20-$FF3F` | PIA1 | |
-| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500 | |
+| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500, the CoCo SDC, Burke & Burke (`$FF50`) | |
 | `$FF60-$FFBF` | Cartridges that decode their own addresses (`$FF68` RS-232 Pak, `$FF7A` Orchestra-90, `$FF7F` Multi-Pak) | |
 | `$FFC0-$FFDF` | SAM control register (write: even address clears the bit, odd sets it) | |
 | `$FFE0-$FFFF` | Vectors, from Color BASIC (`$BFE0-$BFFF`) | |
@@ -165,7 +166,12 @@ what the DAC sends while the motor runs. `tape stop`, `tape play`,
 ## Serial
 
 The bit banger (PIA1 PA1, BASIC's printer port): `serial file:out.txt`
-writes what BASIC sends (8N1, 600 baud: BASIC's default).
+writes what BASIC sends (8N1, 600 baud: BASIC's default). The receive
+line (PIA1 PB0): `serial in:file.bin` sends a host file's bytes down it,
+8N1 at the same rate (the device option `baud`), the line at mark
+(high) between bytes. With nothing connected PB0 reads low (XRoar's
+observation). On the CoCo 3 the line is
+also the GIME's EI2 interrupt (below).
 
 ## Cartridges
 
@@ -181,6 +187,8 @@ starts it.
 | `orch90` | Orchestra-90: stereo DACs at `$FF7A` (left) and `$FF7B` (right), mixed into the sound; the option its ROM |
 | `rs232` | Deluxe RS-232 Program Pak: a 6551 ACIA at `$FF68-$FF6B`, its IRQ on CART; `serial loopback`, `serial tcp:PORT`, `serial modem` |
 | `fd500` | FD-500 disk controller: Disk BASIC (option: the ROM's path; else `disk11.rom`) and its latch at `$FF40` |
+| `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
+| `burke` | Burke & Burke CoCo XT hard disk interface at `$FF50-$FF53` (option: drive 0's raw image[,ROM]) |
 | `rompak` | A ROM Pak; the option its image |
 
 ### The FD-500 disk controller
@@ -200,6 +208,98 @@ Fit it with `expansion cart fd500` (or in a Multi-Pak slot,
 numbered from 1 as on the other machines), and `load game.dsk` or `-i`
 mounts to DRIVE 0. Writes go back to the image file.
 
+### The CoCo SDC
+
+`coco::CocoSdcCart` (`coco_storage.h`) with `CocoSdc`
+(`src/plugins/devices/coco_sdc`), on the CoCo 1, 2 and 3, in the port or
+a Multi-Pak slot. The source is Darren Atkinson's **CoCo SDC User Guide**
+(v4, 2020): its register table (chapter 1), image formats (chapter 6) and
+command reference (chapter 7).
+
+```
+expansion cart sdc ~/coco/sd                       # the folder is the SD card
+expansion cart sdc ~/coco/sd,~/roms/sdc-dos.rom    # and the flash image
+expansion cart sdc ~/coco/sd,~/roms/flash.bin,1    # ... and the DIP switches' bank
+disk mount 1 ~/coco/sd/GAMES.DSK                   # SDC drive 0 (or "M:" from the CoCo)
+```
+
+- **Registers** (CoCo scheme): `$FF40` drive control latch, `$FF42` flash
+  data, `$FF43` flash control, `$FF48` command/status (command mode),
+  `$FF49-$FF4B` parameters (FDC track/sector/data registers in FDC
+  emulation). The Dragon scheme (`DRGN` switch) is not modelled.
+- **FDC emulation**: an FD-502: the latch at `$FF40` and a WD1793 at
+  `$FF48-$FF4B` (the FD-500's code), its drives 0 and 1 the two images
+  mounted, so stock Disk BASIC sees them.
+- **Command mode**: `$43` to `$FF40` (0 returns to FDC emulation). Read /
+  write logical sector `$80`/`$A0` (+ drive; bit 1 the single-sided LSN
+  flag; bit 2 (read) / 3 (write) for 8-bit transfers through `$FF4B`),
+  stream `$90` (512-byte blocks, `$D0` aborts), `$C0` + `I` (the image's
+  32-byte directory record), `Q` (its size in sectors), `C` (the current
+  directory's record), `>` (a listing page: 16 records), `+` (next disk in
+  the set), `V` (version: 1.24); `$D0` + `#` (disk in set); `$E0` + a
+  256-byte `X:path` block: `M`/`m` mount (as an image / raw blocks; `M:`
+  alone ejects), `N`/`n` mount new (630-sector DSK, an SDF of the given
+  cylinders and sides, or an empty raw file), `D` set directory, `L`
+  start a listing, `K` make a directory, `X` delete. Status: `$01` BUSY,
+  `$02` READY, `$80` FAILED with `$04` invalid path, `$08` hardware /
+  CRC / no listing, `$10` not found / invalid LSN / no image, `$20` in use
+  / not empty (and, without FAILED, a deleted data mark), `$40` write
+  protected, per command as the guide lists them. Data blocks move two
+  bytes a pair (`$FF4A` then `$FF4B`, or `LDD`/`STD`).
+- **Images**: DSK (geometry by size as the guide's table: up to 720
+  sectors single-sided, 1440 double-sided 40 tracks, 2880 80 tracks; at
+  least 324), JVC and VDK headers, and SDF (read and written back). A DSK
+  over 2880 sectors is a hard disk: LBA for all of it, its first 1440
+  sectors to the FDC as 80 single-sided tracks (read only in mmsim, a
+  copy). A directory mounted is a disk set (files ending 1-9).
+  `STARTUP.CFG` (`0=`, `1=`, `D=`) is read at power-on. Names are 8.3,
+  matched without regard to case, with `*`/`?` and "name.*" for a missing
+  extension; paths cannot leave the folder.
+- **Flash**: 8 banks of 16 KB at `$C000`; the DIP switches' bank at reset.
+  The guide gives no bit layout for `$FF42`/`$FF43`: mmsim takes `$FF43`
+  bits 0-2 as the bank (unverified) and doesn't model programming.
+- **Not done / differences**: rename (firmware 115 has one; the guide
+  doesn't document it); the LED, the disk-switch button, DriveWire;
+  command timing (results are ready when first polled). Not yet checked
+  with SDC-DOS or a real card.
+
+### Burke & Burke CoCo XT
+
+`coco::BurkeBurke` with `XtHdc` (`src/plugins/devices/xt_hdc`). From the
+**CoCo XT & XT-RTC User's Manual v2.4** (appendix A) and **Application
+Note 5**, these are settled:
+
+- The interface decodes /SCS with A4 high: the controller's registers at
+  `$FF50` data (read/write), `$FF51` status / force reset, `$FF52` read
+  jumpers / start command, `$FF53` (write) select mode.
+- The controller is a PC hard disk controller (WD1002-WX1 recommended;
+  WD1002-27X, DTC 5150/5160, Adaptec 2072 work) with a 2 KB buffer: "no
+  halt", and the CoCo XT doesn't use its interrupt. Sectors are 512 bytes
+  (B&B's driver packs two 256-byte OS-9 sectors into each).
+- The controller's BIOS ROM socket answers /CTS at `$C000` with address
+  lines A4-A6 inverted (an XT-ROM): `expansion cart burke IMAGE,ROM`.
+- It works on the CoCo 1, 2 and 3, normally in a Multi-Pak slot.
+
+What the manual leaves out ("beyond the scope of this manual") is the
+controller's own protocol: the status bits (REQ, I/O, C/D, BUSY), the
+six-byte command block, the command set (read, write, seek, verify,
+format, request sense, initialize drive characteristics `$0C`, sector
+buffer, diagnostics) and 17 sectors a track are the IBM XT / WD1002
+family's, written from memory and **unverified**, as is the `$FF52`
+jumper value (0). The images are raw (CHS order); until `$0C` the
+geometry is 4 heads and the file's length. The XT-RTC's clock isn't
+modelled (its registers aren't documented). Not run with B&B's driver.
+
+```
+expansion cart mpi ; expansion mpi1 burke ~/coco/os9hd.img ; expansion mpi4 fd502
+```
+
+(XRoar's `ide.c`/`idecart.c` model the Glenside IDE cartridge, a
+different interface that mmsim doesn't have.)
+
+The **Disto SC-II / SCSI** adapter is not modelled: no local reference
+documents its registers.
+
 ## Color Computer 3
 
 The Color Computer 3 (#332) is the same board (PIAs, keyboard, joysticks,
@@ -212,7 +312,9 @@ timings and the VDG-compatible rendering are XRoar's measurements (its
 ```
 bin/mmemu-cli -m coco3                       # Super Extended Color BASIC
 expansion ram ram 512K                       # the 512 KB upgrade
+expansion ram ram 2M                         # Disto's 1 or 2 MB MMU extension
 expansion monitor rgb                        # a CM-8 (default: composite)
+expansion monitor composite bluered          # NTSC artifact colours (or redblue, off)
 expansion gime gime 1986                     # the first GIME (default 1987)
 expansion cart fd502 ; disk mount 1 os9.dsk  # the FD-502 and Disk BASIC 1.1
 ```
@@ -227,7 +329,17 @@ Without `coco3.rom` a stand-in says so on the screen.
 set; otherwise pages `$38-$3F`. Pages are 6 bits (64 x 8 KB = 512 KB); on a
 128 KB machine only A0-A16 reach the RAM, so pages `$00-$2F` mirror
 `$30-$3F`, as on the hardware. `$FE00-$FEFF` with MC3 is page `$3F`
-whatever the map. The 1-2 MB Disto upgrades are not modelled.
+whatever the map.
+
+**Disto 1-2 MB** (`expansion ram ram 1M` / `2M`): the RAM is 512 KB banks,
+chosen by a board that latches extra page-register bits, as XRoar models
+it: a write to `$FFA0-$FFAF` keeps bits 6-7 (bit 6 only on 1 MB) as that
+page's bank; `$FF9B` bits 0-1 choose the bank the video is fetched from.
+With the MMU off, and in the constant page, the CPU sees bank 0. Both read
+back (`$FFA0-$FFAF` bits 6-7 with the GIME's six; `$FF9B` bits 0-1). The
+board shares the GIME's MMUEN, MC3 and task bit (XRoar keeps its own copies,
+which /RESET leaves set); the bank bits, like the page registers, survive a
+reset.
 
 **ROM map** (TY clear, `$FFDE`): pages `$3C-$3F` are ROM by INIT0 MC1/MC0:
 `0x` 16K internal + 16K cartridge (`$C000-$FEFF` as on a CoCo 2), `10` 32K
@@ -248,8 +360,11 @@ TY). Unmapped reads see the data bus's last byte.
 with R1 (the "double speed poke", `POKE 65497,0`).
 
 **Interrupts**: `$FF92` IRQENR and `$FF93` FIRQENR: TMR, HBORD (the right
-border starts), VBORD (the bottom border starts), EI2 (serial: not wired),
-EI1 (keyboard: any of PIA0 PA0-PA6 low, including the fire buttons), EI0
+border starts), VBORD (the bottom border starts), EI2 (serial: the RS-232
+receive line at space, so a start bit's falling edge; the line is PIA1
+PB0's, fed by `serial in:`), EI1 (keyboard: any of PIA0 PA0-PA6 low,
+including the fire buttons, re-read as each PIA0 write changes the
+strobe, as XRoar does every cycle), EI0
 (the cartridge's CART falling). An event sets its bit in either status it
 is enabled in; reading a register returns its status and clears it;
 writing it clears what it disables and raises what it newly enables while
@@ -267,8 +382,22 @@ also differ, after XRoar's scope measurements.
 of border each side; 512-tick modes are centred), in the GIME's six-bit
 colours through the monitor: RGB (R1 G1 B1 R0 G0 B0, each channel
 0/0x55/0xAA/0xFF) or composite (intensity bits 4-5, hue bits 0-3; hue 0
-grey; VMODE MOCH shows the intensity only). A line is drawn when its right
-border starts, from the registers as they are then.
+grey; VMODE MOCH shows the intensity only). A line is drawn as the beam
+goes (XRoar's model): before each write that could change it (the GIME's
+registers, the palette, the SAM bits, PIA1 port B as snooped) the line is
+drawn up to where the beam will be when the write's cycle ends, a whole
+fetched byte at a time; the rest at the right border and the line's end.
+So palette, mode and offset changes part way along a line show from the
+next byte (character) on; the border colour and the line's horizontal
+timing are taken as its left border starts. A CM-8 pulls PIA1 PB3 low (the
+monitor detect, as on XRoar).
+
+**PAL** (`coco3p`): a PAL CoCo 3 encodes its RGB outputs for the TV rather
+than using the GIME's NTSC composite, so composite shows the RGB colours at
+the outputs' measured levels (0, 1, 1.6, 2 V: `$00`, `$80`, `$CC`, `$FF`;
+XRoar's measurement); MOCH, a property of the GIME's own composite output,
+has no effect there. The board's encoder is unmeasured (XRoar approximates
+it too), so finer differences are not modelled.
 
 - CoCo 3 text: 32/40/64/80 columns (VRES HRES), with or without attribute
   bytes (CRES bit 0: background palette 0-7 in bits 0-2, foreground 8-15
@@ -289,11 +418,24 @@ border starts, from the registers as they are then.
   MC6847T1), SG4, the CG and RG graphics, all through the palette (0-7 the
   CG colours, 8-11 the RG pairs, 12-15 the text). The address is
   `$FF9D/$FF9E` bits 16-18 and 3-8 with the SAM's F from bit 9. `$FF9C` is
-  the text rows' line count (`$0F`: 12). No artifact colours.
+  the text rows' line count (`$0F`: 12).
+- **Artifact colours** (composite, NTSC; `expansion monitor composite
+  bluered` / `redblue`, or the **Artifact** button): a line drawn in a
+  VDG-compatible graphics mode goes through a model of the TV: the line as
+  a composite signal, a sample a pixel tick (four a colour cycle; a line is
+  exactly 228 cycles, so the phase is the same on every line), decoded with
+  a low-pass that nulls the subcarrier and its harmonic. A run of one
+  colour decodes to its own composite colour; PMODE 4's dot pairs become
+  colours. The GIME's subcarrier phase against the dots is fixed, but has
+  not been measured, so it is the setting (`bluered`: a black dot then a
+  white one is blue, as on a CoCo 2 in that phase). VMODE BPI inverts the
+  burst, swapping them. CoCo 3 modes are shown without the decoder.
 
 **Expansions**: `expansion ram ram 512K`; the FD-502 (`fd502`, the FD-500's
 code with Disk BASIC 1.1), the Deluxe RS-232 Pak (`rs232`, the 6551 at
-`$FF68`; `serial`), the Orchestra-90 and ROM Paks, alone or in the
+`$FF68`; `serial`), the CoCo SDC (`sdc`; its `$FF40-$FF4F` needs INIT0's
+SCS bit, as on the real machine), Burke & Burke (`burke`), the
+Orchestra-90 and ROM Paks, alone or in the
 Multi-Pak (`mpi`, slots `mpi1-mpi4`); the hi-res joystick interface
 (`expansion joyright hires`, which the host mouse drives) as on the CoCo 2.
 
@@ -312,16 +454,35 @@ for NitrOS-9's 6309 builds). The HD6309 starts in emulation mode with the
   (its 1987 switch is compiled out); mmsim follows Sockmaster (+ 2 / + 1).
 - The internal ROM's address: the CPU's A0-A14 (XRoar; the ROM's pins are
   on the CPU bus), not the MMU page.
+- EI2: XRoar leaves the GIME's serial input unconnected and has PIA1 PB0
+  read low ("until I implement serial"); mmsim does the same with nothing
+  connected. Once `serial in:` drives the line, EI2 follows it, idle at
+  mark (PB0 high); that polarity at PB0 and EI2 follows the transmit
+  side's (PA1 high at mark) and is not verified on hardware.
+- Composite colours: mmsim uses XRoar's measured voltages as they are;
+  XRoar's own palette adds a brightness lift (+0.2) and less saturation
+  before its display transfer, which are display tuning rather than
+  measurement.
+
+**Checked against XRoar** (the settings most likely to need tuning, without
+a real ROM to boot): the GIME's power-on and /RESET state (registers and
+palette 0, page registers kept), VSC's text row heights in the
+VDG-compatible modes (`$FF9C`, XRoar's row masks), the interrupt
+enable/acknowledge rules and the timer's reload and rates are as XRoar has
+them; the keyboard's EI1 is now re-read on each PIA0 write. Booting Super
+Extended Color BASIC and OS-9 Level II (user-supplied ROMs and disks) is
+still to be done.
 
 ## Not done
 
 - The Speech/Sound Pak.
 - The CoCo Max 3 style hi-res adapter (only the Tandy interface is
   modelled).
-- CoCo 3: composite artifact colours; mid-line GIME changes (a line is
-  drawn whole at its right border); the Disto 1-2 MB MMU extension
-  (`$FF9B`, page bits 6-7); the serial EI2 input; hard disk interfaces
-  and the CoCo SDC.
+- CoCo 3: artifact colours in the CoCo 3 modes (only the VDG-compatible
+  graphics are decoded); a PAL composite encoder.
+- Storage: the Disto SC-II / SCSI adapter and the Glenside IDE cartridge;
+  the CoCo SDC's flash programming. The SDC and Burke & Burke are not
+  yet checked with SDC-DOS, HDB-DOS or NitrOS-9.
 
 ## Tests
 
@@ -337,5 +498,17 @@ the bit banger. `src/plugins/devices/gime/test` and
 (MMU mapping, tasks, RAM-size mirroring, the constant page, the ROM
 modes, the speed bit, the palette, the timer on both revisions and both
 clocks, the interrupt enable/acknowledge rules, every video mode family's
-pixels, lines per row, the offsets and VSC, the VDG-compatible modes) and a
-CoCo 3 running a stand-in ROM that sets up a 40-column screen.
+pixels, lines per row, the offsets and VSC, the VDG-compatible modes,
+palette, border, mode and CSS changes part way along a line, the Disto
+banks, the artifact decoder in both phases and with BPI, PAL composite) and a
+CoCo 3 running a stand-in ROM that sets up a 40-column screen (plus EI2 from
+the receive line, the 2 MB board through the bus, and the monitor options).
+`src/plugins/devices/coco_sdc/test`, `xt_hdc/test` and
+`test_coco_storage.cpp` cover the CoCo SDC (command mode, LSN reads and
+writes in 16- and 8-bit modes on hard disk, DSK and SDF images, the
+single-sided flag, raw mounts and streaming, mount by name, listings,
+directories, new / make directory / delete, disk sets, STARTUP.CFG,
+flash banks, a stand-in firmware in its flash reading a sector on a
+CoCo 2) and the XT controller (reads across tracks, writes, geometry,
+sense, the sector buffer; Burke & Burke's ROM socket; Burke & Burke and
+the SDC in a Multi-Pak on a CoCo 3).
