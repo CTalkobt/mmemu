@@ -244,6 +244,25 @@ PLUGIN_MC10_SRCS = src/plugins/machines/mc10/main/machine_mc10.cpp \
 	src/plugins/devices/mc6847/main/mc6847.cpp \
 	src/plugins/devices/mc6847/main/mc6847_font.cpp \
 	src/plugins/machines/mc10/main/plugin_init.cpp
+PLUGIN_8085_SRCS = src/plugins/8085/main/cpu8085.cpp \
+	src/plugins/8085/main/opcodes8085.cpp \
+	src/plugins/8085/main/asm8085.cpp \
+	src/plugins/8085/main/plugin_init.cpp
+PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
+	src/plugins/machines/m100/main/m100_system.cpp \
+	src/plugins/machines/coco/main/coco_tape.cpp \
+	src/plugins/devices/serial_endpoint/main/serial_endpoint.cpp \
+	src/plugins/devices/hd44102/main/hd44102.cpp \
+	src/plugins/devices/hd44102/main/m100_lcd.cpp \
+	src/plugins/devices/hd61830/main/hd61830.cpp \
+	src/plugins/devices/hd61830/main/hd61830_font.cpp \
+	src/plugins/devices/i8155/main/i8155.cpp \
+	src/plugins/devices/i8251/main/i8251.cpp \
+	src/plugins/devices/im6402/main/im6402.cpp \
+	src/plugins/devices/upd1990a/main/upd1990a.cpp \
+	src/plugins/devices/rp5c01/main/rp5c01.cpp \
+	src/plugins/devices/tpdd/main/tpdd.cpp \
+	src/plugins/machines/m100/main/plugin_init.cpp
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/z80/main/plugin_init.cpp
@@ -592,6 +611,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/plus4/test/test_plus4_machine.cpp \
 	src/plugins/machines/c128/test/test_c128_machine.cpp \
 	src/plugins/z80/test/test_z80.cpp \
+	src/plugins/8085/test/test_cpu8085.cpp \
 	src/plugins/z80/test/test_z80_fuse.cpp \
 	src/plugins/6809/test/test_cpu6809.cpp \
 	src/plugins/6809/test/test_cpu6309.cpp \
@@ -636,6 +656,16 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/mc6847/test/test_mc6847.cpp \
 	src/plugins/devices/mc6883/test/test_mc6883.cpp \
 	src/plugins/devices/mc6821/test/test_mc6821.cpp \
+	src/plugins/devices/serial_endpoint/test/test_serial_endpoint.cpp \
+	src/plugins/devices/hd44102/test/test_hd44102.cpp \
+	src/plugins/devices/hd61830/test/test_hd61830.cpp \
+	src/plugins/devices/i8155/test/test_i8155.cpp \
+	src/plugins/devices/i8251/test/test_i8251.cpp \
+	src/plugins/machines/m100/test/test_m100_machine.cpp \
+	src/plugins/devices/im6402/test/test_im6402.cpp \
+	src/plugins/devices/upd1990a/test/test_upd1990a.cpp \
+	src/plugins/devices/rp5c01/test/test_rp5c01.cpp \
+	src/plugins/devices/tpdd/test/test_tpdd.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/6801/test/test_cpu6801.cpp \
@@ -749,6 +779,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/c128/main/machine_c128.o \
 	src/plugins/machines/c128/main/c128_carts.o \
 	src/plugins/z80/main/cpu_z80.o \
+	src/plugins/8085/main/cpu8085.o \
+	src/plugins/8085/main/opcodes8085.o \
+	src/plugins/8085/main/asm8085.o \
 	src/plugins/6809/main/cpu6809.o \
 	src/plugins/6809/main/cpu6309.o \
 	src/plugins/6801/main/cpu6801.o \
@@ -835,6 +868,19 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/mc6847/main/mc6847_font.o \
 	src/plugins/devices/mc6883/main/mc6883.o \
 	src/plugins/devices/mc6821/main/mc6821.o \
+	src/plugins/devices/serial_endpoint/main/serial_endpoint.o \
+	src/plugins/devices/hd44102/main/hd44102.o \
+	src/plugins/devices/hd44102/main/m100_lcd.o \
+	src/plugins/devices/hd61830/main/hd61830.o \
+	src/plugins/devices/hd61830/main/hd61830_font.o \
+	src/plugins/devices/i8155/main/i8155.o \
+	src/plugins/devices/i8251/main/i8251.o \
+	src/plugins/machines/m100/main/machine_m100.o \
+	src/plugins/machines/m100/main/m100_system.o \
+	src/plugins/devices/im6402/main/im6402.o \
+	src/plugins/devices/upd1990a/main/upd1990a.o \
+	src/plugins/devices/rp5c01/main/rp5c01.o \
+	src/plugins/devices/tpdd/main/tpdd.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
@@ -982,6 +1028,8 @@ PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
 PLUGIN_PLUS4_OBJS  = $(PLUGIN_PLUS4_SRCS:.cpp=.o)
 PLUGIN_C128_OBJS   = $(PLUGIN_C128_SRCS:.cpp=.o)
 PLUGIN_Z80_OBJS    = $(PLUGIN_Z80_SRCS:.cpp=.o)
+PLUGIN_8085_OBJS   = $(PLUGIN_8085_SRCS:.cpp=.o)
+PLUGIN_M100_OBJS   = $(PLUGIN_M100_SRCS:.cpp=.o)
 PLUGIN_6809_OBJS   = $(PLUGIN_6809_SRCS:.cpp=.o)
 PLUGIN_6801_OBJS   = $(PLUGIN_6801_SRCS:.cpp=.o)
 PLUGIN_MC10_OBJS   = $(PLUGIN_MC10_SRCS:.cpp=.o)
@@ -1061,6 +1109,8 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-plus4.so \
 	$(LIBDIR)/mmemu-plugin-c128.so \
 	$(LIBDIR)/mmemu-plugin-z80.so \
+	$(LIBDIR)/mmemu-plugin-8085.so \
+	$(LIBDIR)/mmemu-plugin-m100.so \
 	$(LIBDIR)/mmemu-plugin-6809.so \
 	$(LIBDIR)/mmemu-plugin-6801.so \
 	$(LIBDIR)/mmemu-plugin-mc10.so \
@@ -1216,6 +1266,12 @@ $(LIBDIR)/mmemu-plugin-c128.so: $(PLUGIN_C128_OBJS) | $(LIBDIR)
 
 $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-8085.so: $(PLUGIN_8085_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-m100.so: $(PLUGIN_M100_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-6809.so: $(PLUGIN_6809_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)

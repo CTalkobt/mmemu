@@ -2309,7 +2309,9 @@ void MmemuFrame::setKeyCapture(bool active) {
         app->m_keyFilter.m_handler = m_machine->onKey;
         app->m_keyFilter.m_positional = (m_machine->machineId.find("mega65") != std::string::npos ||
                                           m_machine->machineId == "x16" ||
-                                          m_machine->machineId.rfind("apple2", 0) == 0);   // PC-style / ASCII keyboards
+                                          m_machine->machineId.rfind("apple2", 0) == 0 ||
+                                          m_machine->machineId.rfind("model", 0) == 0 ||   // Tandy Model 100/102/200
+                                          m_machine->machineId == "m100");   // PC-style / ASCII keyboards
     } else {
         app->m_keyFilter.m_handler = nullptr;
         // Release any modifier keys that may have been left pressed (e.g., the

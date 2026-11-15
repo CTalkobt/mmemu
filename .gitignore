@@ -65,3 +65,7 @@ roms/mc10/*
 # TRS-80 Model I/III/4/4P ROMs and character generators: local only (Tandy / Microsoft copyright); see doc/README-TRS80.md
 roms/trs80/*
 !roms/trs80/hardware.sym
+
+# Tandy Model 100/102/200 ROMs and option ROMs: local only (Microsoft / Tandy / Kyocera copyright); see doc/README-M100.md
+roms/m100/*
+!roms/m100/hardware.sym
