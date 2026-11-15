@@ -752,13 +752,39 @@ TEST_CASE(vic2_sprite_sprite_collision) {
     ASSERT(f.irq.m_level);
     f.vic.ioRead(nullptr, 0xD01E, &v);
     ASSERT_EQ(v, (uint8_t)0x03);
-    f.vic.ioRead(nullptr, 0xD01E, &v);                // cleared by the read
+    f.vic.ioRead(nullptr, 0xD01E, &v);                // cleared a cycle after the read
+    ASSERT_EQ(v, (uint8_t)0x03);
+    f.vic.tick(2);
+    f.vic.ioRead(nullptr, 0xD01E, &v);
     ASSERT_EQ(v, (uint8_t)0x00);
     // One pixel apart: no collision
     oneDotSprite(f, 1, 101, 100);
     runFrame(f);
     f.vic.ioRead(nullptr, 0xD01E, &v);
     ASSERT_EQ(v, (uint8_t)0x00);
+}
+
+// A $D01E read clears it only after the next cycle's pixels (#343, VICE
+// testprogs VICII/spritevssprite): a collision just after the read is lost,
+// one later than that is kept
+TEST_CASE(vic2_collision_clear_delay) {
+    for (int gap : {0, 1}) {
+        VicFixture f;
+        oneDotSprite(f, 0, 100, 100);
+        oneDotSprite(f, 1, 100, 100);
+        f.vic.ioWrite(nullptr, 0xD015, 0x03);
+        runFrame(f);                                  // a collision latched
+        // To the sprites' first line (101), `gap` cycles before the one
+        // drawing their pixel, read; a line later, read again
+        int c = 13 + (100 - 0) / 8;                   // PAL: X 0 in cycle 13
+        while (!(f.vic.rasterLine() == 101 && f.vic.rasterCycle() == c - gap)) f.vic.tick(1);
+        uint8_t v;
+        f.vic.ioRead(nullptr, 0xD01E, &v);
+        ASSERT_EQ(v, (uint8_t)0x03);
+        f.vic.tick((uint64_t)VIC2::PAL_CYCLES_PER_LINE);
+        f.vic.ioRead(nullptr, 0xD01E, &v);
+        ASSERT_EQ(v, gap == 0 ? (uint8_t)0x00 : (uint8_t)0x03);   // an immediate clear kept both
+    }
 }
 
 // PAL puts out no X from $1F8 to $1FF: a sprite there never starts

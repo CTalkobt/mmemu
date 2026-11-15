@@ -38,6 +38,8 @@ void VIC2::reset() {
     m_lpLow = m_lpPending = m_lpTriggered = false;
     m_frameStartPending = false;
     m_collT = 0;
+    m_collClearAt[0] = m_collClearAt[1] = -1;
+    m_dmaDelayLine = m_dmaDelayCol = -1;
 
     if (m_irqLine) m_irqLine->set(false);
 }
@@ -189,12 +191,18 @@ bool VIC2::ioRead(IBus* /*bus*/, uint32_t addr, uint8_t* val) {
         case SSCOL:
             if (!m_peeking && (m_regs[SPENA] || m_seq.active || m_sprDma)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprSprColl;
-            if (!m_peeking) m_sprSprColl = 0; // cleared on read
+            if (!m_peeking) {               // cleared a cycle later
+                if (m_regs[SPENA] || m_seq.active || m_sprDma) m_collClearAt[0] = collReadT() + COLL_CLEAR_DELAY;
+                else applyCollClear(0);
+            }
             break;
         case SBCOL:
             if (!m_peeking && (m_regs[SPENA] || m_seq.active || m_sprDma)) evalCollisions(m_rasterLine, collReadT());
             *val = m_sprBgColl;
-            if (!m_peeking) m_sprBgColl = 0;
+            if (!m_peeking) {
+                if (m_regs[SPENA] || m_seq.active || m_sprDma) m_collClearAt[1] = collReadT() + COLL_CLEAR_DELAY;
+                else applyCollClear(1);
+            }
             break;
         // Bits that aren't there read 1 (VICE vicii-mem.c): code run from the
         // registers depends on it (testprogs VICII/lplatency runs $D017-$D01C)
@@ -263,10 +271,26 @@ bool VIC2::ioWrite(IBus* /*bus*/, uint32_t addr, uint8_t val) {
         case LPY:
             // Read-only collision and light pen registers; writes are ignored.
             break;
-        default:
+        default: {
+            // A badline the write starts while the VIC-II is idle (DMA delay)
+            const int line = m_rasterLine;
+            bool idle = false;
+            if (reg == SCR1) {
+                const int oldRel = line - (0x30 + (m_regs[SCR1] & SCR1_YSCROLL));
+                idle = !isBadline(line) && (!m_denOnLine30 || oldRel < 0 || oldRel / 8 >= 25 || line > 0xF7);
+            }
             m_regs[reg] = val;
             if (reg == SCR1 && m_rasterLine == 0x30 && (val & SCR1_DEN)) m_denOnLine30 = true;
+            if (idle && isBadline(line)) {
+                const int col = (int)(m_cycleAccum % (uint64_t)m_cyclesPerLine) - 15 + DMA_DELAY_COL_OFFSET;
+                if (col >= 0 && col < 40) {
+                    m_dmaDelayLine = line;
+                    m_dmaDelayCol = col;
+                    if (m_gCap[col] >= 0 && !m_vborder) m_gCap[col] = dmaPeek(DMA_DELAY_ADDR);   // already fetched
+                }
+            }
             break;
+        }
     }
     return true;
 }
@@ -424,7 +448,10 @@ void VIC2::tick(uint64_t cycles) {
 void VIC2::captureFetch(int c) {
     if (c >= 15 && c <= 54) {
         uint8_t g; bool mc;
-        if (gfxFetch(m_rasterLine, c - 15, g, mc)) m_gCap[c - 15] = (int16_t)(g | (mc ? 0x100 : 0));
+        if (gfxFetch(m_rasterLine, c - 15, g, mc)) {
+            if (m_dmaDelayLine == (int)m_rasterLine && m_dmaDelayCol == c - 15) { g = dmaPeek(DMA_DELAY_ADDR); mc = false; }
+            m_gCap[c - 15] = (int16_t)(g | (mc ? 0x100 : 0));
+        }
     }
     // A sprite's three data bytes from its pointer and MC, which counts on
     // (VICE vicii-fetch.c sprite_dma_cycle_0/2, vicii_fetch_sprite_dma_1)
@@ -530,8 +557,14 @@ void VIC2::nextLine() {
     {
         if (m_regs[SPENA] || m_seq.active || m_sprDma) evalCollisions(m_rasterLine, lineDots());
         m_collT = 0;
+        for (int k = 0; k < 2; ++k) {       // a clear due in the next line's first cycle
+            if (m_collClearAt[k] < 0) continue;
+            if (!(m_regs[SPENA] || m_seq.active || m_sprDma)) applyCollClear(k);
+            else m_collClearAt[k] = std::max(0, m_collClearAt[k] - lineDots());
+        }
         std::fill(std::begin(m_gCap), std::end(m_gCap), (int16_t)-1);
         std::fill(std::begin(m_sCap), std::end(m_sCap), (int32_t)-1);
+        m_dmaDelayLine = m_dmaDelayCol = -1;
         m_rasterLine++;
 
         if (m_rasterLine >= (uint16_t)m_linesPerFrame) {
@@ -865,6 +898,20 @@ int VIC2::sprDma0In(int c) const {
 // multicolour 10/11) inside the display window sets $D01F. Each register
 // raises its IRQ when it goes from 0.
 void VIC2::evalCollisions(int line, int tTo) {
+    // Up to each pending $D01E/$D01F clear, the clear, then on
+    if (tTo > lineDots()) tTo = lineDots();
+    for (;;) {
+        int k = -1;
+        for (int j = 0; j < 2; ++j)
+            if (m_collClearAt[j] >= 0 && m_collClearAt[j] <= tTo && (k < 0 || m_collClearAt[j] < m_collClearAt[k])) k = j;
+        if (k < 0) break;
+        evalCollisionsRaw(line, m_collClearAt[k]);
+        applyCollClear(k);
+    }
+    evalCollisionsRaw(line, tTo);
+}
+
+void VIC2::evalCollisionsRaw(int line, int tTo) {
     const int tFrom = m_collT;
     if (tTo > lineDots()) tTo = lineDots();
     if (tTo <= tFrom) return;

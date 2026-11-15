@@ -278,7 +278,24 @@ protected:
      *  for its pixels from m_collT up to pixel time `tTo` (8 per cycle, 0 at
      *  the line's first cycle), from the registers and memory as they are. */
     void evalCollisions(int line, int tTo);
+    void evalCollisionsRaw(int line, int tTo);
     int  m_collT = 0;               ///< pixel time of this line evaluated for collisions
+    /** A $D01E / $D01F read clears its register only after the next cycle's
+     *  pixels have been drawn (VICE vicii-cycle.c clear_collisions), so a
+     *  collision in those pixels is lost: the pixel time on this line at
+     *  which each pending clear takes effect, -1 for none. */
+    int  m_collClearAt[2] = {-1, -1};
+    static constexpr int COLL_CLEAR_DELAY = 12;
+    /** DMA delay (#344, VICE testprogs VICII/vsp-tester): a badline started
+     *  by a $D011 write while the VIC-II is idle, in a g-access cycle. The
+     *  first g-access after the write (the next cycle's Phi1, as in VICE
+     *  vicii-cycle.c, where the badline check follows the cycle's fetch)
+     *  reads $38FF instead of the idle $3FFF (6569 and 6567R8 measured; some
+     *  8565s read $3807). The line and column of that g-access, -1 for none. */
+    int  m_dmaDelayLine = -1, m_dmaDelayCol = -1;
+    static constexpr int DMA_DELAY_COL_OFFSET = 1;
+    static constexpr uint16_t DMA_DELAY_ADDR = 0x38FF;
+    void applyCollClear(int k) { if (k == 0) m_sprSprColl = 0; else m_sprBgColl = 0; m_collClearAt[k] = -1; }
     /** VICE's sprite sequencer state (viciisc vicii-draw-cycle.c). */
     struct SpriteSeq {
         uint32_t sbuf[8] = {};      ///< shift registers (24 bits)
