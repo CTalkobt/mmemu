@@ -100,3 +100,29 @@ TEST_CASE(drive1541_error_map_job_codes) {
     }
     std::remove(path.c_str());
 }
+
+#include "plugins/devices/drive1541/main/p64.h"
+
+// P64: pulses at the cell centres of a GCR track (as VICE's
+// P64PulseStreamConvertFromGCR places them) come back as the same bits;
+// data that isn't a P64 is refused
+TEST_CASE(p64_pulses_to_gcr_round_trip) {
+    const int track = 18;
+    const int n = gcr::sectorsOnTrack(track);
+    std::vector<uint8_t> sectors((size_t)n * 256);
+    for (size_t i = 0; i < sectors.size(); ++i) sectors[i] = (uint8_t)(i * 13 + 5);
+    const auto t = gcr::encodeTrack(track, sectors.data(), 'A', 'B');
+    const uint32_t len = (uint32_t)t.size() * 8;
+    std::vector<uint32_t> pulses;
+    const uint64_t R = p64::SAMPLES_PER_ROTATION;
+    for (uint32_t b = 0; b < len; ++b)
+        if (t[b >> 3] & (0x80 >> (b & 7))) pulses.push_back((uint32_t)((R / 2 + (uint64_t)b * R) / len));
+    ASSERT(p64::toGcr(pulses, len) == t);
+
+    std::vector<std::vector<uint32_t>> ht;
+    std::vector<uint8_t> notP64(64, 0);
+    ASSERT(!p64::readPulses(notP64, ht));
+    std::vector<uint8_t> badCrc = {'P', '6', '4', '-', '1', '5', '4', '1', 0, 0, 0, 0, 0, 0, 0, 0,
+                                   4, 0, 0, 0, 1, 2, 3, 4, 'D', 'O', 'N', 'E'};
+    ASSERT(!p64::readPulses(badCrc, ht));
+}

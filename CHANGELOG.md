@@ -7,6 +7,19 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE test programs: G64 and P64 disks on the true drive (#364)
+
+- The 1541 reads P64 images (flux pulses): BeRo's P64 reference decoder
+  from VICE (`drive1541/main/p64.cpp`, zlib licence), with each half-track's
+  pulses turned into bit cells as VICE's `P64PulseStreamConvertToGCR` does.
+- The VICE runner mounts the list's G64 and P64 entries (scratch copies)
+  on the true drive: `drive/hls-protection/hlstest`, `drive/rpm/rpm1`-`rpm3`
+  (G64 and P64), `drive/scanner/scanner35`, `40`, `42` and `drive/skew/skew2`
+  (G64). All 11 pass.
+- Test `p64_pulses_to_gcr_round_trip`.
+- VICE test list: 906 passed, 0 failed, 1 won't do of 907 (was 895 of
+  896); the won't-do is `REU/floatingbus/floating3b` (#346).
+
 ### VICE runner: `floating3b` as "won't do" (#346)
 
 - The VICE test-program runner now has a won't-do list (`VICE_WONT_DO`):
