@@ -39,6 +39,13 @@ The chip model follows `setFilterVariant()` (0 = 6581, the default; 1 = 8580).
 
 With noise combined with another waveform, a 0 output bit also clears the LFSR bit feeding it (noise writeback), so the noise dies away and stays silent ("noise lockup") until TEST reloads the LFSR. Whether a change of waveform carries the combined output into the register follows reSIDfp's rules, fitted to VICE testprogs `SID/wb_testsuite`.
 
+On the 6581, the rules are fitted to the suite's own samplings: OSC3 for all 64 combinations of noise waveforms, sampled on two chips (2586 and 2783), with the test bit released from waveform X into Y (#347):
+- **Pulse + noise (`$C`):** the output pulls the noise output (OSC3) low at once, but not the register. The register takes it only through a shift: each shift clocked in `$C` writes it back, and so does the test bit's rise, once the register has shifted in `$C`. With the frequency at 0, `$C` writes nothing back; at `$FFFF` it does (`SID/wf12nsr`).
+- **To noise alone (`$8`):** nothing is written back, except from `$F` when the test bit rose with `$F` selected (`SID/noiselfsrinit`'s `$F8`, `$80`). When `$F` comes while the test bit is held (`$88`, `$F8`, `$80`), nothing is.
+- **From pulse + noise with triangle or saw (`$D`-`$F`) into pulse + noise (`$C`-`$F`):** releasing the test bit pulls the register bits of output bits 4-6 low.
+
+`sid_noise_writeback_6581_matches_samplings` runs the suite's sequence on the model against all 64 sampled combinations. Where the two chips differ (D→C, D→E, E→C, E→D, which the suite calls unstable), either chip's values pass. `sid_noise_writeback_6581_matches_wf12nsr` does the same for `wf12nsr`'s real-chip data.
+
 **Oscillator details** (reSIDfp's `WaveformGenerator`, in `sid_voice.cpp`):
 
 - The accumulators power up at `$555555` (even bits high), and reset doesn't change them.
@@ -48,7 +55,7 @@ With noise combined with another waveform, a 0 output bit also clears the LFSR b
 - With no waveform selected, the waveform DAC input floats. The last output stays, then fades a bit at a time: from 54,000 cycles on the 6581 and 800,000 on the 8580 (VICE testprogs `SID/osc3-wave0`).
 - With TEST set, the LFSR holds its first shift phase. After 50,000 cycles on the 6581, or 986,000 on the 8580, its bits start fading to 1. Releasing TEST completes the shift (`SID/noiselfsrinit`, `SID/oscinit`).
 
-VICE testprogs results: 93 of the 102 SID programs pass. The other 9 are `wb_testsuite`'s `*_to_C_old`, `D_to_E_old` and `F_to_8_old`, which reSIDfp fails too. Every rule tried that passes the `*_to_C_old` ones breaks `SID/wf12nsr`.
+VICE testprogs results: all 102 SID programs in the list pass.
 
 **Control bits:**
 

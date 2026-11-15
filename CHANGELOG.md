@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### SID: the 6581's noise writeback fitted to real-chip samplings (#347)
+
+- The 6581's noise writeback rules are fitted to VICE testprogs
+  `SID/wb_testsuite`'s samplings (OSC3 on two 6581s, all 64 noise
+  combinations) and to `SID/wf12nsr`'s real-chip data:
+  - in pulse + noise (`$C`) the output pulls OSC3 low at once, but the
+    register only through a shift (a clocked one, or the test bit's rise
+    after one);
+  - a change to noise alone writes nothing back, except from `$F` when the
+    test bit rose with `$F` selected (`SID/noiselfsrinit`);
+  - releasing the test bit from `$D`-`$F` into `$C`-`$F` pulls the taps of
+    output bits 4-6 low.
+- New tests: `sid_noise_writeback_6581_matches_samplings` (the suite's
+  sequence against all 64 sampled combinations, unstable ones against either
+  chip), `sid_noise_writeback_6581_matches_wf12nsr`,
+  `sid_noise_writeback_6581_test_bit_rising_with_f`.
+- All 102 SID programs in the VICE list pass (were 93). VICE test list:
+  895 pass / 1 fail of 896; the one left is `REU/floatingbus/floating3b`
+  (#346, a known failure).
+
 ### VIC-II: the collision registers' delayed clear and DMA delay's idle fetch (#343, #344)
 
 - Reading `$D01E` / `$D01F` clears the register only after the next cycle's

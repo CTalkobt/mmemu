@@ -81,10 +81,12 @@ private:
     unsigned m_shiftRegReset = 0;
     unsigned m_floatingTtl = 0;
     uint8_t  m_waveform = 0;
+    uint8_t  m_testWave = 0;            // the waveform the test bit rose with
     bool     m_test = false;
     bool     m_sync = false;
     bool     m_testOrReset = false;
     bool     m_msbRising = false;
+    bool     m_shiftedInC = false;      // the register shifted in waveform $C
 };
 
 class SidEnvelope {

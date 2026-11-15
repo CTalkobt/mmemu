@@ -26,9 +26,17 @@ constexpr uint32_t SHIFT_MASK = ~((1u << 2) | (1u << 4) | (1u << 8) | (1u << 11)
                                   (1u << 13) | (1u << 17) | (1u << 20) | (1u << 22));
 
 // Whether a shift's second phase takes the combined output into the register
-// (reSIDfp's do_writeback, fitted to testprogs SID/wb_testsuite and friends)
-bool doWriteback(uint8_t oldW, uint8_t newW, bool is6581) {
+// (reSIDfp's do_writeback, fitted to testprogs SID/wb_testsuite and friends;
+// the 6581's rules for $C and for a change to noise alone fitted to the
+// suite's samplings of two 6581s, #347)
+// `testWave` is the waveform the test bit rose with.
+bool doWriteback(uint8_t oldW, uint8_t newW, bool is6581, uint8_t testWave) {
     if (oldW <= 8) return false;            // no combined waveform before
+    // 6581, to noise alone: only from $F, and only if the test bit rose with
+    // $F (noiselfsrinit's $F8, $80), not if $F came while it was held
+    // (wb_testsuite's $88, $F8, $80)
+    if (is6581 && newW == 8) return oldW == 0xF && testWave == 0xF;
+    if (is6581 && oldW == 0xC && newW == 0xC) return true;   // a clocked shift in $C
     if (newW < 8) return false;
     if (newW == 8 && oldW != 0xF) return false;
     if (is6581 && ((((oldW & 3) == 1) && ((newW & 3) == 2)) ||
@@ -84,7 +92,10 @@ void SidWave::clock() {
         m_shiftPipeline = 2;
     } else if (m_shiftPipeline != 0) {
         switch (--m_shiftPipeline) {
-            case 0: shiftPhase2(m_waveform, m_waveform); break;
+            case 0:
+                shiftPhase2(m_waveform, m_waveform);
+                if (m_waveform == 0xC) m_shiftedInC = true;
+                break;
             case 1: m_testOrReset = false; m_shiftLatch = m_shiftReg; break;
         }
     }
@@ -124,7 +135,7 @@ void SidWave::synchronize() const {
 }
 
 void SidWave::shiftPhase2(uint8_t waveformOld, uint8_t waveformNew) {
-    if (doWriteback(waveformOld, waveformNew, m_is6581))
+    if (doWriteback(waveformOld, waveformNew, m_is6581, m_testWave))
         m_shiftLatch = (m_shiftReg & SHIFT_MASK) | noiseWriteback(m_waveOut);
     // bit0 = (bit22 | test | reset) ^ bit17
     const uint32_t bit22 = ((m_testOrReset ? 1u : 0u) | m_shiftLatch) << 22;
@@ -135,7 +146,11 @@ void SidWave::shiftPhase2(uint8_t waveformOld, uint8_t waveformNew) {
 
 void SidWave::writeShiftRegister() {
     if (m_waveform <= 0x8) return;
-    if (m_shiftPipeline != 1 && !m_test) {
+    if (m_is6581 && m_waveform == 0xC && m_shiftPipeline != 1 && !m_test) {
+        // 6581, pulse + noise: the output pulls the noise output (OSC3) low
+        // but not the register; that takes it only through a shift (#347)
+        m_noiseOut &= m_waveOut;
+    } else if (m_shiftPipeline != 1 && !m_test) {
         // The output pulls the register's bits low
         m_shiftReg &= SHIFT_MASK | noiseWriteback(m_waveOut);
         m_noiseOut &= m_waveOut;
@@ -164,6 +179,7 @@ void SidWave::writeControl(uint8_t control) {
     m_ringMsbMask = ((~control >> 5) & (control >> 2) & 0x1) << 23;
 
     if (m_waveform != waveformPrev) {
+        m_shiftedInC = false;
         m_noNoise = (m_waveform & 0x8) ? 0x000 : 0xFFF;
         setNoNoiseOrNoiseOutput();
         m_noPulse = (m_waveform & 0x4) ? 0x000 : 0xFFF;
@@ -175,8 +191,18 @@ void SidWave::writeControl(uint8_t control) {
             m_acc = 0;
             m_shiftPipeline = 0;
             m_shiftLatch = m_shiftReg;      // shift phase 1, held
+            m_testWave = m_waveform;
+            // 6581, pulse + noise, once the register has shifted in it: the
+            // phase takes the output too (wf12nsr's $C)
+            if (m_is6581 && waveformPrev == 0xC && m_shiftedInC)
+                m_shiftLatch = (m_shiftReg & SHIFT_MASK) | noiseWriteback(m_waveOut);
             m_shiftRegReset = m_is6581 ? SHIFT_REGISTER_RESET_6581 : SHIFT_REGISTER_RESET_8580;
         } else {
+            // 6581: released from pulse + noise with triangle or sawtooth
+            // into pulse + noise, the taps of output bits 4-6 are pulled
+            // low (sampled, wb_testsuite D/E/F -> C/E/D)
+            if (m_is6581 && waveformPrev >= 0xD && (m_waveform & 0xC) == 0xC)
+                m_shiftLatch &= SHIFT_MASK | noiseWriteback(0xF8F);
             shiftPhase2(waveformPrev, m_waveform);   // released: phase 2
         }
     }
@@ -202,6 +228,7 @@ void SidWave::reset() {
     m_pw = 0;
     m_msbRising = false;
     m_waveform = 0;
+    m_testWave = 0;
     m_osc3 = 0;
     m_test = false;
     m_sync = false;
