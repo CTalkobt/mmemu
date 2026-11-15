@@ -32,7 +32,9 @@
  *  - $08 TPDD1: switch to FDC mode (no answer). TPDD2: parameter error.
  *        After "M1\r" (TS-DOS's probe) it is the Desk-Link/TS-DOS
  *        directory-management (DME) request instead: the answer names the
- *        current directory ("ROOT  .<> ").
+ *        current directory ("ROOT  .<> "). "M1\r" holds across other
+ *        requests (TS-DOS asks for the status in between) until the CRs
+ *        TS-DOS sends after the answer, or any other byte, end it.
  *  - TPDD2 only: bank 1 by adding $40 to the type; $23 version (-> $14),
  *        $33 system info (-> $3A), $30 sector cache load/commit (-> $38),
  *        $31 cache memory write (-> $38), $32 cache memory read (-> $39).
@@ -183,6 +185,7 @@ private:
     uint8_t m_type = 0, m_len = 0;
     std::vector<uint8_t> m_data;
     bool m_dmePending = false;
+    int m_dmeCrs = 0;              // after a DME answer: CRs seen + 1 (0: none expected)
 
     // The referenced file and the open one
     bool m_haveRef = false;

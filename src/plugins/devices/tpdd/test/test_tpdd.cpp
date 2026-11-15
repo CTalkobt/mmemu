@@ -231,6 +231,29 @@ TEST_CASE(tpdd_tsdos_directories) {
     ASSERT(fs::is_directory(t.path / "WORK"));
 }
 
+// TS-DOS 4.00's own sequence (captured from it on mmsim's Model 100): "M1\r",
+// DME, two CRs, "M1\r", drive status, then $08 again without a new "M1\r": still DME
+TEST_CASE(tpdd_tsdos_dme_sequence) {
+    TempDir t("dmeseq");
+    Tpdd d;
+    ASSERT(d.setRootDirectory(t.path.string()));
+    sendStr(d, "M1\r");
+    auto r = xfer(d, 0x08);
+    ASSERT_EQ(r.size(), 14u);
+    sendStr(d, "\r\rM1\r");
+    ASSERT_EQ(err(xfer(d, 0x07)), 0x00);
+    r = xfer(d, 0x08);
+    ASSERT_EQ(r.size(), 14u);
+    ASSERT_EQ(std::string(r.begin() + 3, r.begin() + 13), "ROOT  .<> ");
+    ASSERT(!d.fdcMode());
+    // After the CRs, a bare $08 is the TPDD1's switch to FDC mode again
+    sendStr(d, "\r\r");
+    xfer(d, 0x07);
+    r = xfer(d, 0x08);
+    ASSERT(r.empty());
+    ASSERT(d.fdcMode());
+}
+
 // TPDD1 FDC mode on a sector image: format, sector and ID access, search
 TEST_CASE(tpdd_fdc_mode) {
     Tpdd d;

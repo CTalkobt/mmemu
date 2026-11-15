@@ -7,6 +7,51 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Tandy Model 100 / 102 / 200 (#334)
+
+- New `mmemu-plugin-m100.so` (`src/plugins/machines/m100`): machines
+  `model100` (alias `m100`), `model102` and `model200` on the 8085 core at
+  2.4576 MHz, with the memory and I/O maps of the Model 100 Technical
+  Reference, VirtualT and MAME's `kyocera.cpp`.
+  - Model 100/102: the 32 KB ROM, RAM down from `$FFFF` (100: 8-32 KB;
+    102: 24 or 32 KB; the `ram` expansion slot), and the option ROM
+    socket switched by port `$E0` bit 0. The ten-HD44102 240x64 LCD, the
+    81C55 (keyboard columns, LCD selects, RTC pins, the speaker / baud
+    timer), the IM6402 UART (RST 6.5), the uPD1990AC clock (TP on RST
+    7.5) and the keyboard matrix at `$E0`.
+  - Tandy 200: the 72 KB ROM in banks (main, MULTIPLAN, option) through
+    port `$D0`, 24-72 KB of RAM in three 24 KB banks at `$A000-$FFFF`,
+    the HD61830 240x128 LCD, the RP5C01 clock and an 8251 USART.
+  - The speaker from the 81C55's TIMER OUT (or port B bit 5) to the audio
+    output; the LCD in two colours, doubled; the host keyboard by position
+    (the GUI now sends the Model 100's keys positionally).
+  - `serial` attaches the UART: `loopback`, `file:`, `tcp:`, `tpdd:DIR`,
+    `tpdd2:DIR` or a disk image; `serial printer:PATH` captures the
+    parallel printer. The cassette is `.wav` through SOD/SID (the CoCo
+    plugin's recorder). The power switch (TRAP, then power-off) and the
+    reset button are screen buttons; snapshots cover the whole machine.
+  - Option ROMs: `rom optrom FILE`, `cart FILE.bin`, `-i FILE.rom`.
+  - The ROMs are the user's (`roms/m100/m100.rom`, `m102.rom`, `t200.rom`,
+    gitignored; MAME's and VirtualT's file names are accepted too). Without
+    one, a generated stand-in says so on the LCD. `roms/m100/hardware.sym`
+    names the ports and the RST vectors.
+- New 8251 USART device (`src/plugins/devices/i8251`): asynchronous mode
+  (mode and command instructions, internal reset, TxRDY / RxRDY / TxEMPTY,
+  overrun, framing and parity errors, DSR) on a `SerialEndpoint`, clocked
+  by TxC/RxC; synchronous mode is accepted but not run.
+- TPDD: "M1\r" now holds across the status request until TS-DOS's CRs
+  end the DME session, as VirtualT's server does; TS-DOS 4.00 lists a
+  host directory.
+- Tests: each machine boots a stand-in that draws on its LCD, the memory
+  maps and option ROM switching, the keyboard scan, RST 7.5 from the clock,
+  the timer-driven speaker, UART loopback (IM6402 and 8251), a TPDD
+  directory read through `serial tpdd:DIR`, the printer, the Tandy 200's
+  RAM and ROM banks, the clocks' ports, power, snapshots and the cassette;
+  8251 unit tests. With the real ROMs (not in the repository) the three
+  machines boot to the menu, BASIC runs, `OPEN "COM:..."` and `LPRINT`
+  reach their files, Multiplan starts on the 200, and TS-DOS 4.00 (an
+  option ROM) reads the TPDD.
+
 ### Intel 8085 CPU (#334)
 
 - New `mmemu-plugin-8085.so` (`src/plugins/8085`) with the `I8085` core,

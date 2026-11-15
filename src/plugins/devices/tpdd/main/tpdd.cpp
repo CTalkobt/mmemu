@@ -196,6 +196,17 @@ void Tpdd::reply(uint8_t type, const std::vector<uint8_t>& d) {
 void Tpdd::opByte(uint8_t b) {
     switch (m_rx) {
     case RxState::Idle:
+        // After a DME answer TS-DOS sends CRs; the second ends the DME
+        // session, anything else ends it at once (VirtualT tpddserver.cpp)
+        if (m_dmeCrs) {
+            if (b == '\r') {
+                if (++m_dmeCrs > 2) m_dmeCrs = 0;
+                m_dmePending = false;
+                break;
+            }
+            m_dmeCrs = 0;
+            m_dmePending = false;
+        }
         if (b == 'Z') m_rx = RxState::Z;
         else if (b == 'M') m_rx = RxState::M;
         break;
@@ -341,8 +352,9 @@ void Tpdd::closeFile() {
 }
 
 void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
+    // "M1\r" holds until the DME session ends: TS-DOS asks for the drive's
+    // status between "M1\r" and its $08 (VirtualT's m_tsdosDmeStart)
     const bool dme = m_dmePending;
-    m_dmePending = false;
     if (m_model == Model::Tpdd2 && (type & 0xC0) == 0x40 && (type & 0x3F) < 0x10) type &= 0x3F;   // bank 1
     if (m_root.empty() && type <= 0x0D && type != 0x06 && type != 0x07 && type != 0x08 && type != 0x0C) {
         normal(0x70);           // no directory: nothing to file-access
@@ -385,6 +397,7 @@ void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
             std::vector<uint8_t> v = {0x00};
             for (char c : name) v.push_back((uint8_t)c);
             reply(0x12, v);
+            m_dmeCrs = 1;
         } else if (m_model == Model::Tpdd1) {
             m_fdc = true;
             m_fdcWait = FdcWait::Line;
