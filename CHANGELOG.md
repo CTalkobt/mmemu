@@ -7,6 +7,20 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VIC-II: the collision registers' delayed clear and DMA delay's idle fetch (#343, #344)
+
+- Reading `$D01E` / `$D01F` clears the register only after the next cycle's
+  pixels have been drawn (VICE vicii-cycle.c clear_collisions), so a
+  collision in the 12 pixel times after the read is lost: VICE testprogs
+  `VICII/spritevssprite` now passes (as on Hoxs64 and the Chameleon; VICE
+  fails it).
+- DMA delay: a badline started by a `$D011` write while the VIC-II is idle
+  makes the first g-access after the write read `$38FF` instead of the idle
+  `$3FFF` (6569 / 6567R8, after the test's measurements; some 8565s read
+  `$3807`), which the sprite-background collisions see: `VICII/vsp-tester`
+  now passes (only Denise and Z64K did). It timed out before: with both
+  collision reads 0 it ran `INC $0000`, which wrecked the CPU port.
+
 ### 1541: a bit-level head, head inertia, VICE's D64 layout (#360)
 
 - The true drive's head works on bits: the disk turns once every 200,000
