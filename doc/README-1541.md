@@ -64,9 +64,10 @@ The computer's side is an `IPortDevice` for its CIA port, as `IecDrive`'s: bits 
   - the error bytes break the sector as VICE does: 2 a header ID of `$FF` (error 20), 3 no SYNCs on the track (21), 4 a data block ID of `$00` (22, but the data still reads), 5 a bad data checksum (23), 9 a bad header checksum (27), 11 ID1 changed (29);
   - tracks past the image's are unformatted (`$55`), and can be written.
 - **G64** tracks are taken as stored, half-tracks included.
+- **P64** (flux pulses, 3,200,000 positions a turn, range-coded) is read with BeRo's P64 reference decoder from VICE (`p64.cpp`, zlib licence). Each half-track's pulses become bit cells at the track's usual density, the cell clock restarting at each pulse, as VICE's `P64PulseStreamConvertToGCR` does. Pulse strengths and side 1 are ignored.
 - Half-tracks with nothing on them have no flux (zeros).
 
-Writes change the GCR tracks. A D64's track is decoded back into its sectors, and written into the file (`diskfile::patch`, so gzip and zip images too) when the head leaves the track or the disk is ejected.
+Writes change the GCR tracks; only a D64's are saved (a G64's or P64's last until it's ejected). A D64's track is decoded back into its sectors, and written into the file (`diskfile::patch`, so gzip and zip images too) when the head leaves the track or the disk is ejected.
 
 **The DOS's SEAK** (`$F3B1`) takes a block whose first GCR byte is `$52` for a header. A data block with the ID `$00` (error 22) starts with `$52` too. So which errors a program reads depends on where the sectors are when the head lands on a track, which is why the D64 layout and skew follow VICE's (`drive/scanner/scanner*e`).
 
@@ -80,6 +81,7 @@ Writes change the GCR tracks. A D64's track is decoded back into its sectors, an
 ## Tests
 
 - `gcr_track_round_trip`: encoding and decoding GCR tracks.
+- `p64_pulses_to_gcr_round_trip`: pulses at a GCR track's cell centres come back as its bits; files that aren't P64s are refused.
 - `drive1541_error_map_job_codes`: a D64 with an error map; the DOS's read jobs return each error's code, and errors 22 and 23 still read the data.
 - `via_t1_latch_reads_back`: the DOS loads T1 from its latch.
 - `c64_true_drive_kernal_load`: a KERNAL `LOAD` from a D64 through the drive's DOS.
@@ -89,10 +91,11 @@ VICE testprogs that pass: all of `drive/` and `vdrive/` in the list, and all of 
 - `drive/viavarious` (19);
 - `drive/1541-testsuite` (both disks), `defaults`, `diskid`, `format`, `iecdelay`, `inertia`;
 - `drive/interrupts/timera`, `openbus`, `openbus2`, `rpm1`, `rpm2`, `rpm3`, `selftest`, `skew1`;
-- `drive/scanner` 35, 40 and 42, with and without error maps;
+- `drive/scanner` 35, 40 and 42, from D64s (with and without error maps) and G64s;
+- `drive/rpm` 1-3 from D64, G64 and P64, `drive/skew/skew2` (G64), `drive/hls-protection/hlstest` (G64);
 - `vdrive/bustakeover`, `vdrive/sa-check`;
 - `general/fuxxortest`, `test-fuxxored` included.
 
 `drive/inertia` (Krill's drive-emu-check) is one that VICE fails ("EMU"): it steps out and back faster than the head can follow.
 
-The VICE runner (README-C64 §2.15) uses the true drive for the list's `drive/`, `vdrive/` and `general/fuxxortest` programs. With `MMEMU_VICE_TRUEDRIVE=1` it uses it for every program. The list's `mountg64:` and `mountp64:` entries aren't run.
+The VICE runner (README-C64 §2.15) uses the true drive for the list's `drive/`, `vdrive/` and `general/fuxxortest` programs. With `MMEMU_VICE_TRUEDRIVE=1` it uses it for every program. The list's G64 and P64 entries (`mountg64:`, `mountp64:`) run too: `hls-protection/hlstest`, `rpm1`-`rpm3` from both, `scanner35`/`40`/`42` and `skew2` (#364).

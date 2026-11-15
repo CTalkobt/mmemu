@@ -1079,7 +1079,7 @@ void typeKeys(MachineDescriptor* desc, IBus* bus, const std::string& text, uint6
 // debug cart at $D7FF. The exit code, or -1 if none came within `limit`
 // cycles of power on.
 // `expansion` is "" or an expansion port device and its size ("reu", "512K").
-// `disk` is a disk image for drive 8 (the list's "mountd64:") or a folder
+// `disk` is a disk image for drive 8 (the list's "mountd64:", "mountg64:", "mountp64:") or a folder
 // it serves: the PRG is then loaded from it through the KERNAL,
 // LOAD"<NAME>",8,1 and RUN, as VICE's disk autostart does. `loadName` is the
 // file's name there (default: the PRG's, without its extension, in capitals).
@@ -1112,7 +1112,8 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
     }
     // Programs write to their disks (drive/format formats it): a copy
     std::string diskPath = disk;
-    if (!disk.empty() && disk.find(".d64") != std::string::npos) {
+    if (!disk.empty() && (disk.find(".d64") != std::string::npos || disk.find(".g64") != std::string::npos ||
+                           disk.find(".p64") != std::string::npos)) {
         ::mkdir("/tmp/mmemu_vice_drive8", 0700);
         diskPath = "/tmp/mmemu_vice_drive8/" + std::to_string((long)getpid()) + "-" + disk.substr(disk.find_last_of('/') + 1);
         std::ifstream in(disk, std::ios::binary);
@@ -1348,7 +1349,8 @@ TEST_CASE(c64_vice_testprogs) {
                 size = f[i].substr(3);
                 for (char& c : size) c = (char)toupper((unsigned char)c);
             } else if (f[i] == "cia-new") newCia = true;
-            else if (f[i].rfind("mountd64:", 0) == 0)
+            else if (f[i].rfind("mountd64:", 0) == 0 || f[i].rfind("mountg64:", 0) == 0 ||
+                     f[i].rfind("mountp64:", 0) == 0)
                 disk = std::string(root) + "/" + prg.substr(0, prg.find_last_of('/') + 1) + f[i].substr(9);
         }
         const bool trueDrive = prg.rfind("drive/", 0) == 0 || prg.rfind("vdrive/", 0) == 0 ||
@@ -1378,7 +1380,8 @@ TEST_CASE(c64_vice_testprogs) {
                 for (char& c : size) c = (char)toupper((unsigned char)c);
             }
             else if (f[i] == "cia-new") newCia = true;
-            else if (f[i].rfind("mountd64:", 0) == 0) diskFile = f[i].substr(9);
+            else if (f[i].rfind("mountd64:", 0) == 0 || f[i].rfind("mountg64:", 0) == 0 ||
+                     f[i].rfind("mountp64:", 0) == 0) diskFile = f[i].substr(9);
             else if (f[i].rfind("comment:load the test using \"", 0) == 0) {
                 // A program that must be LOADed by name (C64/autostart/defaults
                 // checks what the KERNAL's load leaves behind): from the disk,

@@ -1,5 +1,6 @@
 #include "drive1541.h"
 #include "gcr.h"
+#include "p64.h"
 #include "plugins/6502/main/cpu6502.h"
 #include "plugins/devices/via6522/main/via6522.h"
 #include "libdevices/main/shared_irq_manager.h"
@@ -369,6 +370,7 @@ bool Drive1541::mountDisk(int unit, const std::string& path) {
     if (unit != m_unit) return false;
     std::vector<uint8_t> data;
     if (!diskfile::read(path, data)) return false;
+    bool p64Protected = false;
     ejectDisk(unit);
     const std::string ext = diskfile::imageExt(path);
     m_tracks.assign(84, {});
@@ -388,6 +390,16 @@ bool Drive1541::mountDisk(int unit, const std::string& path) {
             m_tracks[(size_t)h].assign(data.begin() + off + 2, data.begin() + off + 2 + len);
         }
         m_isD64 = false;
+    } else if (ext == "p64") {
+        // Flux pulses, as bit cells at the track's density
+        std::vector<std::vector<uint32_t>> pulses;
+        bool wp = false;
+        if (!p64::readPulses(data, pulses, &wp)) return false;
+        for (int h = 0; h < 84; ++h)
+            if (!pulses[(size_t)h].empty())
+                m_tracks[(size_t)h] = p64::toGcr(pulses[(size_t)h], (uint32_t)gcr::trackBytes(h / 2 + 1) * 8);
+        m_isD64 = false;
+        p64Protected = wp;
     } else {
         // D64: 35 or 40 (or 42) tracks, error bytes after the sectors if there
         int tracks = 0;
@@ -420,7 +432,7 @@ bool Drive1541::mountDisk(int unit, const std::string& path) {
     for (int h = 0; h < 84; ++h)
         if (m_tracks[(size_t)h].empty()) m_tracks[(size_t)h].assign((size_t)gcr::trackBytes(h / 2 + 1), 0x00);
     m_path = path;
-    m_writeProtect = !diskfile::writable(path);
+    m_writeProtect = p64Protected || !diskfile::writable(path);
     loadTrack();
     return true;
 }

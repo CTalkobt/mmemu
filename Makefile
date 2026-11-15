@@ -429,6 +429,7 @@ PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
 
 PLUGIN_DRIVE1541_SRCS = src/plugins/devices/drive1541/main/drive1541.cpp \
 	src/plugins/devices/drive1541/main/gcr.cpp \
+	src/plugins/devices/drive1541/main/p64.cpp \
 	src/plugins/devices/via6522/main/via6522.cpp \
 	src/plugins/devices/drive1541/main/plugin_init.cpp
 
@@ -893,6 +894,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
 	src/plugins/devices/drive1541/main/drive1541.o \
 	src/plugins/devices/drive1541/main/gcr.o \
+	src/plugins/devices/drive1541/main/p64.o \
 	src/plugins/devices/acia6551/main/acia6551.o \
 	src/plugins/devices/acia6551/main/hayes_modem.o \
 	src/plugins/machines/x16/main/machine_x16.o \
