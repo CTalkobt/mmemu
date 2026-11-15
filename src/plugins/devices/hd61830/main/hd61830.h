@@ -33,9 +33,16 @@
  *  - $E / $F clear / set bit (data bits 0-2) at the cursor address,
  *       then increment it
  *
- * Status: bit 7 busy. Busy lasts `busyTime` tick() units per instruction
- * (0, the default: never busy, as in MAME, whose busy flag is disabled);
- * data writes while busy are ignored.
+ * Status: bit 7 busy. Each instruction's execution (the data write that
+ * carries it) holds busy for a number of the controller's clocks: 4 for
+ * the set-up instructions ($0-$4, $8-$B), 6 for display data write / read
+ * ($C, $D), 36 for clear / set bit ($E, $F; a read-modify-write of the
+ * RAM). The counts are MAME's hd61830.cpp CYCLES table (MAME computes them
+ * but leaves the flag disabled). setClockScale(n) turns the timing on with
+ * n tick() units per controller clock (the Model 200: the 8085's 2.4576
+ * MHz clock over the controller's 1.2288 MHz, n = 2); setBusyTime(t)
+ * instead holds busy a flat t units per instruction; both 0 (the default):
+ * never busy. Data writes while busy are ignored, as on the chip.
  *
  * Display RAM is the controller's external RAM: the Model 200 has 8 KB,
  * which the 16-bit addresses wrap through (setRamSize).
@@ -92,6 +99,11 @@ public:
 
     void tick(uint64_t units) { m_busyLeft = m_busyLeft > units ? m_busyLeft - units : 0; }
     void setBusyTime(uint32_t units) { m_busyTime = units; }
+    /** tick() units per controller clock (0: the flat busyTime instead). */
+    void setClockScale(uint32_t unitsPerClock) { m_clockScale = unitsPerClock; }
+    /** Controller clocks instruction `ir` keeps busy (MAME's CYCLES; 0 for the undefined $5-$7). */
+    static int busyClocks(uint8_t ir);
+    bool busy() const { return m_busyLeft != 0; }
     /** A display frame has passed (drives the blink: every 32 frames). */
     void frame();
     bool blinkPhase() const { return m_blinkOn; }
@@ -131,7 +143,7 @@ private:
     uint8_t m_ir = 0, m_mcr = 0, m_dor = 0;
     int m_hp = 6, m_vp = 8, m_hn = 40, m_nx = 64, m_cp = 7;
     uint16_t m_dsa = 0, m_cac = 0;
-    uint32_t m_busyTime = 0;
+    uint32_t m_busyTime = 0, m_clockScale = 0;
     uint64_t m_busyLeft = 0;
     int m_frames = 0;
     bool m_blinkOn = false;

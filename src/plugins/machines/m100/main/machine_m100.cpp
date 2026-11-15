@@ -1,5 +1,6 @@
-// The Tandy Model 100, 102 and 200 as machines: ROMs, RAM, the option ROM
-// socket, the frontends' hooks.
+// The Tandy Model 100, 102 and 200, the NEC PC-8201A, the Olivetti M10 and
+// the Kyotronic 85 as machines: ROMs, RAM, the option ROM socket, the
+// frontends' hooks.
 
 #include "m100_system.h"
 #include "plugins/8085/main/cpu8085.h"
@@ -37,6 +38,9 @@ const char* romFile(Model m) {
     switch (m) {
     case Model::M100: return "m100.rom";
     case Model::M102: return "m102.rom";
+    case Model::PC8201: return "pc8201a.rom";
+    case Model::M10: return "m10.rom";
+    case Model::KC85: return "kc85.rom";
     default: return "t200.rom";
     }
 }
@@ -75,6 +79,23 @@ bool loadRom(Model model, std::vector<uint8_t>& rom, std::string& missing) {
             }
         }
         missing = "Tandy 200 ROM not found: put t200.rom (72 KB; or MAME's \"rom 1-1.m15\", \"rom 1-2.m13\", \"rom 2.m14\")" + where;
+        return false;
+    case Model::PC8201:
+        if (loadOne(dir, {"pc8201a.rom", "pc8201rom.rom", "PC8201rom.bin", "pc8201rom.bin"}, 0x8000, 0x8000, rom))
+            return true;
+        missing = "NEC PC-8201A ROM not found: put pc8201a.rom (32 KB)" + where;
+        return false;
+    case Model::M10:
+        // VirtualT's M10rom.bin has 16 bytes past the 32 KB
+        if (loadOne(dir, {"m10.rom", "m10rom.m12", "M10rom.bin", "m10rom.bin"}, 0x8000, 0x8010, rom)) {
+            rom.resize(0x8000);
+            return true;
+        }
+        missing = "Olivetti M10 ROM not found: put m10.rom (32 KB)" + where;
+        return false;
+    case Model::KC85:
+        if (loadOne(dir, {"kc85.rom", "kc85rom.bin", "KC85rom.bin"}, 0x8000, 0x8000, rom)) return true;
+        missing = "Kyotronic 85 ROM not found: put kc85.rom (32 KB)" + where;
         return false;
     }
     return false;
@@ -119,6 +140,69 @@ std::vector<std::string> wrap(const std::string& s, size_t width) {
     }
     if (!line.empty()) out.push_back(line);
     return out;
+}
+
+/**
+ * The add-ons' expansion slots (issue #358): `sysbus` (the system bus
+ * connector: a RAMPAC / Node Datapac) and `rex` (a REX / REX# flash in the
+ * option ROM socket). Each takes the host file that holds its memory as
+ * the option (`expansion sysbus rampac FILE`, `expansion rex rex FILE`).
+ */
+void addAddonSlots(MachineDescriptor* desc, System* sys) {
+    {
+        MachineDescriptor::ExpansionSlot s;
+        s.name = "sysbus";
+        s.description = "The 40-pin system bus: a RAMPAC / Node Datapac (256 KB battery-backed RAM disk at "
+                        "ports $81/$83; the option is the host file that holds it)";
+        s.devices = {{"rampac", "RAMPAC: 256 KB RAM disk, saved to the file given", {}, ""},
+                     {"datapac", "Node Datapac (as the RAMPAC)", {}, ""}};
+        s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
+            if (device.empty()) { sys->removeRampac(); return true; }
+            if (device != "rampac" && device != "datapac") {
+                err = "the sysbus slot takes rampac or datapac";
+                return false;
+            }
+            return sys->fitRampac(option, err);
+        };
+        s.info = [sys]() -> std::string {
+            if (!sys->rampac()) return "";
+            const std::string& p = sys->rampac()->path();
+            return "rampac (256K, " + (p.empty() ? std::string("not saved") : p) + ")";
+        };
+        s.save = [sys](const std::string& path, std::string& err) {
+            if (!sys->rampac()) { err = "no RAMPAC fitted"; return false; }
+            if (!sys->rampac()->saveTo(path)) { err = "can't write '" + path + "'"; return false; }
+            return true;
+        };
+        desc->expansionSlots.push_back(std::move(s));
+    }
+    {
+        MachineDescriptor::ExpansionSlot s;
+        s.name = "rex";
+        s.description = "REX / REX# (1 MB flash) in the option ROM socket, replacing any option ROM while "
+                        "fitted; the option is the host image file (written back as the flash is programmed)";
+        s.devices = {{"rex", "REX (Ken Pettit's)", {}, ""}, {"rexsharp", "REX# (Steve Adolph's)", {}, ""}};
+        s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
+            if (device.empty()) { sys->removeRex(); return true; }
+            if (device != "rex" && device != "rexsharp" && device != "rex#") {
+                err = "the rex slot takes rex or rexsharp";
+                return false;
+            }
+            return sys->fitRex(device == "rex" ? Rex::Kind::Rex : Rex::Kind::RexSharp, option, err);
+        };
+        s.info = [sys]() -> std::string {
+            if (!sys->rex()) return "";
+            const std::string& p = sys->rex()->path();
+            return std::string(sys->rex()->kind() == Rex::Kind::Rex ? "rex" : "rexsharp") + " (" +
+                   (p.empty() ? std::string("not saved") : p) + ")";
+        };
+        s.save = [sys](const std::string& path, std::string& err) {
+            if (!sys->rex()) { err = "no REX fitted"; return false; }
+            if (!sys->rex()->saveTo(path)) { err = "can't write '" + path + "'"; return false; }
+            return true;
+        };
+        desc->expansionSlots.push_back(std::move(s));
+    }
 }
 
 }  // namespace
@@ -212,7 +296,7 @@ std::vector<uint8_t> placeholderRom(Model model, const std::string& message) {
 bool insertOptionRom(MachineDescriptor* m, const std::vector<uint8_t>& image, const std::string& label,
                      std::string& err) {
     System* sys = systemOf(m);
-    if (!sys) { err = "not a Model 100, 102 or 200"; return false; }
+    if (!sys) { err = "not a Model 100 or one of its siblings"; return false; }
     if (image.size() > 0x8000) { err = "an option ROM is at most 32 KB"; return false; }
     sys->setOptionRom(image, label);
     return true;
@@ -234,7 +318,7 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
     }
 
     auto* sys = new System(model, std::move(rom));
-    sys->setRamKb(ramKb > 0 ? ramKb : model == Model::M200 ? 72 : 32);
+    sys->setRamKb(ramKb > 0 ? ramKb : model == Model::M200 ? 72 : model == Model::PC8201 ? 96 : 32);
     if (!opt.empty()) sys->setOptionRom(opt, "option ROM");
 
     auto* desc = new MachineDescriptor();
@@ -242,6 +326,9 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
     case Model::M100: desc->machineId = "model100"; desc->displayName = "Tandy Model 100"; break;
     case Model::M102: desc->machineId = "model102"; desc->displayName = "Tandy Model 102"; break;
     case Model::M200: desc->machineId = "model200"; desc->displayName = "Tandy 200"; break;
+    case Model::PC8201: desc->machineId = "pc8201a"; desc->displayName = "NEC PC-8201A"; break;
+    case Model::M10: desc->machineId = "m10"; desc->displayName = "Olivetti M10"; break;
+    case Model::KC85: desc->machineId = "kc85"; desc->displayName = "Kyocera Kyotronic 85"; break;
     }
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
@@ -264,6 +351,8 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
     io->registerHandler(&sys->sound);
     io->registerHandler(&sys->tape);
     io->registerHandler(&sys->printer);       // before the RS-232 port: it takes `printer:`
+    if (sys->hasModem()) io->registerHandler(&sys->modemPort);    // `modem:SPEC`
+    io->registerHandler(&sys->barcodePort);   // `barcode:...`
     io->registerHandler(&sys->serial);
 
     desc->onKey = [sys](const std::string& name, bool down) {
@@ -288,6 +377,12 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
         case Model::M102: sizes = {"24K", "32K"}; def = "32K"; s.description = "RAM: 24K or 32K, ending at $FFFF"; break;
         case Model::M200: sizes = {"24K", "48K", "72K"}; def = "72K";
             s.description = "RAM: one, two or three 24K banks at $A000-$FFFF (port $D0 bits 2-3)"; break;
+        case Model::PC8201: sizes = {"16K", "32K", "64K", "96K"}; def = "96K";
+            s.description = "RAM: 16K or 32K inside, ending at $FFFF; 64K and 96K add 32K banks 2 and 3 "
+                            "(port $A0: bits 0-1 for $0000-$7FFF, 2-3 for $8000-$FFFF)"; break;
+        case Model::M10:
+        case Model::KC85: sizes = {"8K", "16K", "24K", "32K"}; def = "32K";
+            s.description = "RAM: 8K to 32K in 8K modules, ending at $FFFF"; break;
         }
         s.devices = {{"ram", "The RAM fitted", sizes, def}};
         s.canEmpty = false;
@@ -308,12 +403,15 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
     desc->romSockets.push_back({"optrom",
         model == Model::M200
             ? "The option ROM socket: up to 32 KB, at $0000-$7FFF when port $D0 selects ROM bank 2"
+        : model == Model::PC8201
+            ? "The option ROM socket: up to 32 KB, at $0000-$7FFF when port $A0 selects ROM bank 1"
             : "The option ROM socket: up to 32 KB, at $0000-$7FFF when port $E0 bit 0 is set "
               "(Multiplan, T-Base, Ultimate ROM II, ...; CALL 63012 in BASIC)",
         [desc](const std::vector<uint8_t>& image, const std::string& label, std::string& e) {
             return insertOptionRom(desc, image, label, e);
         },
         [sys]() { return sys->optionRomLabel(); }});
+    addAddonSlots(desc, sys);
 
     desc->symbolFiles.push_back(PathUtil::findResource("roms/m100/hardware.sym"));
     desc->onReset = [sys](MachineDescriptor&) { sys->resetButton(); };

@@ -171,3 +171,32 @@ TEST_CASE(hd61830_busy_and_state) {
     ASSERT_EQ(d.width(), 240);
     ASSERT_EQ(d.mode(), 0x32);
 }
+
+// Busy per instruction (MAME's CYCLES), scaled to the caller's units
+TEST_CASE(hd61830_busy_clocks) {
+    ASSERT_EQ(Hd61830::busyClocks(0x0), 4);
+    ASSERT_EQ(Hd61830::busyClocks(0xA), 4);
+    ASSERT_EQ(Hd61830::busyClocks(0xC), 6);
+    ASSERT_EQ(Hd61830::busyClocks(0xF), 36);
+    Hd61830 c;
+    c.setClockScale(2);                    // the Model 200: two CPU clocks a controller clock
+    cmd(c, 0xA, 0x00);
+    c.tick(7);
+    ASSERT(c.busy());
+    c.tick(1);
+    ASSERT(!c.busy());
+    cmd(c, 0xC, 0x3F);                     // display data write: 12
+    c.tick(11);
+    ASSERT_EQ(c.status(), 0x80);
+    c.write(0, 0x01);                      // ignored
+    c.tick(1);
+    ASSERT_EQ(c.status(), 0x00);
+    ASSERT_EQ(c.cursorAddress(), 0x0001);
+    cmd(c, 0xF, 0x02);                     // set bit: 72
+    c.tick(71);
+    ASSERT(c.busy());
+    c.tick(1);
+    ASSERT(!c.busy());
+    ASSERT_EQ(c.ram(0), 0x3F);
+    ASSERT_EQ(c.ram(1), 0x04);
+}

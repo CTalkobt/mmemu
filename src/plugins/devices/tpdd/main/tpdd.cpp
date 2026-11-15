@@ -1,5 +1,6 @@
 // Tandy Portable Disk Drive (TPDD / TPDD2) protocol, after the Bitchin100
-// wiki, pdd.sh and VirtualT's tpddserver.cpp. mmsim's own code.
+// wiki, pdd.sh (also the TPDD1's on-disk file system) and VirtualT's
+// tpddserver.cpp. mmsim's own code.
 
 #include "tpdd.h"
 #include <algorithm>
@@ -36,6 +37,10 @@ std::string fieldName(const std::vector<uint8_t>& d) {
 }
 
 const int LSC_SIZE[7] = {64, 80, 128, 256, 512, 1024, 1280};
+
+// The TPDD1 file system (pdd.sh): 40 FCBs of 31 bytes in sector 0, then the SMT
+constexpr int FCB_COUNT = 40, FCB_SIZE = 31, SMT_OFFSET = FCB_COUNT * FCB_SIZE, SMT_FLAGS = 20;
+constexpr uint32_t MAX_FILE = 65534;       // pdd.sh PDD1_MAX_FLEN
 
 }  // namespace
 
@@ -264,6 +269,7 @@ std::string Tpdd::dirPath() const {
 }
 
 std::vector<Tpdd::Entry> Tpdd::listDir() const {
+    if (imageFs()) return imageListing();
     std::vector<Entry> v;
     std::error_code ec;
     if (m_root.empty()) return v;
@@ -321,6 +327,11 @@ std::string Tpdd::hostNameFor(const std::string& name, bool& isDir) {
 }
 
 uint8_t Tpdd::freeSectors() const {
+    if (imageFs()) {
+        int n = 0;
+        for (int p = 1; p < (int)m_sectors.size(); ++p) n += sectorUsed(p) ? 0 : 1;
+        return (uint8_t)n;
+    }
     const int total = m_model == Model::Tpdd1 ? 80 : 160;
     int used = 0;
     for (const Entry& e : listDir())
@@ -332,7 +343,7 @@ void Tpdd::replyEntry(const Entry* e) {
     std::vector<uint8_t> d;
     if (e) {
         for (char c : e->name) d.push_back((uint8_t)c);
-        d.push_back('F');
+        d.push_back(e->attr);
         d.push_back((uint8_t)(e->size >> 8));
         d.push_back((uint8_t)e->size);
     } else {
@@ -349,6 +360,9 @@ void Tpdd::closeFile() {
     if (m_file) std::fclose(m_file);
     m_file = nullptr;
     m_openMode = 0;
+    m_imgFcb = -1;
+    m_imgFile.clear();
+    m_imgPos = 0;
 }
 
 void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
@@ -356,7 +370,7 @@ void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
     // status between "M1\r" and its $08 (VirtualT's m_tsdosDmeStart)
     const bool dme = m_dmePending;
     if (m_model == Model::Tpdd2 && (type & 0xC0) == 0x40 && (type & 0x3F) < 0x10) type &= 0x3F;   // bank 1
-    if (m_root.empty() && type <= 0x0D && type != 0x06 && type != 0x07 && type != 0x08 && type != 0x0C) {
+    if (m_root.empty() && !imageFs() && type <= 0x0D && type != 0x06 && type != 0x07 && type != 0x08 && type != 0x0C) {
         normal(0x70);           // no directory: nothing to file-access
         return;
     }
@@ -380,7 +394,10 @@ void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
             normal(0x50);
             break;
         }
-        if (m_root.empty()) {
+        closeFile();
+        if (imageFs()) {
+            formatImageFs();
+        } else if (m_root.empty()) {
             for (Sector& s : m_sectors) s = Sector{};
             persistImage();
         }
@@ -500,6 +517,10 @@ void Tpdd::opOpen(const std::vector<uint8_t>& d) {
     }
     const int mode = d[0];
     closeFile();
+    if (imageFs()) {
+        opOpenImage(mode);
+        return;
+    }
     std::error_code ec;
     if (m_ref.dir) {
         m_lastOpenDir = true;
@@ -543,6 +564,16 @@ void Tpdd::opOpen(const std::vector<uint8_t>& d) {
 }
 
 void Tpdd::opRead() {
+    if (m_imgFcb >= 0 && m_openMode == 3) {
+        const size_t n = std::min<size_t>(128, m_imgFile.size() - m_imgPos);
+        if (n == 0) {
+            normal(0x3F);
+            return;
+        }
+        reply(0x10, std::vector<uint8_t>(m_imgFile.begin() + (long)m_imgPos, m_imgFile.begin() + (long)(m_imgPos + n)));
+        m_imgPos += n;
+        return;
+    }
     if (!m_file || m_openMode != 3) {
         normal(0x37);
         return;
@@ -558,6 +589,25 @@ void Tpdd::opRead() {
 }
 
 void Tpdd::opWrite(const std::vector<uint8_t>& d) {
+    if (m_imgFcb >= 0 && m_openMode != 3) {
+        if (d.empty() || d.size() > 128) {
+            normal(0x36);
+            return;
+        }
+        if (m_imgFile.size() + d.size() > MAX_FILE) {
+            normal(0x6E);
+            return;
+        }
+        std::vector<uint8_t> next = m_imgFile;
+        next.insert(next.end(), d.begin(), d.end());
+        if (!writeImageFile(m_imgFcb, next)) {
+            normal(0x61);
+            return;
+        }
+        m_imgFile = std::move(next);
+        normal(0x00);
+        return;
+    }
     if (!m_file || m_openMode == 3) {
         normal(0x37);
         return;
@@ -593,6 +643,20 @@ void Tpdd::opDelete() {
         return;
     }
     closeFile();
+    if (imageFs()) {
+        if (!m_ref.exists || m_ref.fcb < 0) {
+            m_haveRef = false;
+            normal(0x10);
+            return;
+        }
+        freeChain(m_ref.fcb);
+        std::fill(m_sectors[0].data.begin() + m_ref.fcb * FCB_SIZE,
+                  m_sectors[0].data.begin() + (m_ref.fcb + 1) * FCB_SIZE, 0);
+        persistImage();
+        m_haveRef = false;
+        normal(0x00);
+        return;
+    }
     std::error_code ec;
     const fs::path p = fs::path(dirPath()) / m_ref.host;
     const bool removed = m_ref.exists && fs::remove(p, ec);
@@ -625,6 +689,14 @@ void Tpdd::opRename(const std::vector<uint8_t>& d) {
         return;
     }
     closeFile();
+    if (imageFs()) {
+        const std::string to24 = pad24(trimRight(fieldName(d)));
+        for (int i = 0; i < 24; ++i) m_sectors[0].data[(size_t)(m_ref.fcb * FCB_SIZE + i)] = (uint8_t)to24[(size_t)i];
+        persistImage();
+        m_ref.name = m_ref.host = to24;
+        normal(0x00);
+        return;
+    }
     std::error_code ec;
     fs::rename(fs::path(dirPath()) / m_ref.host, fs::path(dirPath()) / to, ec);
     if (ec) {
@@ -633,6 +705,152 @@ void Tpdd::opRename(const std::vector<uint8_t>& d) {
     }
     m_ref.host = to;
     m_ref.name = dir ? m_ref.name : tpddName(to);
+    normal(0x00);
+}
+
+// --- the TPDD1 file system on a disk image (pdd.sh read_fcb / read_smt) ---
+
+std::vector<Tpdd::Entry> Tpdd::imageListing() const {
+    std::vector<Entry> v;
+    const auto& d = m_sectors[0].data;
+    for (int i = 0; i < FCB_COUNT; ++i) {
+        const uint8_t* f = d.data() + i * FCB_SIZE;
+        if (f[0] == 0) continue;
+        Entry e;
+        e.name.assign((const char*)f, 24);
+        e.host = e.name;
+        e.attr = f[24];
+        e.size = (uint32_t)(f[25] << 8 | f[26]);
+        e.fcb = i;
+        v.push_back(e);
+    }
+    return v;
+}
+
+bool Tpdd::sectorUsed(int p) const {
+    return m_sectors[0].data[SMT_OFFSET + p / 4] & (0x80 >> (2 * (p % 4)));
+}
+
+void Tpdd::setSectorUsed(int p, bool used) {
+    uint8_t& b = m_sectors[0].data[SMT_OFFSET + p / 4];
+    const uint8_t bit = (uint8_t)(0x80 >> (2 * (p % 4)));
+    b = used ? (uint8_t)(b | bit) : (uint8_t)(b & ~bit);
+    int n = 0;
+    for (int s = 0; s < (int)m_sectors.size() && s < SMT_FLAGS * 4; ++s) n += sectorUsed(s) ? 1 : 0;
+    m_sectors[0].data[SMT_OFFSET + SMT_FLAGS] = (uint8_t)n;
+}
+
+std::vector<int> Tpdd::fileChain(int fcb) const {
+    std::vector<int> chain;
+    const uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    const uint32_t size = (uint32_t)(f[25] << 8 | f[26]);
+    if (size == 0) return chain;
+    int p = f[29];
+    const size_t want = (size + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    while (p > 0 && p < (int)m_sectors.size() && chain.size() < want) {
+        chain.push_back(p);
+        const int next = m_sectors[p].id[0];
+        if (next == 0xFF) break;
+        p = next;
+    }
+    return chain;
+}
+
+std::vector<uint8_t> Tpdd::readImageFile(int fcb) const {
+    const uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    size_t left = (size_t)(f[25] << 8 | f[26]);
+    std::vector<uint8_t> v;
+    for (int p : fileChain(fcb)) {
+        const size_t n = std::min<size_t>(left, SECTOR_SIZE);
+        v.insert(v.end(), m_sectors[p].data.begin(), m_sectors[p].data.begin() + n);
+        left -= n;
+    }
+    return v;
+}
+
+void Tpdd::freeChain(int fcb) {
+    for (int p : fileChain(fcb)) {
+        setSectorUsed(p, false);
+        m_sectors[p].id[0] = 0;
+    }
+    uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    f[25] = f[26] = 0;
+    f[29] = f[30] = 0;
+}
+
+bool Tpdd::writeImageFile(int fcb, const std::vector<uint8_t>& data) {
+    const std::vector<int> old = fileChain(fcb);
+    const size_t need = (data.size() + SECTOR_SIZE - 1) / SECTOR_SIZE;
+    std::vector<int> secs;
+    for (int p = 1; p < (int)m_sectors.size() && secs.size() < need; ++p)
+        if (!sectorUsed(p) || std::find(old.begin(), old.end(), p) != old.end()) secs.push_back(p);
+    if (secs.size() < need) return false;
+    freeChain(fcb);
+    for (size_t k = 0; k < secs.size(); ++k) {
+        Sector& s = m_sectors[secs[k]];
+        const size_t off = k * SECTOR_SIZE, n = std::min<size_t>(SECTOR_SIZE, data.size() - off);
+        std::fill(s.data.begin(), s.data.end(), 0);
+        std::copy(data.begin() + (long)off, data.begin() + (long)(off + n), s.data.begin());
+        s.id.fill(0);
+        s.id[0] = (uint8_t)(k + 1 < secs.size() ? secs[k + 1] : 0xFF);
+        s.lsc = 0;
+        setSectorUsed(secs[k], true);
+    }
+    uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    f[25] = (uint8_t)(data.size() >> 8);
+    f[26] = (uint8_t)data.size();
+    f[29] = secs.empty() ? 0 : (uint8_t)secs.front();
+    f[30] = secs.empty() ? 0 : (uint8_t)secs.back();
+    m_sectors[0].lsc = 0;
+    persistImage();
+    return true;
+}
+
+void Tpdd::formatImageFs() {
+    for (Sector& s : m_sectors) {
+        s = Sector{};
+        s.lsc = 1;
+    }
+    m_sectors[0].lsc = 0;
+    persistImage();
+}
+
+void Tpdd::opOpenImage(int mode) {
+    if (mode != 3 && m_writeProtect) {
+        normal(0x50);
+        return;
+    }
+    if (mode == 3 && !m_ref.exists) {
+        normal(0x10);
+        return;
+    }
+    int fcb = m_ref.exists ? m_ref.fcb : -1;
+    if (fcb < 0) {
+        // A new file: the first free FCB
+        const auto& d = m_sectors[0].data;
+        for (int i = 0; i < FCB_COUNT && fcb < 0; ++i)
+            if (d[i * FCB_SIZE] == 0) fcb = i;
+        if (fcb < 0) {
+            normal(0x60);
+            return;
+        }
+        uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+        std::fill(f, f + FCB_SIZE, 0);
+        for (int i = 0; i < 24; ++i) f[i] = (uint8_t)m_ref.name[(size_t)i];
+        f[24] = 'F';
+        m_ref.exists = true;
+        m_ref.fcb = fcb;
+        persistImage();
+    }
+    m_imgFcb = fcb;
+    m_imgPos = 0;
+    m_imgFile = mode == 1 ? std::vector<uint8_t>() : readImageFile(fcb);
+    if (mode == 1 && !writeImageFile(fcb, m_imgFile)) {     // truncates an existing file
+        m_imgFcb = -1;
+        normal(0x61);
+        return;
+    }
+    m_openMode = mode;
     normal(0x00);
 }
 

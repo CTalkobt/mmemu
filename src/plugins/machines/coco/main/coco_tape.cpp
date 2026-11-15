@@ -14,7 +14,6 @@ namespace {
 
 constexpr uint64_t HALF_SPLIT = (Tape::TICKS_BIT0 / 2 + Tape::TICKS_BIT1 / 2) / 2;   // short vs long half-cycle
 constexpr uint64_t GAP = 20000;              // a half-cycle longer than this is silence
-constexpr int WAV_RATE = 22050;
 
 std::string extOf(const std::string& path) {
     const auto dot = path.find_last_of('.');
@@ -205,7 +204,7 @@ std::vector<uint8_t> Tape::recordedWav() const {
         size_t k = 0;
         uint8_t level = m_rec[0].second;
         for (uint64_t i = 0;; ++i) {
-            const uint64_t t = t0 + (uint64_t)((double)i * m_hz / WAV_RATE);
+            const uint64_t t = t0 + (uint64_t)((double)i * m_hz / m_wavRate);
             if (t > t1) break;
             while (k < m_rec.size() && m_rec[k].first <= t) level = m_rec[k++].second;
             samples.push_back((uint8_t)(level * 4 + 2));
@@ -218,8 +217,8 @@ std::vector<uint8_t> Tape::recordedWav() const {
     put32(w, 16);
     put16(w, 1);
     put16(w, 1);
-    put32(w, WAV_RATE);
-    put32(w, WAV_RATE);
+    put32(w, (uint32_t)m_wavRate);
+    put32(w, (uint32_t)m_wavRate);
     put16(w, 1);
     put16(w, 8);
     w.insert(w.end(), {'d', 'a', 't', 'a'});

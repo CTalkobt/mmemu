@@ -250,6 +250,8 @@ PLUGIN_8085_SRCS = src/plugins/8085/main/cpu8085.cpp \
 	src/plugins/8085/main/plugin_init.cpp
 PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
 	src/plugins/machines/m100/main/m100_system.cpp \
+	src/plugins/machines/m100/main/pc8201.cpp \
+	src/plugins/machines/m100/main/kyocera_keys.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/devices/serial_endpoint/main/serial_endpoint.cpp \
 	src/plugins/devices/hd44102/main/hd44102.cpp \
@@ -262,6 +264,10 @@ PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
 	src/plugins/devices/upd1990a/main/upd1990a.cpp \
 	src/plugins/devices/rp5c01/main/rp5c01.cpp \
 	src/plugins/devices/tpdd/main/tpdd.cpp \
+	src/plugins/devices/mc14412/main/mc14412.cpp \
+	src/plugins/devices/barcode/main/barcode_wand.cpp \
+	src/plugins/devices/rampac/main/rampac.cpp \
+	src/plugins/devices/rex/main/rex.cpp \
 	src/plugins/machines/m100/main/plugin_init.cpp
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
@@ -668,10 +674,17 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/i8155/test/test_i8155.cpp \
 	src/plugins/devices/i8251/test/test_i8251.cpp \
 	src/plugins/machines/m100/test/test_m100_machine.cpp \
+	src/plugins/machines/m100/test/test_kyocera_siblings.cpp \
+	src/plugins/machines/m100/test/test_m100_verify.cpp \
 	src/plugins/devices/im6402/test/test_im6402.cpp \
 	src/plugins/devices/upd1990a/test/test_upd1990a.cpp \
 	src/plugins/devices/rp5c01/test/test_rp5c01.cpp \
 	src/plugins/devices/tpdd/test/test_tpdd.cpp \
+	src/plugins/devices/mc14412/test/test_mc14412.cpp \
+	src/plugins/devices/barcode/test/test_barcode_wand.cpp \
+	src/plugins/devices/rampac/test/test_rampac.cpp \
+	src/plugins/devices/rex/test/test_rex.cpp \
+	src/plugins/machines/m100/test/test_m100_addons.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/6801/test/test_cpu6801.cpp \
@@ -885,10 +898,16 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/i8251/main/i8251.o \
 	src/plugins/machines/m100/main/machine_m100.o \
 	src/plugins/machines/m100/main/m100_system.o \
+	src/plugins/machines/m100/main/pc8201.o \
+	src/plugins/machines/m100/main/kyocera_keys.o \
 	src/plugins/devices/im6402/main/im6402.o \
 	src/plugins/devices/upd1990a/main/upd1990a.o \
 	src/plugins/devices/rp5c01/main/rp5c01.o \
 	src/plugins/devices/tpdd/main/tpdd.o \
+	src/plugins/devices/mc14412/main/mc14412.o \
+	src/plugins/devices/barcode/main/barcode_wand.o \
+	src/plugins/devices/rampac/main/rampac.o \
+	src/plugins/devices/rex/main/rex.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
 	src/plugins/devices/iec_drive/main/iec_drive.o \
