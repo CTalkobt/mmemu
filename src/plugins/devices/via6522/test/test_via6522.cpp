@@ -175,3 +175,77 @@ TEST_CASE(via6522_port_a_input_pin_lines) {
     via.ioRead(nullptr, 0x9111, &v);
     ASSERT_EQ((int)v, 0x7F);
 }
+
+// The T1 latches read back at $x6/$x7 (#341): the 1541 DOS loads T1 with
+// LDA $1C07 / STA $1C05
+TEST_CASE(via_t1_latch_reads_back) {
+    VIA6522 via("VIA", 0x1C00);
+    uint8_t v = 0;
+    via.ioWrite(nullptr, 0x1C06, 0x34);
+    via.ioWrite(nullptr, 0x1C07, 0x3A);
+    via.ioRead(nullptr, 0x1C06, &v);
+    ASSERT_EQ((int)v, 0x34);
+    via.ioRead(nullptr, 0x1C07, &v);
+    ASSERT_EQ((int)v, 0x3A);
+}
+
+// The timers as VICE's viacore (#341, testprogs drive/viavarious): T1 counts
+// N ... 0, FFFF, then reloads (one-shot too), flags the cycle after it reads
+// 0, once per T1CH write in one-shot mode; free-running needs a T1CH write
+TEST_CASE(via_t1_counts_through_ffff_and_reloads) {
+    VIA6522 via("VIA", 0x1800);
+    uint8_t lo = 0, hi = 0, ifr = 0;
+    auto t1 = [&]() { via.ioPeek(nullptr, 0x1804, &lo); via.ioPeek(nullptr, 0x1805, &hi); return (int)(lo | (hi << 8)); };
+    via.ioWrite(nullptr, 0x1804, 0x02);
+    via.ioWrite(nullptr, 0x1805, 0x00);                 // T1 = 2 from the next cycle
+    via.tick(1);
+    ASSERT_EQ(t1(), 2);
+    via.tick(1); ASSERT_EQ(t1(), 1);
+    via.tick(1); ASSERT_EQ(t1(), 0);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x40, 0);                           // not in the cycle it reads 0
+    via.tick(1); ASSERT_EQ(t1(), 0xFFFF);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x40, 0x40);
+    via.tick(1); ASSERT_EQ(t1(), 2);                    // reloaded, in one-shot mode too
+    via.ioWrite(nullptr, 0x180D, 0x40);
+    via.tick(4);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x40, 0);                           // one-shot: once per write
+    via.ioWrite(nullptr, 0x180B, 0x40);                 // free-running now: still none
+    via.tick(8);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x40, 0);
+    via.ioWrite(nullptr, 0x1805, 0x00);                 // a T1CH write arms it
+    via.tick(4);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x40, 0x40);
+}
+
+// T2 with the shift register on it (ACR SR modes 1, 4, 5) is an 8-bit timer:
+// the low byte reloads from its latch, the high byte counts its underflows,
+// and the 16-bit underflow still flags
+TEST_CASE(via_t2_eight_bit_mode) {
+    VIA6522 via("VIA", 0x1800);
+    uint8_t lo = 0, hi = 0, ifr = 0;
+    via.ioWrite(nullptr, 0x180B, 0x10);                 // SR out free-running on T2
+    via.ioWrite(nullptr, 0x1808, 0x03);
+    via.ioWrite(nullptr, 0x1809, 0x01);                 // T2 = $0103
+    via.tick(1);
+    via.ioPeek(nullptr, 0x1808, &lo); via.ioPeek(nullptr, 0x1809, &hi);
+    ASSERT_EQ((int)(lo | (hi << 8)), 0x0103);
+    via.tick(3); via.ioPeek(nullptr, 0x1808, &lo); via.ioPeek(nullptr, 0x1809, &hi);
+    ASSERT_EQ((int)(lo | (hi << 8)), 0x0100);
+    via.tick(1); via.ioPeek(nullptr, 0x1808, &lo); via.ioPeek(nullptr, 0x1809, &hi);
+    ASSERT_EQ((int)(lo | (hi << 8)), 0x00FF);
+    via.tick(1); via.ioPeek(nullptr, 0x1808, &lo);
+    ASSERT_EQ((int)lo, 0x03);                           // reloaded from the latch
+    via.tick(3);                                        // 0002, 0001, 0000
+    via.ioPeek(nullptr, 0x1808, &lo); via.ioPeek(nullptr, 0x1809, &hi);
+    ASSERT_EQ((int)(lo | (hi << 8)), 0x0000);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x20, 0);
+    via.tick(1);
+    via.ioPeek(nullptr, 0x180D, &ifr);
+    ASSERT_EQ(ifr & 0x20, 0x20);                        // the 16-bit underflow
+}

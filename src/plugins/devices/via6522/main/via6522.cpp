@@ -50,10 +50,12 @@ void VIA6522::CB1Conduit::set(bool level) {
 void VIA6522::reset() {
     std::memset(m_regs, 0, sizeof(m_regs));
     m_t1Latch = 0xFFFF;
-    m_t1Counter = 0;
-    m_t1Active = false;
-    m_t2Counter = 0;
-    m_t2Active = false;
+    m_t1Counter = 0xFFFF;
+    m_t1Load = m_t1Wrapped = m_t1Armed = false;
+    m_t1Pb7 = 0x80;
+    m_t2Counter = 0xFFFF;
+    m_t2LatchLo = 0xFF;
+    m_t2Load = m_t2Armed = m_t2LowWrapped = false;
     m_ca1Prev = true;
     m_ca2Prev = true;
     m_cb1Prev = true;
@@ -102,6 +104,7 @@ bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
                 uint8_t pins = peek ? m_portBDevice->peekPort() : m_portBDevice->readPort();
                 *val = (m_regs[ORB] & m_regs[DDRB]) | (pins & ~m_regs[DDRB]);
             }
+            if (m_regs[ACR] & 0x80) *val = (uint8_t)((*val & 0x7F) | m_t1Pb7);   // T1 on PB7
             if (peek) break;
             m_regs[IFR] &= ~0x10; // Clear CB1 flag
             // Clear CB2 flag if CB2 is input in non-independent mode (PCR[7]=0, PCR[5]=0)
@@ -126,6 +129,11 @@ bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
             *val = (m_t1Counter >> 8) & 0xFF;
             break;
 
+        // The T1 latches read back (the 1541 DOS loads T1 from them:
+        // LDA $1C07 / STA $1C05)
+        case T1LL: *val = m_t1Latch & 0xFF; break;
+        case T1LH: *val = (m_t1Latch >> 8) & 0xFF; break;
+
         case T2CL:
             *val = m_t2Counter & 0xFF;
             if (peek) break;
@@ -138,7 +146,11 @@ bool VIA6522::readReg(uint32_t addr, uint8_t* val, bool peek) {
             break;
 
         case IFR:
-            *val = m_regs[IFR];
+            *val = (uint8_t)((m_regs[IFR] & 0x7F) | ((m_regs[IFR] & m_regs[IER] & 0x7F) ? 0x80 : 0));
+            break;
+
+        case IER:
+            *val = (uint8_t)(m_regs[IER] | 0x80);   // bit 7 reads 1 (VICE, Rockwell)
             break;
 
         default:
@@ -201,9 +213,12 @@ bool VIA6522::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
             break;
 
         case T1CH:
+            // The latch into the counter from the next cycle; one IRQ armed,
+            // PB7 low
             m_t1Latch = (m_t1Latch & 0x00FF) | (val << 8);
-            m_t1Counter = m_t1Latch;
-            m_t1Active = true;
+            m_t1Load = true;
+            m_t1Armed = true;
+            m_t1Pb7 = 0;
             m_regs[IFR] &= ~0x40; // Clear T1 interrupt
             updateIrq();
             break;
@@ -215,14 +230,31 @@ bool VIA6522::ioWrite(IBus* bus, uint32_t addr, uint8_t val) {
             break;
 
         case T2CL:
-            m_regs[T2CL] = val; // Actually latches into T2CL latch
+            m_t2LatchLo = val;   // the low latch
             break;
 
         case T2CH:
-            m_t2Counter = (val << 8) | m_regs[T2CL];
-            m_t2Active = true;
+            // Counter from the latch from the next cycle (in timer mode; when
+            // counting PB6 pulses it takes the value and stays); one IRQ armed
+            if (m_regs[ACR] & 0x20) m_t2Counter = (uint16_t)((val << 8) | m_t2LatchLo);
+            else { m_t2Counter = (uint16_t)((val << 8) | m_t2LatchLo); m_t2Load = true; }
+            m_t2LowWrapped = false;
+            m_t2Armed = true;
             m_regs[IFR] &= ~0x20; // Clear T2 interrupt
             updateIrq();
+            break;
+
+        case ACR:
+            // PB7 goes high as T1 takes it over
+            if ((val & 0x80) && !(m_regs[ACR] & 0x80)) m_t1Pb7 = 0x80;
+            // T2 between timer and PB6 counting: starting takes a cycle
+            // before the first decrement; stopping decrements once more
+            // (VICE viacore_store VIA_ACR)
+            if ((val ^ m_regs[ACR]) & 0x20) {
+                if (val & 0x20) --m_t2Counter;
+                else m_t2Load = true;
+            }
+            m_regs[ACR] = val;
             break;
 
         case IFR:
@@ -322,33 +354,46 @@ void VIA6522::tick(uint64_t cycles) {
         m_cb2Prev = lvl;
     }
 
-    // Tick Timer 1
-    if (m_t1Active) {
-        uint16_t prev = m_t1Counter;
-        m_t1Counter -= (uint16_t)cycles;
-        if (prev < (uint16_t)cycles) { // Underflow
-            m_regs[IFR] |= 0x40;
-            updateIrq();
-            
-            // Continuous mode?
-            if (m_regs[ACR] & 0x40) {
-                m_t1Counter = m_t1Latch;
-            } else {
-                m_t1Active = false;
-            }
-        }
-    }
+    for (uint64_t c = 0; c < cycles; ++c) stepTimers();
+}
 
-    // Tick Timer 2 (Simplified: only one-shot interval mode)
-    if (m_t2Active) {
-        uint16_t prev = m_t2Counter;
-        m_t2Counter -= (uint16_t)cycles;
-        if (prev < (uint16_t)cycles) { // Underflow
-            m_regs[IFR] |= 0x20;
-            updateIrq();
-            m_t2Active = false;
-        }
+// One cycle of the timers: the flags of the cycle that ended (VICE's zero
+// alarms run after the CPU's access in their cycle), then the counters on
+void VIA6522::stepTimers() {
+    // T1: it read 0 in the cycle that ended
+    // (only while armed: a T1CH write arms it; a one-shot disarms it as
+    // it fires, so switching to free-running later raises nothing - VICE's
+    // t1_zero_alarm)
+    if (!m_t1Load && !m_t1Wrapped && m_t1Counter == 0 && m_t1Armed) {
+        m_regs[IFR] |= 0x40;
+        m_t1Pb7 ^= 0x80;
+        updateIrq();
+        if (!(m_regs[ACR] & 0x40)) m_t1Armed = false;
     }
+    if (m_t1Load) { m_t1Counter = m_t1Latch; m_t1Load = false; m_t1Wrapped = false; }
+    else if (m_t1Wrapped) { m_t1Counter = m_t1Latch; m_t1Wrapped = false; }
+    else if (m_t1Counter == 0) { m_t1Counter = 0xFFFF; m_t1Wrapped = true; }
+    else --m_t1Counter;
+
+    // T2, in timer mode
+    if (m_regs[ACR] & 0x20) return;            // counting PB6 pulses: none come
+    if (m_t2Load) { m_t2Load = false; return; }   // the written value shows
+    // The shift register on T2 (in under T2, out free-running, out under
+    // T2) makes it an 8-bit timer
+    const int sr = (m_regs[ACR] >> 2) & 7;
+    const bool srOnT2 = sr == 1 || sr == 4 || sr == 5;
+    if (m_t2Counter == 0 && m_t2Armed) {          // read 0000: the 16-bit underflow
+        m_regs[IFR] |= 0x20;
+        m_t2Armed = false;
+        updateIrq();
+    }
+    if (srOnT2 && m_t2LowWrapped) {               // 8-bit: low reloads after xxFF
+        m_t2Counter = (uint16_t)((m_t2Counter & 0xFF00) | m_t2LatchLo);
+        m_t2LowWrapped = false;
+        return;
+    }
+    if ((m_t2Counter & 0xFF) == 0) m_t2LowWrapped = true;
+    --m_t2Counter;
 }
 
 void VIA6522::updateIrq() {
@@ -396,8 +441,8 @@ void VIA6522::getDeviceInfo(DeviceInfo& out) const {
     out.state.push_back({"Timer 1 Counter", buf});
     std::sprintf(buf, "%d", (int)m_t2Counter);
     out.state.push_back({"Timer 2 Counter", buf});
-    out.state.push_back({"Timer 1 Active", m_t1Active ? "true" : "false"});
-    out.state.push_back({"Timer 2 Active", m_t2Active ? "true" : "false"});
+    out.state.push_back({"Timer 1 IRQ armed", m_t1Armed ? "true" : "false"});
+    out.state.push_back({"Timer 2 IRQ armed", m_t2Armed ? "true" : "false"});
 
     out.dependencies.push_back({"Port A Device", m_portADevice ? "connected" : "none"});
     out.dependencies.push_back({"Port B Device", m_portBDevice ? "connected" : "none"});

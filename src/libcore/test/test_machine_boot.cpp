@@ -1,4 +1,5 @@
 #include "plugins/devices/iec_drive/main/iec_drive.h"
+#include "plugins/devices/drive1541/main/drive1541.h"
 #include "test_harness.h"
 #include "libcore/main/machine_desc.h"
 #include "libcore/main/machines/machine_registry.h"
@@ -1082,10 +1083,12 @@ void typeKeys(MachineDescriptor* desc, IBus* bus, const std::string& text, uint6
 // it serves: the PRG is then loaded from it through the KERNAL,
 // LOAD"<NAME>",8,1 and RUN, as VICE's disk autostart does. `loadName` is the
 // file's name there (default: the PRG's, without its extension, in capitals).
+// `trueDrive`: drive 8 is a true 1541 (Drive1541) on CIA2 port A, the list's
+// drive/ and vdrive/ programs.
 int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
                         const std::string& expansion = "", const std::string& size = "",
                         bool newCia = false, const std::string& disk = "",
-                        const std::string& loadName = "") {
+                        const std::string& loadName = "", bool trueDrive = false) {
     std::ifstream f(prgPath, std::ios::binary);
     if (!f) return -2;
     std::vector<uint8_t> prg((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -1107,8 +1110,26 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
             if (!c || !c->setOption("model", "6526A", err)) { delete desc; return -3; }
         }
     }
-    if (!disk.empty() && !desc->ioRegistry->mountDisk(8, disk)) { delete desc; return -2; }
-    if (disk.empty()) {
+    // Programs write to their disks (drive/format formats it): a copy
+    std::string diskPath = disk;
+    if (!disk.empty() && disk.find(".d64") != std::string::npos) {
+        ::mkdir("/tmp/mmemu_vice_drive8", 0700);
+        diskPath = "/tmp/mmemu_vice_drive8/" + std::to_string((long)getpid()) + "-" + disk.substr(disk.find_last_of('/') + 1);
+        std::ifstream in(disk, std::ios::binary);
+        std::ofstream out(diskPath, std::ios::binary);
+        out << in.rdbuf();
+    }
+    std::unique_ptr<Drive1541> drive;
+    if (trueDrive) {
+        drive = std::make_unique<Drive1541>(8);
+        IOHandler* cia2 = desc->ioRegistry->findHandler("CIA2");
+        if (!drive->romLoaded() || !cia2) { delete desc; return -3; }
+        drive->setClockHz(985248);
+        cia2->setPortADevice(drive.get());
+        desc->ioRegistry->registerHandler(drive.get());
+        if (!disk.empty() && !drive->mountDisk(8, diskPath)) { delete desc; return -2; }
+    } else if (!disk.empty() && !desc->ioRegistry->mountDisk(8, diskPath)) { delete desc; return -2; }
+    if (disk.empty() && !trueDrive) {
         // Drive 8 otherwise serves the working directory, and some programs
         // save there (REU/quickreutest's log): give it a scratch folder
         static const std::string scratch = "/tmp/mmemu_vice_drive8";
@@ -1164,7 +1185,9 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
         }
     }
     desc->ioRegistry->unregisterHandler(&cart);
+    if (drive) { drive->ejectDisk(8); desc->ioRegistry->unregisterHandler(drive.get()); }
     delete desc;
+    if (diskPath != disk) std::remove(diskPath.c_str());
     return code;
 }
 }  // namespace
@@ -1213,6 +1236,63 @@ TEST_CASE(c64_kernal_load_from_drive8_folder) {
     ::rmdir(dir.c_str());
 }
 
+// A true 1541 (#341): the C64's KERNAL LOADs a file over the serial bus from
+// the drive's own DOS ROM, reading GCR sectors off a D64 built here
+TEST_CASE(c64_true_drive_kernal_load) {
+    ensureRegistriesAndLoad();
+    // A D64: BAM (18/0) with ID "AB", one directory entry (18/1) for
+    // "HELLO", PRG at 17/0: $C000 DE AD BE EF
+    std::vector<uint8_t> d64(174848, 0);
+    auto sector = [&](int t, int s) -> uint8_t* {
+        size_t at = 0;
+        for (int k = 1; k < t; ++k) at += (size_t)(k <= 17 ? 21 : k <= 24 ? 19 : k <= 30 ? 18 : 17) * 256;
+        return &d64[at + (size_t)s * 256];
+    };
+    uint8_t* bam = sector(18, 0);
+    bam[0] = 18; bam[1] = 1; bam[2] = 'A';
+    for (int i = 0; i < 16; ++i) bam[0x90 + i] = 0xA0;
+    std::memcpy(&bam[0x90], "TEST", 4);
+    bam[0xA2] = 'A'; bam[0xA3] = 'B'; bam[0xA4] = 0xA0; bam[0xA5] = '2'; bam[0xA6] = 'A';
+    uint8_t* dir = sector(18, 1);
+    dir[0] = 0; dir[1] = 0xFF;
+    dir[2] = 0x82; dir[3] = 17; dir[4] = 0;                 // PRG at 17/0
+    for (int i = 0; i < 16; ++i) dir[5 + i] = 0xA0;
+    std::memcpy(&dir[5], "HELLO", 5);
+    dir[30] = 1;                                            // 1 block
+    uint8_t* f = sector(17, 0);
+    const uint8_t prg[] = {0x00, 0xC0, 0xDE, 0xAD, 0xBE, 0xEF};
+    f[0] = 0; f[1] = (uint8_t)(1 + sizeof prg);              // the last byte's index
+    std::memcpy(&f[2], prg, sizeof prg);
+    const std::string path = "/tmp/mmemu_test_truedrive_" + std::to_string((long)getpid()) + ".d64";
+    { std::ofstream o(path, std::ios::binary); o.write((const char*)d64.data(), (std::streamsize)d64.size()); }
+
+    auto* desc = MachineRegistry::instance().createMachine("c64");
+    ASSERT(desc != nullptr);
+    Drive1541 drive(8);
+    ASSERT(drive.romLoaded());
+    drive.setClockHz(985248);
+    IOHandler* cia2 = desc->ioRegistry->findHandler("CIA2");
+    ASSERT(cia2 != nullptr);
+    cia2->setPortADevice(&drive);
+    desc->ioRegistry->registerHandler(&drive);
+    ASSERT(drive.mountDisk(8, path));
+    desc->onReset(*desc);
+    IBus* bus = desc->buses[0].bus;
+    uint64_t cycles = 0;
+    while (cycles < 2500000) cycles += (uint64_t)desc->schedulerStep(*desc);
+    const int ready = readyCount(bus);
+    typeKeys(desc, bus, "LOAD\"HELLO\",8,1\r", cycles);
+    while (readyCount(bus) <= ready && cycles < 30000000) cycles += (uint64_t)desc->schedulerStep(*desc);
+    EXPECT_EQ(bus->peek8(0xC000), 0xDE);
+    EXPECT_EQ(bus->peek8(0xC003), 0xEF);
+    EXPECT_EQ(bus->peek8(0xAE) | (bus->peek8(0xAF) << 8), 0xC004);
+    EXPECT_EQ(bus->peek8(0x90) & 0xBF, 0);                  // ST: no error (EOI only)
+    drive.ejectDisk(8);
+    desc->ioRegistry->unregisterHandler(&drive);
+    delete desc;
+    std::remove(path.c_str());
+}
+
 // VICE's exit-code test programs (#304), from VICE's testprogs tree: set
 // MMEMU_VICE_TESTPROGS to its root (with testbench/c64-testlist.in) and,
 // optionally, MMEMU_VICE_FILTER to a part of the program paths to run. Only
@@ -1250,7 +1330,9 @@ TEST_CASE(c64_vice_testprogs) {
             else if (f[i].rfind("mountd64:", 0) == 0)
                 disk = std::string(root) + "/" + prg.substr(0, prg.find_last_of('/') + 1) + f[i].substr(9);
         }
-        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia, disk);
+        const bool trueDrive = prg.rfind("drive/", 0) == 0 || prg.rfind("vdrive/", 0) == 0 ||
+                               prg.find("fuxxortest") != std::string::npos || std::getenv("MMEMU_VICE_TRUEDRIVE");
+        const int code = runViceExitcodeTest(std::string(root) + "/" + prg, limit, expansion, size, newCia, disk, "", trueDrive);
         printf("  vice %-60s %s (%d)\n", prg.c_str(), code == 0 ? "pass" : "FAIL", code);
         return;
     }
@@ -1294,7 +1376,11 @@ TEST_CASE(c64_vice_testprogs) {
         if (++index % shards != shard) continue;
         const std::string dir = std::string(root) + "/testbench/" + f[0];
         const std::string disk = !diskFile.empty() ? dir + diskFile : !loadName.empty() ? dir : "";
-        const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia, disk, loadName);
+        // VICE runs them all with its true drive; here the ones that talk to it
+        const bool trueDrive = f[0].find("/drive/") != std::string::npos || f[0].find("/vdrive/") != std::string::npos ||
+                               f[0].find("/fuxxortest") != std::string::npos ||
+                               (std::getenv("MMEMU_VICE_TRUEDRIVE") && !disk.empty());
+        const int code = runViceExitcodeTest(path, std::stoull(f[3]), expansion, size, newCia, disk, loadName, trueDrive);
         if (code == 0) ++passed; else ++failed;
         printf("  vice %-60s %s (%d)\n", (f[0] + f[1] + (diskFile.empty() ? "" : " +" + diskFile)).c_str(),
                code == 0 ? "pass" : "FAIL", code);

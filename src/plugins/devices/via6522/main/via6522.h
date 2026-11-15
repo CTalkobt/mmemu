@@ -151,14 +151,26 @@ private:
 
     uint8_t m_regs[16];
 
-    // Latches for Timer 1
-    uint16_t m_t1Latch = 0;
-    uint16_t m_t1Counter = 0;
-    bool     m_t1Active = false;
-
-    // Timer 2
-    uint16_t m_t2Counter = 0;
-    bool     m_t2Active = false;
+    // The timers (VICE viacore.c), stepped a cycle at a time; each counter
+    // is the value a read in the current cycle sees.
+    // T1 counts N ... 0, FFFF, then reloads the latch (in one-shot mode too);
+    // its flag comes after the cycle it reads 0, once per T1CH write in
+    // one-shot mode, each time in free-running mode, toggling PB7.
+    uint16_t m_t1Latch = 0xFFFF;
+    uint16_t m_t1Counter = 0xFFFF;
+    bool     m_t1Load = false;      // T1CH written: the latch from the next cycle
+    bool     m_t1Wrapped = false;   // it showed 0, now FFFF: the latch next
+    bool     m_t1Armed = false;     // a one-shot IRQ still to come
+    uint8_t  m_t1Pb7 = 0x80;        // PB7 as T1 drives it (ACR bit 7)
+    // T2 counts down from its T2CH write (or PB6 pulses: here it stops),
+    // once per write flagging the cycle after it reads 0000; with the
+    // shift register on T2, its low byte reloads from the latch
+    uint16_t m_t2Counter = 0xFFFF;
+    uint8_t  m_t2LatchLo = 0xFF;
+    bool     m_t2Load = false;
+    bool     m_t2Armed = false;
+    bool     m_t2LowWrapped = false;
+    void     stepTimers();
 
     IPortDevice* m_portADevice = nullptr;
     IPortDevice* m_portBDevice = nullptr;
