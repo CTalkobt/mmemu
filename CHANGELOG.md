@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### VICE runner: `floating3b` as "won't do" (#346)
+
+- The VICE test-program runner now has a won't-do list (`VICE_WONT_DO`):
+  programs listed with the reason mmsim keeps its behaviour, counted apart
+  from the failures. First entry: `REU/floatingbus/floating3b`. mmsim reads
+  the real C64's result, but the old CIA's timer B bug (real in cascade mode,
+  `cia8`) costs it 8 extra cascade periods past the VICE-calibrated 1.5G
+  cycle limit. VICE fits only because its lazy cascade alarm never meets the
+  bug in that loop. Details in README-C64 §2.15.
+
 ### SID: the 6581's noise writeback fitted to real-chip samplings (#347)
 
 - The 6581's noise writeback rules are fitted to VICE testprogs
