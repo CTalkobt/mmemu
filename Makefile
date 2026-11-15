@@ -725,6 +725,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/sid6581/test/test_sid_filter.cpp \
 	src/plugins/devices/sid6581/test/test_sid_inspect.cpp \
 	src/plugins/devices/sid6581/test/test_sid_cycle.cpp \
+	src/plugins/devices/sid6581/test/test_sid_writeback.cpp \
 	src/plugins/devices/sid6581/test/test_soft_clip_distortion.cpp \
 	src/plugins/devices/sid6581/test/test_spectral_analyzer.cpp \
 	tests/src/test_sid_filter_integration.cpp \
