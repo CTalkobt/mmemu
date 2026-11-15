@@ -160,7 +160,6 @@ void Drive1541::reset() {
     m_clock = m_devClock = m_target = 0;
     m_hostCycles = 0;
     m_frac = 0;
-    m_byteCycles = 0;
     m_hostEvents.clear();
     m_driveEvents.clear();
     m_hostSeen = m_host;
@@ -288,50 +287,78 @@ uint8_t Drive1541::readPort() {
 // ---------------------------------------------------------------------------
 
 void Drive1541::stepper(uint8_t phase) {
-    const uint8_t d = (uint8_t)((phase - m_phase) & 3);
-    if (d == 0) return;
-    if (d == 2) { m_phase = phase; return; }               // two steps at once: no move
+    // The coil's phase; the head follows it once it has been on long enough
+    if (phase == m_coil) return;
+    m_coil = phase;
+    m_coilSince = m_devClock;
+}
+
+void Drive1541::headMotion() {
+    // The head has inertia (VICE testprogs drive/inertia): it moves a half
+    // track toward the coil only once the coil's phase has held for
+    // STEP_CYCLES, so a phase held for less (a step and back, or round all
+    // four phases) leaves it where it was. A coil two phases away doesn't
+    // pull it either way.
+    if (m_coil == m_phase || m_devClock - m_coilSince < STEP_CYCLES) return;
+    const uint8_t d = (uint8_t)((m_coil - m_phase) & 3);
+    if (d == 2) return;
+    m_phase = (uint8_t)((m_phase + (d == 1 ? 1 : 3)) & 3);
+    m_coilSince = m_devClock;                              // the next half track takes as long
     const int ht = std::clamp(m_halfTrack + (d == 1 ? 1 : -1), 0, 83);
-    m_phase = phase;
     if (ht == m_halfTrack) return;
     flushTrack();
+    const size_t from = trackSize(m_halfTrack);
     m_halfTrack = ht;
+    // The disk turns on under the head: the same angle on the new track
+    m_pos = m_pos * trackSize(ht) / from;
     loadTrack();
 }
 
+size_t Drive1541::trackSize(int halfTrack) const {
+    const auto& t = m_tracks[(size_t)halfTrack];
+    return t.empty() ? (size_t)gcr::trackBytes(halfTrack / 2 + 1) : t.size();
+}
+
 void Drive1541::loadTrack() {
-    const auto& t = m_tracks[(size_t)m_halfTrack];
-    if (t.empty()) { m_pos = 0; return; }
-    m_pos %= t.size();
+    m_pos %= trackSize(m_halfTrack) * 8;
 }
 
 void Drive1541::diskCycle() {
+    headMotion();
     const uint8_t pb = m_via2B->effective();
     if (!(pb & 0x04)) return;                              // motor off
-    if (--m_byteCycles > 0) return;
-    const int zone = (pb >> 5) & 3;
-    m_byteCycles = 32 - 2 * zone;                          // 26-32 cycles a byte
+    // The disk turns at 300 rpm, a turn every 200,000 cycles, whatever the
+    // speed zone: the head passes the track's 8 * size bit cells in that time
+    const uint32_t bits = (uint32_t)trackSize(m_halfTrack) * 8;
+    m_rot += bits;
+    if (m_rot < ROTATION_CYCLES) return;
+    m_rot -= ROTATION_CYCLES;
+    m_pos = (m_pos + 1) % bits;
     auto& t = m_tracks[(size_t)m_halfTrack];
     const bool writing = !m_mode.level;
-    if (t.empty()) {                                       // no data: no SYNC, noise
-        m_sync = false;
-        m_readByte = 0x00;
-        return;
-    }
-    m_pos = (m_pos + 1) % t.size();
+    uint8_t& cell = t.empty() ? m_noCell : t[m_pos >> 3];
+    const uint8_t mask = (uint8_t)(0x80 >> (m_pos & 7));
     if (writing) {
-        if (!m_writeProtect) {
-            t[m_pos] = m_via2A->out;
+        // A bit of the byte from PA into the cell; the next byte at each byte
+        if (!m_writeProtect && !t.empty()) {
+            cell = (m_writeShift & 0x80) ? (uint8_t)(cell | mask) : (uint8_t)(cell & ~mask);
             m_dirty[(size_t)m_halfTrack] = true;
         }
+        m_writeShift = (uint8_t)(m_writeShift << 1);
+        m_readShift = 0;
         m_sync = false;
+        if (++m_bitCount < 8) return;
+        m_bitCount = 0;
+        m_writeShift = m_via2A->out;
     } else {
-        const uint8_t b = t[m_pos];
-        // A SYNC: ten 1 bits or more (here: two $FF in a row and on)
-        m_sync = b == 0xFF && m_lastByte == 0xFF;
-        m_lastByte = b;
-        if (m_sync) return;
-        m_readByte = b;
+        // Ten 1 bits in a row are a SYNC, and restart the byte; a byte is
+        // ready every 8 bits after one
+        m_readShift = (uint16_t)(((m_readShift << 1) | ((cell & mask) ? 1 : 0)) & 0x3FF);
+        if (m_readShift == 0x3FF) { m_sync = true; m_bitCount = 0; return; }
+        m_sync = false;
+        if (++m_bitCount < 8) return;
+        m_bitCount = 0;
+        m_readByte = (uint8_t)m_readShift;
     }
     // Byte ready: VIA2 CA1, and V through SO while CA2 enables it
     if (ISignalLine* ca1 = m_via2->getSignalLine("ca1")) { ca1->set(false); ca1->set(true); }
@@ -375,16 +402,23 @@ bool Drive1541::mountDisk(int unit, const std::string& path) {
         m_d64Errors = data.size() == sectors * 257;
         const size_t bam = 357 * 256;                       // track 18 sector 0
         const uint8_t id1 = data[bam + 0xA2], id2 = data[bam + 0xA3];
-        size_t at = 0;
+        size_t at = 0, skew = 0;
         for (int t = 1; t <= tracks; ++t) {
             const int n = gcr::sectorsOnTrack(t);
             const uint8_t* err = m_d64Errors ? &data[sectors * 256 + at / 256] : nullptr;
-            m_tracks[(size_t)(t - 1) * 2] = gcr::encodeTrack(t, &data[at], id1, id2, err);
+            skew = gcr::trackSkew(t, skew);
+            m_tracks[(size_t)(t - 1) * 2] = gcr::encodeTrack(t, &data[at], id1, id2, err, skew);
             at += (size_t)n * 256;
         }
+        // Tracks past the image's are unformatted ($55, as VICE's)
+        for (int t = tracks + 1; t <= 42; ++t)
+            m_tracks[(size_t)(t - 1) * 2].assign((size_t)gcr::trackBytes(t), 0x55);
         m_image = std::move(data);
         m_isD64 = true;
     }
+    // Half-tracks with nothing on them have no flux: zeros (they can be written)
+    for (int h = 0; h < 84; ++h)
+        if (m_tracks[(size_t)h].empty()) m_tracks[(size_t)h].assign((size_t)gcr::trackBytes(h / 2 + 1), 0x00);
     m_path = path;
     m_writeProtect = !diskfile::writable(path);
     loadTrack();

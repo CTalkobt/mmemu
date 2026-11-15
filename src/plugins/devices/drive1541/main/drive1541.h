@@ -29,13 +29,15 @@ class SharedIrqManager;
  *    motor, PB3 the LED, PB4 write protect (0 = protected), PB5/PB6 the
  *    speed zone, PB7 SYNC (0 = found); PA the byte under the head, CA2 the
  *    byte-ready enable to the CPU's SO pin, CB2 read (1) or write (0). The
- *    head moves on a byte every 26-32 cycles by zone; ten 1 bits are a SYNC,
- *    where no byte is ready. A byte is ready a byte after a SYNC's end, and
- *    sets V when SO is enabled.
+ *    disk turns once every 200,000 cycles (300 rpm), and the head reads or
+ *    writes the track's bit cells as they pass: ten 1 bits are a SYNC, and
+ *    a byte is ready every 8 bits after one, setting V when SO is enabled.
+ *    The head follows the stepper with inertia, and keeps its angle.
  *
- * Images: D64 (35-42 tracks, with or without error bytes) encoded as the
- * DOS formats it; G64 as stored. Writes go to the tracks in memory, and
- * from them back to a D64 file on eject.
+ * Images: D64 (35-42 tracks, with or without error bytes) encoded with
+ * VICE's layout and skew; G64 as stored. Writes go to the tracks in memory,
+ * and from them back to a D64 file when the head leaves the track or on
+ * eject.
  *
  * Time: tick() is in the host's cycles (setClockHz); the drive runs its
  * instructions up to the same time, its VIAs and head a cycle at a time.
@@ -96,6 +98,8 @@ private:
     void runDevicesTo(uint64_t t);
     void diskCycle();
     void stepper(uint8_t phase);
+    void headMotion();
+    size_t trackSize(int halfTrack) const;
     void loadTrack();
     void flushTrack();
     uint8_t via1Pins() const;
@@ -151,10 +155,20 @@ private:
     std::vector<bool> m_dirty;
     bool m_writeProtect = false;
     int m_halfTrack = 34;                      // track 18
-    uint8_t m_phase = 0;
-    size_t m_pos = 0;                          // byte under the head
-    int m_byteCycles = 0;                      // to the next byte
+    uint8_t m_phase = 0;                       // the phase the head is at
+    uint8_t m_coil = 0;                        // the stepper coil's phase (VIA2 PB0-1)
+    uint64_t m_coilSince = 0;                  // when the coil last changed
+    static constexpr uint64_t STEP_CYCLES = 1000;
+    // The head: the bit cell under it, the rotation (a turn is
+    // ROTATION_CYCLES, the track's 8 * size cells pass in it), and the
+    // read/write shift register
+    static constexpr uint32_t ROTATION_CYCLES = 200000;   // 300 rpm at 1 MHz
+    size_t m_pos = 0;                          // bit cell under the head
+    uint32_t m_rot = 0;                        // the rotation's remainder
+    uint16_t m_readShift = 0;                  // the last 10 bits read
+    uint8_t m_writeShift = 0;                  // the byte being written
+    int m_bitCount = 0;                        // bits since the byte (or SYNC)
+    uint8_t m_noCell = 0;                      // no disk: no flux
     uint8_t m_readByte = 0;                    // VIA2 PA's input
     bool m_sync = false;
-    uint8_t m_lastByte = 0;
 };

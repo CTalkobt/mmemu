@@ -7,6 +7,31 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### 1541: a bit-level head, head inertia, VICE's D64 layout (#360)
+
+- The true drive's head works on bits: the disk turns once every 200,000
+  cycles (300 rpm) whatever the speed zone, and the head reads and writes
+  the track's 8 x size bit cells as they pass. Ten 1 bits are a SYNC; a
+  byte is ready every 8 bits after one. VICE testprogs `drive/rpm/rpm3`
+  (which writes a track of one long SYNC and times a turn) passes.
+- The head follows the stepper with inertia: it moves a half track only once
+  a phase has held for 1,000 cycles, so a step out and back too quickly
+  leaves it in place (`drive/inertia`, Krill's drive-emu-check, which VICE
+  fails). On a step it keeps its angle, scaled between the track sizes.
+- D64s are laid out as VICE's: its gaps (8, 17, 12, 9 bytes), a tail gap,
+  each track's skew, and its error encodings (2: header ID `$FF`, 11: ID1
+  changed). Tracks past the image's are unformatted and writable; empty
+  half-tracks have no flux. The DOS's SEAK takes an error-22 data block
+  (ID `$00`) for a header, so where the sectors sit decides what the
+  error-map scanners read: `drive/scanner/scanner35e`, `40e`, `42e` pass.
+- VICE runner: an injected PRG leaves the KERNAL's device number at 8, as a
+  load from drive 8 does; `general/fuxxortest/test-fuxxored` passes.
+- Test `drive1541_error_map_job_codes`: the DOS's read jobs on a D64 with an
+  error map return each error's code, and errors 22 and 23 still read.
+- VICE test list: 884 pass / 12 fail of 896 (was 878 / 18). The 12 left are
+  the SID `wb_testsuite` (9, #347), `floating3b` (#346), `spritevssprite`
+  (#343) and `vsp-tester` (#344).
+
 ### A true-drive 1541 (#341)
 
 - New device `drive1541` (`Drive1541`, plugin `mmemu-plugin-drive1541`): a
