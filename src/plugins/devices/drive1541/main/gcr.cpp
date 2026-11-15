@@ -1,4 +1,6 @@
 #include "gcr.h"
+#include <algorithm>
+#include <cstddef>
 
 namespace gcr {
 
@@ -19,6 +21,10 @@ int trackBytes(int track) {
 
 int speedZone(int track) {
     return track <= 17 ? 3 : track <= 24 ? 2 : track <= 30 ? 1 : 0;
+}
+
+int gapSize(int track) {
+    return track <= 17 ? 8 : track <= 24 ? 17 : track <= 30 ? 12 : 9;
 }
 
 int sectorsOnTrack(int track) {
@@ -56,37 +62,48 @@ void putGcr(std::vector<uint8_t>& t, const uint8_t* raw, int n) {
 }  // namespace
 
 std::vector<uint8_t> encodeTrack(int track, const uint8_t* sectors, uint8_t id1, uint8_t id2,
-                                 const uint8_t* errors) {
-    const int n = sectorsOnTrack(track), size = trackBytes(track);
-    // Each sector: 5 SYNC + 10 header + 9 gap + 5 SYNC + 325 data = 354
-    // bytes; the rest of the track is the gaps after them
-    const int gap = (size - n * 354) / n;
+                                 const uint8_t* errors, size_t skew) {
+    const int n = sectorsOnTrack(track), size = trackBytes(track), gap = gapSize(track);
+    // Each sector: 5 SYNC + 10 header + 9 gap + 5 SYNC + 325 data + the
+    // zone's gap, as VICE's gcr_convert_sector_to_GCR; the rest of the track
+    // is a tail gap
     std::vector<uint8_t> t;
     t.reserve((size_t)size);
     for (int s = 0; s < n; ++s) {
         const uint8_t err = errors ? errors[s] : 1;
         const uint8_t* d = sectors + s * 256;
-        if (err != 3) t.insert(t.end(), 5, 0xFF);
-        else t.insert(t.end(), 5, 0x55);                    // no SYNC on the whole track
-        uint8_t h[8] = {0x08, 0, (uint8_t)s, (uint8_t)track, id2, id1, 0x0F, 0x0F};
-        if (err == 11) h[4] ^= 0xFF;                        // ID mismatch
+        const uint8_t sync = err == 3 ? 0x55 : 0xFF;           // 3: no SYNC on the track
+        const uint8_t idm = err == 11 ? 0xFF : 0x00;           // 11: ID mismatch
+        t.insert(t.end(), 5, sync);
+        uint8_t h[8] = {err == 2 ? (uint8_t)0xFF : (uint8_t)0x08, 0, (uint8_t)s, (uint8_t)track,
+                        id2, (uint8_t)(id1 ^ idm), 0x0F, 0x0F};   // 2: no header
         h[1] = (uint8_t)(h[2] ^ h[3] ^ h[4] ^ h[5]);
-        if (err == 9) h[1] ^= 0xFF;
-        if (err == 2) h[0] = 0x00;                          // no header
+        if (err == 9) h[1] ^= 0xFF;                             // 9: header checksum
         putGcr(t, h, 8);
         t.insert(t.end(), 9, 0x55);
-        t.insert(t.end(), 5, err == 3 ? 0x55 : 0xFF);
+        t.insert(t.end(), 5, sync);
+        // 4: data block not found, but its bytes still read (an ID whose GCR
+        // starts with a 0 bit, so the SYNC still ends where it should)
         uint8_t b[260];
         b[0] = err == 4 ? 0x00 : 0x07;
         uint8_t chk = 0;
         for (int i = 0; i < 256; ++i) { b[1 + i] = d[i]; chk ^= d[i]; }
-        b[257] = err == 5 ? (uint8_t)(chk ^ 0xFF) : chk;
+        b[257] = err == 5 ? (uint8_t)(chk ^ 0xFF) : chk;       // 5: data checksum
         b[258] = b[259] = 0;
         putGcr(t, b, 260);
         t.insert(t.end(), (size_t)gap, 0x55);
     }
     t.resize((size_t)size, 0x55);
+    if (skew %= (size_t)size) std::rotate(t.begin(), t.end() - (std::ptrdiff_t)skew, t.end());
     return t;
+}
+
+size_t trackSkew(int track, size_t prev) {
+    // VICE's fsimage-dxx.c: the bytes the sectors take (less the last gap),
+    // and the time a step takes, as a part of the track
+    const size_t size = (size_t)trackBytes(track);
+    const size_t written = (size_t)sectorsOnTrack(track) * (size_t)(354 + gapSize(track));
+    return (prev + written - (size_t)gapSize(track) + size * 100 / 270) % size;
 }
 
 void decodeTrack(int track, const std::vector<uint8_t>& g, std::vector<uint8_t>& out, std::vector<bool>& found) {

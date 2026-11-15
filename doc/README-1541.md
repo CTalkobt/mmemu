@@ -40,50 +40,59 @@ The computer's side is an `IPortDevice` for its CIA port, as `IecDrive`'s: bits 
 
 | VIA2 | |
 |---|---|
-| PB0-1 | stepper phase: a step either way moves the head half a track (half-tracks 0-83) |
+| PB0-1 | stepper phase: the head follows it a half track at a time (half-tracks 0-83) |
 | PB2 | motor |
 | PB3 | LED |
 | PB4 | write protect (0 = protected: the image file isn't writable) |
-| PB5-6 | speed zone: a byte every 32, 30, 28 or 26 cycles (zone 0-3) |
+| PB5-6 | speed zone (0-3) |
 | PB7 | SYNC (0 = under the head) |
 | PA | the byte read, or the byte to write |
 | CA1 | byte ready |
 | CA2 | byte ready to the CPU's SO pin (V flag) |
 | CB2 | 1 = read, 0 = write |
 
-The head moves on one byte each byte time. Two `$FF` bytes in a row are a SYNC, where no byte is ready. Otherwise every byte is ready: CA1 pulses, and if CA2 enables it the CPU's V flag is set, which the DOS's `BVC *` loops wait for. In write mode the byte on PA goes onto the track.
+**The head** works on bits. The disk turns at 300 rpm, once every 200,000 drive cycles, and a track's 8 × size bit cells pass under the head in that time. So a turn takes the same time on every track, and in every speed zone (VICE testprogs `drive/rpm`).
+- **Reading:** each cell is a bit. Ten 1 bits in a row are a SYNC (PB7 low), and restart the byte. After a SYNC, every 8 bits are a byte: PA latches it, CA1 pulses, and if CA2 enables it the CPU's V flag is set, which the DOS's `BVC *` loops wait for.
+- **Writing:** the byte on PA is shifted out into the cells, a bit per cell, and the next byte is taken (a byte ready) every 8 bits.
+
+**The stepper** has inertia (`drive/inertia`): the head moves a half track toward the coil only after the coil's phase has held for 1,000 cycles, and each further half track takes as long again. A phase held for less, such as stepping out and back, or round all four phases, leaves the head where it was. The DOS steps every 14,000 cycles or so. When the head moves, it keeps its angle: its cell is scaled by the two tracks' sizes, as VICE's.
 
 **Images:**
-- **D64** (35 to 42 tracks, with or without the error bytes) is encoded as the DOS formats it: for each sector a SYNC, the header (`$08`, checksum, sector, track, ID2, ID1, `$0F`, `$0F`), a gap, a SYNC and the data block (`$07`, 256 bytes, checksum), with the gaps filling each track. The error bytes make the sector break as the code says (20 no header, 21 no SYNC, 22 no data block, 23 data checksum, 27 header checksum, 29 ID mismatch).
+- **D64** (35 to 42 tracks, with or without the error bytes) is encoded with VICE's layout (`gcr.cpp`):
+  - each sector is a SYNC, the header (`$08`, checksum, sector, track, ID2, ID1, `$0F`, `$0F`), 9 bytes of `$55`, a SYNC, the data block (`$07`, 256 bytes, checksum) and the zone's gap (8, 17, 12 or 9 bytes), and `$55` fills the rest of the track;
+  - each track is turned on from the last by VICE's skew: the sectors' length, and the time a step takes (`drive/skew`);
+  - the error bytes break the sector as VICE does: 2 a header ID of `$FF` (error 20), 3 no SYNCs on the track (21), 4 a data block ID of `$00` (22, but the data still reads), 5 a bad data checksum (23), 9 a bad header checksum (27), 11 ID1 changed (29);
+  - tracks past the image's are unformatted (`$55`), and can be written.
 - **G64** tracks are taken as stored, half-tracks included.
+- Half-tracks with nothing on them have no flux (zeros).
 
 Writes change the GCR tracks. A D64's track is decoded back into its sectors, and written into the file (`diskfile::patch`, so gzip and zip images too) when the head leaves the track or the disk is ejected.
 
+**The DOS's SEAK** (`$F3B1`) takes a block whose first GCR byte is `$52` for a header. A data block with the ID `$00` (error 22) starts with `$52` too. So which errors a program reads depends on where the sectors are when the head lands on a track, which is why the D64 layout and skew follow VICE's (`drive/scanner/scanner*e`).
+
 ## Not yet
 
-- The head reads whole bytes, not bits. A SYNC is two `$FF` bytes, and a G64 track's length isn't a bit count. So the rotation speed (`drive/rpm`), track-to-track skew beyond whole bytes, and weak or odd bits (`drive/scanner`, `drive/inertia`) aren't right.
+- The speed zone sets neither the read clock nor the write clock. The head reads and writes the track's cells at the track's own density, so a track read in the wrong zone reads right, where a real drive would read garbage.
+- The read circuit's clock recovery, and weak or random bits: unformatted parts of a disk read as no flux, not noise.
 - The VIAs' shift register doesn't shift (its modes set T2's 8-bit mode). Their timers are VICE's (README-VIA, `drive/viavarious` all pass).
 - The 1541-II, 1571 and 1581, a second drive, parallel cables, and a GUI choice between this and `IecDrive`.
 
 ## Tests
 
 - `gcr_track_round_trip`: encoding and decoding GCR tracks.
+- `drive1541_error_map_job_codes`: a D64 with an error map; the DOS's read jobs return each error's code, and errors 22 and 23 still read the data.
 - `via_t1_latch_reads_back`: the DOS loads T1 from its latch.
 - `c64_true_drive_kernal_load`: a KERNAL `LOAD` from a D64 through the drive's DOS.
 - `via_t1_counts_through_ffff_and_reloads`, `via_t2_eight_bit_mode`: the VIA timers.
 
-VICE testprogs that pass:
-- all of `drive/viavarious` (19);
-- `drive/1541-testsuite` (both disks), `defaults`, `diskid`, `format`, `iecdelay`;
-- `drive/interrupts/timera`, `openbus`, `openbus2`, `rpm1`, `rpm2`, `selftest`, `skew1`;
-- `drive/scanner` 35, 40 and 42;
+VICE testprogs that pass: all of `drive/` and `vdrive/` in the list, and all of `general/fuxxortest`:
+- `drive/viavarious` (19);
+- `drive/1541-testsuite` (both disks), `defaults`, `diskid`, `format`, `iecdelay`, `inertia`;
+- `drive/interrupts/timera`, `openbus`, `openbus2`, `rpm1`, `rpm2`, `rpm3`, `selftest`, `skew1`;
+- `drive/scanner` 35, 40 and 42, with and without error maps;
 - `vdrive/bustakeover`, `vdrive/sa-check`;
-- `general/fuxxortest/ef2-inst1`.
+- `general/fuxxortest`, `test-fuxxored` included.
 
-Not yet:
-- `drive/rpm/rpm3` (times out);
-- the error-map scanners: a data block whose ID isn't `$07` gives error 27 instead of 22;
-- `general/fuxxortest/test-fuxxored`;
-- `drive/inertia`, which VICE fails too: it needs the head's inertia.
+`drive/inertia` (Krill's drive-emu-check) is one that VICE fails ("EMU"): it steps out and back faster than the head can follow.
 
-The VICE runner (README-C64 §2.15) uses the true drive for the list's `drive/`, `vdrive/` and `general/fuxxortest` programs. With `MMEMU_VICE_TRUEDRIVE=1` it uses it for every program.
+The VICE runner (README-C64 §2.15) uses the true drive for the list's `drive/`, `vdrive/` and `general/fuxxortest` programs. With `MMEMU_VICE_TRUEDRIVE=1` it uses it for every program. The list's `mountg64:` and `mountp64:` entries aren't run.

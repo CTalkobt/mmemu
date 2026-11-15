@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -14,6 +15,8 @@ namespace gcr {
 int trackBytes(int track);
 /** The speed zone the DOS uses for a track (3: tracks 1-17 ... 0: 31-). */
 int speedZone(int track);
+/** The gap after each sector's data block (VICE's: 8, 17, 12, 9 bytes). */
+int gapSize(int track);
 /** Sectors on a track of a 1541 disk (21, 19, 18, 17). */
 int sectorsOnTrack(int track);
 
@@ -24,16 +27,24 @@ bool decode4(const uint8_t in[5], uint8_t out[4]);
 
 /**
  * One track of a D64 as a 1541 formats it: for each sector a SYNC, the
- * header block ($08, checksum, sector, track, ID2, ID1, $0F, $0F), a gap of
- * $55, a SYNC and the data block ($07, 256 bytes, checksum), with the
- * gaps between sectors filling the track. `sectors` holds the track's
+ * header block ($08, checksum, sector, track, ID2, ID1, $0F, $0F), 9 bytes
+ * of $55, a SYNC, the data block ($07, 256 bytes, checksum) and the zone's
+ * gap; $55 fills the rest of the track. The track is turned `skew` bytes on
+ * (VICE's layout, trackSkew). `sectors` holds the track's
  * sectors' 256 bytes each; `errors` (or null) the D64's error byte for each
  * (1 = OK; 2 header not found, 3 no SYNC, 4 data block not found,
  * 5 checksum error, 9 header checksum error, 11 ID mismatch as the 1541's
  * error codes 20, 21, 22, 23, 27, 29).
  */
 std::vector<uint8_t> encodeTrack(int track, const uint8_t* sectors, uint8_t id1, uint8_t id2,
-                                 const uint8_t* errors = nullptr);
+                                 const uint8_t* errors = nullptr, size_t skew = 0);
+
+/**
+ * Where VICE starts a D64's track (in bytes) given where the track before
+ * started (`prev`, 0 before track 1): its sectors' length on from there,
+ * and the time a step takes. Gives skew1's track-to-track offsets.
+ */
+size_t trackSkew(int track, size_t prev);
 
 /**
  * The sectors of a GCR track back into 256-byte blocks: `out` gets

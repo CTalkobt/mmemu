@@ -1161,6 +1161,10 @@ int runViceExitcodeTest(const std::string& prgPath, uint64_t limit,
         bus->write8(p, (uint8_t)end);
         bus->write8(p + 1, (uint8_t)(end >> 8));
     }
+    // VICE's testbench autostarts a PRG from drive 8, which leaves the
+    // KERNAL's device number (FA) at 8 (general/fuxxortest/test-fuxxored
+    // talks to the drive it was loaded from)
+    bus->write8(0xBA, 8);
     const char* run = "RUN\r";
     for (int i = 0; i < 4; ++i) bus->write8(0x0277 + i, (uint8_t)run[i]);
     bus->write8(0xC6, 4);
