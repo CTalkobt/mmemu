@@ -523,8 +523,10 @@ TEST_CASE(coco_fd500_latch_hook) {
     ASSERT_EQ(fdc->controller().selectedDrive(), 0);
     ASSERT(fdc->controller().motor());
     ASSERT(!fdc->controller().doubleDensity());
-    // HALT: the CPU stops until DRQ
+    // HALT: the CPU stops until DRQ (after the instruction under way and the
+    // next, as the 6809 samples /HALT at an instruction's end)
     bus->write8(0xFF40, 0x89);
+    run(m, 1000);
     const uint64_t c0 = m->cpus[0].cpu->cycles();
     run(m, 1000);
     ASSERT_EQ(m->cpus[0].cpu->cycles(), c0);
@@ -595,4 +597,100 @@ TEST_CASE(coco_fd500_reads_a_sector) {
     ASSERT(fd.ejectDisk(0));
     ASSERT(fd.diskPath(0).empty());
     std::remove(dsk.c_str());
+}
+
+namespace {
+
+// Disk BASIC's way of reading a sector, run by the 6809 from a stand-in disk
+// ROM: wait for the first DRQ, then LDA $FF4B / STA ,X+ / STB $FF40 (HALT
+// enable) / BRA, ended by INTRQ's NMI. `lateDensity` writes READ SECTOR in
+// single density and only then the latch that selects double density, as
+// OS-9's CoCo 3 boot driver does.
+uint8_t readSectorByCpu(bool lateDensity, std::vector<uint8_t>& got) {
+    Asm basic(0xA000);
+    basic.ext(0x7E, 0xC000);                                 // JMP $C000
+    basic.word(0xBFFC, 0xC100);                              // NMI
+    basic.word(0xBFFE, 0xA000);                              // RESET
+    Asm d(0xC000, 0x2000, 0x12);
+    d.emit({0x10, 0xCE, 0x7F, 0x00});                        // LDS #$7F00
+    d.emit({0x1A, 0x50});                                    // ORCC #$50
+    d.emit({0x86, 0x09}); d.ext(0xB7, 0xFF40);               // drive 0, motor (no NMI yet)
+    d.emit({0x86, 0x03}); d.ext(0xB7, 0xFF48);               // RESTORE
+    const uint16_t busy = d.pc;
+    d.ext(0xB6, 0xFF48);                                     // LDA status (clears INTRQ)
+    d.emit({0x85, 0x01});                                    // BITA #BUSY
+    d.branch(0x26, busy);                                    // BNE busy
+    if (!lateDensity) { d.emit({0x86, 0x29}); d.ext(0xB7, 0xFF40); }
+    d.emit({0x86, 0x01}); d.ext(0xB7, 0xFF4A);               // sector 1
+    d.emit({0x8E, 0x06, 0x00});                              // LDX #$0600
+    d.emit({0x86, 0x80}); d.ext(0xB7, 0xFF48);               // READ SECTOR
+    if (lateDensity) { d.emit({0x86, 0x29}); d.ext(0xB7, 0xFF40); }
+    d.emit({0xC6, 0xA9});                                    // LDB #$A9: HALT, DD + NMI, motor, drive 0
+    d.emit({0xCE, 0xFF, 0x48});                              // LDU #$FF48
+    const uint16_t wait = d.pc;
+    d.emit({0x86, 0x02, 0xA5, 0xC4});                        // LDA #2 / BITA ,U
+    d.branch(0x27, wait);                                    // BEQ wait
+    const uint16_t loop = d.pc;
+    d.ext(0xB6, 0xFF4B);                                     // LDA $FF4B
+    d.emit({0xA7, 0x80});                                    // STA ,X+
+    d.ext(0xF7, 0xFF40);                                     // STB $FF40
+    d.branch(0x20, loop);                                    // BRA loop
+    d.pc = 0xC100;                                           // NMI: mark, then stay
+    d.ext(0xB6, 0xFF48);                                     // LDA status
+    d.ext(0xB7, CART_MARK + 1);
+    d.emit({0x86, 0x5D}); d.ext(0xB7, CART_MARK);
+    d.branch(0x20, d.pc);
+
+    char tmpl[] = "/tmp/coco_halt_XXXXXX";
+    int fdesc = mkstemp(tmpl);
+    close(fdesc);
+    const std::string rom = std::string(tmpl) + ".rom", dsk = std::string(tmpl) + ".dsk";
+    std::remove(tmpl);
+    { std::ofstream f(rom, std::ios::binary); f.write((const char*)d.b.data(), (std::streamsize)d.b.size()); }
+    std::vector<uint8_t> img(35 * 18 * 256, 0xE5);
+    for (int i = 0; i < 256; ++i) img[i] = (uint8_t)(i * 7 + 3);   // track 0, sector 1
+    { std::ofstream f(dsk, std::ios::binary); f.write((const char*)img.data(), (std::streamsize)img.size()); }
+
+    coco::Roms roms;
+    roms.colorBasic = basic.b;
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    uint8_t status = 0xFF;
+    if (m && m->expansionSlot("cart")->install("fd500", rom, err)) {
+        auto* fdc = dynamic_cast<coco::Fd500*>(coco::systemOf(m)->cart());
+        if (fdc && fdc->mountDisk(0, dsk)) {
+            m->onReset(*m);
+            run(m, 2000000);
+            IBus* bus = m->buses[0].bus;
+            if (bus->peek8(CART_MARK) == 0x5D) status = bus->peek8(CART_MARK + 1);
+            got.clear();
+            for (int i = 0; i < 256; ++i) got.push_back(bus->peek8((uint16_t)(0x0600 + i)));
+        }
+    }
+    delete m;
+    std::remove(rom.c_str());
+    std::remove(dsk.c_str());
+    return status;
+}
+
+}  // namespace
+
+// The 6809 sees /HALT at the end of the instruction after the one that raises
+// it, so Disk BASIC's loop stores every byte, the 256th too, before INTRQ's NMI
+TEST_CASE(coco_fd500_halt_loop_keeps_last_byte) {
+    std::vector<uint8_t> got;
+    const uint8_t status = readSectorByCpu(false, got);
+    ASSERT_EQ(status & 0x1C, 0);       // NMI taken, no RNF / CRC / lost data
+    ASSERT_EQ(got.size(), 256u);
+    for (int i = 0; i < 256; ++i) ASSERT_EQ(got[i], (uint8_t)(i * 7 + 3));
+}
+
+// READ SECTOR written in single density, then double density selected: the
+// search under way finds the double-density IDs (OS-9 Level 2's boot driver)
+TEST_CASE(coco_fd500_density_set_after_read_command) {
+    std::vector<uint8_t> got;
+    const uint8_t status = readSectorByCpu(true, got);
+    ASSERT_EQ(status & 0x1C, 0);
+    ASSERT_EQ(got.size(), 256u);
+    for (int i = 0; i < 256; ++i) ASSERT_EQ(got[i], (uint8_t)(i * 7 + 3));
 }

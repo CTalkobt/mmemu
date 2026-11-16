@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: /HALT seen an instruction late, DDEN read during the ID search: OS-9 Level 2 boots (#356)
+
+- The 6809 samples /HALT at the end of an instruction, so a HALT raised in
+  an instruction's last cycle (Disk BASIC's `LDB $FF4B` clearing DRQ, or
+  the `STA $FF40` that re-enables it) is seen only after the next one.
+  mmsim halted at once, which made the read loop stop before storing each
+  sector's 256th byte when INTRQ's NMI came: every sector Disk BASIC read
+  lost its last byte (`DOS` jumped into a corrupt boot track).
+- The WD279x reads its DDEN pin as it searches for an ID, so selecting
+  double density after writing READ SECTOR still finds the sector. OS-9's
+  CoCo 3 boot driver does exactly that; mmsim fixed the density at the
+  command's start and gave "record not found".
+- With the real ROMs, `DOS` on a `coco3` with the FD-502 now boots the OS-9
+  Level 2 system disk to its `Time ?` prompt; `mdir` lists the modules.
+
 ### Model 100/102/200: the Tandy Disk/Video Interface (#358)
 
 - **The DVI (26-3806)** is emulated from its service manual: the box's own

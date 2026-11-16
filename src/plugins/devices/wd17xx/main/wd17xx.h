@@ -148,7 +148,8 @@ public:
     void setMotor(bool on);
     bool motor() const { return m_motor; }
     /** DDEN: true = double density (MFM). Ignored on the FD1771. */
-    void setDoubleDensity(bool dd) { m_dden = dd; }
+    /** The DDEN pin; read throughout an ID search, so a change mid-search takes effect there. */
+    void setDoubleDensity(bool dd);
     bool doubleDensity() const;
     void setReadyMode(ReadyMode m);
     /** Controller clock: 1 MHz (5.25") or 2 MHz (8"), for step and settle times. */
