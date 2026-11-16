@@ -58,6 +58,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
   (`expansion joyright cm3`): the hi-res ramp started by PIA0 PA0-PA3
   low, with MAME's (unmeasured) timing.
 
+### Matra Alice: checked with its own BASIC (#357)
+
+- The Alice (4K)'s Micro Color BASIC (`alice.rom`, CRC f876abe9 as MAME's
+  and XRoar's; from Daniel Coulom's DCAlice site as `alice4k.rom`) boots on
+  the `alice` profile with 3142 bytes free (19526 with the 16K pack), runs a
+  program typed through the ROM's AZERTY key table, and CSAVEs and CLOADs a
+  `.k7`. New real-ROM tests `mc10_rom_alice` and `mc10_rom_alice_csave_cload`
+  (skipped without the ROM).
+
 ### Matra Alice 32 and Alice 90; the Thomson EF9345 (#357)
 
 - New profiles `alice32` (8 KB of RAM at `$3000`) and `alice90` (32 KB),

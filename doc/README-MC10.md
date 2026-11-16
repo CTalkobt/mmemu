@@ -35,7 +35,7 @@ their directory:
 | File | Contents |
 |------|----------|
 | `mc10.rom` | Micro Color BASIC 1.0, 8 KB at `$E000` (required for `mc10`) |
-| `alice.rom` | The Alice's BASIC, 8 KB (required for `alice`) |
+| `alice.rom` | The Alice's BASIC, 8 KB (required for `alice`; DCAlice's `alice4k.rom`, the same as MAME's) |
 | `mcx128bas.rom` / `alice128bas.rom` | The MCX-128's 16 KB EPROM, MCX BASIC 2.1 (QWERTY / AZERTY; optional) |
 | `alice32.rom` | The Alice 32's and 90's BASIC, 16 KB at `$C000` (required for `alice32`, `alice90`) |
 | `ef9345.rom` | The EF9345's character ROM, 8 KB (MAME's `charset.rom` from its `alice32` set is taken too) |
@@ -218,14 +218,14 @@ server works with the 6803's registers (`--gdb-port`).
 program, CSAVEs to the recorder and CLOADs the `.c10` back, and LLISTs to
 the serial printer; MCX BASIC 2.1 boots on the MC-10 in its three
 choices (31558, 28703 and 47454 bytes free) and its AZERTY build on the
-Alice; the Alice 32 and 90's BASIC (`alice32.rom`, Micro Color BASIC 1.0)
+Alice; the Alice's own BASIC (`alice.rom`: the MC-10's with the AZERTY key
+table) boots with 3142 bytes free (19526 with the pack), runs a program,
+and CSAVEs and CLOADs a `.k7`; the Alice 32 and 90's BASIC (`alice32.rom`, Micro Color BASIC 1.0)
 boots on the EF9345 with 7238 and 31814 bytes free, runs a program, and
 CSAVEs and CLOADs a `.k7`. Keyboard typing goes through the ROM's own scan.
 
 ## Not done
 
-- The Alice's own BASIC (`alice.rom`) was not found to test with: the
-  `alice` profile is checked with MCX BASIC's AZERTY build and stand-ins.
 - The Alice 32/90's EF9345 gaps above.
 
 ## Testing
