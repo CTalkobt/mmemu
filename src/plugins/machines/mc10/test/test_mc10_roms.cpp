@@ -168,6 +168,54 @@ TEST_CASE(mc10_rom_mcx128) {
     }
 }
 
+// The Alice (4K)'s own Micro Color BASIC 1.0: the MC-10's with the AZERTY
+// key table; 3142 free alone, 19526 with the 16K pack; CSAVE and CLOAD
+TEST_CASE(mc10_rom_alice) {
+    if (!have("alice.rom")) return;
+    const struct { mc10::Expansion exp; const char* mem; } setups[] = {
+        {mc10::Expansion::None, " 3142"}, {mc10::Expansion::RamPack16K, " 19526"},
+    };
+    for (const auto& c : setups) {
+        Real m(mc10::Model::Alice, c.exp);
+        ASSERT(m.sys != nullptr);
+        ASSERT(m.waitFor("MICROCOLOR BASIC 1.0", 5));
+        ASSERT(m.waitFor("OK", 5));
+        m.runFor(1);
+        m.type("PRINT MEM\\n");                   // typed by legend: the AZERTY positions
+        EXPECT_TRUE(m.waitFor(c.mem, 5));
+        m.type("10 FOR I=1 TO 3:PRINT I*7;:NEXT\\nRUN\\n");
+        EXPECT_TRUE(m.waitFor(" 7  14  21", 10));
+    }
+}
+
+TEST_CASE(mc10_rom_alice_csave_cload) {
+    if (!have("alice.rom")) return;
+    const std::string tape = "/tmp/mmsim_alice_" + std::to_string((long)getpid()) + ".k7";
+    {
+        Real m(mc10::Model::Alice, mc10::Expansion::None);
+        ASSERT(m.waitFor("OK", 5));
+        m.runFor(1);
+        m.type("10 PRINT \"SAVED\";6*7\\n");
+        m.runFor(3);
+        ASSERT(m.sys->tapeDeck.startTapeRecord());
+        m.type("CSAVE \"T\"\\n");
+        ASSERT(m.waitAfter("CSAVE", "OK", 30));
+        m.sys->tapeDeck.stopTapeRecord();
+        ASSERT(m.sys->tapeDeck.saveTapeRecording(tape));
+    }
+    Real m(mc10::Model::Alice, mc10::Expansion::None);
+    ASSERT(m.waitFor("OK", 5));
+    m.runFor(1);
+    ASSERT(m.sys->tapeDeck.mountTape(tape));
+    m.type("CLOAD\\n");
+    m.runFor(1);
+    m.sys->tapeDeck.controlTape("play");
+    m.runFor(15);
+    m.type("RUN\\n");
+    EXPECT_TRUE(m.waitFor("SAVED 42", 30));
+    std::remove(tape.c_str());
+}
+
 // The AZERTY build on the Alice (no Alice BASIC needed: the EPROM has all)
 TEST_CASE(mc10_rom_alice_mcx128) {
     if (!have("alice128bas.rom")) return;
