@@ -697,6 +697,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6801/test/test_cpu6801.cpp \
 	src/plugins/6801/test/test_asm6801.cpp \
 	src/plugins/machines/mc10/test/test_mc10_machine.cpp \
+	src/plugins/machines/mc10/test/test_mc10_roms.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
 	src/plugins/machines/coco/test/test_coco3_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_storage.cpp \

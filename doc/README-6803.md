@@ -61,7 +61,11 @@ Single-Chip Microcomputer Reference Manual (Motorola).
   counter's MSB (TOF), write the output compare (OCF) or read the capture's
   MSB (ICF).
 - **SCI:** NRZ at the internal rate (or `sciExternalClock()`, 8 a bit, for
-  CC = 11). Enabling TE sends a preamble of ten 1s; TDR is shifted out
+  CC = 11), or bi-phase (CC = 00, the same rates): the line toggles every
+  bit time and again at the half bit for a 1 (Motorola's patent on the
+  6801's serial logic, US 4,346,452); the receiver reads P23 at a quarter
+  and three quarters of each bit, a mid-bit transition a 1, a line without
+  the bit-time transition idle. Enabling TE sends a preamble of ten 1s; TDR is shifted out
   LSB first with start and stop bits on P24 (`onTxLine`, `onTxByte`).
   The receiver samples P23 (or characters queued with `receiveByte`):
   RDRF, overrun and framing errors (ORFE), and the wake-up mode (WU,
@@ -70,9 +74,21 @@ Single-Chip Microcomputer Reference Manual (Motorola).
 - **Ports:** each `Port` has the DDR, the data register, what drives its
   input pins (`in`), and `preRead`/`postWrite` callbacks for the machine.
 
-Not modelled: the bi-phase SCI format (CC = 00 runs as NRZ), port 3's IS3
-handshake and its interrupt, the standby/power-down behaviour of RAM
-control's STBY PWR, and the address trap.
+- **Port 3's handshake** (the single-chip modes, where P3CSR is the
+  chip's): `setIs3Line()`'s falling edge sets the IS3 flag (an IRQ1 with
+  IS3 ENABLE) and, with LE, latches port 3's inputs until port 3 is read;
+  the flag clears on a P3CSR read then a port 3 read or write;
+  `onOutputStrobe` is SC2's pulse after a port 3 read (OSS 0) or write
+  (OSS 1).
+- **Standby:** `setStandby()` (STBY low) stops the chip until /RESET, the
+  RAM kept; `standbyPowerLost()` clears STBY PWR (RAM control bit 7), which
+  the program sets to learn later whether its RAM survived.
+- **The bus in the expanded modes:** writes to the chip's own registers and
+  RAM are on the external bus as well (`onInternalWrite`), so a memory
+  board under them (the MC-10's MCX-128) keeps a copy.
+
+The address trap (an illegal address or opcode taking a vector) is the
+Hitachi HD6301's, not the MC6801's, and is not modelled.
 
 ## Disassembler and assembler
 
@@ -102,7 +118,8 @@ the Matra Alice use it: see [README-MC10.md](README-MC10.md).
 - IRQ1 (stacking order, 12 cycles), RTI, SWI, CLI's delay, NMI's edge, WAI;
 - the internal RAM and registers, the modes, the MC6801's ROM;
 - the ports; the timer (counter, preset, TOF/OCF/ICF and their clearing, the OCF interrupt, OLVL);
-- the SCI (a character out and in, TDRE, RDRF and its interrupt);
+- the SCI (a character out and in, TDRE, RDRF and its interrupt); bi-phase, transmitter looped to the receiver;
+- port 3's IS3 latch, flag, clearing, interrupt and SC2 strobes; STBY and STBY PWR;
 - the undocumented opcodes; the disassembler.
 
 `test_asm6801.cpp` assembles every documented opcode's disassembly back to

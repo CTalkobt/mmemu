@@ -31,9 +31,9 @@ public:
     virtual void loadState(const std::vector<uint8_t>&) {}
     /** /NMI from the port. */
     std::function<void(bool)> setNmi;
-    /** A write the cartridge passes on to the machine as well (the MCX-128's
-     *  mirror of $4000-$5FFF into the internal RAM). */
-    std::function<void(uint16_t, uint8_t)> writeThrough;
+    /** A write the 6803 makes to its own RAM or registers: the chip keeps
+     *  it, but the cycle is on the bus too (no SEL: the chip ignores it). */
+    virtual void internalWrite(uint16_t, uint8_t) {}
 };
 
 /** Tandy's 16K RAM Expansion Pack (26-3013): RAM at $5000-$8FFF, 20 KB in all. */
@@ -68,14 +68,17 @@ private:
 };
 
 /**
- * Darren Atkinson's MCX-128: 128 KB of RAM in two 64 KB banks and a 16 KB
- * EPROM with its extended BASIC (mcx128bas.rom). $BF00 selects the RAM
- * banks (bit 0: $0000-$3FFF and $C000-$FFFF; bit 1: $4000-$BEFF, with bit
- * 1 clear the internal RAM's range reads from bank 0 and writes go to both),
- * $BF01 the ROM map (0: EPROM at $C000-$FEFF, 1: RAM at $C000, EPROM's
- * second half at $E000, 2: RAM at $C000, the MC-10's ROM read at $E000
- * with writes to RAM, 3: all RAM); the EPROM's last page at $FF00 in maps 0
- * and 1. As MAME's mcx128.cpp maps it.
+ * Darren Atkinson's MCX-128: 128 KB of SRAM in two 64 KB banks and a 16 KB
+ * EPROM with MCX BASIC (mcx128bas.rom), decoded by a GAL22V10 as its
+ * equations (MCX128.pld) give it. $BF00-$BF7F are the registers (even:
+ * the RAM banks, P0 for $0000-$3FFF and $C000-$FEFF, P1 for $4000-$BEFF;
+ * odd: the ROM map, 0 all EPROM at $C000, 1 RAM at $C000 and the EPROM's
+ * upper half at $E000, 2 RAM at $C000 and the MC-10's ROM at $E000, 3 all
+ * RAM); writes to $C000-$FFFF always reach the RAM; $FF00-$FFFF is bank 0's.
+ * The MC-10's own devices keep $4000-$4FFF (while P1 is 0), the keyboard
+ * and VDG at $BF80-$BFFF, and $E000-$FFFF reads in map 2. Writes to the
+ * 6803's own RAM and registers are on the bus too, so they land in the
+ * SRAM under them ($0000-$00FF): with RAME cleared BASIC finds them there.
  */
 class Mcx128 : public Cart {
 public:
@@ -90,8 +93,14 @@ public:
     void loadState(const std::vector<uint8_t>& s) override;
     uint8_t bankControl() const { return m_bankCr; }
     uint8_t romControl() const { return m_romCr; }
+    void internalWrite(uint16_t a, uint8_t v) override;
+    /** The SRAM (128 KB: bank 1 at $10000). */
+    uint8_t sram(uint32_t off) const { return m_ram[off & 0x1FFFF]; }
 private:
-    /** The RAM offset for `a` (-1: not the cartridge's RAM in this map). */
+    /** The MC-10's own decoding keeps the cycle (SEL high). */
+    bool internal(uint16_t a, bool write) const;
+    bool romSelected(uint16_t a) const;
+    /** The SRAM offset for `a` (-1: not selected). */
     long ramOffset(uint16_t a, bool write) const;
     std::vector<uint8_t> m_ram, m_rom;
     uint8_t m_bankCr = 0, m_romCr = 0;

@@ -59,6 +59,8 @@ public:
     // TCSR bits
     static constexpr uint8_t TCSR_OLVL = 0x01, TCSR_IEDG = 0x02, TCSR_ETOI = 0x04, TCSR_EOCI = 0x08,
                              TCSR_EICI = 0x10, TCSR_TOF = 0x20, TCSR_OCF = 0x40, TCSR_ICF = 0x80;
+    // P3CSR bits
+    static constexpr uint8_t P3_LE = 0x08, P3_OSS = 0x10, P3_IS3E = 0x40, P3_IS3F = 0x80;
     // TRCSR bits
     static constexpr uint8_t TR_WU = 0x01, TR_TE = 0x02, TR_TIE = 0x04, TR_RE = 0x08, TR_RIE = 0x10,
                              TR_TDRE = 0x20, TR_ORFE = 0x40, TR_RDRF = 0x80;
@@ -131,6 +133,10 @@ public:
     bool readInternal(uint16_t addr, uint8_t& v);
     /** An internal location as the CPU writes it. */
     bool writeInternal(uint16_t addr, uint8_t v);
+    /** A write to an internal location: the chip takes it, but in the
+     *  expanded modes the cycle is on the external bus as well (address,
+     *  R/W low, the data), so a device decoding those addresses sees it. */
+    std::function<void(uint16_t addr, uint8_t v)> onInternalWrite;
     /** The 128 bytes of RAM. */
     const uint8_t* internalRam() const { return m_ram; }
 
@@ -156,6 +162,21 @@ public:
     /** Port 2's input pins changed (P20 is the timer's Tin: an IEDG edge
      *  captures the counter). */
     void setPort2Input(uint8_t in);
+
+    /** IS3 (SC1 in the single-chip modes): its falling edge sets the IS3
+     *  flag (an IRQ1 with IS3 ENABLE) and, with LE, latches port 3's inputs
+     *  until port 3 is read. The flag clears on a P3CSR read then a port 3
+     *  read or write. */
+    void setIs3Line(bool low);
+    /** SC2's output strobe: a pulse after a port 3 read (OSS 0) or write (OSS 1). */
+    std::function<void()> onOutputStrobe;
+    /** STBY low: the chip stops (the clock, the pins) until /RESET; the RAM
+     *  is kept on the standby supply. */
+    void setStandby(bool low) { if (low) m_standby = true; }
+    /** The standby supply dropped: STBY PWR (RAM control bit 7) reads 0
+     *  until the program sets it again, so it knows the RAM was lost. */
+    void standbyPowerLost() { m_ramc &= (uint8_t)~0x80; }
+    bool standby() const { return m_standby; }
 
     // --- Timer and SCI ----------------------------------------------------------
     uint16_t counter() const { return m_counter; }
@@ -231,6 +252,7 @@ private:
     bool romMapped(uint16_t a) const;
     bool ramMapped(uint16_t a) const;
     bool regMapped(uint16_t a) const;
+    void port3Accessed(bool write);
 
     Variant m_variant;
     IBus* m_bus = nullptr;
@@ -251,6 +273,9 @@ private:
     // Ports
     Port m_port[4];
     uint8_t m_p3csr = 0;
+    uint8_t m_p3Latch = 0;             // port 3's inputs latched by IS3
+    bool m_p3Latched = false, m_p3ClearPending = false, m_is3 = false;
+    bool m_standby = false;
     bool m_tin = true;                 // P20's last level, for input capture edges
 
     // Timer
@@ -266,6 +291,9 @@ private:
     int m_sciDiv = 0;                  // E cycles toward the next bit time
     int m_extClocks = 0;
     bool m_tx = true;
+    bool m_biMid = false;              // bi-phase: a 1's mid-cell transition to come
+    bool m_biQ1 = true, m_biQ3 = true; // bi-phase: P23 at a quarter and three quarters of the cell
+    bool m_biPrev = true;              // ... and at three quarters of the cell before
     int m_txBits = 0;                  // 0 idle / preamble state, 1-9 shifting
     bool m_txPreamble = false;
     int m_preambleBits = 0;

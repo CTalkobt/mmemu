@@ -99,6 +99,8 @@ void M6801::reset() {
     m_nmiPending = false;
     for (auto& p : m_port) p.ddr = 0;
     m_p3csr = 0;
+    m_p3Latched = m_p3ClearPending = false;
+    m_standby = false;
     m_tcsr = 0;
     m_tcsrRead = 0;
     m_counter = 0;
@@ -113,6 +115,7 @@ void M6801::reset() {
     m_sciDiv = 0;
     m_extClocks = 0;
     m_tx = true;
+    m_biMid = false;
     m_txBits = 0;
     m_txPreamble = false;
     m_rxBits = 0;
@@ -140,7 +143,7 @@ void M6801::saveState(uint8_t* buf) const {
     put(v, m_mode); put(v, m_ramc);
     v.insert(v.end(), m_ram, m_ram + 128);
     for (const auto& p : m_port) { put(v, p.ddr); put(v, p.data); put(v, p.in); }
-    put(v, m_p3csr);
+    put(v, m_p3csr); put(v, m_p3Latch); put(v, (uint8_t)(m_p3Latched | m_p3ClearPending << 1 | m_is3 << 2 | m_standby << 3 | m_biMid << 4));
     put(v, m_counter); put(v, m_ocr); put(v, m_icr); put(v, m_tcsr); put(v, m_tcsrRead); put(v, m_lsbLatch);
     put(v, m_rmcr); put(v, m_trcsr); put(v, m_rdr); put(v, m_tdr); put(v, m_trRead);
     put(v, (int16_t)m_sciDiv); put(v, (uint8_t)m_tx); put(v, (uint8_t)m_txBits); put(v, (uint8_t)m_txPreamble);
@@ -160,7 +163,8 @@ void M6801::loadState(const uint8_t* buf) {
     std::memcpy(m_ram, p, 128);
     p += 128;
     for (auto& q : m_port) { get(p, q.ddr); get(p, q.data); get(p, q.in); }
-    get(p, m_p3csr);
+    get(p, m_p3csr); get(p, m_p3Latch);
+    { uint8_t f; get(p, f); m_p3Latched = f & 1; m_p3ClearPending = f & 2; m_is3 = f & 4; m_standby = f & 8; m_biMid = f & 16; }
     get(p, m_counter); get(p, m_ocr); get(p, m_icr); get(p, m_tcsr); get(p, m_tcsrRead); get(p, m_lsbLatch);
     get(p, m_rmcr); get(p, m_trcsr); get(p, m_rdr); get(p, m_tdr); get(p, m_trRead);
     int16_t div = 0; uint8_t b8 = 0;
@@ -209,7 +213,10 @@ bool M6801::peekInternal(uint16_t a, uint8_t& v) const {
         case P1DDR: case P2DDR: case P3DDR: case P4DDR: v = 0xFF; break;
         case P1DR: v = m_port[0].pins(); break;
         case P2DR: v = (uint8_t)(((port2Out() & m_port[1].ddr) | (m_port[1].in & ~m_port[1].ddr)) & 0x1F) | (uint8_t)(m_mode << 5); break;
-        case P3DR: v = m_port[2].pins(); break;
+        case P3DR:                                         // the latched inputs while LE has them
+            v = (m_p3csr & P3_LE) && m_p3Latched ? (uint8_t)((m_p3Latch & ~m_port[2].ddr) | (m_port[2].data & m_port[2].ddr))
+                                                 : m_port[2].pins();
+            break;
         case P4DR: v = m_port[3].pins(); break;
         case TCSR: v = m_tcsr; break;
         case CRH: v = (uint8_t)(m_counter >> 8); break;
@@ -235,6 +242,7 @@ bool M6801::readInternal(uint16_t a, uint8_t& v) {
         case P1DR: if (m_port[0].preRead) m_port[0].preRead(); break;
         case P2DR: if (m_port[1].preRead) m_port[1].preRead(); break;
         case P3DR: if (m_port[2].preRead) m_port[2].preRead(); break;
+        case P3CSR: if (m_p3csr & P3_IS3F) m_p3ClearPending = true; break;   // the first step of clearing IS3
         case P4DR: if (m_port[3].preRead) m_port[3].preRead(); break;
         default: break;
     }
@@ -248,6 +256,9 @@ bool M6801::readInternal(uint16_t a, uint8_t& v) {
             break;
         case ICRH:                                         // ICF: TCSR then the capture's MSB
             if (m_tcsrRead & TCSR_ICF) { m_tcsr &= (uint8_t)~TCSR_ICF; m_tcsrRead &= (uint8_t)~TCSR_ICF; }
+            break;
+        case P3DR:                                         // IS3: P3CSR then port 3; the latch opens; OSS 0 strobes
+            port3Accessed(false);
             break;
         case TRCSR: m_trRead = m_trcsr & (TR_RDRF | TR_ORFE | TR_TDRE); break;
         case RDR:                                          // RDRF, ORFE: TRCSR then RDR
@@ -270,7 +281,7 @@ bool M6801::writeInternal(uint16_t a, uint8_t v) {
         case P4DDR: m_port[3].ddr = v; portWritten(4); break;
         case P1DR: m_port[0].data = v; portWritten(1); break;
         case P2DR: m_port[1].data = (uint8_t)(v & 0x1F); portWritten(2); break;
-        case P3DR: m_port[2].data = v; portWritten(3); break;
+        case P3DR: m_port[2].data = v; portWritten(3); port3Accessed(true); break;
         case P4DR: m_port[3].data = v; portWritten(4); break;
         case TCSR: m_tcsr = (uint8_t)((m_tcsr & 0xE0) | (v & 0x1F)); break;
         case CRH: m_counter = 0xFFF8; break;               // a write presets the counter
@@ -306,6 +317,27 @@ bool M6801::writeInternal(uint16_t a, uint8_t v) {
         default: break;
     }
     return true;
+}
+
+// Port 3's handshake (the single-chip modes): an access to its data register
+// finishes clearing IS3 (after a P3CSR read saw it), a read opens the
+// latch, and the output strobe SC2 pulses for a read (OSS 0) or a write (OSS 1)
+void M6801::port3Accessed(bool write) {
+    if (m_p3ClearPending) { m_p3csr &= (uint8_t)~P3_IS3F; m_p3ClearPending = false; }
+    if (!write) m_p3Latched = false;
+    if (((m_p3csr & P3_OSS) != 0) == write && onOutputStrobe) onOutputStrobe();
+}
+
+void M6801::setIs3Line(bool low) {
+    if (low && !m_is3) {                                   // the falling edge
+        m_p3csr |= P3_IS3F;
+        if ((m_p3csr & P3_LE) && !m_p3Latched) {           // the inputs held until port 3 is read
+            if (m_port[2].preRead) m_port[2].preRead();
+            m_p3Latch = m_port[2].in;
+            m_p3Latched = true;
+        }
+    }
+    m_is3 = low;
 }
 
 void M6801::portWritten(int n) {
@@ -344,7 +376,19 @@ void M6801::tick() {
     m_ocInhibit = false;
     const int cc = (m_rmcr >> 2) & 3;
     if (cc != 3 && (m_trcsr & (TR_TE | TR_RE))) {
-        if (++m_sciDiv >= SCI_DIV[m_rmcr & 3]) {
+        const int div = SCI_DIV[m_rmcr & 3];
+        ++m_sciDiv;
+        if (cc == 0) {                                     // bi-phase: the half bit and the receiver's quarters
+            if (m_sciDiv == div / 2 && m_biMid && (m_trcsr & TR_TE)) {
+                m_biMid = false;
+                m_tx = !m_tx;
+                if (onTxLine) onTxLine(m_tx);
+                portWritten(2);
+            }
+            if (m_sciDiv == div / 4) { m_biPrev = m_biQ3; m_biQ1 = (m_port[1].in & 0x08) != 0; }
+            if (m_sciDiv == div * 3 / 4) m_biQ3 = (m_port[1].in & 0x08) != 0;
+        }
+        if (m_sciDiv >= div) {
             m_sciDiv = 0;
             sciBit();
         }
@@ -366,7 +410,10 @@ bool M6801::rxLine() const {
         if (m_rxGenBit == 9) return true;
         return (m_rxGenByte >> (m_rxGenBit - 1)) & 1;
     }
-    return (m_port[1].in & 0x08) != 0;                     // P23
+    // Bi-phase on P23: a mid-cell transition is a 1; no transition at the
+    // cell's start (a line not toggling) is idle, marking
+    if (((m_rmcr >> 2) & 3) == 0) return m_biQ1 == m_biPrev || m_biQ1 != m_biQ3;
+    return (m_port[1].in & 0x08) != 0;                     // P23 (NRZ)
 }
 
 // One bit time: the transmitter shifts a bit out, the queued line moves on,
@@ -374,25 +421,30 @@ bool M6801::rxLine() const {
 void M6801::sciBit() {
     if (m_trcsr & TR_TE) {
         const bool was = m_tx;
+        bool bit = true;                                   // the bit this cell sends (idle: marking)
         if (m_txPreamble) {
-            m_tx = true;
             if (++m_preambleBits >= 10) m_txPreamble = false;
         } else if (m_txBits == 0) {
             if (!(m_trcsr & TR_TDRE)) {                    // a character waiting: its start bit
                 m_tsr = m_tdr;
                 m_txByte = m_tdr;
                 m_trcsr |= TR_TDRE;
-                m_tx = false;
+                bit = false;
                 m_txBits = 1;
             }
         } else if (m_txBits <= 8) {
-            m_tx = m_tsr & 1;
+            bit = m_tsr & 1;
             m_tsr >>= 1;
             ++m_txBits;
         } else {                                           // the stop bit
-            m_tx = true;
             m_txBits = 0;
             if (onTxByte) onTxByte(m_txByte);
+        }
+        if (((m_rmcr >> 2) & 3) == 0) {                    // bi-phase: a transition every cell, another mid-cell for a 1
+            m_tx = !m_tx;
+            m_biMid = bit;
+        } else {
+            m_tx = bit;
         }
         if (was != m_tx) {
             if (onTxLine) onTxLine(m_tx);
@@ -443,7 +495,10 @@ uint8_t M6801::rd(uint16_t a) {
 void M6801::wr(uint16_t a, uint8_t v) {
     ++m_sub;
     tick();
-    if (writeInternal(a, v)) return;
+    if (writeInternal(a, v)) {
+        if (onInternalWrite && m_mode != 4 && m_mode != 7) onInternalWrite(a, v);
+        return;
+    }
     if (m_bus) m_bus->write8(a, v);
 }
 
@@ -576,7 +631,7 @@ int M6801::interrupt() {
         return takeInterrupt(VEC_NMI, !m_wait);
     }
     if (m_cc & CC_I) return 0;
-    if (m_irq1) return takeInterrupt(VEC_IRQ1, !m_wait);
+    if (m_irq1 || ((m_p3csr & P3_IS3F) && (m_p3csr & P3_IS3E))) return takeInterrupt(VEC_IRQ1, !m_wait);
     if (irq2()) return takeInterrupt(irq2Vector(), !m_wait);
     return 0;
 }
@@ -589,6 +644,7 @@ int M6801::step() {
         m_cycles += 2;
         return 2;
     }
+    if (m_standby) { m_cycles += 1; return 1; }  // STBY: stopped until /RESET
     m_sub = 0;
     int c = 0;
     const bool delayed = m_iDelay;           // CLI: one more instruction before an interrupt
