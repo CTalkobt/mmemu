@@ -425,31 +425,129 @@ TEST_CASE(mc10_serial_printer) {
     EXPECT_EQ(p.paper, std::string(32, 'A') + "\nA\n");
 }
 
-// The MCX-128: its EPROM at $C000 (map 0), RAM (map 3), the bank register,
-// $4000-$5FFF read from its RAM with the writes reaching the internal RAM too
+// RS-232 input on P22 (where a printer's ready line comes in): host bytes
+// arrive as 8N1 frames at the baud rate,
+// read by a bit-banged receive loop; `serial loopback` sends back what the
+// MC-10 sends; tcp:PORT takes a client's bytes
+TEST_CASE(mc10_serial_receive) {
+    Machine m(romFrom({
+        "start: LDS #$00FF",
+        "LDX #$4100",
+        "next: LDAA $03", "ANDA #4", "BNE L_next",    // wait for a start bit
+        "BSR L_half",
+        "LDAB #8", "STAB $90",
+        "bit: BSR L_wait",
+        "LDAA $03", "ANDA #4", "LSRA", "LSRA", "LSRA", "ROR $0091",
+        "DEC $0090", "BNE L_bit",
+        "LDAA $91", "STAA 0,X", "INX",
+        "BSR L_wait",                                 // the stop bit
+        "BRA L_next",
+        "half: LDAB #100",
+        "h1: NOP", "DECB", "BNE L_h1", "RTS",
+        "wait: LDAB #200",
+        "w1: NOP", "DECB", "BNE L_w1",
+        "LDAB #5",
+        "w2: DECB", "BNE L_w2",
+        "RTS",
+    }));
+    EXPECT_TRUE(!m.sys->serial.rxLevel());           // a printer: its ready line, low
+    m.sys->setPrinterReady(false);
+    EXPECT_TRUE(m.sys->serial.rxLevel());
+    ASSERT(m.sys->serial.attachSerial("loopback"));
+    m.run(2000);
+    EXPECT_TRUE(m.sys->serial.rxLevel());            // an RS-232 link idles marking
+    m.sys->serial.receive({'O', 'K', 0x0D, 0xA5});
+    m.run(4 * 10 * 1491 + 3000);
+    EXPECT_EQ(m.sys->serial.rxPending(), (size_t)0);
+    EXPECT_EQ(m.sys->ram(0x100), 'O');
+    EXPECT_EQ(m.sys->ram(0x101), 'K');
+    EXPECT_EQ(m.sys->ram(0x102), 0x0D);
+    EXPECT_EQ(m.sys->ram(0x103), 0xA5);
+
+    // Loopback: what is sent is received
+    mc10::SerialPort p;
+    ASSERT(p.attachSerial("loopback"));
+    const double bit = mc10::MASTER_HZ / 600;
+    uint64_t t = 1000;
+    p.txLevel(t, false); t += (uint64_t)bit;
+    for (int i = 0; i < 8; ++i) { p.txLevel(t, (0x42 >> i) & 1); t += (uint64_t)bit; }
+    p.txLevel(t, true);
+    p.txLevel(t + (uint64_t)(bit * 2), true);
+    EXPECT_EQ(p.rxPending(), (size_t)1);
+    p.clock((uint64_t)(bit * 1.5));                   // the start bit, then bit 0 (0)
+    EXPECT_TRUE(!p.rxLevel());
+    p.clock((uint64_t)bit);                           // bit 1 (1)
+    EXPECT_TRUE(p.rxLevel());
+    p.clock((uint64_t)(bit * 9));
+    EXPECT_EQ(p.rxPending(), (size_t)0);
+    EXPECT_TRUE(p.rxLevel());
+    EXPECT_TRUE(!p.attachSerial("tcp:0"));
+    EXPECT_TRUE(p.attachSerial("none"));
+}
+
+// The MCX-128, as its GAL decodes: the EPROM at $C000 (map 0), RAM (map
+// 3), the registers through $BF7F, the internal RAM kept at $4000-$4FFF
+// until P1 banks it out, and the 6803's own writes landing in its SRAM
 TEST_CASE(mc10_mcx128) {
     std::vector<uint8_t> eprom(0x4000);
     for (size_t i = 0; i < eprom.size(); ++i) eprom[i] = (uint8_t)(i >> 8);
     Machine m(romFrom(SPIN), mc10::Model::MC10, mc10::Expansion::Mcx128, eprom);
     ASSERT(m.sys->cart() != nullptr);
+    auto* mcx = dynamic_cast<mc10::Mcx128*>(m.sys->cart());
+    ASSERT(mcx != nullptr);
     EXPECT_EQ(m.sys->cart()->kind(), std::string("mcx128"));
     EXPECT_EQ(m.sys->peek8(0xC100), 0x01);            // map 0: the EPROM
     EXPECT_EQ(m.sys->peek8(0xFF00), 0x3F);
     m.sys->write8(0x4010, 0x99);
-    EXPECT_EQ(m.sys->ram(0x010), 0x99);               // through to the internal RAM (the screen)
-    EXPECT_EQ(m.sys->peek8(0x4010), 0x99);
+    EXPECT_EQ(m.sys->ram(0x010), 0x99);               // the internal RAM (the screen)
+    EXPECT_EQ(mcx->sram(0x4010), 0x00);               // not the SRAM
+    m.sys->write8(0x5010, 0x77);                      // above it: the SRAM
+    EXPECT_EQ(mcx->sram(0x5010), 0x77);
+    EXPECT_EQ(m.sys->peek8(0x5010), 0x77);
+    EXPECT_EQ(m.sys->ram(0x010), 0x99);
     m.sys->write8(0x2000, 0x5A);                      // RAM below $4000
     EXPECT_EQ(m.sys->peek8(0x2000), 0x5A);
-    m.sys->write8(0xBF00, 0x01);                      // bank 1 low
+    m.sys->write8(0xBF00, 0x01);                      // P0: bank 1 low
     EXPECT_EQ(m.sys->peek8(0x2000), 0x00);
+    EXPECT_EQ(m.sys->peek8(0xBF00), 0x01);
+    EXPECT_EQ(m.sys->peek8(0xBF7E), 0x01);            // the registers repeat to $BF7F
     m.sys->write8(0xBF00, 0x00);
     EXPECT_EQ(m.sys->peek8(0x2000), 0x5A);
-    m.sys->write8(0xBF01, 0x03);                      // map 3: RAM at $C000
+    m.sys->write8(0xBF00, 0x02);                      // P1: $4000-$BEFF from bank 1, internal RAM out
+    m.sys->write8(0x4010, 0x33);
+    EXPECT_EQ(mcx->sram(0x14010), 0x33);
+    EXPECT_EQ(m.sys->ram(0x010), 0x99);
+    EXPECT_EQ(m.sys->peek8(0x4010), 0x33);
+    m.sys->write8(0xBF00, 0x00);
+    EXPECT_EQ(m.sys->peek8(0x4010), 0x99);
+    m.sys->write8(0xBFFF, 0x20);                      // $BF80-$BFFF: the MC-10's latch
+    EXPECT_EQ(m.sys->latch(), 0x20);
+    m.sys->write8(0xBF41, 0x03);                      // map 3 (odd: the ROM map): RAM at $C000
     m.sys->write8(0xC100, 0x42);
     EXPECT_EQ(m.sys->peek8(0xC100), 0x42);
-    m.sys->write8(0xBF01, 0x02);                      // map 2: the MC-10's ROM at $E000
+    m.sys->write8(0xBF01, 0x02);                      // map 2: the MC-10's ROM read at $E000
     EXPECT_EQ(m.sys->peek8(0xE000), 0x20);
+    m.sys->write8(0xE000, 0x11);                      // written to the RAM under it
+    EXPECT_EQ(mcx->sram(0xE000), 0x11);
     EXPECT_EQ(m.sys->peek8(0xBF01), 0x02);
+    m.sys->write8(0xBF01, 0x03);
+    EXPECT_EQ(m.sys->peek8(0xE000), 0x11);
+}
+
+// The 6803's writes to its own RAM are on the bus too: the MCX-128's SRAM
+// has them, and with RAME cleared the program reads them back from there
+TEST_CASE(mc10_mcx128_internal_ram_mirror) {
+    Machine m(romFrom({"start: LDS #$00FF", "LDAA #$5C", "STAA $90", "CLR $14", "LDAB $90", "STAB $4000",
+                       "LDAA #$66", "STAA $91", "loop: BRA L_loop"}),
+              mc10::Model::MC10, mc10::Expansion::Mcx128, std::vector<uint8_t>(0x4000, 0xFF));
+    auto* mcx = dynamic_cast<mc10::Mcx128*>(m.sys->cart());
+    ASSERT(mcx != nullptr);
+    m.sys->write8(0xBF01, 0x02);                      // map 2: the stand-in at $E000
+    m.cpu->reset();
+    m.run(200);
+    EXPECT_EQ(mcx->sram(0x90), 0x5C);                 // mirrored while RAME was set
+    EXPECT_EQ(m.sys->ram(0), 0x5C);                   // read back from the SRAM with RAME clear
+    EXPECT_EQ(mcx->sram(0x91), 0x66);                 // RAME clear: the SRAM itself
 }
 
 // Snapshots: the board and the 6803 (registers, timer, internal RAM) come back

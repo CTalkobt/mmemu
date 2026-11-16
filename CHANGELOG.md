@@ -88,6 +88,28 @@ parts.
 - Not modelled, and listed in `doc/README-6809.md`: PC as an inter-register
   destination landing late, the native-mode SYNC flag bug, and SWI
   interrupted by NMI.
+### MC-10 and MC6803 leftovers; the real ROMs boot (#357)
+
+- `test_mc10_roms.cpp`: with the user's ROMs in `roms/mc10/`, Micro Color
+  BASIC 1.0 boots with and without the 16K pack (19526 / 3142 bytes free),
+  runs a program, CSAVEs and CLOADs it back, and LLISTs; MCX BASIC 2.1
+  boots on the MC-10 (all three menu choices) and, AZERTY, on the Alice.
+  Without the files the tests say so and pass.
+- The printer's ready line is P22 (the RS-232 receive pin), as BASIC's
+  printer routine reads it; LLIST waited for ever before. P23 is CTS.
+- RS-232 input on P22: `serial loopback` and `serial tcp:PORT` (both ways),
+  8N1 at the port's baud rate.
+- The MCX-128 is decoded from its GAL's equations: the MC-10 keeps
+  `$4000-$4FFF` while P1 is 0, the registers repeat to `$BF7F`, the
+  keyboard/VDG is `$BF80-$BFFF`, the SRAM is addressed straight with A16
+  from P0/P1. The 6803's writes to its own RAM and registers reach the
+  SRAM under them. The VMC-10 build of the ROM (24-byte header) loads.
+- Program packs: a cartridge handler for `.rom` / `.bin` (`cart`, `-i`,
+  the GUI, MCP).
+- MC6801/6803: the bi-phase SCI format; port 3's IS3 handshake (latch,
+  flag, IRQ1, SC2 strobe); STBY and STBY PWR; internal writes seen on the
+  external bus (`onInternalWrite`). The address trap is the HD6301's, not
+  the 6801's.
 
 ### TRS-80: the real ROMs and DOSes boot (#354)
 

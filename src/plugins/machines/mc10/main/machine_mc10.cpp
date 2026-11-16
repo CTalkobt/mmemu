@@ -14,6 +14,11 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace mc10 {
 
@@ -206,8 +211,15 @@ void Keyboard::clock(uint64_t ticks) {
 // ---------------------------------------------------------------------------
 // The serial port's output
 // ---------------------------------------------------------------------------
-SerialPort::~SerialPort() {
+SerialPort::~SerialPort() { closeLink(); }
+
+void SerialPort::closeLink() {
     if (m_file) std::fclose(m_file);
+    m_file = nullptr;
+    if (m_clientFd >= 0) ::close(m_clientFd);
+    if (m_listenFd >= 0) ::close(m_listenFd);
+    m_clientFd = m_listenFd = -1;
+    m_loopback = false;
 }
 
 bool SerialPort::attachSerial(const std::string& spec) {
@@ -215,16 +227,65 @@ bool SerialPort::attachSerial(const std::string& spec) {
     if (spec.rfind("file:", 0) == 0) path = spec.substr(5);
     else if (spec.rfind("printer:", 0) == 0) path = spec.substr(8);
     if (!path.empty()) {
-        if (m_file) std::fclose(m_file);
-        m_file = std::fopen(path.c_str(), "ab");
-        return m_file != nullptr;
+        FILE* f = std::fopen(path.c_str(), "ab");
+        if (!f) return false;
+        closeLink();
+        m_file = f;
+        return true;
     }
-    if (spec == "none") {
-        if (m_file) std::fclose(m_file);
-        m_file = nullptr;
+    if (spec == "none") { closeLink(); return true; }
+    if (spec == "loopback") { closeLink(); m_loopback = true; return true; }
+    if (spec.rfind("tcp:", 0) == 0) {
+        const int port = std::atoi(spec.c_str() + 4);
+        if (port <= 0 || port > 65535) return false;
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) return false;
+        int one = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        sockaddr_in a{};
+        a.sin_family = AF_INET;
+        a.sin_port = htons((uint16_t)port);
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(fd, (sockaddr*)&a, sizeof a) < 0 || ::listen(fd, 1) < 0) { ::close(fd); return false; }
+        ::fcntl(fd, F_SETFL, O_NONBLOCK);
+        closeLink();
+        m_listenFd = fd;
         return true;
     }
     return false;
+}
+
+void SerialPort::pollTcp() {
+    if (m_clientFd < 0 && m_listenFd >= 0) {
+        const int c = ::accept(m_listenFd, nullptr, nullptr);
+        if (c >= 0) { ::fcntl(c, F_SETFL, O_NONBLOCK); m_clientFd = c; }
+    }
+    if (m_clientFd < 0 || m_rxQueue.size() > 256) return;
+    uint8_t buf[64];
+    const ssize_t n = ::recv(m_clientFd, buf, sizeof buf, 0);
+    if (n > 0) m_rxQueue.insert(m_rxQueue.end(), buf, buf + n);
+    else if (n == 0) { ::close(m_clientFd); m_clientFd = -1; }
+}
+
+void SerialPort::clock(uint64_t ticks) {
+    if (m_listenFd >= 0) {
+        if (m_pollLeft > ticks) m_pollLeft -= ticks;
+        else { m_pollLeft = (uint64_t)(m_hz / 1000); pollTcp(); }
+    }
+    const uint64_t bit = (uint64_t)(m_hz / m_baud);
+    while (ticks) {
+        if (m_rxBit < 0) {
+            if (m_rxQueue.empty()) return;
+            m_rxByte = m_rxQueue.front();
+            m_rxQueue.pop_front();
+            m_rxBit = 0;                     // the start bit
+            m_rxLeft = bit;
+        }
+        if (m_rxLeft > ticks) { m_rxLeft -= ticks; return; }
+        ticks -= m_rxLeft;
+        if (++m_rxBit > 9) m_rxBit = -1;     // after the stop bit: idle (or the next byte)
+        m_rxLeft = bit;
+    }
 }
 
 bool SerialPort::setOption(const std::string& key, const std::string& value, std::string& err) {
@@ -240,7 +301,7 @@ void SerialPort::getDeviceInfo(DeviceInfo& out) const {
     IOHandler::getDeviceInfo(out);
     out.state.push_back({"baud", std::to_string(m_baud)});
     out.state.push_back({"device", m_tp10 ? "TP-10 thermal printer" : "serial printer / RS-232"});
-    out.state.push_back({"capture", m_file ? "file" : "none"});
+    out.state.push_back({"link", m_file ? "file" : m_loopback ? "loopback" : m_clientFd >= 0 ? "tcp (connected)" : m_listenFd >= 0 ? "tcp (listening)" : "none"});
     out.state.push_back({"bytes", std::to_string(sent.size())});
 }
 
@@ -314,6 +375,8 @@ void SerialPort::deliver(uint8_t v) {
         std::fwrite(out.data(), 1, out.size(), m_file);
         std::fflush(m_file);
     }
+    if (m_loopback) m_rxQueue.push_back(v);
+    if (m_clientFd >= 0 && ::send(m_clientFd, &v, 1, MSG_NOSIGNAL) < 0) { ::close(m_clientFd); m_clientFd = -1; }
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +455,8 @@ void System::setCpu(M6801* cpu) {
     m_cpu = cpu;
     if (!cpu) return;
     cpu->setModePins(2);                     // P20 low, P21 high, P22 low: mode 2
+    // The chip's own writes are on the bus too: the expansion port sees them
+    cpu->onInternalWrite = [this](uint16_t a, uint8_t v) { if (m_cart) m_cart->internalWrite(a, v); };
     cpu->port(2).preRead = [this]() { port2In(); };
     cpu->port(2).postWrite = [this]() {
         // P20: the cassette's output and the serial line
@@ -412,7 +477,6 @@ void System::setCart(std::unique_ptr<Cart> cart) {
     m_cart = std::move(cart);
     if (!m_cart) return;
     m_cart->setNmi = [this](bool on) { if (m_cpu) m_cpu->setNmiLine(on); };
-    m_cart->writeThrough = [this](uint16_t a, uint8_t v) { decodeWrite(a, v); };
     m_cart->reset();
 }
 
@@ -456,7 +520,8 @@ void System::port2In() {
     keyboardRows(row6);
     uint8_t in = 0xFF;
     if (row6) in &= (uint8_t)~0x02;                   // P21: row 6
-    if (m_printerReady) in &= (uint8_t)~0x08;         // P23: the printer ready (low)
+    if (!serial.rxLevel()) in &= (uint8_t)~0x04;      // P22: RS-232 receive / the printer's ready (low)
+    in &= (uint8_t)~0x08;                             // P23: CTS (low: clear to send)
     if (!tape.input()) in &= (uint8_t)~0x10;          // P24: the cassette
     m_cpu->setPort2Input(in);
 }
@@ -491,6 +556,7 @@ void System::sync(uint64_t to) {
     tape.clock(d);
     if (tape.input() != tapeWas) m_level = soundLevel();
     keyboard.clock(d);
+    serial.clock(d);
     m_dev = to;
     if (m_cpu) serial.txLevel(m_dev, m_cpu->port2Out() & 1);
     if (m_playAfterTyping && !keyboard.typing()) {
@@ -664,6 +730,7 @@ std::vector<uint8_t> loadMcxRom(Model model, const std::string& option, std::str
               " (16 KB) in " + firmwareDir() + "/ (or set MMEMU_MC10_FIRMWARE), or give its path";
         return {};
     }
+    if (rom.size() == 0x4000 + 24) rom.erase(rom.begin(), rom.begin() + 24);   // the VMC-10 emulator's header
     return rom;
 }
 

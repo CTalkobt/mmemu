@@ -79,12 +79,15 @@ private:
 };
 
 /**
- * The serial port's output (P20, shared with the cassette): bit-banged by
- * BASIC's printer driver (8N1, 600 baud by default), decoded to a host
- * file: CLI `serial file:PATH` (`serial none`), option `baud`. The TP-10
- * thermal printer (or any serial printer, or an RS-232 device on the port)
- * receives the same bytes; with `tp10` the capture is the TP-10's paper:
- * 32 columns, CR ends a line.
+ * The serial port (the DIN socket). Its output (P20, shared with the
+ * cassette) is bit-banged by BASIC's printer driver (8N1, 600 baud by
+ * default) and decoded; its input (P22, idle high) is framed from host
+ * bytes the same way, for programs that bit-bang a receive routine. CLI
+ * `serial file:PATH` (the output to a file), `serial loopback` (what is
+ * sent comes back on P22), `serial tcp:PORT` (a TCP client on 127.0.0.1
+ * both ways), `serial none`; option `baud`. The TP-10 thermal printer (or
+ * any serial printer) receives the same bytes; with `tp10` the capture is
+ * the TP-10's paper: 32 columns, CR ends a line.
  */
 class SerialPort : public IOHandler {
 public:
@@ -102,6 +105,20 @@ public:
 
     /** The line's level at `now` (ticks). */
     void txLevel(uint64_t now, bool level);
+    /** Queue bytes to arrive on P22 (8N1 at the baud rate). */
+    void receive(const std::vector<uint8_t>& bytes) { m_rxQueue.insert(m_rxQueue.end(), bytes.begin(), bytes.end()); }
+    /** P22's level now: a byte arriving; else with an RS-232 link (loopback,
+     *  TCP) marking (high), else the printer's ready line (low: ready, which
+     *  BASIC's printer routine waits for before each byte). */
+    bool rxLevel() const {
+        if (m_rxBit >= 0) return m_rxBit == 0 ? false : m_rxBit > 8 ? true : ((m_rxByte >> (m_rxBit - 1)) & 1) != 0;
+        return m_loopback || m_listenFd >= 0 || !m_ready;
+    }
+    /** The printer's ready line (P22 while no byte is arriving). */
+    void setReady(bool ready) { m_ready = ready; }
+    size_t rxPending() const { return m_rxQueue.size() + (m_rxBit >= 0 ? 1 : 0); }
+    /** Time passes (the receive line, the TCP link), in master ticks. */
+    void clock(uint64_t ticks);
     void setMasterHz(double hz) { m_hz = hz; }
     void setBaud(int baud) { m_baud = baud > 0 ? baud : 600; }
     int baud() const { return m_baud; }
@@ -114,6 +131,8 @@ public:
 private:
     void decode(uint64_t now);
     void deliver(uint8_t v);
+    void closeLink();
+    void pollTcp();
     double m_hz = MASTER_HZ;
     int m_baud = 600;
     bool m_level = true, m_inFrame = false, m_tp10 = false;
@@ -121,6 +140,14 @@ private:
     std::vector<std::pair<uint64_t, bool>> m_edges;
     FILE* m_file = nullptr;
     int m_column = 0;
+    // The receive side
+    bool m_loopback = false, m_ready = true;
+    int m_listenFd = -1, m_clientFd = -1;
+    uint64_t m_pollLeft = 0;
+    std::deque<uint8_t> m_rxQueue;
+    int m_rxBit = -1;                     // -1 idle, 0 start, 1-8 data, 9 stop
+    uint8_t m_rxByte = 0;
+    uint64_t m_rxLeft = 0;                // ticks left in this bit
 };
 
 /** The audio, as the frontends pull it: 44.06 kHz mono. */
@@ -217,8 +244,8 @@ private:
  *   $C000-$FFFF  the 8 KB ROM (mirrored at $C000)
  * The expansion port's device sees each cycle first and may take it.
  * Port 1 strobes the keyboard's columns; port 2: P20 out (cassette and
- * serial), P21 in (keyboard row 6), P22 in (RS-232 receive, idle high),
- * P23 in (the printer's ready: low when ready), P24 in (cassette).
+ * serial), P21 in (keyboard row 6), P22 in (RS-232 receive; a printer's
+ * ready, low, which BASIC waits for), P23 in (CTS, low), P24 in (cassette).
  *
  * The VDG fetches the internal RAM itself (its own address counter: the
  * screen is at $4000); D7 is its A/S, D6 INV. Time is kept in ticks of
@@ -265,8 +292,8 @@ public:
     void setCart(std::unique_ptr<Cart> cart);
     Cart* cart() const { return m_cart.get(); }
 
-    /** The printer's ready line (P23): ready (low) by default. */
-    void setPrinterReady(bool ready) { m_printerReady = ready; }
+    /** The serial printer's ready line (on P22, the receive pin): ready by default. */
+    void setPrinterReady(bool ready) { serial.setReady(ready); }
     /** Press PLAY once typing (the loader's CLOAD) has finished. */
     void playAfterTyping() { m_playAfterTyping = true; }
     /** The level the sound circuit outputs now. */
@@ -300,7 +327,6 @@ private:
     std::unique_ptr<Cart> m_cart;
     M6801* m_cpu = nullptr;
     uint8_t m_latch = 0;
-    bool m_printerReady = true;
     bool m_playAfterTyping = false;
     uint64_t m_ticks = 0, m_dev = 0;
     float m_level = 0;

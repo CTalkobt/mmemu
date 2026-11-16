@@ -488,6 +488,92 @@ TEST_CASE(m6801_sci) {
     EXPECT_EQ(r.cpu.trcsr() & M6801::TR_RDRF, 0);   // cleared by reading TRCSR then RDR
 }
 
+// Bi-phase (RMCR CC = 00): the line toggles every bit time and again at
+// the half bit for a 1 (the 6801's serial logic, US patent 4,346,452); the
+// receiver on P23 reads a mid-cell transition as a 1. Looped back TX to RX.
+TEST_CASE(m6801_sci_biphase) {
+    Rig r;
+    std::vector<uint8_t> sent;
+    int toggles = 0, atSent = -1;
+    bool level = true;
+    r.cpu.onTxByte = [&](uint8_t b) { sent.push_back(b); atSent = toggles; };
+    r.cpu.onTxLine = [&](bool l) { if (l != level) ++toggles; level = l; r.cpu.setPort2Input(l ? 0xFF : 0xF7); };
+    r.load(0x1000, {0x8E, 0x01, 0xFF,
+                    0x86, 0x00, 0x97, 0x10,          // RMCR: bi-phase, E/16
+                    0x86, 0x0A, 0x97, 0x11,          // TRCSR: TE RE
+                    0x96, 0x11,                      // LDAA TRCSR (TDRE seen)
+                    0x86, 0x41, 0x97, 0x13,          // TDR = 'A'
+                    0x20, 0xFE});
+    for (int i = 0; i < 400 && !(r.cpu.trcsr() & M6801::TR_RDRF); ++i) r.run(1);
+    ASSERT_EQ(sent.size(), (size_t)1);
+    // The preamble's ten 1s (two each), the start bit (one), 'A' = 1000 0010 (8 + two 1s)
+    EXPECT_EQ(atSent, 20 + 1 + 10);
+    EXPECT_TRUE(r.cpu.trcsr() & M6801::TR_RDRF);
+    uint8_t v = 0;
+    r.cpu.readInternal(M6801::RDR, v);
+    EXPECT_EQ(v, 0x41);
+}
+
+// Port 3's handshake in the single-chip mode: IS3 latches the inputs (LE),
+// sets the flag (IRQ1 with IS3 ENABLE), cleared by P3CSR then port 3; SC2
+// strobes on a read (OSS 0) or a write (OSS 1). STBY stops the chip until
+// /RESET; STBY PWR reads 0 after the standby supply drops.
+TEST_CASE(m6801_port3_handshake_standby) {
+    Rig r;
+    r.cpu.setModePins(7);
+    r.vec(M6801::VEC_IRQ1, 0x2000);
+    r.mem.write8(0x2000, 0x20); r.mem.write8(0x2001, 0xFE);     // the handler: BRA *
+    r.load(0x1000, {0x0E, 0x20, 0xFE});                       // CLI; BRA *
+    EXPECT_EQ(r.cpu.mode(), 7);
+    int strobes = 0;
+    r.cpu.onOutputStrobe = [&]() { ++strobes; };
+    r.cpu.writeInternal(M6801::P3CSR, M6801::P3_LE);
+    r.cpu.port(3).in = 0x5A;
+    r.cpu.setIs3Line(true);
+    r.cpu.setIs3Line(false);
+    r.cpu.port(3).in = 0x00;
+    uint8_t v = 0;
+    r.cpu.peekInternal(M6801::P3CSR, v);
+    EXPECT_EQ(v & M6801::P3_IS3F, M6801::P3_IS3F);
+    r.cpu.readInternal(M6801::P3DR, v);
+    EXPECT_EQ(v, 0x5A);                                        // latched
+    EXPECT_EQ(strobes, 1);                                     // OSS 0: a read strobes
+    r.cpu.peekInternal(M6801::P3CSR, v);
+    EXPECT_EQ(v & M6801::P3_IS3F, M6801::P3_IS3F);             // not cleared without the P3CSR read
+    r.cpu.readInternal(M6801::P3DR, v);
+    EXPECT_EQ(v, 0x00);                                        // the latch opened
+    r.cpu.readInternal(M6801::P3CSR, v);
+    r.cpu.writeInternal(M6801::P3DR, 0x00);
+    r.cpu.peekInternal(M6801::P3CSR, v);
+    EXPECT_EQ(v & M6801::P3_IS3F, 0);
+    EXPECT_EQ(strobes, 2);                                     // two reads; the write did not (OSS 0)
+    r.cpu.writeInternal(M6801::P3CSR, M6801::P3_OSS | M6801::P3_IS3E);
+    r.cpu.writeInternal(M6801::P3DR, 0x00);
+    EXPECT_EQ(strobes, 3);                                     // OSS 1: a write strobes
+    r.run(2);
+    EXPECT_TRUE(r.cpu.pc() >= 0x1001u && r.cpu.pc() < 0x2000u);
+    r.cpu.setIs3Line(true);                                    // IS3 ENABLE: IRQ1
+    r.run(2);
+    EXPECT_EQ(r.cpu.pc(), 0x2000u);
+
+    // STBY
+    r.load(0x1000, {0x01, 0x20, 0xFD});                       // NOP; BRA back
+    r.run(1);
+    r.cpu.setStandby(true);
+    const uint32_t pc = r.cpu.pc();
+    r.run(10);
+    EXPECT_EQ(r.cpu.pc(), pc);
+    EXPECT_TRUE(r.cpu.standby());
+    r.cpu.reset();
+    EXPECT_TRUE(!r.cpu.standby());
+    r.cpu.writeInternal(M6801::RAMC, 0xC0);
+    r.cpu.peekInternal(M6801::RAMC, v);
+    EXPECT_EQ(v & 0x80, 0x80);
+    r.cpu.standbyPowerLost();
+    r.cpu.peekInternal(M6801::RAMC, v);
+    EXPECT_EQ(v & 0xC0, 0x40);
+}
+
 // The undocumented opcodes as XRoar found them
 TEST_CASE(m6801_undocumented) {
     Rig r;

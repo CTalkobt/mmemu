@@ -31,7 +31,14 @@ their directory:
 |------|----------|
 | `mc10.rom` | Micro Color BASIC 1.0, 8 KB at `$E000` (required for `mc10`) |
 | `alice.rom` | The Alice's BASIC, 8 KB (required for `alice`) |
-| `mcx128bas.rom` / `alice128bas.rom` | The MCX-128's 16 KB EPROM (optional) |
+| `mcx128bas.rom` / `alice128bas.rom` | The MCX-128's 16 KB EPROM, MCX BASIC 2.1 (QWERTY / AZERTY; optional) |
+
+MCX BASIC 2.1 (Darren Atkinson's, from the MCX-128 project files) opens a
+boot menu: Micro Color BASIC with 32 KB, MCX BASIC, or MCX BASIC (large:
+the 128 KB banks). Its EPROM replaces the whole ROM, so the Alice runs MCX
+BASIC with `alice128bas.rom` even without `alice.rom`. The VMC-10
+emulator's "MCX Basic for VMC-10.bin" is the same 16 KB behind a 24-byte
+header, which is skipped.
 
 Without BASIC the machine is still made (so the debugger and the plugin
 checks work), with a warning naming the file and the directory (printed,
@@ -57,8 +64,11 @@ The 6803 runs in mode 2 (P20 low, P21 high, P22 low at reset). Its ports:
 
 - Port 1 (all out): the keyboard's columns, strobed low.
 - Port 2: P20 out (the cassette and the serial line), P21 in (keyboard row
-  6: CONTROL, BREAK, SHIFT), P22 in (RS-232 receive, idle high), P23 in
-  (the printer's ready, low), P24 in (the cassette).
+  6: CONTROL, BREAK, SHIFT), P22 in (RS-232 receive, where a serial
+  printer's ready line comes in: BASIC waits for it low before each byte),
+  P23 in (CTS, low), P24 in (the cassette). Port 2's bits 7-5 read the
+  mode latched at reset (2), as the data sheet has it (XRoar reads 0;
+  BASIC doesn't look).
 
 The VDG fetches the internal RAM through its own address counter (the
 screen is `$4000`); D7 is A/S, D6 INV; GM2 is also INT/EXT. Time is
@@ -105,13 +115,23 @@ captures P20.
 ## Serial port, printers
 
 BASIC's printer output (LLIST, `PRINT #-2`) is bit-banged on P20 at 600
-baud, 8N1; mmsim decodes it to a host file with `serial file:PATH`
-(`serial none` stops). The `serial` expansion slot picks what is on the
-port: `printer` (any serial printer or RS-232 device: the bytes as sent)
-or `tp10` (the TP-10 thermal printer: its 32-column paper as text, CR
-ending a line); the option is the baud rate. The printer's ready line
-(P23) reads ready. Receiving on P22 is not wired to the host (it idles
-high).
+baud, 8N1, once P22 (the printer's ready) is low; mmsim decodes it.
+
+| CLI `serial` | |
+|--------------|---|
+| `file:PATH` | The output to a host file |
+| `loopback` | What is sent comes back on P22 |
+| `tcp:PORT` | A TCP client on 127.0.0.1:PORT, both ways |
+| `none` | Nothing (the printer's output is still decoded) |
+
+Bytes from a link arrive on P22 as 8N1 frames at the port's baud rate,
+for programs with a bit-banged receive routine (Micro Color BASIC has
+none); a link idles marking (high), so BASIC's printer routine waits while
+one is attached. Without a link P22 is the printer's ready: ready. The
+`serial` expansion slot picks what is on the port: `printer` (any serial
+printer or RS-232 device: the bytes as sent) or `tp10` (the TP-10 thermal
+printer: its 32-column paper as text, CR ending a line); the option is the
+baud rate.
 
 ## Expansion port
 
@@ -122,7 +142,24 @@ XRoar's `mc10_cart.c`): `expansion expansion <device> [option]`.
 |--------|---|
 | `ram16k` | Tandy's 16K RAM Expansion Pack (26-3013): RAM at `$5000-$8FFF`, 20 KB in all (the default; BASIC finds it at power on) |
 | `rompak` | A program pack: up to 16 KB of ROM at `$5000`; option: the image |
-| `mcx128` | Darren Atkinson's MCX-128: 128 KB of RAM in two banks (`$BF00`) and its 16 KB EPROM in four ROM maps (`$BF01`), as MAME maps it; option: the ROM |
+| `mcx128` | Darren Atkinson's MCX-128: 128 KB of RAM in two banks and its 16 KB EPROM in four ROM maps; option: the ROM |
+
+Program packs (`.rom`, `.bin`, up to 16 KB) also go in with the CLI `cart`
+and `load`/`-i`, the GUI's Attach Cartridge and MCP `attach_cartridge`:
+the pack takes the port's place (the RAM pack comes out) and the machine
+is powered on again; ejecting puts the RAM pack back. Micro Color BASIC
+doesn't start a pack: `EXEC 20480` runs one at `$5000`.
+
+The MCX-128 is decoded as its GAL's equations give it (`MCX128.pld`, the
+4K board): `$BF00-$BF7F` are its registers (even addresses the RAM banks:
+P0 for `$0000-$3FFF` and `$C000-$FEFF`, P1 for `$4000-$BEFF`; odd
+addresses the ROM map: 0 all EPROM at `$C000`, 1 RAM at `$C000` and the
+EPROM's upper half at `$E000`, 2 RAM at `$C000` and the MC-10's ROM at
+`$E000`, 3 all RAM). Writes to `$C000-$FFFF` always reach the RAM;
+`$FF00-$FFFF` is bank 0's. The MC-10 keeps `$4000-$4FFF` (its own RAM)
+while P1 is 0, the keyboard and VDG at `$BF80-$BFFF`, and `$E000-$FFFF`
+reads in map 2. The 6803's writes to its own RAM and registers are on the
+bus too, so they land in the SRAM under them.
 
 With nothing in the port the machine has 4 KB (`mc10-4k`).
 
@@ -133,14 +170,19 @@ and the clock, with the 6803's registers, timer, SCI and internal RAM. The
 debugger disassembles 6803 code (Motorola syntax) and assembles it; the GDB
 server works with the 6803's registers (`--gdb-port`).
 
+## Checked with the real ROMs
+
+`test_mc10_roms.cpp` (with the files in `roms/mc10/`): Micro Color BASIC
+1.0 boots, finds 19526 bytes with the 16K pack (3142 without), runs a
+program, CSAVEs to the recorder and CLOADs the `.c10` back, and LLISTs to
+the serial printer; MCX BASIC 2.1 boots on the MC-10 in its three
+choices (31558, 28703 and 47454 bytes free) and its AZERTY build on the
+Alice. Keyboard typing goes through the ROM's own scan.
+
 ## Not done
 
-- The real ROM could not be run here: booting Micro Color BASIC, BASIC's
-  RAM-size check with the pack, its CLOAD/CSAVE timing and its printer
-  routine are exercised only through the hand-assembled stand-ins in the
-  tests.
-- RS-232 input on P22; the MCX-128's mirror of the 6803's own RAM into its
-  RAM; the Alice 32/90 (their EF9345 video).
+- The Alice's own BASIC (`alice.rom`) was not found to test with.
+- The Alice 32 and Alice 90 (their EF9345 video).
 
 ## Testing
 
@@ -153,4 +195,7 @@ assembled by the 6803 line assembler:
 - the missing-ROM stand-in and its warning;
 - the cassette both ways (bytes written on P20 decode to `.c10`; a `.c10` played into P24 timed with the 6803's counter);
 - the serial printer (a bit-banged 600-baud string; the TP-10's paper);
-- the MCX-128's banks and ROM maps; snapshots.
+- RS-232 input on P22 (a bit-banged receive loop; loopback; the printer's ready);
+- the MCX-128's banks, registers and ROM maps as its GAL decodes, and the 6803's writes into its SRAM; snapshots.
+
+`test_mc10_roms.cpp` runs with the real ROMs (above), else says so and passes.
