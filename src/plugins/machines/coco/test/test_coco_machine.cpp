@@ -516,7 +516,7 @@ TEST_CASE(coco_fd500_latch_hook) {
     ASSERT(!fdc->controller().intrq());   // reset leaves it idle: no NMI before Disk BASIC is up
     bus->write8(0xFF48, 0xD0);            // the command register (force interrupt)
     ASSERT_EQ(fdc->controller().commandRegister(), 0xD0);
-    bus->write8(0xFF40, 0x29);            // drive 0, motor on, single density (no NMI)
+    bus->write8(0xFF40, 0x09);            // drive 0, motor on, single density (no NMI)
     ASSERT_EQ(fdc->controller().selectedDrive(), 0);
     ASSERT(fdc->controller().motor());
     ASSERT(!fdc->controller().doubleDensity());
@@ -565,7 +565,7 @@ TEST_CASE(coco_fd500_reads_a_sector) {
     };
     uint8_t d = 0;
     auto rd = [&](uint16_t a) { fd.read(a, false, true, d); return d; };
-    fd.write(0xFF40, false, true, 0x09);                  // drive 0, motor, double density (INTRQ -> NMI)
+    fd.write(0xFF40, false, true, 0x29);                  // drive 0, motor, double density (INTRQ -> NMI)
     // Seek to track 17 (data register = target, then SEEK with the fastest step rate)
     fd.write(0xFF4B, false, true, 17);
     fd.write(0xFF48, false, true, 0x10);
@@ -575,14 +575,14 @@ TEST_CASE(coco_fd500_reads_a_sector) {
     ASSERT(!nmi);
     // Read sector 3 with HALT enabled: the CPU would sleep until each DRQ
     fd.write(0xFF4A, false, true, 3);
-    fd.write(0xFF40, false, true, 0x89);                  // HALT enable
+    fd.write(0xFF40, false, true, 0xA9);                  // HALT enable
     fd.write(0xFF48, false, true, 0x80);                  // READ SECTOR
     std::vector<uint8_t> got;
     while (got.size() < 256) {
         ASSERT(tickUntil([&] { return !halt || nmi; }, 14318180ull));
         if (nmi) break;
         got.push_back(rd(0xFF4B));
-        fd.write(0xFF40, false, true, 0x89);              // Disk BASIC re-enables HALT for each byte
+        fd.write(0xFF40, false, true, 0xA9);              // Disk BASIC re-enables HALT for each byte
     }
     ASSERT_EQ(got.size(), (size_t)256);
     for (int i = 0; i < 256; ++i) ASSERT_EQ(got[i], (uint8_t)(i ^ 0x5A));

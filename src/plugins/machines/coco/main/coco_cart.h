@@ -139,8 +139,8 @@ private:
  * $FF48-$FF4B.
  *
  * Latch ($FF40-$FF47, write): bits 0-2 drive select 0-2, 3 motor on, 4
- * write precompensation, 5 density (1 = single; 0 also lets the
- * controller's INTRQ through to /NMI), 6 drive select 3 (side select on
+ * write precompensation, 5 density (1 = double) and NMI enable (set, it
+ * lets the controller's INTRQ through to /NMI), 6 drive select 3 (side select on
  * double-sided drives), 7 HALT enable: while set, the CPU halts until the
  * controller raises DRQ (a byte is ready) or INTRQ (which also clears it).
  *

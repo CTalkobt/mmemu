@@ -216,9 +216,10 @@ void Fd500::latchWrite(uint8_t v) {
     m_fdc->selectDrive(drive);
     m_fdc->setSide(side ? 1 : 0);
     m_fdc->setMotor(v & 0x08);
-    m_fdc->setDoubleDensity(!(v & 0x20));
-    // With double density selected (bit 5 low) INTRQ reaches /NMI
-    if (!(v & 0x20) && m_intrq && setNmi) setNmi(true);
+    // Bit 5: density (1 = double) and NMI enable: with it set INTRQ reaches
+    // /NMI (MAME coco_fdc.cpp DSKREG; XRoar rsdos.c inverts bit 5 first)
+    m_fdc->setDoubleDensity(v & 0x20);
+    if ((v & 0x20) && m_intrq && setNmi) setNmi(true);
     m_haltEnable = (v & 0x80) && !m_intrq;
     updateHalt();
 }
@@ -237,7 +238,7 @@ void Fd500::setIntrq(bool on) {
     if (on) {
         m_haltEnable = false;
         updateHalt();
-        if (!(m_latch & 0x20) && setNmi) setNmi(true);
+        if ((m_latch & 0x20) && setNmi) setNmi(true);
     } else if (setNmi) {
         setNmi(false);
     }
