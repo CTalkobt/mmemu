@@ -122,6 +122,9 @@ private:
  * The serial port's transmit line (PIA1 PA1, the bit banger): decodes the
  * frames BASIC sends (8N1 at 600 baud, as BASIC's printer driver, by
  * default) to a host file. CLI `serial file:PATH` (or `serial none`).
+ * The receive line (PIA1 PB0, and on the CoCo 3 the GIME's EI2): bytes
+ * queued (`serial in:PATH`, or receive()) arrive 8N1 at the same rate, the
+ * line at mark (high) between them; with nothing connected it reads low.
  */
 class BitBanger : public IOHandler {
 public:
@@ -138,6 +141,16 @@ public:
 
     /** PA1 at time `now` (ticks). */
     void txLevel(uint64_t now, bool level);
+    /** The receive line at time `now` (ticks): true at mark. */
+    bool rxLevel(uint64_t now);
+    /** Bytes to send down the receive line, after any queued. */
+    void receive(const std::vector<uint8_t>& bytes) {
+        m_rxQueue.insert(m_rxQueue.end(), bytes.begin(), bytes.end());
+        m_rxConnected = true;
+    }
+    /** Something drives the receive line (bytes were queued): else it floats low. */
+    bool rxConnected() const { return m_rxConnected; }
+    bool receiving() const { return m_rxBusy || !m_rxQueue.empty(); }
     void setBaud(int baud) { m_baud = baud > 0 ? baud : 600; }
     void setMasterHz(double hz) { m_hz = hz; }
     std::vector<uint8_t> sent;            ///< everything decoded
@@ -152,6 +165,11 @@ private:
     std::vector<std::pair<uint64_t, bool>> m_edges;
     FILE* m_file = nullptr;
     void decodeFrame(uint64_t end);
+    // Receiving: the byte on the line since m_rxStart; the last frame's end; the last poll
+    std::deque<uint8_t> m_rxQueue;
+    bool m_rxBusy = false, m_rxConnected = false;
+    uint8_t m_rxByte = 0;
+    uint64_t m_rxStart = 0, m_rxEnd = 0, m_rxPoll = 0;
 };
 
 /**

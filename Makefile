@@ -195,6 +195,9 @@ PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
 	src/plugins/machines/spectrum/main/plugin_init.cpp
 PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/machines/coco/main/coco_cart.cpp \
+	src/plugins/machines/coco/main/coco_storage.cpp \
+	src/plugins/devices/coco_sdc/main/coco_sdc.cpp \
+	src/plugins/devices/xt_hdc/main/xt_hdc.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/machines/coco/main/machine_dragon.cpp \
 	src/plugins/machines/coco/main/dragon_dos.cpp \
@@ -586,6 +589,8 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/acia6551/test/test_acia6551.cpp \
 	src/plugins/devices/acia6551/test/test_hayes_modem.cpp \
 	src/plugins/devices/wd17xx/test/test_wd17xx.cpp \
+	src/plugins/devices/coco_sdc/test/test_coco_sdc.cpp \
+	src/plugins/devices/xt_hdc/test/test_xt_hdc.cpp \
 	src/plugins/devices/wd17xx/test/test_floppy_images.cpp \
 	tests/src/test_c64_tape.cpp \
 	tests/src/test_tape_roundtrip.cpp \
@@ -694,6 +699,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/mc10/test/test_mc10_machine.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
 	src/plugins/machines/coco/test/test_coco3_machine.cpp \
+	src/plugins/machines/coco/test/test_coco_storage.cpp \
 	src/plugins/devices/gime/test/test_gime.cpp \
 	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
@@ -878,6 +884,9 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/spectrum/main/spi_sd_card.o \
 	src/plugins/machines/coco/main/machine_coco.o \
 	src/plugins/machines/coco/main/coco_cart.o \
+	src/plugins/machines/coco/main/coco_storage.o \
+	src/plugins/devices/coco_sdc/main/coco_sdc.o \
+	src/plugins/devices/xt_hdc/main/xt_hdc.o \
 	src/plugins/machines/coco/main/coco_tape.o \
 	src/plugins/machines/coco/main/machine_dragon.o \
 	src/plugins/machines/coco/main/dragon_dos.o \

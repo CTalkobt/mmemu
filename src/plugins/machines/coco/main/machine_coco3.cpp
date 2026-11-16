@@ -29,7 +29,7 @@ void System::wireCoco3(std::vector<uint8_t> rom, int ramKb) {
     m_gime.reset(new Gime(Gime::Revision::G1987));
     m_gime->setPal(m_pal);
     display.setGime(m_gime.get());
-    setRamKb(ramKb >= 512 ? 512 : 128);
+    setRamKb(ramKb);
     m_gime->onHs = [this](bool level, uint64_t at) {
         pia0.advance(at);
         pia0.setCa1(level);
@@ -57,7 +57,10 @@ uint8_t System::access3(uint16_t a, bool write, uint8_t v) {
         m_bus = v;
         switch (d.s) {
             case Gime::S_RAM: m_ram3[d.phys] = v; break;
-            case Gime::S_PIA0: pia0.write(a, v); break;
+            case Gime::S_PIA0:
+                pia0.write(a, v);
+                coco3Lines();           // the keyboard's EI1 as the strobe changes (XRoar: every cycle)
+                break;
             case Gime::S_PIA1:
                 m_gime->snoopPia1(a, v);
                 pia1.write(a, v);
@@ -79,7 +82,10 @@ uint8_t System::access3(uint16_t a, bool write, uint8_t v) {
         case Gime::S_PIA1: r = pia1.read(a); break;
         case Gime::S_GIME: {
             uint8_t g;
-            if (m_gime->read(a, g)) r = (uint8_t)((r & 0xC0) | (g & 0x3F));
+            if (m_gime->read(a, g)) {
+                const uint8_t mask = m_gime->readMask(a);    // six bits (the Disto board's two more)
+                r = (uint8_t)((r & ~mask) | (g & mask));
+            }
             break;
         }
         default: break;
@@ -112,10 +118,20 @@ uint8_t System::peek3(uint16_t a) {
 }
 
 // The GIME's keyboard interrupt (EI1): any of PIA0 PA0-PA6 low (a key in a
-// column the software drives low, or a fire button)
+// column the software drives low, or a fire button). The serial interrupt
+// (EI2): the RS-232 receive line at space (a start bit's falling edge), as
+// PIA1 PB0 reads it, while something drives the line. A CM-8 (RGB) monitor pulls PIA1 PB3 low (XRoar's
+// monitor detect).
 void System::coco3Lines() {
     keyboardUpdate();
     m_gime->setInterruptInput(Gime::INT_EI1, (pia0.portA() | 0x80) != 0xFF);
+    const bool connected = rs232.rxConnected();
+    const bool rx = rs232.rxLevel(m_dev) && connected;     // nothing connected: low (as XRoar)
+    if (rx) { pia1.b.inSource |= 0x01; pia1.b.inSink |= 0x01; }
+    else { pia1.b.inSource &= (uint8_t)~0x01; pia1.b.inSink &= (uint8_t)~0x01; }
+    m_gime->setInterruptInput(Gime::INT_EI2, connected && !rx);
+    if (m_gime->monitor() == Gime::Monitor::Rgb) pia1.b.inSink &= (uint8_t)~0x08;
+    else pia1.b.inSink |= 0x08;
 }
 
 bool loadCoco3Rom(bool pal, std::vector<uint8_t>& rom, std::string& missing) {
@@ -178,35 +194,58 @@ void coco3Slots(MachineDescriptor* desc, System* sys) {
     {
         MachineDescriptor::ExpansionSlot s;
         s.name = "ram";
-        s.description = "RAM fitted: 128K (the stock machine) or 512K (the common upgrade); changing it clears the RAM";
-        s.devices = {{"ram", "The RAM", {"128K", "512K"}, "128K"}};
+        s.description = "RAM fitted: 128K (the stock machine), 512K (the common upgrade), or 1M / 2M "
+                        "(Disto's MMU extension: page register bits 6-7, video bank at $FF9B); changing it clears the RAM";
+        s.devices = {{"ram", "The RAM", {"128K", "512K", "1M", "2M"}, "128K"}};
         s.canEmpty = false;
         s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
-            if (device != "ram") { err = "the ram slot takes 'ram' (128K, 512K)"; return false; }
+            if (device != "ram") { err = "the ram slot takes 'ram' (128K, 512K, 1M, 2M)"; return false; }
             const uint64_t bytes = MachineDescriptor::parseMemorySize(option.empty() ? "128K" : option);
-            if (bytes != 128 * 1024 && bytes != 512 * 1024) { err = "128K or 512K"; return false; }
+            if (bytes != 128 * 1024 && bytes != 512 * 1024 && bytes != 1024 * 1024 && bytes != 2048 * 1024) {
+                err = "128K, 512K, 1M or 2M";
+                return false;
+            }
             sys->setRamKb((int)(bytes / 1024));
             return true;
         };
-        s.info = [sys]() { return "ram (" + std::to_string(sys->gime()->ramMask() >= 0x7FFFF ? 512 : 128) + "K)"; };
+        s.info = [sys]() {
+            const int kb = sys->gime()->ramKb();
+            return "ram (" + (kb >= 1024 ? std::to_string(kb / 1024) + "M" : std::to_string(kb) + "K") + ")";
+        };
         desc->expansionSlots.push_back(std::move(s));
     }
     {
         MachineDescriptor::ExpansionSlot s;
         s.name = "monitor";
-        s.description = "The display: a CM-8 RGB monitor or a TV / composite monitor (the GIME's NTSC colours)";
+        s.description = "The display: a CM-8 RGB monitor or a TV / composite monitor (the GIME's NTSC colours; "
+                        "a PAL board's RGB encoded); composite's option: NTSC artifact colours off, bluered or redblue";
         s.devices = {
-            {"composite", "A TV or composite monitor: two bits of intensity, four of hue", {}, ""},
+            {"composite", "A TV or composite monitor: two bits of intensity, four of hue", {"off", "bluered", "redblue"}, "off"},
             {"rgb", "The CM-8 RGB monitor: two bits each of red, green and blue", {}, ""},
         };
         s.canEmpty = false;
-        s.install = [sys](const std::string& device, const std::string&, std::string& err) {
-            if (device == "composite" || device.empty()) sys->gime()->setMonitor(Gime::Monitor::Composite);
-            else if (device == "rgb") sys->gime()->setMonitor(Gime::Monitor::Rgb);
-            else { err = "composite or rgb"; return false; }
+        s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
+            Gime* g = sys->gime();
+            if (device == "composite" || device.empty()) {
+                if (option.empty() || option == "off") g->setArtifact(Gime::Artifact::Off);
+                else if (option == "bluered") g->setArtifact(Gime::Artifact::BlueRed);
+                else if (option == "redblue") g->setArtifact(Gime::Artifact::RedBlue);
+                else { err = "composite's artifact colours: off, bluered or redblue"; return false; }
+                g->setMonitor(Gime::Monitor::Composite);
+            } else if (device == "rgb") {
+                g->setMonitor(Gime::Monitor::Rgb);
+            } else {
+                err = "composite or rgb";
+                return false;
+            }
             return true;
         };
-        s.info = [sys]() { return sys->gime()->monitor() == Gime::Monitor::Rgb ? std::string("rgb") : std::string("composite"); };
+        s.info = [sys]() {
+            const Gime* g = sys->gime();
+            if (g->monitor() == Gime::Monitor::Rgb) return std::string("rgb");
+            const auto a = g->artifact();
+            return std::string("composite") + (a == Gime::Artifact::BlueRed ? " (bluered)" : a == Gime::Artifact::RedBlue ? " (redblue)" : "");
+        };
         desc->expansionSlots.push_back(std::move(s));
     }
     {

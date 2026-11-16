@@ -291,3 +291,106 @@ TEST_CASE(coco3h_hd6309) {
     ASSERT(m->buses[0].bus->peek8(IRQ_COUNT) >= 15);
     delete m;
 }
+
+// The receive line: 8N1 at the baud rate, LSB first, back to back; mark between
+TEST_CASE(coco_serial_receive_line) {
+    coco::BitBanger b;
+    b.setBaud(600);
+    const double bit = coco::MASTER_HZ / 600.0;
+    auto at = [&](double bits) { return b.rxLevel((uint64_t)(bit * bits)); };
+    ASSERT(b.rxLevel(0));                       // nothing queued: mark
+    b.receive({0xA5, 0x00});
+    ASSERT(b.receiving());
+    ASSERT(!at(0));                             // the start bit, from the first look
+    ASSERT(!at(0.5));
+    const uint8_t want = 0xA5;
+    for (int i = 0; i < 8; ++i) ASSERT_EQ(at(1.5 + i), (((want >> i) & 1) != 0));
+    ASSERT(at(9.5));                            // the stop bit
+    ASSERT(!at(10.5));                          // the next frame's start bit, straight after
+    ASSERT(!at(15.5));
+    ASSERT(at(19.5));
+    ASSERT(at(20.5));
+    ASSERT(!b.receiving());
+}
+
+// EI2: the RS-232 receive line's falling edge (a start bit), as PIA1 PB0 reads it
+TEST_CASE(coco3_serial_ei2) {
+    MachineDescriptor* m = make3();
+    coco::System* sys = coco::systemOf(m);
+    Gime* g = sys->gime();
+    IBus* bus = m->buses[0].bus;
+    run(m, 100000);
+    bus->write8(0xFF93, Gime::INT_EI2);        // EI2 to FIRQ status (FEN off: no FIRQ taken)
+    run(m, 1000);
+    ASSERT(!(g->firqStatus() & Gime::INT_EI2));
+    ASSERT(!(sys->pia1.portB() & 0x01));         // nothing connected: PB0 low, no EI2
+    sys->rs232.receive({});
+    run(m, 100);
+    ASSERT(sys->pia1.portB() & 0x01);           // connected, idle at mark
+    ASSERT(!(g->firqStatus() & Gime::INT_EI2));
+    sys->rs232.receive({0x00});
+    run(m, 100);
+    ASSERT(g->firqStatus() & Gime::INT_EI2);
+    ASSERT(!(sys->pia1.portB() & 0x01));
+    bus->read8(0xFF93);                        // acknowledge
+    run(m, 2000);                              // data bits (all 0): no new edge
+    ASSERT(!(g->firqStatus() & Gime::INT_EI2));
+    run(m, 20000);
+    ASSERT(sys->pia1.portB() & 0x01);           // back at mark
+    ASSERT(!sys->rs232.receiving());
+    // From a host file
+    char path[] = "/tmp/mmemu-coco3-serialXXXXXX";
+    const int fd = mkstemp(path);
+    ASSERT(fd >= 0);
+    ASSERT(write(fd, "U", 1) == 1);
+    close(fd);
+    ASSERT(sys->rs232.attachSerial(std::string("in:") + path));
+    unlink(path);
+    run(m, 100);
+    ASSERT(g->firqStatus() & Gime::INT_EI2);
+    delete m;
+}
+
+// Disto 2 MB: page register bits 6-7 pick the 512K bank; they read back
+TEST_CASE(coco3_disto_2mb) {
+    MachineDescriptor* m = make3();
+    coco::System* sys = coco::systemOf(m);
+    IBus* bus = m->buses[0].bus;
+    std::string err;
+    ASSERT(m->expansionSlot("ram")->install("ram", "2M", err));
+    ASSERT_EQ(sys->gime()->ramKb(), 2048);
+    ASSERT(m->expansionSlot("ram")->info().find("2M") != std::string::npos);
+    run(m, 100000);
+    bus->write8(0xFFA2, 0xC1);
+    bus->write8(0x4000, 0x77);
+    ASSERT_EQ(sys->ramByte((3u << 19) | (1u << 13)), 0x77);
+    ASSERT_EQ(bus->read8(0xFFA2), 0xC1);
+    bus->write8(0xFFA2, 0x01);
+    ASSERT(bus->peek8(0x4000) != 0x77);
+    bus->write8(0xFF9B, 0x03);
+    ASSERT_EQ(bus->read8(0xFF9B) & 0x03, 0x03);
+    ASSERT(m->expansionSlot("ram")->install("ram", "1M", err));
+    ASSERT_EQ(sys->gime()->ramMask(), 0xFFFFFu);
+    delete m;
+}
+
+// The monitor: composite's artifact option (and the screen button), RGB's
+// monitor detect on PIA1 PB3
+TEST_CASE(coco3_monitor_options) {
+    MachineDescriptor* m = make3();
+    coco::System* sys = coco::systemOf(m);
+    std::string err;
+    ASSERT(m->expansionSlot("monitor")->install("composite", "bluered", err));
+    ASSERT(sys->gime()->artifact() == Gime::Artifact::BlueRed);
+    ASSERT(!m->expansionSlot("monitor")->install("composite", "green", err));
+    m->onKey("artifact", true);
+    ASSERT(sys->gime()->artifact() == Gime::Artifact::RedBlue);
+    m->onKey("artifact", true);
+    ASSERT(sys->gime()->artifact() == Gime::Artifact::Off);
+    run(m, 1000);
+    ASSERT(sys->pia1.b.inSink & 0x08);
+    ASSERT(m->expansionSlot("monitor")->install("rgb", "", err));
+    run(m, 1000);
+    ASSERT(!(sys->pia1.b.inSink & 0x08));
+    delete m;
+}
