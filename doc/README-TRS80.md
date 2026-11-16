@@ -274,12 +274,13 @@ length (5, 7, 6, 8), 7 even parity. The III/4's read `$FF` (xtrs).
 
 ## Not done
 
-Booting the real ROMs and DOSes (Level I/II BASIC, the Model III/4/4P
-ROMs; TRSDOS, LDOS, NEWDOS/80, LS-DOS) has not been checked: the ROMs and
-DOSes are the user's, and none are in mmsim's tests. Nor has the Stringy
-Floppy with the Exatron's ROM, or the hard disk with RSHARD. The Radio
-Shack hi-res board's wait states, the Model I's video "snow" and the
-Germany-only HRG1B Model I graphics card are not modelled.
+Checked with real ROMs and DOSes (`test_trs80_roms.cpp`, below): Level I
+and Level II 1.3 BASIC, the Model III Rev C ROM, LDOS 5.3.1 on the Model I
+and III, and LS-DOS 6.3.1 on the 4P (with xtrs's free boot ROM). Not
+checked: Radio Shack's Model 4 ROM and the real 4P boot ROM, TRSDOS,
+NEWDOS/80, the Stringy Floppy with the Exatron's ROM and the hard disk with
+RSHARD. The Radio Shack hi-res board's wait states, the Model I's video
+"snow" and the Germany-only HRG1B Model I graphics card are not modelled.
 
 ## Tests
 
@@ -298,3 +299,16 @@ the Stringy Floppy (flux runs written and read back, the leader, write
 protection, files), the hi-res boards (counting, alone and overlaid, the
 Model III's Grafyx Solution), the Orchestra, the Model I's second cassette
 and sense switches, the CRTC registers, video waits and snapshots.
+
+`test_trs80_roms.cpp` runs the real ROMs and DOSes when they are in
+`roms/trs80/` (or `$MMEMU_TRS80_FIRMWARE`), and otherwise says so and
+passes: `level1.rom`, `level2.rom` and `model3.rom` come up and answer
+`PRINT`; `ld1-531.dsk`, `ld3-531.dsk` (LDOS 5.3.1) and `ld4-631.dsk`
+(LS-DOS 6.3.1, with `model4p.rom`) boot, take the date and list their
+directories. The LDOS and LS-DOS images are Misosys's, free to download
+from tim-mann.org/misosys.html. A free 4P boot ROM is xtrs's
+`xtrsrom4p.z80` (MIT licence; assemble with zmac), with two changes: its
+model query (`ED 3C`, an xtrs trap) becomes `LD L,5`, and the select it
+writes before its read loop becomes `$C1` (`$81` in the source): the loop
+reads a byte every 27 T-states, so it needs WAIT, which xtrs's untimed
+controller doesn't. LS-DOS 6.3.1 takes dates from 1980 to 2011 only.

@@ -698,6 +698,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
 	src/plugins/machines/trs80/test/test_trs80_addons.cpp \
+	src/plugins/machines/trs80/test/test_trs80_roms.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \

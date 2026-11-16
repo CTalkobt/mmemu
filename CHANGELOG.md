@@ -7,6 +7,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80: the real ROMs and DOSes boot (#354)
+
+- `test_trs80_roms.cpp`: with the user's ROMs in `roms/trs80/`, Level I and
+  Level II BASIC and the Model III ROM come up and answer `PRINT`; LDOS
+  5.3.1 boots on the Model I and III, and LS-DOS 6.3.1 on the 4P (xtrs's
+  free boot ROM): each takes the date and lists its directory. Without the
+  files the tests say so and pass.
+- `doc/README-TRS80.md`: what has been checked, and how to make the free 4P
+  boot ROM work on timed hardware.
+
 ### TRS-80 add-ons: hard disk, Stringy Floppy, hi-res, Orchestra (#354)
 
 - The Radio Shack hard disk interface: a WD1010 at `$C8-$CF` with the
