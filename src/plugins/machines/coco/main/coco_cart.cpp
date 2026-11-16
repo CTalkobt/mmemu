@@ -19,7 +19,10 @@ constexpr uint32_t ACIA_CLOCK = 894886;         // the ACIA ticks in CPU cycles 
 // ---------------------------------------------------------------------------
 RomPak::RomPak(std::vector<uint8_t> image, std::string label, bool autostart)
     : m_rom(std::move(image)), m_label(std::move(label)), m_autostart(autostart) {
-    if (m_rom.size() > 0x4000) m_rom.resize(0x4000);
+    if (m_rom.size() > 0x8000) m_rom.resize(0x8000);
+    size_t n = 1;
+    while (n < m_rom.size()) n <<= 1;
+    m_rom.resize(n, 0xFF);              // XRoar's rombank: a power of two, padded with $FF
 }
 
 std::string RomPak::describe() const {
@@ -36,7 +39,7 @@ bool RomPak::read(uint16_t a, bool cts, bool scs, uint8_t& d) { return peek(a, c
 
 bool RomPak::peek(uint16_t a, bool cts, bool, uint8_t& d) const {
     if (!cts || m_rom.empty()) return false;
-    d = m_rom[(a & 0x3FFF) % m_rom.size()];
+    d = m_rom[a & (m_rom.size() - 1)];
     return true;
 }
 

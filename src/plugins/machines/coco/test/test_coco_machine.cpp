@@ -312,6 +312,9 @@ TEST_CASE(coco_dac_sound) {
     ASSERT(m->expansionSlot("cart")->install("orch90", "", err));
     bus->write8(0xFF7A, 0xFF);
     bus->write8(0xFF7B, 0xFF);
+    ASSERT(std::fabs(last()) < 0.01f);    // the cartridge's SND reaches the mux only
+    bus->write8(0xFF03, 0x3C);            // CB2 high, CA2 low: source 2, the cartridge
+    bus->write8(0xFF23, 0x3F);            // the mux on
     ASSERT(last() > 0.4f);
     auto* o = dynamic_cast<coco::Orchestra90*>(sys->cart());
     ASSERT(o && o->left() == 0xFF && o->right() == 0xFF);

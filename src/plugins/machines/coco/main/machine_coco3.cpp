@@ -43,6 +43,7 @@ void System::wireCoco3(std::vector<uint8_t> rom, int ramKb) {
 
 // Every cycle at the GIME's rate; I/O brings the devices up to time first.
 // The ROM's address lines are the CPU's (A0-A14); the cartridge sees /CTS
+// (with A14 inverted, as XRoar's coco3.c: a 32 KB Pak's start is at $C000)
 // and /SCS, and decodes $FF60-$FF8F itself (Multi-Pak, RS-232 Pak,
 // Orchestra-90). Nothing driving the bus leaves its last byte there.
 uint8_t System::access3(uint16_t a, bool write, uint8_t v) {
@@ -69,7 +70,7 @@ uint8_t System::access3(uint16_t a, bool write, uint8_t v) {
             default: break;
         }
         if (cartSees) {
-            m_cart->write(a, cts, scs, v);
+            m_cart->write(cts ? (uint16_t)(a ^ 0x4000) : a, cts, scs, v);
             soundChanged();
         }
         return v;
@@ -92,7 +93,7 @@ uint8_t System::access3(uint16_t a, bool write, uint8_t v) {
     }
     if (cartSees) {
         uint8_t cd;
-        if (m_cart->read(a, cts, scs, cd)) r = cd;
+        if (m_cart->read(cts ? (uint16_t)(a ^ 0x4000) : a, cts, scs, cd)) r = cd;
     }
     m_bus = r;
     return r;
@@ -112,7 +113,7 @@ uint8_t System::peek3(uint16_t a) {
     }
     if (m_cart && (cts || scs || (a >= 0xFF60 && a < 0xFF90))) {
         uint8_t cd;
-        if (m_cart->peek(a, cts, scs, cd)) r = cd;
+        if (m_cart->peek(cts ? (uint16_t)(a ^ 0x4000) : a, cts, scs, cd)) r = cd;
     }
     return r;
 }

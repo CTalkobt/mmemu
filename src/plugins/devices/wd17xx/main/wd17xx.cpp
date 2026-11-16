@@ -699,10 +699,15 @@ void Wd17xx::run() {
             m_data = b;
             setDrq(true);
             if (--m_left > 0) { schedule(State::ReadAddrByte, timeOf(m_slot + st)); break; }
+            // The command ends a byte time after the last DRQ (as XRoar's wd279x.c), so
+            // the CPU takes the sixth byte before INTRQ (DOSplus counts all six in its NMI)
+            schedule(State::ReadAddrEnd, timeOf(m_slot + st));
+            break;
+        }
+        case State::ReadAddrEnd:
             m_sector = m_idTrack;           // the ID's track goes to the sector register
             finish(m_crc ? ST_CRC : 0);
             break;
-        }
 
         // Read Track ---------------------------------------------------------------
         case State::ReadTrackStart: {

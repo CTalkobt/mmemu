@@ -6,6 +6,9 @@
 #include "plugins/6809/main/cpu6809.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
+#include "plugins/machines/coco/main/coco_paks.h"
+#include "plugins/machines/coco/main/dragon_pro.h"
+#include <algorithm>
 #include "libdevices/main/io_registry.h"
 #include <cstdio>
 #include <cstdlib>
@@ -430,4 +433,205 @@ TEST_CASE(dragon_dragondos_in_the_machine) {
     ASSERT_EQ(bus->read8(0xFF42), 0x09);
     delete m;
     std::remove(vdk.c_str());
+}
+
+// Cumana DOS: its 16 KB ROM on DragonDOS's hardware (XRoar, MAME dragon_cart.xml);
+// DeltaDOS's WD2791 complemented with its latch at $FF44
+TEST_CASE(dragon_cumana_and_delta_in_the_machine) {
+    MachineDescriptor* m = makeDragon(coco::Model::Dragon64);
+    ASSERT(m);
+    std::vector<uint8_t> rom(0x4000, 0x11);
+    rom[0x2000] = 0x22;
+    const std::string romPath = tempPath("cdos", ".rom");
+    {
+        std::ofstream f(romPath, std::ios::binary);
+        f.write((const char*)rom.data(), (std::streamsize)rom.size());
+    }
+    std::string err;
+    ASSERT(m->expansionSlot("cart")->install("cumana", romPath, err));
+    coco::System* sys = sysOf(m);
+    ASSERT_EQ(sys->cart()->kind(), std::string("dragondos"));
+    ASSERT(sys->cart()->describe().find("Cumana DOS") != std::string::npos);
+    IBus* bus = m->buses[0].bus;
+    ASSERT_EQ(bus->peek8(0xC000), 0x11);
+    ASSERT_EQ(bus->peek8(0xE000), 0x22);
+    bus->write8(0xFF42, 0x07);                  // the WD2797 where DragonDOS has it
+    ASSERT_EQ(bus->read8(0xFF42), 0x07);
+    ASSERT(m->expansionSlot("cart")->install("deltados", romPath, err));
+    ASSERT_EQ(sys->cart()->kind(), std::string("deltados"));
+    m->onReset(*m);
+    bus->write8(0xFF41, 0xFA);                  // track 5
+    auto* delta = dynamic_cast<coco::DeltaDos*>(sys->cart());
+    ASSERT(delta);
+    ASSERT_EQ(delta->controller().trackRegister(), 5);
+    bus->write8(0xFF44, 0x13);
+    ASSERT_EQ(delta->controller().selectedDrive(), 3);
+    ASSERT(!m->expansionSlot("cart")->install("fd500", romPath, err));
+    std::remove(romPath.c_str());
+    delete m;
+}
+
+namespace {
+// A 4 KB 200-E character generator: active low, character $48 ('H') solid, the rest blank
+std::vector<uint8_t> charset200e() {
+    std::vector<uint8_t> c(0x1000, 0xFF);
+    for (int row = 0; row < 12; ++row) c[(size_t)(row << 8) | 0x48] = 0x00;
+    return c;
+}
+}  // namespace
+
+// The Dragon 200-E: a Dragon 64 with its own character generator and
+// Spanish legends for typed text
+TEST_CASE(dragon200e_charset_and_keyboard) {
+    coco::Roms roms;
+    roms.dragonBasic = dragonBasic(0x32);
+    roms.dragon64k = dragonBasic(0x64);
+    roms.dragonCharset = charset200e();
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::Dragon200E, &err, 64, &roms);
+    ASSERT(m);
+    ASSERT_EQ(m->machineId, std::string("dragon200e"));
+    coco::System* sys = sysOf(m);
+    ASSERT(sys->acia());                        // the 64's board
+    ASSERT(sys->keyboard.dragon200eLayout());
+    run(m, 400000);
+    // "HELLO DRAGON" at the top: H solid foreground, E (blank in this ROM) background
+    for (int y = 0; y < 12; ++y)
+        for (int x = 0; x < 8; ++x) ASSERT_EQ(sys->vdg.activeDot(x, y), (uint8_t)Mc6847::GREEN);
+    ASSERT_EQ(sys->vdg.activeDot(8 + 3, 5), (uint8_t)Mc6847::DARK_GREEN);
+    // The 64K-mode BASIC as on the 64 (PIA1 PB2)
+    IBus* bus = m->buses[0].bus;
+    bus->write8(0xFF23, 0x30);
+    bus->write8(0xFF22, 0xFE);
+    bus->write8(0xFF23, 0x34);
+    bus->write8(0xFF22, 0x00);
+    ASSERT_EQ(bus->read8(MARK_AT), 0x64);
+    bus->write8(0xFF22, 0x04);
+    // Typed ';' is the @ key (row 2 column 0); 'ñ' the ; key
+    size_t i = 0;
+    ASSERT_EQ(coco::dragon200eKey(";", i), 0);
+    i = 0;
+    ASSERT_EQ(coco::dragon200eKey("\xC3\xB1", i), 43);
+    ASSERT_EQ(i, (size_t)1);
+    i = 0;
+    ASSERT_EQ(coco::dragon200eKey("\xC3\x91", i), 43 | 0x100);
+    i = 0;
+    ASSERT_EQ(coco::dragon200eKey("a", i), -1);
+    auto scan = [&](int col) { bus->write8(0xFF02, (uint8_t)~(1 << col)); return (uint8_t)(bus->read8(0xFF00) & 0x7F); };
+    sys->keyboard.enqueueText(";");
+    bool seen = false;
+    for (int k = 0; k < 2000 && !seen; ++k) {
+        run(m, 100);
+        seen = scan(0) == 0x7B;
+    }
+    ASSERT(seen);
+    delete m;
+    // Without its character set: the VDG's own font
+    coco::Roms bare;
+    bare.dragonBasic = dragonBasic(0x32);
+    m = coco::create(coco::Model::Dragon200E, &err, 64, &bare);
+    ASSERT(m);
+    ASSERT(sysOf(m)->dragonCharset().empty());
+    delete m;
+}
+
+// The Dragon Professional: the boot ROM at reset, PIA2's ROM select, the
+// AY-3-8912 through PIA2 driving the disk selects, the WD2797 reversed at $FF2C
+TEST_CASE(dragonpro_boot_psg_and_disk) {
+    Asm boot(0xA000, 0x2000);
+    boot.emit({0x86, 0xB7});                    // LDA #$B7; STA $0701; BRA *
+    boot.ext(0xB7, CART_MARK);
+    const uint16_t spin = boot.pc;
+    boot.branch(0x20, spin);
+    boot.word(0xBFFE, 0xA000);
+    coco::Roms roms;
+    roms.dragonBasic = dragonBasic(0x32);
+    roms.dragonBoot = boot.b;
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::DragonPro, &err, 64, &roms);
+    ASSERT(m);
+    ASSERT_EQ(m->machineId, std::string("dragonpro"));
+    coco::System* sys = sysOf(m);
+    coco::DragonProHw* pro = sys->dragonPro();
+    ASSERT(pro);
+    ASSERT(sys->acia());
+    run(m, 50000);
+    IBus* bus = m->buses[0].bus;
+    ASSERT_EQ(bus->peek8(CART_MARK), 0xB7);
+    ASSERT_EQ(bus->peek8(0x8000), 0x86);        // the boot ROM, twice
+    ASSERT_EQ(bus->peek8(0xA000), 0x86);
+    // PIA2 at $FF24: PA0-2 out; PA2 low selects BASIC
+    bus->write8(0xFF25, 0x00);
+    bus->write8(0xFF24, 0x07);
+    bus->write8(0xFF25, 0x04);
+    bus->write8(0xFF24, 0x00);
+    ASSERT_EQ(bus->peek8(MARK_AT), 0x32);
+    ASSERT_EQ(bus->peek8(0x8000), 0x10);        // BASIC's LDS
+    // The PSG: R7 port A out, R14 = $12 (drive 1, motor)
+    bus->write8(0xFF27, 0x00);
+    bus->write8(0xFF26, 0xFF);
+    bus->write8(0xFF27, 0x04);
+    auto psgWrite = [&](uint8_t reg, uint8_t v) {
+        bus->write8(0xFF26, reg);
+        bus->write8(0xFF24, 0x03);              // latch the address
+        bus->write8(0xFF24, 0x00);
+        bus->write8(0xFF26, v);
+        bus->write8(0xFF24, 0x01);              // write
+        bus->write8(0xFF24, 0x00);
+    };
+    psgWrite(7, 0x7E);
+    psgWrite(14, 0x12);
+    ASSERT_EQ(pro->ioa, 0x12);
+    ASSERT_EQ(pro->fdc->selectedDrive(), 1);
+    ASSERT(pro->fdc->motor());
+    ASSERT(pro->fdc->doubleDensity());
+    // Read R14 back through port B
+    bus->write8(0xFF27, 0x00);
+    bus->write8(0xFF26, 0x00);
+    bus->write8(0xFF27, 0x04);
+    bus->write8(0xFF24, 0x02);
+    ASSERT_EQ(bus->read8(0xFF26), 0x12);
+    bus->write8(0xFF24, 0x00);
+    // The WD2797 reversed: $FF2D the sector register, $FF2E the track
+    bus->write8(0xFF2D, 0x09);
+    bus->write8(0xFF2E, 0x21);
+    ASSERT_EQ(pro->fdc->sectorRegister(), 0x09);
+    ASSERT_EQ(pro->fdc->trackRegister(), 0x21);
+    ASSERT_EQ(bus->read8(0xFF2D), 0x09);
+    // A tone on channel A: the PSG's level moves
+    bus->write8(0xFF27, 0x00);
+    bus->write8(0xFF26, 0xFF);
+    bus->write8(0xFF27, 0x04);
+    psgWrite(0, 0x40);
+    psgWrite(1, 0x00);
+    psgWrite(8, 0x0F);
+    psgWrite(7, 0x7E);
+    float lo = 1.0f, hi = -1.0f;
+    for (int k = 0; k < 400; ++k) {
+        run(m, 20);
+        lo = std::min(lo, pro->ayLevel);
+        hi = std::max(hi, pro->ayLevel);
+    }
+    ASSERT(hi - lo > 0.05f);
+    // The built-in drives answer `disk mount 1`
+    const std::string dsk = tempPath("pro", ".vdk");
+    {
+        std::vector<uint8_t> img = {'d', 'k', 12, 0, 0x10, 0x10, 'M', 0, 40, 1, 0, 0};
+        img.resize(12 + 40 * 18 * 256, 0xE5);
+        std::ofstream f(dsk, std::ios::binary);
+        f.write((const char*)img.data(), (std::streamsize)img.size());
+    }
+    ASSERT(m->ioRegistry->mountDisk(1, dsk) != nullptr);
+    ASSERT_EQ(pro->paths[0], dsk);
+    delete m;
+    std::remove(dsk.c_str());
+    // Without the boot ROM BASIC starts
+    coco::Roms bare;
+    bare.dragonBasic = dragonBasic(0x32);
+    m = coco::create(coco::Model::DragonPro, &err, 64, &bare);
+    ASSERT(m);
+    run(m, 100000);
+    ASSERT_EQ(m->buses[0].bus->peek8(MARK_AT), 0x32);
+    ASSERT_EQ(m->buses[0].bus->peek8(0x8000), 0x10);
+    delete m;
 }

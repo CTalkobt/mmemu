@@ -185,7 +185,7 @@ private:
         Idle,
         StepLoop, StepDone, VerifyStart, Search, IdFound,
         T2Start, ReadByte, ReadCrc, WriteDrq, WriteStart, WriteByte, WriteEnd,
-        ReadAddrByte, ReadTrackStart, ReadTrackByte,
+        ReadAddrByte, ReadAddrEnd, ReadTrackStart, ReadTrackByte,
         WriteTrackCheck, WriteTrackStart, WriteTrackByte,
     };
     enum class Search { Verify, Sector, Address };

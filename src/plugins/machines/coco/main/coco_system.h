@@ -24,6 +24,8 @@ class Acia6551;
 
 namespace coco {
 
+struct DragonProHw;
+
 constexpr double MASTER_HZ = 14318180.0;      ///< the crystal; the SAM divides by 16 (0.89 MHz) or 8
 constexpr double DRAGON_PAL_HZ = 14218000.0;  ///< the Dragon 32/64's crystal (0.889 MHz)
 constexpr double COCO_PAL_HZ = 14237530.0;    ///< a PAL CoCo's
@@ -34,11 +36,15 @@ constexpr int PIA_IRQ_DELAY = 14;             ///< tRS3, 1 us: a PIA's flag to i
  *  the stock Multi-Vue). */
 constexpr double HIRES_OFFSET_US = 560.0;
 constexpr double HIRES_SPAN_US = 4856.0;
+/** The CoCo Max 3 adapter's ramp: MAME's figures ("chosen by fair dice roll": not measured). */
+constexpr double CM3_OFFSET_US = 500.0;
+constexpr double CM3_SPAN_US = 2624.0;
 
 /** What a joystick port has on it. */
 enum class JoyInterface {
     Normal,     ///< the stick's pots, read through the DAC and comparator (6 bits)
     HiRes,      ///< the Radio Shack 26-3028 Hi-Res Joystick Interface: a timed ramp
+    CoCoMax3,   ///< the CoCo Max 3 hi-res adapter: the same ramp, started by PIA0 PA0-PA3 low
 };
 
 /**
@@ -78,6 +84,11 @@ private:
  *   row 2  @ A B C D E F G        row 5  X Y Z UP DOWN LEFT RIGHT SPACE
  * (row 6 as the CoCo's): setDragonLayout moves keys pressed by name or
  * typed; keyDown/keyUp are raw matrix positions.
+ *
+ * The Dragon 200-E's keys are the Dragon's with Spanish legends
+ * (setDragon200eLayout, for typed text, as XRoar's dkbd.c): ';' and '+' on
+ * the @ key, '@' SHIFT+CLEAR, Ñ / ñ on the ; key, Ç SHIFT+0, Ü SHIFT+BREAK,
+ * ¿ and ¡ SHIFT+RIGHT / DOWN, § and '~' SHIFT+SPACE.
  */
 class Keyboard : public IOHandler, public IKeyboardMatrix {
 public:
@@ -101,6 +112,9 @@ public:
     /** The Dragon's rows (see above). */
     void setDragonLayout(bool on) { m_dragon = on; }
     bool dragonLayout() const { return m_dragon; }
+    /** The Dragon 200-E's legends for typed text (see above). */
+    void setDragon200eLayout(bool on) { m_200e = on; }
+    bool dragon200eLayout() const { return m_200e; }
     void set(int row, int col, bool down);
     /** Rows pressed in a column (bit per row, SHIFT held by typing included). */
     uint8_t column(int col) const;
@@ -110,7 +124,7 @@ public:
 
 private:
     void pressChord(int code, bool down);
-    bool m_dragon = false;
+    bool m_dragon = false, m_200e = false;
     uint8_t m_matrix[8] = {};      // per column: rows held
     int m_shifts = 0;              // SHIFT held by shifted-symbol keys and typing
     std::deque<int> m_queue;       // typed keys: row << 3 | col, 0x100 = with SHIFT
@@ -365,7 +379,7 @@ public:
     void setJoyInterface(int port, JoyInterface j) { m_joyIf[port & 1] = j; }
     JoyInterface joyInterface(int port) const { return m_joyIf[port & 1]; }
     /** The port the host mouse moves: the first with a hi-res interface, else the right. */
-    int mousePort() const { return m_joyIf[0] != JoyInterface::HiRes && m_joyIf[1] == JoyInterface::HiRes ? 1 : 0; }
+    int mousePort() const { return m_joyIf[0] == JoyInterface::Normal && m_joyIf[1] != JoyInterface::Normal ? 1 : 0; }
 
     /** The level the sound circuit outputs now (-1..1). */
     float soundLevel() const;
@@ -385,6 +399,11 @@ public:
     bool rom64kSelected() const { return m_rom64Sel; }
     /** The Dragon 64's 6551 at $FF04-$FF07 (nullptr on others). */
     Acia6551* acia() const { return m_acia.get(); }
+    /** The Dragon 200-E's character generator (4 KB; empty: the VDG's own font). */
+    void setDragonCharset(std::vector<uint8_t> rom);
+    const std::vector<uint8_t>& dragonCharset() const { return m_charset; }
+    /** The Dragon Professional's own hardware (dragon_pro.h; nullptr on others). */
+    DragonProHw* dragonPro() const { return m_pro.get(); }
 
     Mc6847 vdg;
     Mc6883 sam;
@@ -424,6 +443,17 @@ private:
     void dragonClock(uint64_t ticks);
     bool piaDecoded(uint16_t a) const;
     const uint8_t* romByte(uint16_t a) const;
+    void fetchVideoCharset(int n, uint16_t* out);
+    // The Dragon Professional (dragon_pro.cpp)
+    void wireDragonPro();
+    bool proRead(uint16_t a, uint8_t& d);
+    bool proPeek(uint16_t a, uint8_t& d) const;
+    bool proWrite(uint16_t a, uint8_t v);
+    void proReset();
+    void proClock(uint64_t ticks);
+    void proNmiUpdate();
+    float proSound() const;
+    bool proFirq() const;
 
     Model m_model;
     bool m_pal = false;
@@ -436,6 +466,9 @@ private:
     bool m_rom64Sel = false;
     std::unique_ptr<Acia6551> m_acia;          // Dragon 64
     uint64_t m_aciaAcc = 0;
+    std::vector<uint8_t> m_charset;            // Dragon 200-E: the character generator
+    std::unique_ptr<DragonProHw> m_pro;        // Dragon Professional
+    bool m_proNmi = false;                     // its disk's INTRQ on /NMI
     uint64_t m_ackLeft = 0;                    // printer /ACK low for this many more ticks
     std::unique_ptr<Cart> m_cart;
     ICore* m_cpu = nullptr;
@@ -488,5 +521,10 @@ bool loadDragonRoms(Model model, std::vector<uint8_t>& basic, std::vector<uint8_
 std::vector<uint8_t> dragonPlaceholderRom();
 /** DragonDOS's ROM: `path`, or ddos12a.rom (...) from dragonFirmwareDir(); empty with `err` if none. */
 std::vector<uint8_t> loadDragonDosRom(const std::string& path, std::string& err);
+/** The Dragon 200-E's character set (d200e_26.rom, 4 KB): false (with `notice`) if missing. */
+bool loadDragonCharset(std::vector<uint8_t>& rom, std::string& notice);
+/** Typed text on a Dragon 200-E: the key for text[i] (advancing `i` past a UTF-8
+ *  sequence), -1 when its legend is the Dragon's (see Keyboard). */
+int dragon200eKey(const std::string& text, size_t& i);
 
 }  // namespace coco

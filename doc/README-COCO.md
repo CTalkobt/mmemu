@@ -7,8 +7,13 @@ Reference Manual; where those leave the behaviour open (the VDG mid-line,
 the SAM's video counter and rate changes) mmsim does what XRoar does
 (GPL-3.0-or-later; mmsim's own code).
 
-The Dragon 32 and Dragon 64 are built from the same code: see
-[README-DRAGON.md](README-DRAGON.md).
+The Dragon 32, Dragon 64, Dragon 200-E and Dragon Professional, and the
+Dragon's disk cartridges (DragonDOS, Delta, Cumana DOS, SuperDOS, DOSplus),
+are built from the same code: see [README-DRAGON.md](README-DRAGON.md),
+which lists their ROM file names (XRoar's: `d32`, `d64_1` / `d64_2`,
+`d200e_1` / `d200e_2` / `d200e_26`, `alpha-basic` / `alpha-boot-v1.0`,
+`ddos12a`, `delta2`, `cdos20`, `sdose6`, `dplus49b`, in
+`MMEMU_DRAGON_FIRMWARE` or `roms/dragon/`).
 
 ## Profiles
 
@@ -45,6 +50,8 @@ at their directory:
 | `extbas11.rom` (or `extbas10.rom`) | Extended Color BASIC, 8 KB at `$8000` (optional: without it the machine runs Color BASIC alone, with a warning) |
 | `disk11.rom` (or `disk10.rom`) | Disk Extended Color BASIC, 8 KB, for the FD-500 cartridge |
 | `orch90.rom` | The Orchestra-90 program (optional) |
+| `pic-7040-510.bin` | The Speech/Sound Cartridge's TMS7040 mask ROM, 4 KB (required for `ssc`; MAME's name) |
+| `sp0256-al2.bin` | The SP0256-AL2's allophone ROM, 2 KB (optional: without it the SSC's speech is silent) |
 | `sdc-dos.rom` (or `sdcdos.rom`, `cocosdc.rom`) | The CoCo SDC's flash: SDC-DOS (16 KB, bank 0) or the whole 128 KB (optional) |
 
 Without Color BASIC the machine is still made (so the debugger and the
@@ -149,9 +156,20 @@ value stops the ramp; changing the selects (CA2 axis, CB2 port) after it
 has run out starts it again. The mouse moves the stick on a hi-res port
 (the left one if only it has the interface) at 256 steps a host pixel.
 
+**CoCo Max 3 hi-res adapter** (CoCo 3 only): `expansion joyright cm3`.
+As MAME's `coco_cm3_hires_joy`: the same ramp, but started when PIA0
+PA0-PA3 are all driven low (PA0-PA3 as outputs written 0) and stopped
+otherwise, rising 500 µs + position × 2624 µs / 1023 later. MAME marks
+those two figures "chosen by fair dice roll": **unverified** against the
+adapter or CoCo Max III.
+
+**CoCo Max Hi-Res Input Pack** (CoCo Max I/II, CoCo 1/2): a cartridge,
+below (`cocomax`).
+
 Sound: the DAC (PIA1 PA2-PA7) through the analog multiplexer (PIA1 CB2
 on, PIA0 CA2/CB2 selecting DAC, cassette, cartridge), the single-bit
-output (PIA1 PB1), and the Orchestra-90's DACs, at 44.06 kHz.
+output (PIA1 PB1), and the Orchestra-90's DACs and the Speech/Sound
+Cartridge, at 44.06 kHz.
 
 ## Cassette
 
@@ -176,20 +194,145 @@ also the GIME's EI2 interrupt (below).
 ## Cartridges
 
 `cart game.ccc` (or `.rom`, or `-i`) plugs a ROM Pak in (up to 16 KB at
-`$C000`). Its CART line is tied to a clock, so BASIC's cartridge FIRQ
-starts it.
+`$C000`; on a CoCo 3 a whole 32 KB at `$8000-$FEFF`; larger images are
+bank-switched, see below). Its CART line is tied to a clock, so BASIC's
+cartridge FIRQ starts it.
 
 `expansion cart <device>` fits a device in the cartridge port:
 
 | Device | |
 |--------|---|
 | `mpi` | The Multi-Pak Interface: four slots (`expansion mpi1 <device>` ... `mpi4`); `$FF7F` routes /CTS (bits 4-5) and /SCS (bits 0-1); the option is the front switch (1-4, both selects at reset). A ROM Pak attached with `cart` goes in the switch's slot; what was in the port moves there when the Multi-Pak goes in |
-| `orch90` | Orchestra-90: stereo DACs at `$FF7A` (left) and `$FF7B` (right), mixed into the sound; the option its ROM |
+| `orch90` | Orchestra-90: stereo DACs at `$FF7A` (left) and `$FF7B` (right), on the cartridge sound input (the analog multiplexer's source 2); the option its ROM |
+| `ssc` | Speech/Sound Cartridge (26-3144): TMS7040, SP0256-AL2 and AY-3-8913 behind `$FF7D/$FF7E` (option: `[TMS7040 ROM][,SP0256 ROM]`; below) |
+| `cocomax` | CoCo Max Hi-Res Input Pack: an A/D for its mouse at `$FF90-$FF97`, moved by the host mouse (not on a CoCo 3; below) |
 | `rs232` | Deluxe RS-232 Program Pak: a 6551 ACIA at `$FF68-$FF6B`, its IRQ on CART; `serial loopback`, `serial tcp:PORT`, `serial modem` |
 | `fd500` | FD-500 disk controller: Disk BASIC (option: the ROM's path; else `disk11.rom`) and its latch at `$FF40` |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
 | `burke` | Burke & Burke CoCo XT hard disk interface at `$FF50-$FF53` (option: drive 0's raw image[,ROM]) |
 | `rompak` | A ROM Pak; the option its image |
+| `gmc` | The Games Master Cartridge (bank-switched ROM and an SN76489); the option its image |
+| `banked` | A banked ROM Pak as MAME's (16 KB banks, register at `$FF40`); the option its image |
+
+### Bank-switched ROM Paks
+
+`coco::BankedPak` (`coco_paks.h`). As XRoar's rombank the image (up to
+256 KB) is padded with `$FF` to a power of two and seen 16 KB at a time at
+`$C000-$FEFF`; reset selects bank 0; CART is on Q as a plain Pak's.
+
+- `gmc`: John Linville's Games Master Cartridge, as XRoar's gmc.c: a write
+  to an even address in `$FF40-$FF5F` selects bank D (masked to the
+  image), an odd one goes to its SN76489 (4 MHz), mixed into the sound.
+  XRoar runs Tandy's own bank-switched CoCo 3 Paks (RoboCop, Predator) as
+  this: their bank register is at `$FF40` too.
+- `banked`: MAME's "CoCo Program PAK (Banked)" (coco_pak.cpp, `banked
+  16K`): only `$FF40` selects, bank D modulo the image; no sound.
+
+**Auto-detection** (`cart`, `-i`; XRoar's cart.c): an image XRoar knows by
+CRC-32 keeps its type (the CoCo 3's unbanked 32 KB Paks, e.g. Super
+Pitfall, Rampage!, Arkanoid, Silpheed: a plain Pak; Mind Roll, RoboCop,
+Predator, Dunjunz, Blockdown: `gmc`); any other image over 16 KB is a GMC,
+16 KB or less a plain Pak. `expansion cart gmc|banked|rompak IMAGE`
+chooses explicitly.
+
+On the CoCo 3 the cartridge sees A14 inverted (as XRoar's coco3.c), so a
+32 KB Pak's first half is at `$C000` in 16K mode and the whole image at
+`$8000-$FEFF` in the GIME's 32K external ROM mode.
+
+Not done: XRoar's MOOH (512 KB RAM with an MMU and SPI) and NX32 (RAM
+expansion) are RAM cartridges, not ROM bank schemes; they are not
+modelled.
+
+Verified (November 2026, user-supplied images from the Color Computer
+Archive, not in the repository; `test_coco_real_roms.cpp` repeats it
+when they are in `roms/coco/paks/`): on the `coco3`, RoboCop (128 KB) and
+Predator (64 KB) are detected as GMC-banked, switch banks and show their
+title screens; Super Pitfall and Rampage! (32 KB) are detected as plain
+Paks and ask their RGB-monitor questions; Mind-Roll (32 KB, banked) runs on
+a `coco2`. No GMC with sound (Blockdown, Dunjunz) was tried.
+
+### The Speech/Sound Cartridge
+
+`coco::SpeechSoundPak`, after MAME's `coco_ssc` (tim lindner). The
+cartridge is a TMS7040 microcontroller with its own firmware, 2 KB of
+static RAM, an SP0256-AL2 and an AY-3-8913; the CoCo talks only to the
+firmware, so mmsim **runs the firmware** on a TMS7000 core
+(`src/plugins/devices/tms7000`, after MAME's) rather than imitating its
+command language, which no document available here describes. The cost:
+the TMS7040's mask ROM (`pic-7040-510.bin`) is needed, and without it the
+cartridge isn't made (the message names the file).
+
+- `$FF7D` (write): bit 0 high holds the TMS7040, the SP0256 and the AY
+  in reset (the service manual's flip-flop IC4); low lets them run. The
+  host's RESET clears it. Not readable (MAME returns `$FF`; the
+  service manual's 74LS138 decodes only the two writes and the `$FF7E`
+  read, at `$FF7C-$FF7F` with A7 high).
+- `$FF7E` (write): a byte to the firmware (TMS7040 port A, its INT3), and
+  BUSY until the firmware acknowledges it (port C bit 7 rising). Read:
+  bit 7 low = BUSY, bit 6 the SP0256's SBY (high: silent), bit 5 low while
+  the sound activity circuit hears the AY, bits 0-4 high.
+- Inside, as MAME: port B the RAM's A0-A7, port C bits 0-2 A8-A10 (bit 0
+  also the AY's BC1), 3 R/W (the AY's BDIR), 4 the RAM's /CS, 5 the
+  SP0256's /ALD, 6 the AY's /CS, 7 BUSY's reset; port D the data bus; the
+  SP0256's LRQ on INT1. Clocks: the TMS7040 and AY from E × 2 (1.79 MHz),
+  the SP0256 from its 3.12 MHz crystal (10 kHz samples).
+- The SP0256 (`src/plugins/devices/sp0256`, after MAME's / jzIntv's): the
+  microsequencer and LPC-12 filter, driven from its ROM
+  (`sp0256-al2.bin`). Without that ROM each allophone halts at once:
+  silent, SBY and LRQ still answer (but SBY's busy time is then a sample,
+  not the allophone's length).
+- The cartridge's sound reaches the CoCo on the cartridge connector's SND
+  pin, which is the analog multiplexer's cartridge input: software
+  selects it (the owner's manual: `POKE &HFF01,52: POKE &HFF03,63` and
+  `POKE &HFF23,60`). mmsim now routes every cartridge's audio (the
+  Orchestra-90's too) through the multiplexer's source 2 instead of mixing
+  it in always.
+- The AY-3-8913 is mmsim's AY core (the Spectrum's, after Fuse); the 8913
+  has no I/O ports, so registers 14-15 read back what was written. The
+  sound activity circuit (`$FF7E` bit 5) and the mix are MAME's model.
+
+What the documents settle (Tandy's owner's manual, service manual
+26-3144A and schematic): the two addresses and the status bits (bit 7
+BUSY*, bit 6 speaking, bit 5 sound active, all active low; the other bits
+unused), the reset by writing 1 then 0 to `$FF7D`, the write latch and
+BUSY flip-flop raising the PIC 7040's INT3 and cleared when the 7040 has
+the byte, LRQ* on INT1, port A from the host, port B the RAM's address,
+port C control, port D the internal bus, the 1.78 MHz clock (E XOR Q),
+the 3.12 MHz SP0256 resonator, the mixer (sound x 2, speech x 1.5), the
+4 kHz speech filter (not modelled) and the sound activity circuit (an
+AC-coupled rectifier against 0.8 V, so volumes of 3 or less may not
+register). Port C's individual bit assignments are MAME's (the
+schematic scan is too coarse to read them); the service manual says the
+7040 clears BUSY by "bringing C7 low", while MAME clears it on C7
+rising: mmsim follows MAME (a difference of a few cycles). The owner's
+manual's command language (`$80-$FF`: buffers, text-to-speech after a
+carriage return, register access with `$AF`) is the firmware's and runs as
+it is.
+
+Not verified: neither ROM is available here, so the cartridge has only
+been run with a stand-in firmware (the tests'); the demonstration
+programs (SS1-SS7.CAS) need the firmware. Snapshots don't include the
+cartridge.
+
+### The CoCo Max Hi-Res Input Pack
+
+`coco::CocoMax`, after MAME's `coco_max`: an 8-bit A/D converter for the
+mouse (or joystick) plugged into the pack, at `$FF90-$FF97`. A read
+returns the last conversion and starts the next of its channel: `$FF90`
+Y, `$FF91` X (0-255), `$FF92` the left button (`$00` pressed), `$FF93`
+the right; `$FF94-$FF97` start nothing. With the pack in (or in a
+Multi-Pak slot) the host mouse moves it, a step a pixel, instead of the
+joystick. It has no ROM in mmsim (MAME's has none). The CoCo 3's GIME is
+at `$FF90`, so it is refused there (CoCo Max III uses the `cm3` joystick
+adapter above).
+
+Checked against: "Hi-Res Adapter (Colorware).txt" (a reverse-engineering
+note: `$FF90` Y, `$FF91` X, `$FF92` the button; a modified pack at
+`$FF60`) and CoCo Max II's own code on its disk, which reads a channel
+as `LDY #$FF90: LDA B,Y`, waits a delay loop, then `LDA B,Y` again (and
+`$FF92` the same way): the read-starts-a-conversion model. CoCo Max II
+itself has not been run (Disk BASIC's DIR gives an I/O error from the
+CLI with these images, with or without the pack: a separate problem).
 
 ### The FD-500 disk controller
 
@@ -475,9 +618,9 @@ still to be done.
 
 ## Not done
 
-- The Speech/Sound Pak.
-- The CoCo Max 3 style hi-res adapter (only the Tandy interface is
-  modelled).
+- MOOH and NX32 RAM cartridges.
+- The Speech/Sound Cartridge with its real firmware and allophone ROM
+  (not available here); the CoCo Max 3 adapter's timing (MAME's guess).
 - CoCo 3: artifact colours in the CoCo 3 modes (only the VDG-compatible
   graphics are decoded); a PAL composite encoder.
 - Storage: the Disto SC-II / SCSI adapter and the Glenside IDE cartridge;
