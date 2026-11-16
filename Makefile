@@ -253,6 +253,7 @@ PLUGIN_6801_SRCS = src/plugins/6801/main/cpu6801.cpp \
 	src/plugins/6801/main/plugin_init.cpp
 PLUGIN_MC10_SRCS = src/plugins/machines/mc10/main/machine_mc10.cpp \
 	src/plugins/machines/mc10/main/mc10_cart.cpp \
+	src/plugins/devices/ef9345/main/ef9345.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/devices/mc6847/main/mc6847.cpp \
 	src/plugins/devices/mc6847/main/mc6847_font.cpp \
@@ -708,6 +709,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/6801/test/test_asm6801.cpp \
 	src/plugins/machines/mc10/test/test_mc10_machine.cpp \
 	src/plugins/machines/mc10/test/test_mc10_roms.cpp \
+	src/plugins/devices/ef9345/test/test_ef9345.cpp \
 	src/plugins/machines/coco/test/test_dragon_machine.cpp \
 	src/plugins/machines/coco/test/test_coco3_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_storage.cpp \
@@ -833,6 +835,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/6801/main/asm6801.o \
 	src/plugins/machines/mc10/main/machine_mc10.o \
 	src/plugins/machines/mc10/main/mc10_cart.o \
+	src/plugins/devices/ef9345/main/ef9345.o \
 	src/plugins/arm/main/cpu_arm2.o \
 	src/plugins/65816/main/cpu65816.o \
 	src/plugins/devices/riot6532/main/riot6532.o \

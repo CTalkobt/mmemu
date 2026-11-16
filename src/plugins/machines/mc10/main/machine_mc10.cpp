@@ -407,6 +407,7 @@ int Sound::pullSamples(float* buffer, int maxSamples) {
 }
 
 void Display::renderFrame(uint32_t* buffer) {
+    if (m_useEf) { m_ef->render(buffer); return; }
     std::memcpy(buffer, m_vdg->frame(), sizeof(uint32_t) * Mc6847::OUT_W * Mc6847::OUT_H);
 }
 
@@ -430,15 +431,21 @@ void ExpansionPort::getDeviceInfo(DeviceInfo& out) const {
 // The system
 // ---------------------------------------------------------------------------
 System::System(Model model, std::vector<uint8_t> rom) : vdg(false), m_model(model) {
-    m_masterHz = model == Model::Alice ? ALICE_HZ : MASTER_HZ;
+    m_ef = hasEf9345(model);
+    m_masterHz = model == Model::MC10 ? MASTER_HZ : ALICE_HZ;
     sound.setMasterHz(m_masterHz);
     serial.setMasterHz(m_masterHz);
     tape.setMasterHz(m_masterHz);
     tape.setMotor(true);                     // no motor relay
-    keyboard.setAlice(model == Model::Alice);
+    keyboard.setAlice(model != Model::MC10);
     m_cfg = {16, 8, BusRole::DATA, false, 0xFFFF};
-    m_rom.assign(0x2000, 0xFF);
-    for (size_t i = 0; i < 0x2000 && !rom.empty(); ++i) m_rom[i] = rom[i % rom.size()];
+    const size_t romSize = m_ef ? 0x4000 : 0x2000;
+    m_rom.assign(romSize, 0xFF);
+    for (size_t i = 0; i < romSize && !rom.empty(); ++i) m_rom[i] = rom[i % rom.size()];
+    m_ram.assign(model == Model::Alice90 ? 0x8000 : model == Model::Alice32 ? 0x2000 : 0x1000, 0);
+    m_ramStart = m_ef ? 0x3000 : 0x4000;
+    ef.setClock(m_masterHz);
+    display.useEf9345(m_ef);
     vdg.fetch = [this](uint16_t addr, int n, uint16_t* out) { fetchVideo(addr, n, out); };
     // The Alice's PAL board pads the VDG to 312 lines as a PAL CoCo's does (XRoar's assumption)
     if (model == Model::Alice) {
@@ -481,13 +488,15 @@ void System::setCart(std::unique_ptr<Cart> cart) {
 }
 
 void System::powerOn() {
-    std::memset(m_ram, 0, sizeof m_ram);
+    std::fill(m_ram.begin(), m_ram.end(), 0);
+    for (uint16_t a = 0; a < Ef9345::VRAM_SIZE; ++a) ef.setVram(a, 0);
     if (auto* r = dynamic_cast<RamPack*>(m_cart.get())) r->clear();
     resetButton();
 }
 
 void System::resetButton() {
     vdg.reset();
+    ef.reset();
     keyboard.reset();
     m_latch = 0;
     vdg.setMode(0);
@@ -504,11 +513,15 @@ float System::soundLevel() const {
 }
 
 // Rows 0-5 low for keys in strobed columns; row 6 (P21) separately
+// (the Alice 90 reads only the highest column strobed)
 uint8_t System::keyboardRows(uint8_t& row6) const {
     const uint8_t cols = m_cpu ? m_cpu->port(1).out() : 0xFF;
     uint8_t rows = 0;
-    for (int c = 0; c < 8; ++c)
-        if (!(cols & (1 << c))) rows |= keyboard.column(c);
+    for (int c = 7; c >= 0; --c)
+        if (!(cols & (1 << c))) {
+            rows |= keyboard.column(c);
+            if (m_model == Model::Alice90) break;
+        }
     row6 = rows & 0x40;
     return (uint8_t)(~rows & 0x3F);
 }
@@ -528,8 +541,10 @@ void System::port2In() {
 
 void System::writeLatch(uint8_t v) {
     sync(now());
-    vdg.update();
     m_latch = v;
+    m_level = soundLevel();
+    if (m_ef) return;                                 // the Alice 32/90: the sound only
+    vdg.update();
     // D5 A/G, D2 GM2, D3 GM1, D4 GM0, D6 CSS
     const uint8_t mode = (uint8_t)(((v & 0x20) ? 0x80 : 0) | ((v & 0x04) ? 0x40 : 0) | ((v & 0x08) ? 0x20 : 0) |
                                    ((v & 0x10) ? 0x10 : 0) | ((v & 0x40) ? 0x08 : 0));
@@ -542,7 +557,7 @@ void System::fetchVideo(uint16_t addr, int n, uint16_t* out) {
     const uint16_t ext = (m_latch & 0x04) ? Mc6847::F_EXT : 0;
     for (int i = 0; i < n; ++i) {
         const uint16_t a = (uint16_t)((addr + i) & 0x1FFF);
-        const uint8_t d = a < 0x1000 ? m_ram[a] : 0;
+        const uint8_t d = a < 0x1000 ? m_ram[a % m_ram.size()] : 0;
         *out++ = (uint16_t)(d | ext | ((d & 0x80) ? Mc6847::F_AS : 0) | ((d & 0x40) ? Mc6847::F_INV : 0));
     }
 }
@@ -551,7 +566,8 @@ void System::sync(uint64_t to) {
     if (to <= m_dev) return;
     const uint64_t d = to - m_dev;
     sound.run(d, m_level);
-    vdg.advance(d);
+    if (m_ef) ef.advance(d);
+    else vdg.advance(d);
     const bool tapeWas = tape.input();
     tape.clock(d);
     if (tape.input() != tapeWas) m_level = soundLevel();
@@ -565,7 +581,24 @@ void System::sync(uint64_t to) {
     }
 }
 
+uint8_t System::efRead(uint16_t a, bool peek) {
+    if (a >= m_ramStart && a < m_ramStart + m_ram.size()) return m_ram[a - m_ramStart];
+    if (a >= 0xC000) return m_rom[a & 0x3FFF];
+    if ((a & 0xFFF0) == 0xBF20) {
+        if (peek) return ef.peek((uint8_t)(a & 0x0F));
+        sync(now());
+        return ef.read((uint8_t)(a & 0x0F));
+    }
+    if (a >= 0x8000) {                                // the keyboard's rows
+        if (!peek) sync(now());
+        uint8_t row6;
+        return (uint8_t)((a & 0xC0) | keyboardRows(row6));
+    }
+    return (uint8_t)a;
+}
+
 uint8_t System::decodeRead(uint16_t a) {
+    if (m_ef) return efRead(a, false);
     switch (a >> 14) {
         case 1:
             if (!(a & 0x1000)) return m_ram[a & 0x0FFF];
@@ -582,6 +615,12 @@ uint8_t System::decodeRead(uint16_t a) {
 }
 
 void System::decodeWrite(uint16_t a, uint8_t v) {
+    if (m_ef) {
+        if (a >= m_ramStart && a < m_ramStart + m_ram.size()) m_ram[a - m_ramStart] = v;
+        else if ((a & 0xFFF0) == 0xBF20) { sync(now()); ef.write((uint8_t)(a & 0x0F), v); }
+        else if (a >= 0x8000 && a < 0xC000) writeLatch(v);
+        return;
+    }
     switch (a >> 14) {
         case 1:
             if (!(a & 0x1000)) {
@@ -620,6 +659,7 @@ uint8_t System::peek8(uint32_t addr) {
     uint8_t v;
     if (m_cpu && m_cpu->peekInternal(a, v)) return v;
     if (m_cart && m_cart->peek(a, v)) return v;
+    if (m_ef) return efRead(a, true);
     switch (a >> 14) {
         case 1: return (a & 0x1000) ? (uint8_t)a : m_ram[a & 0x0FFF];
         case 2: { uint8_t row6; return (uint8_t)((a & 0xC0) | keyboardRows(row6)); }
@@ -646,7 +686,7 @@ void System::saveState(uint8_t* buf) const {
 
 std::vector<uint8_t> System::state() const {
     std::vector<uint8_t> v;
-    putBlob(v, std::vector<uint8_t>(m_ram, m_ram + sizeof m_ram));
+    putBlob(v, m_ram);
     putBlob(v, vdg.saveState());
     const std::string kind = m_cart ? m_cart->kind() : "";
     putBlob(v, std::vector<uint8_t>(kind.begin(), kind.end()));
@@ -654,6 +694,7 @@ std::vector<uint8_t> System::state() const {
     put(v, m_latch);
     put(v, m_ticks);
     put(v, m_dev);
+    if (m_ef) putBlob(v, ef.saveState());
     return v;
 }
 
@@ -666,7 +707,8 @@ void System::loadState(const uint8_t* buf) {
     get(p, m_latch);
     get(p, m_ticks);
     get(p, m_dev);
-    if (ram.size() == sizeof m_ram) std::memcpy(m_ram, ram.data(), sizeof m_ram);
+    if (m_ef) ef.loadState(getBlob(p));
+    if (ram.size() == m_ram.size()) m_ram = ram;
     vdg.loadState(vd);
     if (m_cart && std::string(kind.begin(), kind.end()) == m_cart->kind()) m_cart->loadState(cs);
     m_level = soundLevel();
@@ -721,6 +763,44 @@ std::vector<uint8_t> placeholderRom(const std::string& file) {
     return r;
 }
 
+// The Alice 32/90 without its ROM: a stand-in at $C000 that sets up the
+// EF9345 (40 columns, rows from Y=8), writes the message on row 1 and waits
+std::vector<uint8_t> placeholderEfRom(const std::string& file) {
+    std::vector<uint8_t> r(0x4000, 0x01);
+    std::vector<uint8_t> c;
+    const uint16_t WAIT = 0xC0F0, MSG = 0xC100;
+    auto jsrWait = [&]() { c.insert(c.end(), {0xBD, (uint8_t)(WAIT >> 8), (uint8_t)WAIT}); };
+    c.insert(c.end(), {0x8E, 0x00, 0xFF});                        // LDS #$00FF
+    const uint8_t ind[][2] = {{0x00, 0x81}, {0x00, 0x82}, {0x37, 0x83}, {0x00, 0x84}, {0x08, 0x87}};
+    for (const auto& p : ind) {                                   // TGS, MAT, PAT, DOR, ROR
+        jsrWait();
+        c.insert(c.end(), {0x86, p[0], 0xB7, 0xBF, 0x21});        // LDAA #v; STAA R1
+        c.insert(c.end(), {0x86, p[1], 0xB7, 0xBF, 0x28});        // LDAA #IND; STAA R0 (and go)
+    }
+    jsrWait();
+    c.insert(c.end(), {0x86, 0x08, 0xB7, 0xBF, 0x26});            // R6 (Y) = 8: row 1
+    c.insert(c.end(), {0x7F, 0xBF, 0x27, 0x7F, 0xBF, 0x22});      // R7 (X) = 0; R2 (B) = 0: G0
+    c.insert(c.end(), {0x86, 0x70, 0xB7, 0xBF, 0x23});            // R3 (A) = white on black
+    c.insert(c.end(), {0xCE, (uint8_t)(MSG >> 8), (uint8_t)MSG});  // LDX #MSG
+    const size_t loop = c.size();
+    jsrWait();
+    c.insert(c.end(), {0xA6, 0x00, 0x27, 0x0B});                  // LDAA 0,X; BEQ done
+    c.insert(c.end(), {0xB7, 0xBF, 0x21, 0x86, 0x01, 0xB7, 0xBF, 0x28, 0x08});   // R1; KRF+inc; INX
+    c.insert(c.end(), {0x20, (uint8_t)(loop - (c.size() + 2))});  // BRA loop
+    c.insert(c.end(), {0x20, 0xFE});                              // done: BRA *
+    std::copy(c.begin(), c.end(), r.begin());
+    const uint8_t wait[] = {0xF6, 0xBF, 0x20, 0x2B, 0xFB, 0x39};  // LDAB status; BMI WAIT; RTS
+    std::copy(wait, wait + sizeof wait, r.begin() + (WAIT - 0xC000));
+    std::string msg = "NO ROM: PUT " + file + " IN ROMS/MC10/";
+    for (auto& ch : msg) ch = (char)std::toupper((unsigned char)ch);
+    msg.resize(std::min<size_t>(msg.size(), 40));
+    std::copy(msg.begin(), msg.end(), r.begin() + (MSG - 0xC000));
+    r[(MSG - 0xC000) + msg.size()] = 0;
+    r[0x3FFE] = 0xC0;               // reset vector: $C000
+    r[0x3FFF] = 0x00;
+    return r;
+}
+
 std::vector<uint8_t> loadMcxRom(Model model, const std::string& option, std::string& err) {
     std::vector<uint8_t> rom;
     const std::string path = !option.empty() ? option
@@ -738,29 +818,45 @@ std::vector<uint8_t> loadMcxRom(Model model, const std::string& option, std::str
 
 MachineDescriptor* create(Model model, std::string* err, Expansion expansion, const Roms* roms) {
     const bool alice = model == Model::Alice;
-    const std::string romName = alice ? "alice.rom" : "mc10.rom";
-    std::vector<uint8_t> basic;
-    std::string missing;
+    const bool efModel = hasEf9345(model);
+    const std::string romName = efModel ? "alice32.rom" : alice ? "alice.rom" : "mc10.rom";
+    const size_t romSize = efModel ? 0x4000 : 0x2000;
+    std::vector<uint8_t> basic, charset;
+    std::string missing, noCharset;
     if (roms) {
         basic = roms->basic;
+        charset = roms->charset;
         if (basic.empty()) { if (err) *err = "no BASIC image"; return nullptr; }
-    } else if (!readFile(firmwareDir() + "/" + romName, basic) || basic.size() != 0x2000) {
-        missing = std::string(alice ? "Alice BASIC" : "Micro Color BASIC") + " ROM not found: put " + romName +
-                  " (8 KB) in " + firmwareDir() + "/ or set MMEMU_MC10_FIRMWARE to its directory";
-        if (err) *err = missing;
-        std::fprintf(stderr, "%s\n", missing.c_str());
-        basic = placeholderRom(romName);
+    } else {
+        if (!readFile(firmwareDir() + "/" + romName, basic) || basic.size() != romSize) {
+            missing = std::string(efModel ? "Alice 32/90 BASIC" : alice ? "Alice BASIC" : "Micro Color BASIC") +
+                      " ROM not found: put " + romName + " (" + std::to_string(romSize / 1024) + " KB) in " +
+                      firmwareDir() + "/ or set MMEMU_MC10_FIRMWARE to its directory";
+            if (err) *err = missing;
+            std::fprintf(stderr, "%s\n", missing.c_str());
+            basic = efModel ? placeholderEfRom(romName) : placeholderRom(romName);
+        }
+        if (efModel && !readFile(firmwareDir() + "/ef9345.rom", charset) && !readFile(firmwareDir() + "/charset.rom", charset))
+            charset.clear();
+    }
+    if (efModel && charset.size() != Ef9345::CHARSET_SIZE) {
+        noCharset = "EF9345 character ROM not found: put ef9345.rom (8 KB; MAME's charset.rom) in " + firmwareDir() +
+                    "/: without it the screen shows no characters";
+        if (!roms) std::fprintf(stderr, "%s\n", noCharset.c_str());
     }
 
     auto* sys = new System(model, std::move(basic));
+    if (efModel) sys->setCharset(charset);
     auto* desc = new MachineDescriptor();
-    desc->machineId = alice ? "alice" : "mc10";
-    desc->displayName = alice ? "Matra Alice" : "TRS-80 MC-10";
+    desc->machineId = model == Model::Alice90 ? "alice90" : model == Model::Alice32 ? "alice32" : alice ? "alice" : "mc10";
+    desc->displayName = model == Model::Alice90 ? "Matra Alice 90" : model == Model::Alice32 ? "Matra Alice 32"
+                      : alice ? "Matra Alice" : "TRS-80 MC-10";
     desc->licenseClass = "proprietary";
     desc->uiPanesSet = true;
     desc->uiPanes = {"tape"};
     desc->clockHz = sys->masterHz() / TICKS_PER_CYCLE;
     if (!missing.empty()) desc->warnings.push_back(missing);
+    if (!noCharset.empty()) desc->warnings.push_back(noCharset);
 
     auto* cpu = new M6801(M6801::Variant::MC6803);
     cpu->setDataBus(sys);
@@ -772,6 +868,8 @@ MachineDescriptor* create(Model model, std::string* err, Expansion expansion, co
     std::vector<uint8_t> mcxRom = roms ? roms->mcx128 : std::vector<uint8_t>();
     if (expansion == Expansion::RamPack16K) {
         sys->setCart(std::unique_ptr<Cart>(new RamPack()));
+    } else if (expansion == Expansion::Mcx128 && efModel) {
+        desc->warnings.push_back("the MCX-128 is for the MC-10 and the Alice, not the Alice 32/90");
     } else if (expansion == Expansion::Mcx128) {
         std::string e;
         if (mcxRom.empty()) mcxRom = loadMcxRom(model, "", e);
@@ -816,6 +914,7 @@ MachineDescriptor* create(Model model, std::string* err, Expansion expansion, co
                 sys->setCart(std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1))));
                 return true;
             }
+            if (device == "mcx128" && hasEf9345(model)) { err = "the MCX-128 is for the MC-10 and the Alice"; return false; }
             if (device == "mcx128") {
                 std::vector<uint8_t> rom = loadMcxRom(model, option, err);
                 if (rom.empty()) return false;

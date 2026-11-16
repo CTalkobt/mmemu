@@ -4,6 +4,7 @@
 #include "mc10_cart.h"
 #include "plugins/machines/coco/main/coco_tape.h"
 #include "plugins/devices/mc6847/main/mc6847.h"
+#include "plugins/devices/ef9345/main/ef9345.h"
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ikeyboard_matrix.h"
 #include "libdevices/main/ivideo_output.h"
@@ -173,10 +174,11 @@ private:
     uint64_t m_acc = 0;
 };
 
-/** The screen, as the frontends find it. */
+/** The screen, as the frontends find it: the VDG's, or the EF9345's (the Alice 32/90). */
 class Display : public IOHandler, public IVideoOutput {
 public:
-    explicit Display(Mc6847* vdg) : m_vdg(vdg) {}
+    Display(Mc6847* vdg, Ef9345* ef) : m_vdg(vdg), m_ef(ef) {}
+    void useEf9345(bool on) { m_useEf = on; }
     const char* name() const override { return "Video"; }
     uint32_t baseAddr() const override { return 0; }
     uint32_t addrMask() const override { return 0; }
@@ -184,10 +186,15 @@ public:
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override {}
     void tick(uint64_t) override {}
-    VideoDimensions getDimensions() const override { return {Mc6847::OUT_W, Mc6847::OUT_H, Mc6847::OUT_W, Mc6847::OUT_H}; }
+    VideoDimensions getDimensions() const override {
+        if (m_useEf) return {m_ef->width(), Ef9345::OUT_H, m_ef->width(), Ef9345::OUT_H};
+        return {Mc6847::OUT_W, Mc6847::OUT_H, Mc6847::OUT_W, Mc6847::OUT_H};
+    }
     void renderFrame(uint32_t* buffer) override;
 private:
     Mc6847* m_vdg;
+    Ef9345* m_ef;
+    bool m_useEf = false;
 };
 
 class System;
@@ -251,10 +258,18 @@ private:
  * screen is at $4000); D7 is its A/S, D6 INV. Time is kept in ticks of
  * the master clock, 16 per E cycle; external accesses bring the devices up
  * to their cycle first.
+ *
+ * The Alice 32 and 90 (as MAME has them): RAM from $3000 (8 KB to $4FFF,
+ * 32 KB to $AFFF), the EF9345 at $BF20-$BF2F (offset & 15) with its own
+ * 16 KB of video RAM, the keyboard's rows at $BFFF (the Alice 90 reads
+ * only the highest column strobed), the latch's bit 7 the sound, the
+ * 16 KB ROM at $C000.
  */
 class System : public IBus {
 public:
     System(Model model, std::vector<uint8_t> rom);
+    /** The EF9345's character ROM (the Alice 32/90). */
+    void setCharset(const std::vector<uint8_t>& rom) { ef.setCharset(rom); }
     ~System() override;
 
     // IBus
@@ -284,9 +299,11 @@ public:
     double masterHz() const { return m_masterHz; }
     /** The $BFFF latch's last value. */
     uint8_t latch() const { return m_latch; }
-    /** The internal 4 KB of RAM (offset from $4000). */
-    uint8_t ram(uint16_t off) const { return m_ram[off & 0x0FFF]; }
-    void setRam(uint16_t off, uint8_t v) { m_ram[off & 0x0FFF] = v; }
+    /** The internal RAM (offset from its start: $4000, 4 KB; the Alice 32/90 $3000, 8 / 32 KB). */
+    uint8_t ram(uint16_t off) const { return m_ram[off % m_ram.size()]; }
+    void setRam(uint16_t off, uint8_t v) { m_ram[off % m_ram.size()] = v; }
+    uint16_t ramStart() const { return m_ramStart; }
+    size_t ramSize() const { return m_ram.size(); }
 
     // The expansion port
     void setCart(std::unique_ptr<Cart> cart);
@@ -300,11 +317,12 @@ public:
     float soundLevel() const;
 
     Mc6847 vdg;
+    Ef9345 ef;                             ///< the Alice 32/90's video
     coco::Tape tape;
     Keyboard keyboard;
     SerialPort serial;
     Sound sound;
-    Display display{&vdg};
+    Display display{&vdg, &ef};
     TapeDeck tapeDeck{this};
     ExpansionPort expansionPort{this};
 
@@ -319,11 +337,15 @@ private:
     uint8_t decodeRead(uint16_t a);
     void decodeWrite(uint16_t a, uint8_t v);
 
+    uint8_t efRead(uint16_t a, bool peek);
+
     Model m_model;
+    bool m_ef = false;                     // the Alice 32/90
     double m_masterHz = MASTER_HZ;
     BusConfig m_cfg;
-    std::vector<uint8_t> m_rom;            // 8 KB
-    uint8_t m_ram[0x1000] = {};
+    std::vector<uint8_t> m_rom;            // 8 KB ($E000) or 16 KB ($C000)
+    std::vector<uint8_t> m_ram;
+    uint16_t m_ramStart = 0x4000;
     std::unique_ptr<Cart> m_cart;
     M6801* m_cpu = nullptr;
     uint8_t m_latch = 0;

@@ -195,6 +195,76 @@ TEST_CASE(mc10_keyboard) {
     EXPECT_EQ(a.sys->ram(0x101) & 0x3F, 0x1F);
 }
 
+// The Alice 32 and 90: RAM from $3000 (8K / 32K), the EF9345 at $BF20
+// (offset 8-15 runs R0's command), the ROM at $C000, the keyboard at $BFFF
+// (the Alice 90 reads the highest column strobed only), no VDG
+TEST_CASE(mc10_alice32_memory_map) {
+    const std::vector<std::string> scan = {"start: LDS #$00FF", "LDAA #$FF", "STAA $00", "loop: LDAA $3100", "STAA $02",
+                                           "LDAA $BFFF", "STAA $3101", "BRA L_loop"};
+    Machine m(romFrom(scan), mc10::Model::Alice32, mc10::Expansion::None);
+    ASSERT(m.sys != nullptr);
+    EXPECT_EQ(m.desc->machineId, std::string("alice32"));
+    EXPECT_EQ(m.sys->ramSize(), (size_t)0x2000);
+    m.sys->write8(0x3000, 0x12);
+    m.sys->write8(0x4FFF, 0x34);
+    EXPECT_EQ(m.sys->ram(0), 0x12);
+    EXPECT_EQ(m.sys->peek8(0x4FFF), 0x34);
+    EXPECT_EQ(m.sys->peek8(0x5000), 0x00);            // nothing: the address's low byte
+    EXPECT_EQ(m.sys->peek8(0xC000), m.sys->peek8(0xE000));   // (an 8K stand-in, twice)
+    m.sys->write8(0xBF20, 0x81);                      // R0: IND to TGS (no command yet)
+    EXPECT_EQ(m.sys->ef.tgs(), 0x00);
+    m.sys->write8(0xBF29, 0x10);                      // R1, and go
+    EXPECT_EQ(m.sys->ef.tgs(), 0x10);
+    EXPECT_EQ(m.sys->peek8(0xBF20) & 0x80, 0x80);     // busy
+    m.run(10);
+    EXPECT_EQ(m.sys->read8(0xBF20) & 0x80, 0);
+    EXPECT_EQ(m.sys->peek8(0xBF21), 0x10);
+    EXPECT_EQ(m.sys->display.getDimensions().width, Ef9345::W40);
+    m.sys->write8(0xBFFF, 0x80);                      // the latch: sound only
+    EXPECT_EQ(m.sys->latch(), 0x80);
+    // The keyboard: A (row 2, column 1) and G (row 0, column 7) with both columns strobed
+    m.sys->keyboard.key("a", true);
+    m.sys->keyboard.key("g", true);
+    m.sys->setRam(0x100, 0x7D);
+    m.run(200);
+    EXPECT_EQ(m.sys->ram(0x101) & 0x3F, 0x3A);
+
+    Machine n(romFrom(scan), mc10::Model::Alice90, mc10::Expansion::None);
+    EXPECT_EQ(n.desc->machineId, std::string("alice90"));
+    EXPECT_EQ(n.sys->ramSize(), (size_t)0x8000);
+    n.sys->write8(0xAFFF, 0x56);
+    EXPECT_EQ(n.sys->peek8(0xAFFF), 0x56);
+    n.sys->keyboard.key("a", true);
+    n.sys->keyboard.key("g", true);
+    n.sys->setRam(0x100, 0x7D);
+    n.run(200);
+    EXPECT_EQ(n.sys->ram(0x101) & 0x3F, 0x3E);        // column 7's rows only
+    // No MCX-128 on these
+    std::string err;
+    EXPECT_TRUE(!n.desc->expansionSlots[0].install("mcx128", "", err));
+}
+
+// The Alice 32 without its ROM: a stand-in that puts the message on the
+// EF9345's row 1; warnings naming alice32.rom and ef9345.rom
+TEST_CASE(mc10_alice32_missing_rom) {
+    const std::string dir = (std::filesystem::temp_directory_path() / "mmemu-mc10-empty").string();
+    std::filesystem::create_directories(dir);
+    const char* old = std::getenv("MMEMU_MC10_FIRMWARE");
+    const std::string saved = old ? old : "";
+    ::setenv("MMEMU_MC10_FIRMWARE", dir.c_str(), 1);
+    std::string err;
+    std::unique_ptr<MachineDescriptor> d(mc10::create(mc10::Model::Alice32, &err, mc10::Expansion::None));
+    if (old) ::setenv("MMEMU_MC10_FIRMWARE", saved.c_str(), 1); else ::unsetenv("MMEMU_MC10_FIRMWARE");
+    ASSERT(d != nullptr);
+    EXPECT_TRUE(err.find("alice32.rom") != std::string::npos);
+    ASSERT(d->warnings.size() == 2);
+    EXPECT_TRUE(d->warnings[1].find("ef9345.rom") != std::string::npos);
+    mc10::System* sys = mc10::systemOf(d.get());
+    for (int i = 0; i < 30000; ++i) sys->step();
+    EXPECT_EQ(sys->ef.rowText(1).substr(0, 23), std::string("NO ROM: PUT ALICE32.ROM"));
+    EXPECT_EQ(sys->ef.pat(), 0x37);
+}
+
 // The latch at $BFFF: VDG mode pins (A/G, GM2-0, CSS), GM2 as INT/EXT, the sound bit;
 // alphanumerics and the semigraphics drawn from the internal RAM; the Alice's 312 lines
 TEST_CASE(mc10_vdg_latch) {

@@ -58,6 +58,24 @@ The canonical version is defined in the `VERSION` file at the repository root.
   (`expansion joyright cm3`): the hi-res ramp started by PIA0 PA0-PA3
   low, with MAME's (unmeasured) timing.
 
+### Matra Alice 32 and Alice 90; the Thomson EF9345 (#357)
+
+- New profiles `alice32` (8 KB of RAM at `$3000`) and `alice90` (32 KB),
+  as MAME has them: the MC-10's 6803, keyboard (AZERTY; the Alice 90
+  reads the highest column strobed only), cassette and serial port, a
+  16 KB ROM at `$C000` (`alice32.rom`, the user's) and the EF9345 at
+  `$BF20`. Without the ROM a stand-in says so on the EF9345's screen.
+- The EF9345 display processor (`src/plugins/devices/ef9345`, after
+  MAME's ef9345.cpp): its command set through R0-R7 with the busy flag
+  and times, 16 KB of video RAM, 40 columns of 24- and 16-bit codes and
+  80 columns of 12-bit codes, the service row, ROR's scrolling origin,
+  double size, flash, conceal, negative, underline, the cursor, insert
+  modes, quadrichrome characters; the character ROM is the user's
+  (`ef9345.rom`; MAME's `charset.rom`). The picture is 336 or 492 x 270.
+- With the real ROM the Alice 32 and 90 boot Micro Color BASIC 1.0
+  (7238 and 31814 bytes free), run a program, and CSAVE and CLOAD a
+  `.k7` (the `.c10` format; `.k7` now loads and records too).
+
 ### CoCo FD-500 / FD-502: `$FF40` bit 5 polarity (#355)
 
 - Bit 5 of the disk latch is density (1 = double) and the NMI enable, as
