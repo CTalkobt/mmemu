@@ -5,7 +5,9 @@
 //  - mc10.rom: Micro Color BASIC 1.0 boots on `mc10` and `mc10-4k`, finds
 //    its RAM, runs a program, CSAVEs and CLOADs it back, LLISTs it;
 //  - mcx128bas.rom / alice128bas.rom: MCX BASIC 2.1 (the MCX-128's EPROM,
-//    QWERTY and AZERTY) boots on `mc10` and `alice` and finds its RAM.
+//    QWERTY and AZERTY) boots on `mc10` and `alice` and finds its RAM;
+//  - alice32.rom and ef9345.rom (the EF9345's characters): the Alice 32
+//    and 90 boot, run a program, CSAVE and CLOAD.
 
 #include "test_harness.h"
 #include "plugins/machines/mc10/main/machine_mc10.h"
@@ -38,9 +40,14 @@ struct Real {
         const uint64_t end = sys->cycles() + (uint64_t)(seconds * sys->masterHz() / mc10::TICKS_PER_CYCLE);
         while (sys->cycles() < end) sys->step();
     }
-    // The text screen: 32 x 16 at $4000, as the VDG's characters
+    // The text screen: 32 x 16 at $4000, as the VDG's characters (the
+    // Alice 32/90: the EF9345's 25 rows)
     std::string screen() const {
         std::string s;
+        if (mc10::hasEf9345(sys->model())) {
+            for (int y = 0; y < 25; ++y) s += sys->ef.rowText(y) + "\n";
+            return s;
+        }
         for (int i = 0; i < 512; ++i) {
             const uint8_t c = sys->ram((uint16_t)i) & 0x3F;
             s += (char)(c < 0x20 ? '@' + c : c);
@@ -172,4 +179,60 @@ TEST_CASE(mc10_rom_alice_mcx128) {
     m.runFor(1);
     m.type("PRINT MEM\\n");                   // typed by legend: the AZERTY positions
     EXPECT_TRUE(m.waitFor(" 28703", 5));
+}
+
+// The Alice 32 (8K) and 90 (32K): Micro Color BASIC 1.0 at $C000 (16 KB,
+// the same ROM in both), the screen the EF9345's
+TEST_CASE(mc10_rom_alice32) {
+    if (!have("alice32.rom") || !have("ef9345.rom")) return;
+    const struct { mc10::Model model; const char* mem; } models[] = {
+        {mc10::Model::Alice32, " 7238"}, {mc10::Model::Alice90, " 31814"},
+    };
+    for (const auto& c : models) {
+        Real m(c.model, mc10::Expansion::None);
+        ASSERT(m.sys != nullptr);
+        ASSERT(m.waitFor("MICROCOLOR BASIC 1.0", 5));
+        ASSERT(m.waitFor("OK", 5));
+        m.runFor(1);
+        m.type("PRINT MEM\\n");                   // typed by legend: the AZERTY positions
+        EXPECT_TRUE(m.waitFor(c.mem, 5));
+        m.type("10 FOR I=1 TO 3:PRINT I*7;:NEXT\\nRUN\\n");
+        EXPECT_TRUE(m.waitFor(" 7  14  21", 10));
+        // The picture: BASIC's 32 x 16 in the middle of the 40 x 25, black
+        // characters on green (row 4, the banner's, is the 6th cell row)
+        EXPECT_EQ(m.sys->display.getDimensions().width, Ef9345::W40);
+        EXPECT_EQ(m.sys->ef.pixel(2, 2), 0);
+        bool green = false;
+        for (int x = 40; x < 296 && !green; ++x) green = m.sys->ef.pixel(x, 55) == 2;
+        EXPECT_TRUE(green);
+    }
+}
+
+// CSAVE on an Alice 32 and CLOAD from the .k7 (the .c10 format)
+TEST_CASE(mc10_rom_alice32_csave_cload) {
+    if (!have("alice32.rom")) return;
+    const std::string tape = "/tmp/mmsim_alice32_" + std::to_string((long)getpid()) + ".k7";
+    {
+        Real m(mc10::Model::Alice32, mc10::Expansion::None);
+        ASSERT(m.waitFor("OK", 5));
+        m.runFor(1);
+        m.type("10 PRINT \"SAVED\";6*7\\n");
+        m.runFor(3);
+        ASSERT(m.sys->tapeDeck.startTapeRecord());
+        m.type("CSAVE \"T\"\\n");
+        ASSERT(m.waitAfter("CSAVE", "OK", 30));
+        m.sys->tapeDeck.stopTapeRecord();
+        ASSERT(m.sys->tapeDeck.saveTapeRecording(tape));
+    }
+    Real m(mc10::Model::Alice32, mc10::Expansion::None);
+    ASSERT(m.waitFor("OK", 5));
+    m.runFor(1);
+    ASSERT(m.sys->tapeDeck.mountTape(tape));
+    m.type("CLOAD\\n");
+    m.runFor(1);
+    m.sys->tapeDeck.controlTape("play");
+    m.runFor(15);
+    m.type("RUN\\n");
+    EXPECT_TRUE(m.waitFor("SAVED 42", 30));
+    std::remove(tape.c_str());
 }

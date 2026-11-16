@@ -1,5 +1,8 @@
 # mmemu-plugin-mc10: TRS-80 MC-10 Micro Color Computer and Matra Alice
 
+Also the Alice 32 and Alice 90 (the Thomson EF9345's video): see
+[Alice 32 and 90](#alice-32-and-90).
+
 The Tandy TRS-80 MC-10 (#333): an MC6803 at 0.89 MHz, the MC6847 VDG, 4 KB
 of RAM, the 8 KB Micro Color BASIC ROM, a 1-bit sound latch, the cassette
 and a serial printer port. The board's wiring follows XRoar (`mc10.c`,
@@ -14,6 +17,8 @@ Color Computer uses ([README-COCO.md](README-COCO.md#video-mc6847)).
 | `mc10` | MC-10 with the 16K RAM pack (20 KB) |
 | `mc10-4k` | MC-10, unexpanded (4 KB) |
 | `alice` | Matra Alice: the French MC-10 (PAL, 312 lines at 50 Hz; AZERTY), with the 16K pack |
+| `alice32` | Matra Alice 32 (1984): the EF9345, 8 KB of RAM at `$3000`, 16 KB of ROM at `$C000` |
+| `alice90` | Matra Alice 90 (1985): the same with 32 KB of RAM |
 
 ```
 bin/mmemu-cli -m mc10                      # Micro Color BASIC
@@ -32,6 +37,8 @@ their directory:
 | `mc10.rom` | Micro Color BASIC 1.0, 8 KB at `$E000` (required for `mc10`) |
 | `alice.rom` | The Alice's BASIC, 8 KB (required for `alice`) |
 | `mcx128bas.rom` / `alice128bas.rom` | The MCX-128's 16 KB EPROM, MCX BASIC 2.1 (QWERTY / AZERTY; optional) |
+| `alice32.rom` | The Alice 32's and 90's BASIC, 16 KB at `$C000` (required for `alice32`, `alice90`) |
+| `ef9345.rom` | The EF9345's character ROM, 8 KB (MAME's `charset.rom` from its `alice32` set is taken too) |
 
 MCX BASIC 2.1 (Darren Atkinson's, from the MCX-128 project files) opens a
 boot menu: Micro Color BASIC with 32 KB, MCX BASIC, or MCX BASIC (large:
@@ -43,7 +50,8 @@ header, which is skipped.
 Without BASIC the machine is still made (so the debugger and the plugin
 checks work), with a warning naming the file and the directory (printed,
 and in the GUI's notice bar); a stand-in ROM puts the same message on the
-screen. `roms/mc10/hardware.sym` (checked in) names the 6803's registers,
+screen (on the Alice 32/90, through the EF9345; without `ef9345.rom` the
+screen shows no characters, with a warning). `roms/mc10/hardware.sym` (checked in) names the 6803's registers,
 `KBD_VDG` (`$BFFF`), the MCX-128's registers and the vectors.
 
 ## Memory map
@@ -74,6 +82,39 @@ The VDG fetches the internal RAM through its own address counter (the
 screen is `$4000`); D7 is A/S, D6 INV; GM2 is also INT/EXT. Time is
 counted in ticks of 14.31818 MHz (4x the VDG's clock): an E cycle is 16.
 External accesses bring the VDG, cassette and keyboard up to their cycle.
+
+## Alice 32 and 90
+
+Matra's second design (as MAME has it, `mame/trs/mc10.cpp`): the same 6803,
+keyboard, cassette and serial port, with the Thomson EF9345 for video.
+
+| Address | Read | Write |
+|---------|------|-------|
+| `$3000-$4FFF` | The Alice 32's 8 KB of RAM (the Alice 90's 32 KB: `$3000-$AFFF`) | |
+| `$BF20-$BF2F` | The EF9345's registers (offset & 7; R0 is the status) | R(offset & 7); at offsets 8-15 R0's command then runs |
+| `$8000-$BFFF` (else) | Keyboard rows (the Alice 90 reads only the highest column strobed) | The latch: bit 7 sound |
+| `$C000-$FFFF` | The 16 KB ROM | |
+
+The EF9345 (`src/plugins/devices/ef9345/`, after MAME's `ef9345.cpp`) has
+its own 16 KB of video RAM, reached only through its commands: KRF/KRG
+(24/16-bit codes), CLF/CLG, OCT, KRL (80 columns), IND (the indirect
+registers TGS, MAT, PAT, DOR, ROR and the character ROM), INY and the
+MVB/MVD/MVT block moves, each with its busy time. It shows 40 columns of
+long (24-bit) or short (16-bit, serial attributes) codes, or 80 columns of
+12-bit codes: 25 rows (the service row and 24 from ROR's origin), double
+height and width, flash, conceal, negative, underline, the cursor, the
+insert modes and quadrichrome characters. A row of ten lines is drawn at
+its first line, 64 us lines, 312 to a frame. The picture is 336 x 270 (40
+columns: 42 cells of 8 dots by 27 rows of 10 with the margin) or 492 x 270
+(80 columns). Colours are 3-bit RGB.
+
+Not done (nor in MAME): KRC (8-bit 80-column writes), the 40-column
+variable and 80-column 8-bit codes (shown as margin), insert on
+quadrichrome characters. CLF and CLG take 4 us a code (MAME leaves the chip
+busy until the next command). The chip's timing (MAME: 60 Hz) is taken as
+PAL's 50 Hz here.
+
+`.k7` tapes (the Alice 32's name) are the `.c10` format.
 
 ## Keyboard
 
@@ -177,12 +218,15 @@ server works with the 6803's registers (`--gdb-port`).
 program, CSAVEs to the recorder and CLOADs the `.c10` back, and LLISTs to
 the serial printer; MCX BASIC 2.1 boots on the MC-10 in its three
 choices (31558, 28703 and 47454 bytes free) and its AZERTY build on the
-Alice. Keyboard typing goes through the ROM's own scan.
+Alice; the Alice 32 and 90's BASIC (`alice32.rom`, Micro Color BASIC 1.0)
+boots on the EF9345 with 7238 and 31814 bytes free, runs a program, and
+CSAVEs and CLOADs a `.k7`. Keyboard typing goes through the ROM's own scan.
 
 ## Not done
 
-- The Alice's own BASIC (`alice.rom`) was not found to test with.
-- The Alice 32 and Alice 90 (their EF9345 video).
+- The Alice's own BASIC (`alice.rom`) was not found to test with: the
+  `alice` profile is checked with MCX BASIC's AZERTY build and stand-ins.
+- The Alice 32/90's EF9345 gaps above.
 
 ## Testing
 
@@ -196,6 +240,12 @@ assembled by the 6803 line assembler:
 - the cassette both ways (bytes written on P20 decode to `.c10`; a `.c10` played into P24 timed with the 6803's counter);
 - the serial printer (a bit-banged 600-baud string; the TP-10's paper);
 - RS-232 input on P22 (a bit-banged receive loop; loopback; the printer's ready);
-- the MCX-128's banks, registers and ROM maps as its GAL decodes, and the 6803's writes into its SRAM; snapshots.
+- the MCX-128's banks, registers and ROM maps as its GAL decodes, and the 6803's writes into its SRAM; snapshots;
+- the Alice 32 and 90's memory map, the EF9345's registers on the bus, the Alice 90's keyboard read, the missing-ROM stand-in on the EF9345.
+
+`src/plugins/devices/ef9345/test/test_ef9345.cpp`: the EF9345's commands
+and busy times, the pointers, clearing and block moves, the 40- and
+80-column pictures, the margin, the service row, negative, the cursor,
+double height, the VSYNC status, snapshots (a stand-in character ROM).
 
 `test_mc10_roms.cpp` runs with the real ROMs (above), else says so and passes.

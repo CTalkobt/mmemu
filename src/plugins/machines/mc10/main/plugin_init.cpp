@@ -10,14 +10,14 @@
 
 namespace {
 
-/** .c10: into the recorder, then CLOAD typed and PLAY pressed (an MC-10 or Alice only). */
+/** .c10 (and the Alice 32's .k7, the same bytes): into the recorder, then CLOAD typed and PLAY pressed (an MC-10 or Alice only). */
 class C10Loader : public IImageLoader {
 public:
     bool canLoad(const std::string& path) const override {
         auto dot = path.rfind('.');
         std::string e = dot == std::string::npos ? "" : path.substr(dot + 1);
         std::transform(e.begin(), e.end(), e.begin(), ::tolower);
-        return e == "c10";
+        return e == "c10" || e == "k7";
     }
     bool load(const std::string& path, IBus*, MachineDescriptor* m, uint32_t) override {
         mc10::System* sys = mc10::systemOf(m);
@@ -114,5 +114,7 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("mc10", mc10::Model::MC10, mc10::Expansion::RamPack16K, "TRS-80 MC-10 Micro Color Computer (20 KB with the 16K RAM pack)");
     reg("mc10-4k", mc10::Model::MC10, mc10::Expansion::None, "TRS-80 MC-10 Micro Color Computer (4 KB, unexpanded)");
     reg("alice", mc10::Model::Alice, mc10::Expansion::RamPack16K, "Matra Alice (PAL MC-10, AZERTY; 20 KB)");
+    reg("alice32", mc10::Model::Alice32, mc10::Expansion::None, "Matra Alice 32 (EF9345 video, 8 KB)");
+    reg("alice90", mc10::Model::Alice90, mc10::Expansion::None, "Matra Alice 90 (EF9345 video, 32 KB)");
     return &s_manifest;
 }
