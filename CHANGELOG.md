@@ -7,6 +7,15 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo FD-500 / FD-502: `$FF40` bit 5 polarity (#355)
+
+- Bit 5 of the disk latch is density (1 = double) and the NMI enable, as
+  MAME's coco_fdc (DSKREG) and XRoar's rsdos.c have it; mmsim had it
+  inverted, so real Disk BASIC got `?IO ERROR` on every disk access. With
+  the real Disk BASIC 1.1 ROM `DIR` now lists a real disk on the CoCo 2
+  (FD-500) and the CoCo 3 (FD-502). The two FD-500 unit tests used the
+  inverted value and are corrected.
+
 ### CoCo storage: the CoCo SDC and Burke & Burke hard disk interface (#356)
 
 - The CoCo SDC (`expansion cart sdc FOLDER[,FIRMWARE[,BANK]]`, or a
