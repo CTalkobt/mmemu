@@ -59,8 +59,13 @@ public:
 };
 
 /**
- * A ROM Pak (.rom / .ccc): up to 16 KB at $C000-$FEFF (smaller images
- * repeat). Its CART line is tied to the Q clock, so once BASIC enables
+ * A ROM Pak (.rom / .ccc): up to 16 KB at $C000-$FEFF, or on a CoCo 3 a
+ * whole 32 KB at $8000-$FEFF (the GIME's 32K external mode). As XRoar's
+ * rombank the image is padded with $FF to a power of two and addressed by
+ * A0-A14: an image of 8 KB or less repeats; on a CoCo 1/2 a 32 KB one shows
+ * its second half (the CoCo 3 inverts A14 to the cartridge, so its $C000
+ * is the image's start). Bigger, bank-switched images: BankedPak
+ * (coco_paks.h). Its CART line is tied to the Q clock, so once BASIC enables
  * the cartridge FIRQ (PIA1 CRB) the first edge starts it at $C000: here a
  * 1 kHz square wave, which reaches the PIA as soon as BASIC looks.
  */
@@ -239,7 +244,8 @@ private:
  */
 class DragonDos : public Cart {
 public:
-    explicit DragonDos(std::vector<uint8_t> rom);
+    /** `label` names a compatible DOS on the same hardware (Cumana DOS). */
+    explicit DragonDos(std::vector<uint8_t> rom, std::string label = "");
     ~DragonDos() override;
     std::string kind() const override { return "dragondos"; }
     std::string describe() const override;
@@ -263,6 +269,7 @@ private:
     std::unique_ptr<Wd17xx> m_fdc;
     std::string m_paths[4];
     std::vector<uint8_t> m_rom;
+    std::string m_label;
     uint8_t m_latch = 0;
 };
 

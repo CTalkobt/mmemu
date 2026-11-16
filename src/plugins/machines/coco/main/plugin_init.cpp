@@ -91,7 +91,7 @@ static const char* s_deps[] = { "6809", nullptr };
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,
     "coco",
-    "TRS-80 Color Computer 1, 2, 2B and 3; Dragon 32 and 64",
+    "TRS-80 Color Computer 1, 2, 2B and 3; Dragon 32, 64, 200-E and Professional",
     "1.0.0",
     s_deps,
     nullptr,
@@ -127,5 +127,7 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
     reg("dragon32", coco::Model::Dragon32, 32, "Dragon 32 (PAL, 32 KB)");
     reg("dragon64", coco::Model::Dragon64, 64, "Dragon 64 (PAL, 64 KB, 6551 RS-232)");
     reg("tano", coco::Model::Dragon64, 64, "Tano Dragon (NTSC Dragon 64)", coco::Tv::NTSC);
+    reg("dragon200e", coco::Model::Dragon200E, 64, "Dragon 200-E (Eurohard's Spanish Dragon 64: its character set and keyboard)");
+    reg("dragonpro", coco::Model::DragonPro, 64, "Dragon Professional (Alpha): boot ROM, AY-3-8912, built-in WD2797 floppy");
     return &s_manifest;
 }

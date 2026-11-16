@@ -423,6 +423,26 @@ TEST_CASE(wd17xx_read_address) {
     ASSERT_EQ(got[3], 1);
     ASSERT_EQ(r.f.sectorRegister(), 12);
     ASSERT_EQ(r.status() & 0x7F, 0);
+    // INTRQ a byte time after the sixth DRQ (as XRoar), not with it: DOSplus's
+    // NMI handler counts all six bytes
+    r.f.writeRegister(0, 0xC0);
+    int drqs = 0;
+    bool was = false;
+    for (int t = 0; t < 1000000 && !r.f.intrq(); ++t) {
+        if (r.f.drq() && !was) ++drqs;
+        was = r.f.drq();
+        if (drqs == 6 && r.f.drq()) {
+            ASSERT(!r.f.intrq());
+            r.f.readRegister(3);
+            was = false;
+        } else if (r.f.drq()) {
+            r.f.readRegister(3);
+            was = false;
+        }
+        r.f.tick(1);
+    }
+    ASSERT_EQ(drqs, 6);
+    ASSERT(r.f.intrq());
     // Wrong density: no IDs to be found
     r.f.setDoubleDensity(false);
     got.clear();

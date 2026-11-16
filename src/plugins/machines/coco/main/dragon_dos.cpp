@@ -7,8 +7,8 @@
 
 namespace coco {
 
-DragonDos::DragonDos(std::vector<uint8_t> rom)
-    : m_fdc(new Wd17xx(Wd17xx::Variant::WD2797, 0xFF40)), m_rom(std::move(rom)) {
+DragonDos::DragonDos(std::vector<uint8_t> rom, std::string label)
+    : m_fdc(new Wd17xx(Wd17xx::Variant::WD2797, 0xFF40)), m_rom(std::move(rom)), m_label(std::move(label)) {
     m_fdc->setClockHz(14318180);
     m_fdc->setReadyMode(Wd17xx::ReadyMode::Always);
     // DRQ is the CART line (PIA1 CB1, FIRQ); INTRQ is /NMI when the latch enables it
@@ -19,7 +19,8 @@ DragonDos::DragonDos(std::vector<uint8_t> rom)
 DragonDos::~DragonDos() { m_fdc->flush(); }
 
 std::string DragonDos::describe() const {
-    std::string s = "DragonDOS disk controller (WD2797)";
+    std::string s = m_label.empty() ? "DragonDOS disk controller (WD2797)"
+                                    : m_label + " (DragonDOS-compatible controller, WD2797)";
     for (int i = 0; i < 4; ++i)
         if (!m_paths[i].empty()) {
             const auto slash = m_paths[i].find_last_of('/');

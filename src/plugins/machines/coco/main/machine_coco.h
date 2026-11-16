@@ -12,12 +12,18 @@ namespace coco {
  * CoCo 1 (MC6847, 0.89 MHz), CoCo 2 (MC6847), CoCo 2B (MC6847T1: lower
  * case); the Dragon 32 and Dragon 64 (Dragon Data's: the same chips, their
  * own keyboard matrix, ROM, printer port and, on the 64, a 6551 and a
- * second BASIC); the Color Computer 3 (the TCC1014 GIME in place of the
+ * second BASIC; the 200-E with its own character set and keyboard legends;
+ * the Professional with an AY-3-8912, a WD2797 and a boot ROM); the Color
+ * Computer 3 (the TCC1014 GIME in place of the
  * SAM and VDG, 128 or 512 KB, Super Extended Color BASIC).
  */
-enum class Model { CoCo1, CoCo2, CoCo2B, Dragon32, Dragon64, CoCo3 };
+enum class Model { CoCo1, CoCo2, CoCo2B, Dragon32, Dragon64, CoCo3, Dragon200E, DragonPro };
 
-inline bool isDragon(Model m) { return m == Model::Dragon32 || m == Model::Dragon64; }
+inline bool isDragon(Model m) {
+    return m == Model::Dragon32 || m == Model::Dragon64 || m == Model::Dragon200E || m == Model::DragonPro;
+}
+/** The Dragon 64's board (its 6551, ROM select pull-up, PIA decoding): the 64, 200-E and Professional. */
+inline bool isDragon64Board(Model m) { return m == Model::Dragon64 || m == Model::Dragon200E || m == Model::DragonPro; }
 
 /**
  * The television standard: NTSC (60 Hz, 262 lines, 14.31818 MHz) or PAL
@@ -34,6 +40,8 @@ struct Roms {
     std::vector<uint8_t> dragonBasic;  ///< Dragon: 16 KB at $8000 (required; the 64's 32K-mode BASIC)
     std::vector<uint8_t> dragon64k;    ///< Dragon 64: the 16 KB 64K-mode BASIC (PIA1 PB2 low)
     std::vector<uint8_t> coco3Basic;   ///< CoCo 3: the 32 KB Super Extended Color BASIC (required on a CoCo 3)
+    std::vector<uint8_t> dragonCharset;  ///< Dragon 200-E: the 4 KB character generator ROM (optional)
+    std::vector<uint8_t> dragonBoot;     ///< Dragon Professional: the 8 KB boot ROM (optional)
 };
 
 /**
@@ -53,7 +61,12 @@ struct Roms {
  * $MMEMU_DRAGON_FIRMWARE or roms/dragon/: the Dragon 32's d32.rom, the
  * Dragon 64's d64_1.rom (32K mode) and d64_2.rom (64K mode), 16 KB each;
  * DragonDOS ddos12a.rom (or ddos12, ddos10...) for its cartridge. A
- * Dragon 64 with `tv` NTSC is the Tano Dragon.
+ * Dragon 64 with `tv` NTSC is the Tano Dragon. The Dragon 200-E (Eurohard's
+ * Spanish Dragon 64) runs d200e_1.rom / d200e_2.rom (falling back to the
+ * Dragon 64's) and its character set d200e_26.rom (4 KB); the Dragon
+ * Professional (Alpha) its boot ROM alpha-boot-v1.0.rom (8 KB, or
+ * alpha_bt_10, alpha-boot-v0.4, alpha_bt_04) and BASIC alpha-basic.rom
+ * (16 KB, or alpha_ba; else the Dragon 64's d64_1.rom).
  *
  * The CoCo 3 (`ramKb` 128 or 512) runs coco3.rom (32 KB, Super Extended
  * Color BASIC; a PAL coco3p prefers coco3p.rom) from the same directory;

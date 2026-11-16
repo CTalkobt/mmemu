@@ -4,6 +4,9 @@
 
 #include "coco_system.h"
 #include "coco_storage.h"
+#include "coco_addons.h"
+#include "coco_paks.h"
+#include "dragon_pro.h"
 #include "plugins/6809/main/cpu6809.h"
 #include "plugins/6809/main/cpu6309.h"
 #include "plugins/devices/acia6551/main/acia6551.h"
@@ -193,7 +196,8 @@ void Keyboard::enqueueText(const std::string& text) {
     for (size_t i = 0; i < text.size(); ++i) {
         char c = text[i];
         if (c == '\\' && i + 1 < text.size() && text[i + 1] == 'n') { c = '\n'; ++i; }
-        const int code = charCode(c);
+        int code = m_200e ? dragon200eKey(text, i) : -1;      // the 200-E's Spanish legends
+        if (code < 0) code = charCode(c);
         if (code >= 0) m_queue.push_back(code);
     }
 }
@@ -433,6 +437,7 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
     sam.onVideoChange = [this]() { vdg.update(); };
 
     pia0.a.preRead = [this]() { keyboardUpdate(); joystickUpdate(); };
+    pia0.a.postWrite = [this]() { hiresTrigger(); };          // (the CoCo Max 3 adapter's trigger)
     pia0.b.preRead = [this]() { keyboardUpdate(); ramSizeUpdate(); };
     pia0.a.onControl = [this]() { soundChanged(); hiresTrigger(true); };   // CA2, CB2: the joystick / sound selects
     pia0.b.onControl = [this]() { soundChanged(); hiresTrigger(true); };
@@ -459,7 +464,7 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
         if (isDragon(model)) {
             p.stop0 = 262; p.delay0 = 25;
             p.stop1 = 254; p.delay1 = 25;
-            p.hsInhibit = model == Model::Dragon64;
+            p.hsInhibit = isDragon64Board(model);
         } else {
             p.stop0 = 16; p.delay0 = 24;
             p.stop1 = 256; p.delay1 = 26;
@@ -495,7 +500,7 @@ void System::setCart(std::unique_ptr<Cart> cart) {
     m_cartLine = true;
     pia1.setCb1(true);
     m_halt = false;
-    if (m_nmi && m_cpu) m_cpu->setNmiLine(false);
+    if (m_nmi && m_cpu) m_cpu->setNmiLine(m_proNmi);
     m_nmi = false;
     if (!m_cart) return;
     m_cart->setCart = [this](bool level) {
@@ -505,7 +510,7 @@ void System::setCart(std::unique_ptr<Cart> cart) {
     };
     m_cart->setNmi = [this](bool on) {
         m_nmi = on;
-        if (m_cpu) m_cpu->setNmiLine(on);
+        if (m_cpu) m_cpu->setNmiLine(on || m_proNmi);      // with the Professional's own disk's
     };
     m_cart->setHalt = [this](bool on) { m_halt = on; };
     m_cart->setClockHz(m_masterHz);
@@ -533,6 +538,7 @@ void System::resetButton() {
         m_ackLeft = 0;
         pia1.setCa1(true);
         if (m_acia) m_acia->reset();
+        if (m_pro) proReset();
     }
     sam.reset();
     if (m_gime) m_gime->reset();
@@ -554,7 +560,7 @@ void System::updateLines() {
     if (!m_cpu) return;
     const bool gIrq = m_gime && m_gime->irq(), gFirq = m_gime && m_gime->firq();
     m_cpu->setIrqLine(pia0.irq() || gIrq);  // PIA0: HS, FS (and the CoCo 3's GIME)
-    m_setFirq(pia1.irq() || gFirq);         // PIA1: CD (RS-232 carrier), CART
+    m_setFirq(pia1.irq() || gFirq || proFirq());   // PIA1: CD (RS-232 carrier), CART; the Professional's PIA2
 }
 
 void System::keyboardUpdate() {
@@ -581,9 +587,10 @@ void System::joystickUpdate() {
     const int port = pia0.cb2() ? 1 : 0;
     const int axis = pia0.ca2() ? 1 : 0;
     bool high;
-    if (m_joyIf[port] == JoyInterface::HiRes) {
+    if (m_joyIf[port] != JoyInterface::Normal) {
         // The hi-res interface holds the comparator low until its ramp,
-        // started by writing the DAC 0, passes the stick's position
+        // started by writing the DAC 0 (the CoCo Max 3's: PA0-PA3 0),
+        // passes the stick's position
         high = m_ramp && m_dev - m_rampStart >= hiresRampTicks(port, axis);
     } else {
         const unsigned dac = (unsigned)((pia1.portA() & 0xFC) | 2) << 8;
@@ -596,10 +603,14 @@ void System::joystickUpdate() {
 // The hi-res interface's trigger, as MAME's coco_tandy_hires_joy: writing the
 // DAC (PIA1 PA2-PA7) 0 starts its ramp, anything else stops it. A change of
 // the selects (axis, port) with the DAC still 0 after the ramp has run out
-// starts it again (the software has moved to another axis).
+// starts it again (the software has moved to another axis). The CoCo Max 3
+// adapter (MAME's coco_cm3_hires_joy) starts it when PIA0 PA0-PA3 are all
+// driven low instead.
 void System::hiresTrigger(bool selectsChanged) {
-    if (pia1.portA() & 0xFC) { m_ramp = false; return; }
     const int port = pia0.cb2() ? 1 : 0, axis = pia0.ca2() ? 1 : 0;
+    const bool low = m_joyIf[port] == JoyInterface::CoCoMax3 ? ((pia0.a.out | ~pia0.a.ddr) & 0x0F) == 0
+                                                             : (pia1.portA() & 0xFC) == 0;
+    if (!low) { m_ramp = false; return; }
     if (!m_ramp) {
         m_ramp = true;
         m_rampStart = m_dev;
@@ -609,7 +620,9 @@ void System::hiresTrigger(bool selectsChanged) {
 }
 
 uint64_t System::hiresRampTicks(int port, int axis) const {
-    const double us = HIRES_OFFSET_US + (double)(m_axis[port][axis] >> 6) * HIRES_SPAN_US / 1023.0;
+    const bool cm3 = m_joyIf[port] == JoyInterface::CoCoMax3;
+    const double us = (cm3 ? CM3_OFFSET_US : HIRES_OFFSET_US) +
+                      (double)(m_axis[port][axis] >> 6) * (cm3 ? CM3_SPAN_US : HIRES_SPAN_US) / 1023.0;
     return (uint64_t)(us * m_masterHz / 1e6);
 }
 
@@ -640,6 +653,7 @@ void System::ramSizeUpdate() {
 }
 
 void System::fetchVideo(int n, uint16_t* out) {
+    if (!m_charset.empty()) { fetchVideoCharset(n, out); return; }     // the Dragon 200-E's
     // D7 is the VDG's A/S, D6 its INV; GM0 (PIA1 PB4) its INT/EXT
     const uint16_t ext = (pia1.portB() & 0x10) ? Mc6847::F_EXT : 0;
     while (n > 0) {
@@ -660,9 +674,10 @@ float System::soundLevel() const {
         const int src = (pia0.cb2() ? 2 : 0) | (pia0.ca2() ? 1 : 0);
         if (src == 0) v = ((float)(pia1.portA() >> 2) - 31.5f) / 63.0f;          // the DAC
         else if (src == 1 && tape.playing()) v = tape.input() ? -0.25f : 0.25f;  // the cassette
+        else if (src == 2 && m_cart) v = m_cart->audio();                         // the cartridge's SND
+        else if (src == 3) v = proSound();                                       // the Professional's AY
     }
     if (pia1.b.ddr & 0x02) v += (pia1.b.out & 0x02) ? 0.25f : 0.0f;              // single-bit sound
-    if (m_cart) v += m_cart->audio();
     return std::max(-1.0f, std::min(1.0f, v));
 }
 
@@ -683,7 +698,10 @@ void System::sync(uint64_t to) {
     if (tape.input()) pia1.a.inSink |= 0x01;
     else pia1.a.inSink &= (uint8_t)~0x01;
     if (tape.input() != tapeWas && tape.playing()) soundChanged();
-    if (m_cart) m_cart->clock(d);
+    if (m_cart) {
+        m_cart->clock(d);
+        soundChanged();                 // a cartridge's own sound (the SSC, the GMC's SN76489) moves with time
+    }
     keyboard.clock(d);
     if (dragon()) dragonClock(d);
     else rs232.txLevel(m_dev, pia1.portA() & 2);
@@ -714,7 +732,7 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
         if (c.s == Mc6883::S_IO0) {
             if (piaDecoded(a)) pia0.write(a, v);
             else if (m_acia && (a & 4)) m_acia->ioWrite(nullptr, 0xFF00u | (a & 7), v);
-        } else if (c.s == Mc6883::S_IO1 && piaDecoded(a)) {
+        } else if (c.s == Mc6883::S_IO1 && !(m_pro && proWrite(a, v)) && piaDecoded(a)) {
             pia1.write(a, v);
         }
         if (cartSees) {
@@ -737,6 +755,7 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
             else if (m_acia && (a & 4)) m_acia->ioRead(nullptr, 0xFF00u | (a & 7), &d);
             break;
         case Mc6883::S_IO1:
+            if (m_pro && proRead(a, d)) break;
             if (piaDecoded(a)) d = pia1.read(a);
             break;
         default:
@@ -782,7 +801,10 @@ uint8_t System::peek8(uint32_t addr) {
             if (piaDecoded(a)) d = pia0.peek(a);
             else if (m_acia && (a & 4)) m_acia->ioPeek(nullptr, 0xFF00u | (a & 7), &d);
             break;
-        case Mc6883::S_IO1: if (piaDecoded(a)) d = pia1.peek(a); break;
+        case Mc6883::S_IO1:
+            if (m_pro && proPeek(a, d)) break;
+            if (piaDecoded(a)) d = pia1.peek(a);
+            break;
         default: break;
     }
     if (m_cart && (cts || scs || (a >= 0xFF60 && a < 0xFFC0))) {
@@ -928,9 +950,18 @@ std::vector<uint8_t> placeholderRom() {
 namespace {
 const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
 const char* const BURKE_DESC = "Burke & Burke CoCo XT hard disk interface ($FF50-$FF53); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
+const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
+const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
+const char* const GMC_DESC = "Games Master Cartridge: banked ROM (bank at even $FF40-$FF5F) and SN76489 (odd); option: the image (up to 256 KB)";
+const char* const BANKED_DESC = "Banked ROM Pak as MAME's (16 KB banks, register at $FF40); option: the image";
 }  // namespace
 
 std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& option, std::string& err) {
+    // Banked ROM Paks, DeltaDOS, Cumana DOS (coco_paks.cpp); err is cleared
+    // first so a caller's leftover message doesn't read as this call failing
+    err.clear();
+    if (auto c = makePakCart(device, option, err)) return c;
+    if (!err.empty()) return nullptr;
     if (device == "orch90") {
         std::vector<uint8_t> rom;
         const std::string path = option.empty() ? firmwareDir() + "/orch90.rom" : option;
@@ -938,6 +969,8 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         return std::unique_ptr<Cart>(new Orchestra90(std::move(rom)));
     }
     if (device == "rs232") return std::unique_ptr<Cart>(new DeluxeRs232());
+    if (device == "ssc") return makeSpeechSoundPak(option, err);
+    if (device == "cocomax") return std::unique_ptr<Cart>(new CocoMax());
     if (device == "fd500" || device == "fd502") {
         std::vector<uint8_t> rom;
         std::string found;
@@ -995,7 +1028,7 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, rs232, fd500, sdc, burke, dragondos, rompak)";
+    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sdc, burke, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
     return nullptr;
 }
 
@@ -1010,20 +1043,22 @@ template <class Cpu> ICore* fitCpu(System* sys) {
 }  // namespace
 
 MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* roms, Tv tv, bool hd6309) {
-    std::vector<uint8_t> color, ext, dragon, dragon64k;
+    std::vector<uint8_t> color, ext, dragon, dragon64k, charset;
     std::string missing, notice;
     const bool isD = isDragon(model);
     if (isD && roms) {
         dragon = roms->dragonBasic;
-        dragon64k = roms->dragon64k;
+        dragon64k = model == Model::DragonPro ? roms->dragonBoot : roms->dragon64k;
+        charset = roms->dragonCharset;
         if (dragon.empty()) { if (err) *err = "no Dragon BASIC image"; return nullptr; }
     } else if (isD) {
+        if (model == Model::Dragon200E) loadDragonCharset(charset, notice);
         if (!loadDragonRoms(model, dragon, dragon64k, missing)) {
             if (err) *err = missing;
             std::fprintf(stderr, "%s\n", missing.c_str());
             dragon = dragonPlaceholderRom();
         } else {
-            notice = missing;                 // the Dragon 64 without its 64K-mode BASIC
+            if (!missing.empty()) notice = missing;   // the Dragon 64 without its 64K-mode BASIC
             missing.clear();
         }
     } else if (model == Model::CoCo3) {
@@ -1060,6 +1095,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     const bool haveExt = !ext.empty();
     auto* sys = new System(model, ramKb, std::move(ext), std::move(color), tv);
     if (isD) sys->setDragonRoms(dragon, dragon64k);
+    if (model == Model::Dragon200E) sys->setDragonCharset(std::move(charset));
     const bool pal = sys->pal();
 
     auto* desc = new MachineDescriptor();
@@ -1073,6 +1109,8 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             desc->displayName = pal ? "Dragon 64" : "Tano Dragon (NTSC Dragon 64)";
             break;
         case Model::CoCo3: desc->machineId = pal ? "coco3p" : "coco3"; desc->displayName = "Tandy Color Computer 3"; break;
+        case Model::Dragon200E: desc->machineId = "dragon200e"; desc->displayName = "Dragon 200-E"; break;
+        case Model::DragonPro: desc->machineId = "dragonpro"; desc->displayName = "Dragon Professional (Alpha)"; break;
     }
     if (!isD && pal) desc->displayName += " (PAL)";
     if (model == Model::Dragon32 && !pal) desc->displayName += " (NTSC)";
@@ -1100,6 +1138,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     if (!isD) io->registerHandler(&sys->rs232);
     if (sys->acia()) io->registerHandler(&sys->aciaPort);
     if (isD) io->registerHandler(&sys->printer);
+    if (sys->dragonPro()) io->registerHandler(sys->dragonPro()->disk.get());   // before the cartridge's: drives 1-4
     io->registerHandler(&sys->cartPort);
 
     // Keys; RESET and the artifact colours as buttons under the screen
@@ -1137,6 +1176,11 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
     // The mouse moves the right joystick, or the one on a hi-res interface
     // (a host pixel = 256 steps of 65536, finer than either reads)
     desc->onMouse = [sys](int dx, int dy, uint8_t buttons, int) {
+        if (CocoMax* cm = findCocoMax(sys->cart())) {   // the CoCo Max pack has the mouse
+            cm->move(dx, dy);
+            cm->setButtons(buttons & 3);
+            return;
+        }
         const int port = sys->mousePort();
         for (int axis = 0; axis < 2; ++axis) {
             const int d = axis ? dy : dx;
@@ -1174,14 +1218,20 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"normal", "The joystick on the port: 6 bits through the DAC and comparator", {}, ""},
             {"hires", "Radio Shack 26-3028 Hi-Res Joystick Interface: a ramp from the cassette output, timed by software (about 10 bits)", {}, ""},
         };
+        if (model == Model::CoCo3)
+            s.devices.push_back({"cm3", "CoCo Max 3 hi-res adapter: the ramp started by PIA0 PA0-PA3 low (MAME's timing, unmeasured)", {}, ""});
         s.canEmpty = false;
         s.install = [sys, port](const std::string& device, const std::string&, std::string& err) {
             if (device == "normal" || device.empty()) sys->setJoyInterface(port, JoyInterface::Normal);
             else if (device == "hires") sys->setJoyInterface(port, JoyInterface::HiRes);
-            else { err = "normal or hires"; return false; }
+            else if (device == "cm3" && sys->coco3()) sys->setJoyInterface(port, JoyInterface::CoCoMax3);
+            else { err = sys->coco3() ? "normal, hires or cm3" : "normal or hires"; return false; }
             return true;
         };
-        s.info = [sys, port]() { return sys->joyInterface(port) == JoyInterface::HiRes ? std::string("hires") : std::string("normal"); };
+        s.info = [sys, port]() {
+            const JoyInterface j = sys->joyInterface(port);
+            return std::string(j == JoyInterface::HiRes ? "hires" : j == JoyInterface::CoCoMax3 ? "cm3" : "normal");
+        };
         desc->expansionSlots.push_back(std::move(s));
     }
     // The cartridge port: a Multi-Pak, the Orchestra-90, the Deluxe RS-232
@@ -1193,25 +1243,38 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         if (isD) {
             s.devices = {
                 {"dragondos", "DragonDOS disk controller (WD2797 at $FF40, latch $FF48); option: the ROM", {}, ""},
-                {"rompak", "A ROM cartridge; option: the image (.rom, .dgn, .ccc)", {}, ""},
+                {"deltados", "Premier Delta disk system (WD2791 at $FF40, latch $FF44); option: the ROM", {}, ""},
+                {"cumana", "Cumana DOS 2.0 on DragonDOS-compatible hardware; option: the ROM (cdos20.rom)", {}, ""},
+                {"superdos", "SuperDOS (PNP) on DragonDOS's hardware; option: the ROM (sdose6.rom)", {}, ""},
+                {"dosplus", "DOSplus on DragonDOS's hardware; option: the ROM (dplus49b.rom)", {}, ""},
+                {"rompak", "A ROM cartridge (up to 16 KB); option: the image (.rom, .dgn, .ccc)", {}, ""},
+                {"gmc", GMC_DESC, {}, ""},
+                {"banked", BANKED_DESC, {}, ""},
             };
         } else {
             s.devices = {
                 {"mpi", "Multi-Pak Interface: 4 slots (expansion mpi1-mpi4); option: the switch position", {"1", "2", "3", "4"}, "4"},
                 {"orch90", "Orchestra-90 stereo DACs ($FF7A/$FF7B); option: its ROM image", {}, ""},
+                {"ssc", SSC_DESC, {}, ""},
+                {"cocomax", COCOMAX_DESC, {}, ""},
                 {"rs232", "Deluxe RS-232 Program Pak (6551 ACIA at $FF68; the serial command)", {}, ""},
                 {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
                 {"sdc", SDC_DESC, {}, ""},
                 {"burke", BURKE_DESC, {}, ""},
-                {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
+                {"rompak", "A ROM Pak (16 KB, 32 KB on the CoCo 3); option: the image (.rom, .ccc)", {}, ""},
+                {"gmc", GMC_DESC, {}, ""},
+                {"banked", BANKED_DESC, {}, ""},
             };
             if (model == Model::CoCo3)
                 s.devices.insert(s.devices.begin() + 3, {"fd502", "FD-502 disk controller (WD1793 as the FD-500's) with Disk BASIC 1.1; option: the ROM", {}, ""});
         }
         s.install = [sys, isD](const std::string& device, const std::string& option, std::string& err) {
             if (device.empty()) { sys->setCart(nullptr); return true; }
-            const bool fits = isD ? (device == "dragondos" || device == "rompak") : device != "dragondos";
-            if (!fits) { err = "no cartridge '" + device + "' for this machine"; return false; }
+            const bool dragonOnly = device == "dragondos" || device == "deltados" || device == "cumana" ||
+                                    device == "superdos" || device == "dosplus";
+            const bool both = device == "rompak" || device == "gmc" || device == "banked";
+            const bool fits = isD ? (dragonOnly || both) : !dragonOnly;
+            if (!fits || (device == "cocomax" && sys->coco3())) { err = "no cartridge '" + device + "' for this machine"; return false; }
             if (device == "mpi") {
                 const int pos = option.empty() ? 4 : std::atoi(option.c_str());
                 if (pos < 1 || pos > 4) { err = "the switch is 1-4"; return false; }
@@ -1241,17 +1304,22 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
         s.description = "Multi-Pak slot " + std::to_string(n + 1) + " (with expansion cart mpi)";
         s.devices = {
             {"orch90", "Orchestra-90; option: its ROM image", {}, ""},
+            {"ssc", SSC_DESC, {}, ""},
+            {"cocomax", COCOMAX_DESC, {}, ""},
             {"rs232", "Deluxe RS-232 Program Pak", {}, ""},
             {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
             {"fd502", "FD-502 disk controller (as the FD-500) with Disk BASIC 1.1; option: the ROM", {}, ""},
             {"sdc", SDC_DESC, {}, ""},
             {"burke", BURKE_DESC, {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
+            {"gmc", GMC_DESC, {}, ""},
+            {"banked", BANKED_DESC, {}, ""},
         };
         s.install = [sys, n](const std::string& device, const std::string& option, std::string& err) {
             auto* mpi = dynamic_cast<MultiPak*>(sys->cart());
             if (!mpi) { err = "no Multi-Pak in the cartridge port (expansion cart mpi)"; return false; }
             if (device.empty()) { mpi->insert(n, nullptr); return true; }
+            if (device == "cocomax" && sys->coco3()) { err = "the CoCo Max pack is not for the CoCo 3"; return false; }
             auto c = makeCart(device, option, err);
             if (!c) return false;
             mpi->insert(n, std::move(c));
@@ -1278,19 +1346,25 @@ bool insertRomPak(MachineDescriptor* m, const std::vector<uint8_t>& image, const
     System* sys = systemOf(m);
     if (!sys) { err = "not a Color Computer"; return false; }
     if (image.empty()) { err = "empty image"; return false; }
-    std::unique_ptr<Cart> pak(new RomPak(image, label));
+    // Over 16 KB: banked (the GMC's scheme), unless known by CRC (coco_paks.cpp)
+    std::unique_ptr<Cart> pak = makeRomCart(image, label, "", err);
+    if (!pak) return false;
     if (auto* mpi = dynamic_cast<MultiPak*>(sys->cart())) mpi->insert(mpi->switchPosition(), std::move(pak));
     else sys->setCart(std::move(pak));
     return true;
 }
+
+namespace {
+bool isRomKind(const std::string& k) { return k == "rompak" || k == "gmc" || k == "banked"; }
+}  // namespace
 
 void removeRomPak(MachineDescriptor* m) {
     System* sys = systemOf(m);
     if (!sys) return;
     if (auto* mpi = dynamic_cast<MultiPak*>(sys->cart())) {
         for (int i = 0; i < 4; ++i)
-            if (mpi->slot(i) && mpi->slot(i)->kind() == "rompak") mpi->insert(i, nullptr);
-    } else if (sys->cart() && sys->cart()->kind() == "rompak") {
+            if (mpi->slot(i) && isRomKind(mpi->slot(i)->kind())) mpi->insert(i, nullptr);
+    } else if (sys->cart() && isRomKind(sys->cart()->kind())) {
         sys->setCart(nullptr);
     }
 }

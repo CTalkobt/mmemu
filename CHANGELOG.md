@@ -7,6 +7,57 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo / Dragon: bank-switched ROM Paks, Dragon 200-E and Professional, more Dragon DOSes (#355)
+
+- ROM Paks over 16 KB: the Games Master Cartridge (`expansion cart gmc`,
+  XRoar's gmc.c: bank at even `$FF40-$FF5F`, an SN76489 at odd ones) and
+  MAME's banked Pak (`banked`, bank at `$FF40`). `cart`/`-i` auto-detect as
+  XRoar: known CRCs keep their type (the CoCo 3's 32 KB Paks plain, Mind
+  Roll, RoboCop, Predator banked), any other image over 16 KB is a GMC. A
+  CoCo 3 sees a 32 KB Pak whole at `$8000-$FEFF` (A14 inverted to the
+  cartridge). Checked with RoboCop, Predator, Super Pitfall, Rampage! (CoCo
+  3) and Mind-Roll (CoCo 2) from the Color Computer Archive.
+- Dragon 200-E (`dragon200e`): the Dragon 64 board with Eurohard's BASIC
+  (`d200e_1/2`, falling back to the Dragon 64's), its 4 KB character
+  generator (`d200e_26`) and the Spanish keyboard legends for typed text.
+  Run with the Dragon 64 ROMs only (the 200-E's own were not available).
+- Dragon Professional (`dragonpro`): PIA2 at `$FF24`, the AY-3-8912 driving
+  the drive selects, a WD2797 at `$FF2C-$FF2F` (registers reversed), the
+  8 KB boot ROM switched by PIA2 PA2 (XRoar dragonpro.c, MAME dgnalpha.cpp).
+  Only stand-in ROMs: no real boot ROM was available.
+- Dragon disk cartridges: Premier Delta (`deltados`: a WD2791 with its
+  inverted bus, the latch at `$FF44`), and Cumana DOS, SuperDOS and DOSplus
+  on DragonDOS's hardware (`cumana`, `superdos`, `dosplus`). With the real
+  ROMs DragonDOS 1.0-4.2, SuperDOS E6/E8 and DOSplus 4.8-5.0 format, save,
+  list and load; Delta 2.0 lists a directory; Cumana DOS untested (no ROM).
+- WD17xx: Read Address raises INTRQ a byte time after its sixth DRQ (as
+  XRoar's wd279x.c), not with it; DOSplus's DIR failed with `?BT ERROR`.
+- `test_coco_real_roms.cpp`: boot / DOS / Pak checks that run when the
+  user's ROMs are present and pass (saying so) without them.
+
+### CoCo: Speech/Sound Cartridge, CoCo Max pack and CoCo Max 3 adapter (#355)
+
+- The Speech/Sound Cartridge (`expansion cart ssc [TMS7040 ROM][,SP0256 ROM]`,
+  or a Multi-Pak slot), after MAME's coco_ssc and Tandy's owner's /
+  service manuals: `$FF7D` bit 0 holds it in reset, `$FF7E` data /
+  status (BUSY, SBY, the sound activity circuit). Its TMS7040
+  firmware runs on a new TMS7000 core (`src/plugins/devices/tms7000`,
+  after MAME's), driving 2 KB of RAM, a new SP0256 speech processor
+  (`src/plugins/devices/sp0256`: microsequencer and LPC-12 filter, after
+  MAME / jzIntv) and the AY core shared with the Spectrum. Both chips'
+  ROMs are the user's (`pic-7040-510.bin`, `sp0256-al2.bin` in
+  `roms/coco/`); without the SP0256's, speech is silent but the
+  handshake works. Run only with stand-in firmware: unverified with the
+  real ROMs.
+- The CoCo Max Hi-Res Input Pack (`expansion cart cocomax`, CoCo 1/2):
+  the A/D at `$FF90-$FF97` as MAME's coco_max, moved by the host mouse.
+- A cartridge's sound (the Orchestra-90's too) now reaches the CoCo
+  through the analog multiplexer's cartridge input (source 2), as the
+  SSC's owner's manual sets it up, instead of always being mixed in.
+- The CoCo Max 3 hi-res adapter on the CoCo 3's joystick ports
+  (`expansion joyright cm3`): the hi-res ramp started by PIA0 PA0-PA3
+  low, with MAME's (unmeasured) timing.
+
 ### CoCo FD-500 / FD-502: `$FF40` bit 5 polarity (#355)
 
 - Bit 5 of the disk latch is density (1 = double) and the NMI enable, as
