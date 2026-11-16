@@ -206,7 +206,7 @@ constexpr uint32_t FG = 0xFFF0F0F0, BG = 0xFF000000;
 IVideoOutput::VideoDimensions Display::getDimensions() const {
     switch (m_sys->model()) {
     case Model::M1Level1: case Model::M1Level2: return {384, 384, 384, 384};
-    case Model::M3: return {512, 384, 512, 384};
+    case Model::M3: return m_sys->wideScreen() ? VideoDimensions{640, 480, 640, 480} : VideoDimensions{512, 384, 512, 384};
     default: return {640, 480, 640, 480};
     }
 }
@@ -215,6 +215,19 @@ void Display::renderFrame(uint32_t* buf) {
     const auto dim = getDimensions();
     const int W = dim.width, H = dim.height / 2;          // H logical lines, each drawn twice
     std::fill(buf, buf + (size_t)W * dim.height, BG);
+    const Hires& g = m_sys->hires;
+    if (g.alone()) {
+        // The graphics alone: 80 bytes by 240 lines
+        for (int y = 0; y < 240 && y < H; ++y) {
+            uint32_t* line0 = buf + (size_t)(y * 2) * W;
+            uint32_t* line1 = line0 + W;
+            for (int col = 0; col < 80 && col * 8 < W; ++col) {
+                const uint8_t b = g.shown(col, y);
+                for (int x = 0; x < 8; ++x) line0[col * 8 + x] = line1[col * 8 + x] = (b & (0x80 >> x)) ? FG : BG;
+            }
+        }
+        return;
+    }
     const bool m1 = isModel1(m_sys->model());
     const bool m80 = m_sys->mode80();
     const int cols = m80 ? 80 : 64, rows = m80 ? 24 : 16, lines = m80 ? 10 : 12;
@@ -253,6 +266,22 @@ void Display::renderFrame(uint32_t* buf) {
                         line0[sx] = px;
                         line1[sx] = px;
                     }
+                }
+            }
+        }
+    }
+    if (g.enabled()) {
+        // The overlay: the graphics XORed with the text, byte n under column n
+        for (int y = 0; y < rows * lines; ++y) {
+            uint32_t* line0 = buf + (size_t)((y0 + y) * 2) * W;
+            uint32_t* line1 = line0 + W;
+            for (int col = 0; col < cols; ++col) {
+                const uint8_t b = g.shown(col, y);
+                if (!b) continue;
+                for (int x = 0; x < 8; ++x) {
+                    const int sx = x0 + col * 8 + x;
+                    if (!(b & (0x80 >> x)) || sx < 0 || sx >= W) continue;
+                    line0[sx] = line1[sx] = line0[sx] == FG ? BG : FG;
                 }
             }
         }
@@ -312,6 +341,12 @@ System::System(Model model, const Config& cfg, std::vector<uint8_t> rom)
     });
     tape.setMasterHz(m_masterHz);
     tape.speed = [this]() { return tapeSpeed(); };
+    stringy.onMount = [this]() {
+        if (m_model == Model::M1Level2 && !m_config.stringy) { m_config.stringy = true; applyFitted(); }
+    };
+    tape2.setName("Tape 2");
+    tape2.setMasterHz(m_masterHz);
+    tape2.speed = [this]() { return tapeSpeed(); };
     tape.onEdge = [this](bool rise) {
         if (isModel1(m_model)) return;
         // The 1500 baud edges are clocked into the latch if enabled
@@ -321,7 +356,6 @@ System::System(Model model, const Config& cfg, std::vector<uint8_t> rom)
     };
     sound.setMasterHz(m_masterHz);
     uart.setMasterHz(m_masterHz);
-    uart.setSwitches(m1 ? 0x6F : 0xFF);           // Model I: 8 bits, no parity, 9600 baud
     uart.onInterrupt = [this](bool rcv, bool snd, bool errs) {
         if (isModel1(m_model)) return;
         m_intLatch = (uint8_t)((m_intLatch & 0x8F) | (rcv ? 0x20 : 0) | (snd ? 0x10 : 0) | (errs ? 0x40 : 0));
@@ -333,7 +367,11 @@ System::System(Model model, const Config& cfg, std::vector<uint8_t> rom)
     configure(cfg);
 }
 
-System::~System() { m_fdc->flush(); }
+System::~System() {
+    m_fdc->flush();
+    hard.flush();
+    stringy.flush();
+}
 
 void System::configure(const Config& cfg) {
     m_config = cfg;
@@ -346,6 +384,17 @@ void System::configure(const Config& cfg) {
     } else kb = kb <= 16 ? 16 : kb <= 32 ? 32 : 48;
     m_config.ramKb = kb;
     m_ram.assign((size_t)kb * 1024, 0);
+    applyFitted();
+}
+
+void System::applyFitted() {
+    const bool m1 = isModel1(m_model);
+    if (m1) m_config.hires = HiresBoard::None;
+    else m_config.stringy = false;
+    uart.setSwitches(m1 ? m_config.switches : 0xFF);
+    hard.setFitted(m_config.hardDisk && (!m1 || m_config.expansion));     // the Model I's is on the EI
+    stringy.setFitted(m_config.stringy);
+    if (hires.board() != m_config.hires) { hires.setBoard(m_config.hires); hires.clear(); }
 }
 
 bool System::hasFdc() const {
@@ -417,8 +466,10 @@ bool System::wide() const { return isModel1(m_model) ? (m_portFF & 0x08) : (m_po
 
 float System::soundLevel() const {
     static const float LEVEL[4] = {0.0f, 0.4f, -0.4f, 0.0f};
-    float v = tape.motor() ? 0.0f : LEVEL[m_cassOut & 3];
+    float v = cassette().motor() ? 0.0f : LEVEL[m_cassOut & 3];
     if (isModel4(m_model) && m_soundBit) v += 0.4f;
+    // The Orchestra's two DACs, mixed (xtrs: heard only with the motor off)
+    if (m_config.orchestra && !cassette().motor()) v += ((float)m_orchL + (float)m_orchR) / 512.0f;
     return v;
 }
 
@@ -427,6 +478,7 @@ void System::advance(uint64_t t) {
     m_ticks += t;
     m_fdc->tick(t);
     tape.advance(m_ticks);
+    tape2.advance(m_ticks);
     uart.clock(t);
     keyboard.clock(t, m_masterHz);
     sound.run(t, soundLevel());
@@ -465,7 +517,12 @@ void System::advance(uint64_t t) {
 int System::step() {
     uint64_t t;
     if (m_wait || !m_cpu) t = 4ull * (uint64_t)m_ticksPerT;     // WAIT: the Z80 holds its bus cycle
-    else t = (uint64_t)m_cpu->step() * (uint64_t)m_ticksPerT;
+    else {
+        m_waitTicks = 0;
+        t = (uint64_t)m_cpu->step() * (uint64_t)m_ticksPerT;
+        t += m_waitTicks;               // the video waits the instruction met
+        m_waitTicks = 0;
+    }
     advance(t);
     const uint64_t dc = m_ticks / (uint64_t)m_baseTicks;
     const int r = (int)(dc - m_reported);
@@ -479,6 +536,8 @@ void System::powerOn() {
     m_portFF = m_portEC = m_port84 = 0;
     m_crtcReg = 0;
     m_crtcStart = 0;
+    std::memset(m_crtc, 0, sizeof m_crtc);
+    hires.clear();
     keyboard.reset();
     hardwareReset();
     if (m_cpu) m_cpu->reset();
@@ -522,7 +581,45 @@ void System::hardwareReset() {
     else m_fdc->setDoubleDensity(false);
     m_cassOut = 0;
     tape.setMotor(m_ticks, false);
+    tape2.setMotor(m_ticks, false);
+    m_cassSel = 0;
+    m_orchL = m_orchR = 0;
+    m_waitTicks = 0;
     uart.reset();
+    hard.reset();
+    hires.reset();
+}
+
+// The video waits (Model III/4, port $EC bit 5): a CPU access to video RAM
+// while the display reads it is held to the line's horizontal blanking.
+// The CRTC is mask-programmed: 264 lines of 63.1 us (1280 master ticks; 640
+// dots at 10.1376 MHz in 64 x 16, 800 at 12.672 MHz in 80 x 24, MAME's
+// Model 4 raster), 192 (16 x 12) or 240 (24 x 10) of them shown, each shown
+// for 1024 ticks (512 or 640 dots).
+uint64_t System::videoWaitAt(uint64_t t) const {
+    constexpr uint64_t LINE = 1280, SHOWN = 1024, LINES = 264;
+    const uint64_t active = mode80() ? 240 : 192;
+    const uint64_t pos = t % (LINE * LINES);
+    const uint64_t line = pos / LINE, x = pos % LINE;
+    return (line < active && x < SHOWN) ? SHOWN - x : 0;
+}
+
+void System::videoAccess(bool peek) {
+    if (peek || !videoWaits()) return;
+    m_waitTicks += videoWaitAt(m_ticks + m_waitTicks);
+}
+
+void System::selectCassette(int n) {
+    n &= 1;
+    if (n == m_cassSel) return;
+    // The relay and the signal go to the selected recorder
+    Tape& old = cassette();
+    old.advance(m_ticks);
+    old.setMotor(m_ticks, false);
+    m_cassSel = n;
+    Tape& now = cassette();
+    now.advance(m_ticks);
+    now.setMotor(m_ticks, m_portFF & 0x04);
 }
 
 // Memory ------------------------------------------------------------------
@@ -555,7 +652,12 @@ uint8_t System::m1Access(uint16_t a, bool write, uint8_t v, bool peek) {
     }
     if (a >= 0x3800) return write ? 0 : keyboard.read(a);
     if (a < 0x3000) return (!write && a < m_rom.size()) ? m_rom[a] : 0xFF;
-    if (a < 0x37E0 || !m_config.expansion) return 0xFF;
+    if (a < 0x37E0) {
+        // The Exatron Stringy Floppy's ROM
+        const size_t i = a - 0x3000u;
+        return (!write && m_config.stringy && i < m_extRom.size()) ? m_extRom[i] : 0xFF;
+    }
+    if (!m_config.expansion) return 0xFF;
     switch (a & 0x0C) {
     case 0x00:                                  // $37E0-$37E3: the interrupt latch / drive select
         if (write) { driveSelect(v); return 0; }
@@ -564,7 +666,9 @@ uint8_t System::m1Access(uint16_t a, bool write, uint8_t v, bool peek) {
             if (!peek) { m_intLatch &= (uint8_t)~0x80; updateIrq(); }     // reading acknowledges the clock
             return l;
         }
-    case 0x04: return 0xFF;                     // $37E4: cassette 1/2 select (write only)
+    case 0x04:                                  // $37E4: cassette 1/2 select (bit 0; write only)
+        if (write) selectCassette(v & 1);
+        return 0xFF;
     case 0x08:                                  // $37E8: the printer
         if (write) { printer.write(v); return 0; }
         return printer.status();
@@ -574,7 +678,7 @@ uint8_t System::m1Access(uint16_t a, bool write, uint8_t v, bool peek) {
     }
 }
 
-uint8_t System::m3Access(uint16_t a, bool write, uint8_t v, bool) {
+uint8_t System::m3Access(uint16_t a, bool write, uint8_t v, bool peek) {
     if (a >= 0x4000) {
         const size_t i = a - 0x4000u;
         if (i >= m_ram.size()) return 0xFF;
@@ -582,6 +686,12 @@ uint8_t System::m3Access(uint16_t a, bool write, uint8_t v, bool) {
         return m_ram[i];
     }
     if (a >= 0x3C00) {
+        videoAccess(peek);
+        if (hires.m3Active()) {                 // the Grafyx Solution's memory in place of video RAM
+            uint8_t& b = hires.m3Byte(a & 0x3FF);
+            if (write) b = v;
+            return b;
+        }
         if (write) videoWrite(a & 0x3FF, v);
         return m_video[a & 0x3FF];
     }
@@ -607,7 +717,7 @@ uint8_t& System::m4RamRef(uint16_t a) {
 
 uint8_t System::m4Ram(uint16_t a) const { return const_cast<System*>(this)->m4RamRef(a); }
 
-uint8_t System::m4Access(uint16_t a, bool write, uint8_t v, bool) {
+uint8_t System::m4Access(uint16_t a, bool write, uint8_t v, bool peek) {
     const int map = m_port84 & 3;
     const bool p = m_model == Model::M4P;
     if (map == 3) {
@@ -620,6 +730,7 @@ uint8_t System::m4Access(uint16_t a, bool write, uint8_t v, bool) {
             return m4Ram(a);
         }
         if (a >= 0xF800) {
+            videoAccess(peek);
             if (write) videoWrite(a - 0xF800, v);
             return m_video[a - 0xF800];
         }
@@ -631,6 +742,7 @@ uint8_t System::m4Access(uint16_t a, bool write, uint8_t v, bool) {
         return m4Ram(a);
     }
     if (a >= 0x3C00) {
+        videoAccess(peek);
         if (write) videoWrite((uint16_t)(page + (a & 0x3FF)), v);
         return m_video[page + (a & 0x3FF)];
     }
@@ -709,6 +821,13 @@ void System::driveSelect(uint8_t v) {
 
 bool System::mountDisk(int drive, const std::string& path) {
     if (!hasFdc() || drive < 0 || drive > 3) return false;
+    {
+        // Hard disk and Stringy images are for those drives
+        const auto dot = path.rfind('.');
+        std::string e = dot == std::string::npos ? "" : path.substr(dot + 1);
+        for (auto& c : e) c = (char)std::tolower((unsigned char)c);
+        if (e == "hdv" || e == "esf") return false;
+    }
     std::vector<uint8_t> b;
     {
         std::ifstream f(path, std::ios::binary);
@@ -735,10 +854,11 @@ void System::ejectDisk(int drive) {
 // Ports -------------------------------------------------------------------
 void System::portFFOut(uint8_t v) {
     m_portFF = v;
-    tape.advance(m_ticks);
-    tape.setMotor(m_ticks, v & 0x04);
-    tape.output(m_ticks, v & 3);
-    tape.clearFlipflop();
+    Tape& c = cassette();
+    c.advance(m_ticks);
+    c.setMotor(m_ticks, v & 0x04);
+    c.output(m_ticks, v & 3);
+    c.clearFlipflop();
     m_cassOut = v & 3;
 }
 
@@ -749,11 +869,14 @@ void System::portECOut(uint8_t v) {
 }
 
 uint8_t System::peekPort(uint8_t port) {
+    if (port >= 0xC0 && port <= 0xCF) return hard.peek(port);
     if (isModel1(m_model)) {
-        if (port == 0xFF) return (uint8_t)(((m_portFF & 0x08) ? 0x3F : 0x7F) | (tape.flipflop() ? 0x80 : 0));
+        if (port == 0xFF) return (uint8_t)(((m_portFF & 0x08) ? 0x3F : 0x7F) | (cassette().flipflop() ? 0x80 : 0));
         if (port >= 0xE8 && port <= 0xEB) return m_config.rs232 ? uart.peek(port & 3) : 0xFF;
+        if (port >= 0xF0 && port <= 0xF7) return stringy.peek(port);
         return 0xFF;
     }
+    if (port == 0x82 && hires.fitted()) return hires.peekData();
     if (port >= 0xE0 && port <= 0xE3) return (uint8_t)~m_intLatch;
     if (port >= 0xE4 && port <= 0xE7) return (uint8_t)~m_nmiLatch;
     if (port >= 0xE8 && port <= 0xEB) return m_config.rs232 ? uart.peek(port & 3) : 0xFF;
@@ -765,11 +888,14 @@ uint8_t System::peekPort(uint8_t port) {
 }
 
 uint8_t System::in(uint8_t port) {
+    if (port >= 0xC0 && port <= 0xCF) return hard.in(port);
     if (isModel1(m_model)) {
-        if (port == 0xFF) tape.advance(m_ticks);
+        if (port == 0xFF) cassette().advance(m_ticks);
         if (port >= 0xE8 && port <= 0xEB && m_config.rs232) return uart.in(port & 3);
+        if (port >= 0xF0 && port <= 0xF7) return stringy.in(port, m_ticks / (uint64_t)m_ticksPerT);
         return peekPort(port);
     }
+    if (port == 0x82 && hires.fitted()) return hires.readData();
     if (port >= 0xE8 && port <= 0xEB) return m_config.rs232 ? uart.in(port & 3) : 0xFF;
     if (port >= 0xEC && port <= 0xEF) {            // acknowledges the clock
         m_intLatch &= (uint8_t)~0x04;
@@ -788,9 +914,30 @@ uint8_t System::in(uint8_t port) {
 }
 
 void System::out(uint8_t port, uint8_t v) {
+    if (port >= 0xC0 && port <= 0xCF) { hard.out(port, v); return; }
     if (isModel1(m_model)) {
         if (port == 0xFF) portFFOut(v);
         else if (port >= 0xE8 && port <= 0xEB && m_config.rs232) uart.out(port & 3, v);
+        else if (port >= 0xF0 && port <= 0xF7) stringy.out(port, v, m_ticks / (uint64_t)m_ticksPerT);
+        else if (m_config.orchestra && port == 0xB9) m_orchL = (int8_t)v;   // Orchestra-85: left
+        else if (m_config.orchestra && port == 0xB5) m_orchR = (int8_t)v;   // and right
+        return;
+    }
+    if (m_config.orchestra && port == 0x79) { m_orchL = (int8_t)v; return; }    // Orchestra-90: left
+    if (m_config.orchestra && port == 0x75) { m_orchR = (int8_t)v; return; }    // and right
+    if (hires.fitted() && port >= 0x80 && port <= 0x83) {
+        switch (port) {
+        case 0x80: hires.writeX(v); break;
+        case 0x81: hires.writeY(v); break;
+        case 0x82: hires.writeData(v); break;
+        default: hires.writeMode(v); break;
+        }
+        return;
+    }
+    if (hires.fitted() && isModel4(m_model) && port >= 0x8C && port <= 0x8E) {
+        if (port == 0x8C) hires.writeXOffset(v);
+        else if (port == 0x8D) hires.writeYOffset(v);
+        else hires.writeOverlay(v);
         return;
     }
     if (port >= 0xE0 && port <= 0xE3) { m_intMask = v; updateIrq(); return; }
@@ -801,6 +948,7 @@ void System::out(uint8_t port, uint8_t v) {
     if (port >= 0xF4 && port <= 0xF7) { if (hasFdc()) driveSelect(v); return; }
     if (port >= 0xF8 && port <= 0xFB) { printer.write(v); return; }
     if (port >= 0xFC) {
+        if (m_model == Model::M3 && hires.m3Mode(v)) return;   // the Grafyx Solution's mode
         tape.advance(m_ticks);
         tape.output(m_ticks, v & 3);
         tape.clearFlipflop();
@@ -811,6 +959,7 @@ void System::out(uint8_t port, uint8_t v) {
     if (port >= 0x84 && port <= 0x87) { m_port84 = v; return; }
     if (port == 0x88) { m_crtcReg = v & 0x1F; return; }
     if (port == 0x89) {
+        m_crtc[m_crtcReg] = v;
         if (m_crtcReg == 12) m_crtcStart = (uint16_t)(((v & 0x3F) << 8) | (m_crtcStart & 0xFF));
         else if (m_crtcReg == 13) m_crtcStart = (uint16_t)((m_crtcStart & 0xFF00) | v);
         return;
@@ -837,6 +986,10 @@ std::vector<uint8_t> System::state() const {
     put(v, m_intLatch); put(v, m_intMask); put(v, m_nmiLatch); put(v, m_nmiMask);
     put(v, m_dd); put(v, m_select); put(v, m_ticksPerT);
     put(v, m_ticks); put(v, m_rtcAcc); put(v, m_motorLeft);
+    v.insert(v.end(), std::begin(m_crtc), std::end(m_crtc));
+    put(v, m_orchL); put(v, m_orchR); put(v, m_cassSel);
+    const auto g = hires.state();
+    v.insert(v.end(), g.begin(), g.end());
     return v;
 }
 
@@ -853,6 +1006,11 @@ void System::loadState(const uint8_t* buf) {
     get(p, m_intLatch); get(p, m_intMask); get(p, m_nmiLatch); get(p, m_nmiMask);
     get(p, m_dd); get(p, m_select); get(p, m_ticksPerT);
     get(p, m_ticks); get(p, m_rtcAcc); get(p, m_motorLeft);
+    std::memcpy(m_crtc, p, sizeof m_crtc);
+    p += sizeof m_crtc;
+    get(p, m_orchL); get(p, m_orchR); get(p, m_cassSel);
+    hires.loadState(p);
+    p += Hires::stateSize();
     m_reported = m_ticks / (uint64_t)m_baseTicks;
     if (isModel1(m_model)) setDensity(m_dd);
     updateIrq();

@@ -7,6 +7,27 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80 add-ons: hard disk, Stringy Floppy, hi-res, Orchestra (#354)
+
+- The Radio Shack hard disk interface: a WD1010 at `$C8-$CF` with the
+  board's `$C0`/`$C1`, four drives, Matthew Reed's `.hdv` images (read,
+  written back), multiple-sector commands; after xtrs.
+- The Exatron Stringy Floppy (Model I): eight wafer drives at `$F0-$F7`,
+  `.esf` wafers read and written as xtrs and TRS32 do, the Exatron's ROM at
+  `$3000` (`esf.rom`, optional).
+- The hi-res graphics boards (Model III/4): Radio Shack's and Micro-Labs'
+  Grafyx Solution, 640 x 240, alone or XORed over the text, the Model 4's
+  offsets and overlay, the Model III Grafyx's port `$FF` mode.
+- The Orchestra-85 (Model I, `$B9`/`$B5`) and Orchestra-90 (III/4,
+  `$79`/`$75`) DACs, mixed into the sound.
+- The Model I's second cassette recorder (`$37E4` bit 0; `tape 2 ...` in
+  the CLI) and the RS-232 board's sense switches (`expansion rs232 rs232
+  300-7E1`).
+- Video waits (Model III/4, port `$EC` bit 5) on the mask-programmed
+  CRTC's fixed raster; the Model 4's CRTC registers are kept as written.
+- Tests in `test_trs80_addons.cpp`. Booting the real ROMs and DOSes is
+  still unchecked (no ROMs in mmsim).
+
 ### Model 100/200 add-ons: modem, bar code wand, RAMPAC, REX flash (#358)
 
 - The built-in 300-baud modem (Model 100 and Tandy 200): an MC14412

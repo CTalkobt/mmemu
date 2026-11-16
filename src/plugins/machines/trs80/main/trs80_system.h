@@ -1,7 +1,10 @@
 #pragma once
 
 #include "machine_trs80.h"
+#include "trs80_hard.h"
+#include "trs80_hires.h"
 #include "trs80_serial.h"
+#include "trs80_stringy.h"
 #include "trs80_tape.h"
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ikeyboard_matrix.h"
@@ -153,6 +156,11 @@ struct Config {
     Doubler doubler = Doubler::None;///< Model I: a double-density adapter in the EI
     bool rs232 = false;             ///< the RS-232 board
     bool fdc = true;                ///< Model III: the disk controller
+    uint8_t switches = 0x6F;        ///< Model I: the RS-232 board's sense switches ($E9; 8N1, 9600 baud)
+    bool orchestra = false;         ///< the Orchestra-85 (Model I, $B5/$B9) or -90 (III/4, $75/$79)
+    HiresBoard hires = HiresBoard::None; ///< Model III/4: a hi-res graphics board
+    bool hardDisk = false;          ///< the Radio Shack hard disk interface (WD1010, $C0-$CF)
+    bool stringy = false;           ///< Model I: the Exatron Stringy Floppy ($F0-$F7, ROM at $3000)
 };
 
 /**
@@ -248,6 +256,23 @@ public:
     bool inverse() const { return isModel4(m_model) && (m_port84 & 0x08); }
     bool altChars() const { return !isModel1(m_model) && (m_portEC & 0x08); }
     uint16_t crtcStart() const { return m_crtcStart; }
+    /** The Model 4's CRTC registers as written (R0-R17; only R12/R13, the start, act). */
+    uint8_t crtcRegister(int r) const { return m_crtc[r & 0x1F]; }
+    /** Port $EC bit 5 (Model III/4): the CPU waits for video RAM until the display is off it. */
+    bool videoWaits() const { return !isModel1(m_model) && (m_portEC & 0x20); }
+    /** The master ticks a video RAM access at tick `t` waits (0 outside the display). */
+    uint64_t videoWaitAt(uint64_t t) const;
+    /** The screen is 640 wide (the Model 4, or a hi-res board on the III). */
+    bool wideScreen() const { return isModel4(m_model) || hires.fitted(); }
+    /** The Orchestra's DACs (signed). */
+    int8_t orchestraLeft() const { return m_orchL; }
+    int8_t orchestraRight() const { return m_orchR; }
+    /** The Model I's selected cassette recorder ($37E4 bit 0). */
+    Tape& cassette() { return m_cassSel ? tape2 : tape; }
+    const Tape& cassette() const { return m_cassSel ? tape2 : tape; }
+    int cassetteSelected() const { return m_cassSel; }
+    /** Model I: the Exatron's ROM at $3000-$37DF (empty: none). */
+    void setStringyRom(const std::vector<uint8_t>& rom) { m_extRom = rom; }
     /** The glyph row (bit 7 the leftmost dot) of character `c`, line `ra`. */
     uint8_t glyph(int c, int ra) const { return m_font[c & 0xFF][ra % 12]; }
 
@@ -270,6 +295,10 @@ public:
 
     Keyboard keyboard;
     Tape tape;
+    Tape tape2;                         ///< the Model I's second recorder
+    HardDisk hard;
+    Stringy stringy;
+    Hires hires;
     Sound sound;
     Printer printer;
     Uart uart;
@@ -294,6 +323,9 @@ private:
     uint8_t& m4RamRef(uint16_t a);
     void portFFOut(uint8_t v);
     void portECOut(uint8_t v);
+    void videoAccess(bool peek);
+    void selectCassette(int n);
+    void applyFitted();
     void setDensity(bool dd);
     void buildFont(const std::vector<uint8_t>& charGen);
     float soundLevel() const;
@@ -320,6 +352,11 @@ private:
     bool m_romIn = true;                // 4P: the boot ROM in
     uint8_t m_crtcReg = 0;
     uint16_t m_crtcStart = 0;
+    uint8_t m_crtc[32] = {};
+    uint64_t m_waitTicks = 0;           // video waits owed by this instruction
+    int8_t m_orchL = 0, m_orchR = 0;
+    int m_cassSel = 0;
+    std::vector<uint8_t> m_extRom;
     bool m_soundBit = false;
     int m_cassOut = 0;
 

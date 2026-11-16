@@ -215,6 +215,8 @@ PLUGIN_TRS80_SRCS = src/plugins/machines/trs80/main/machine_trs80.cpp \
 	src/plugins/machines/trs80/main/trs80_font.cpp \
 	src/plugins/machines/trs80/main/trs80_tape.cpp \
 	src/plugins/machines/trs80/main/trs80_serial.cpp \
+	src/plugins/machines/trs80/main/trs80_hard.cpp \
+	src/plugins/machines/trs80/main/trs80_stringy.cpp \
 	src/plugins/devices/wd17xx/main/wd17xx.cpp \
 	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
 	src/plugins/machines/trs80/main/plugin_init.cpp
@@ -695,6 +697,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/gime/test/test_gime.cpp \
 	src/plugins/machines/trs80/test/test_trs80_machine.cpp \
 	src/plugins/machines/trs80/test/test_trs80_tape.cpp \
+	src/plugins/machines/trs80/test/test_trs80_addons.cpp \
 	src/plugins/devices/vdc8563/test/test_vdc8563.cpp \
 	src/plugins/devices/ym2151/test/test_ym2151.cpp \
 	src/plugins/6502/test/test_disasm6502.cpp \
@@ -885,6 +888,8 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/machines/trs80/main/trs80_font.o \
 	src/plugins/machines/trs80/main/trs80_tape.o \
 	src/plugins/machines/trs80/main/trs80_serial.o \
+	src/plugins/machines/trs80/main/trs80_hard.o \
+	src/plugins/machines/trs80/main/trs80_stringy.o \
 	src/plugins/devices/mc6847/main/mc6847.o \
 	src/plugins/devices/mc6847/main/mc6847_font.o \
 	src/plugins/devices/mc6883/main/mc6883.o \

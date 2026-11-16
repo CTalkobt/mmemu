@@ -41,6 +41,7 @@ their directory:
 | `model4p.rom` (MAME's `8075332.u69`) | Model 4P boot ROM, 4 KB |
 | `mcm6670p.z29` (optional) | The Model I's character generator, 1 KB |
 | `8044316a.u36` / `8049007.u103` (optional) | The Model III/4 / 4P character generator, 2 KB |
+| `esf.rom` (optional) | The Exatron Stringy Floppy's ROM (Model I, up to 2016 bytes at `$3000`) |
 
 Without its ROM a machine is still made (the debugger and the plugin
 checks work), with a warning naming the file and where it looked; a
@@ -62,9 +63,10 @@ assembler and GDB register layout are the Z80 plugin's.
 |---------|--|
 | `$0000-$2FFF` | ROM (Level I: `$0000-$0FFF`) |
 | `$37E0-$37E3` | read: the interrupt latch (7 clock, 6 FDC); write: drive select (bits 0-3; bit 3 is also the side for drives 0-2) |
-| `$37E4` | cassette 1/2 select (ignored) |
+| `$37E4` | cassette 1/2 select (bit 0: the second recorder) |
 | `$37E8` | printer: data out, status in (`$30` ready) |
 | `$37EC-$37EF` | FD1771: status/command, track, sector, data |
+| `$3000-$37DF` | the Exatron Stringy Floppy's ROM (when fitted) |
 | `$3800-$3BFF` | keyboard (address bits 0-7 select rows) |
 | `$3C00-$3FFF` | video RAM (D6 not stored without the lower case mod) |
 | `$4000-` | RAM: 4 or 16 KB in the keyboard unit, to 48 KB with the EI |
@@ -106,9 +108,17 @@ until port `$9C` bit 0 is cleared; its map 0 reads RAM below `$3800`.
 | `$F8-$FB` | printer status | printer data |
 | `$FC-$FF` | 7 cassette flip-flop, 6-1 port `$EC`'s, 0 the 1500 baud level (clears the cassette interrupts) | cassette output (bits 1-0) |
 | `$84-$87` | | Model 4: the memory map, video (above) |
+| `$75`, `$79` | | the Orchestra-90: right, left DAC (`expansion orchestra orchestra`) |
+| `$80-$83` | `$82`: hi-res data | the hi-res board: x, y, data, mode (`expansion hires`) |
 | `$88/$89` | | Model 4: CRTC register select and data (12/13: the display's start) |
+| `$8C-$8E` | | Model 4: the hi-res board's x offset, y offset, overlay |
 | `$90-$93` | | Model 4: the sound bit (0) |
 | `$9C-$9F` | | Model 4P: the boot ROM in (bit 0) |
+| `$C0-$CF` | the hard disk (below) | the hard disk |
+
+On the Model I: `$B5`/`$B9` the Orchestra-85's right/left DACs, `$C0-$CF`
+the hard disk, `$E8-$EB` the RS-232 board (`$E9` reads its sense
+switches) and `$F0-$F7` the Stringy Floppy's drives.
 
 ## Interrupts and timing
 
@@ -126,6 +136,14 @@ RESET: on the Model I an NMI (Level II restarts from its handler, memory
 kept); on the III/4 the Z80 is reset (memory kept). Both reset the disk
 controller, cassette and UART. The GUI's RESET button, or the key `reset`.
 
+Video waits (Model III/4, port `$EC` bit 5): a CPU access to video RAM
+while the display is reading it waits for the line's horizontal blanking.
+The CRTC is mask-programmed, so the raster is fixed: 264 lines of 63.1 us
+(640 dots at 10.1376 MHz in 64 x 16; 800 at 12.672 MHz in 80 x 24, MAME's
+Model 4 raster), 192 or 240 of them shown, each for 80% of the line. Without
+the waits (the default) the CPU is never held, as on the Model I (whose
+real hardware shows "snow" instead, which mmsim doesn't draw).
+
 Time is kept in ticks of a master clock: 10.6445 MHz on the Model I (6 a
 T-state: 1.774 MHz), 20.2752 MHz on the III/4 (10 a T-state, 5 with the
 Model 4's 4 MHz: `speed 4` / `speed 2`, or port `$EC` bit 6). The debugger's cycle
@@ -138,6 +156,11 @@ counts and pacing are in T-states at the base clock.
 | I | 64 x 16 (32 x 16) | 6 x 12 | 384 x 384 |
 | III | 64 x 16 (32 x 16) | 8 x 12 | 512 x 384 |
 | 4 | 64 x 16 (32 x 16) and 80 x 24 (40 x 24) | 8 x 12, 8 x 10 | 640 x 480 |
+
+The Model 4's CRTC registers are kept as written (`crtcRegister()`, the
+debugger), but only R12/R13, the display's start, act: the CRTC is
+mask-programmed (MAME), and its cursor and light pen outputs are not used
+(the ROM and DOSes draw their own cursor).
 
 Each line is drawn twice. Characters `$80-$BF` (and `$C0-$FF` on the
 Model I) are 2 x 3 block graphics (bits 0/1 the top pair, 2/3 the middle,
@@ -157,6 +180,31 @@ position; Backspace is LEFT, Home CLEAR, Esc or End BREAK, Tab RIGHT. The
 PC's shifted symbols (`!`, `"`...) press SHIFT and the TRS-80 key that has
 them. Typed text (`type`, paste) is held 60 ms a key.
 
+## Hi-res graphics (Model III/4)
+
+`expansion hires tandy` (Radio Shack's board, 26-1126) or `expansion hires
+grafyx` (Micro-Labs' Grafyx Solution), after xtrs: 32 KB of graphics, 128
+bytes (bit 7 the leftmost dot) by 256 lines, 640 x 240 of it shown. Port
+`$80` x, `$81` y, `$82` the byte at x, y, `$83` the mode (bit 0 on; 1
+Micro-Labs: text off, Radio Shack: wait states, not modelled; 2/3 x/y
+count down; 4/5 x/y held after a read; 6/7 after a write); on the Model 4
+`$8C`/`$8D` the x/y offsets and `$8E` bit 0 the overlay (Radio Shack).
+Overlaid, the graphics are XORed with the text dot for dot (byte n under
+column n, line n under scan line n); otherwise they are the screen alone.
+The Model III's Grafyx Solution also takes port `$FF` writes with bit 5
+set (6 on, 7 video RAM reaches the graphics: `$3C00 + n` is byte `n % 64`
+of line `(n / 64) * 12` plus bits 4-1). The Model III's screen is 640
+wide with a board fitted.
+
+## Orchestra-85 / Orchestra-90
+
+`expansion orchestra orchestra`: two signed 8-bit DACs, the Model I's
+Orchestra-85 at `$B9` (left) and `$B5` (right), the Model III/4's
+Orchestra-90 at `$79` and `$75` (xtrs's ports). mmsim's sound is mono:
+the channels are mixed, and (as xtrs) heard with the cassette motor off.
+The Orchestra-80 (the Model I card before the -85) is not modelled apart
+from it.
+
 ## Cassette
 
 `.cas` (the bits as recorded) and `.wav`: `-i game.cas`, `tape mount`,
@@ -166,6 +214,10 @@ the machine reads at: 250 baud on Level I, 500 on Level II and the Model
 III/4, 1500 on the III/4 once its cassette interrupts are enabled (`$E0`
 bits 1-0: the ROM's high speed). The pulse shapes are xtrs's. With the
 motor off the cassette output (and the Model 4's port `$90`) is the sound.
+
+The Model I has two recorders (`$37E4` bit 0 selects: the relay, the
+output and the input go to it): `tape` is the first, `tape 2 mount x.cas`
+(and `tape 2 play`...) the second.
 
 ## Disks
 
@@ -180,6 +232,30 @@ JV3 is taken as JV1) and JV3, read and written (saved back to the file).
 - Model III/4: the FD1793 at `$F0` (`expansion fdc` on the III: fitted by
   default).
 
+## Hard disk
+
+The Radio Shack hard disk interface (`expansion harddisk`, fitted on all
+but Level I; on the Model I it needs the EI), after xtrs: a WD1010 at
+`$C8-$CF` and the board's `$C0` (read: the drives' write protect) and
+`$C1` (control: 4 reset), with up to four drives of 256-byte sectors, 32 a
+track. As in xtrs the ports read `$FF` until a drive is mounted, and the
+commands finish at once. Images are Matthew Reed's `.hdv` format (xtrs,
+TRS32): `disk mount 1 work.hdv` (units 1-4; `-i work.hdv` is unit 1),
+written back on eject and at exit; a write-protected header or read-only
+file protects the drive. The DOSes need their hard disk drivers (LDOS's
+and LS-DOS's `RSHARD`, or xtrs's `XTRSHARD/DCT`).
+
+## Stringy Floppy (Model I)
+
+The Exatron Stringy Floppy (`expansion stringy stringy`; mounting a wafer
+fits it), after xtrs: eight wafer drives at `$F0-$F7` (out: 0 motor, 2
+write gate, 7 flux; in: 0 write protected, 2 end of tape, 3 no wafer, 7
+flux) and the Exatron's ROM at `$3000` (`esf.rom`, which you supply; its
+source is in xtrs as `esfrom.z80`). `.esf` wafers (xtrs, TRS32): `disk mount
+1 prog.esf` (units 1-8), written back on eject and at exit. The wafer is a
+loop of 124 T-state cells; starting the motor starts it from the beginning
+(as xtrs, which the ROM's `@SAVE` needs).
+
 ## Printer and RS-232
 
 The printer (Model I `$37E8`, III/4 `$37E8` and `$F8`) is always ready;
@@ -190,14 +266,20 @@ fitted on the III/4) takes `serial loopback`, `serial file:out.txt`
 at the programmed baud rate and the receive/send/error interrupts on the
 III/4.
 
+The Model I's board has sense switches (`$E9`): `expansion rs232 rs232
+300-7E1` sets them as baud-bits-parity-stop (110 to 9600 baud; 5-8 bits;
+N, E or O; 1 or 2 stop bits) or as the byte (`$6F`, the default: 9600
+8N1). Bits 2-0 the baud rate, 3 no parity, 4 two stop bits, 6-5 the word
+length (5, 7, 6, 8), 7 even parity. The III/4's read `$FF` (xtrs).
+
 ## Not done
 
-The stretch items of #330: the WD1010 hard disk, the Model 4 hi-res
-graphics board, the Orchestra-80/85 and the Exatron Stringy Floppy. Also
-the Model I's second cassette, the RS-232 board's sense switches beyond
-the default, the Model 4's 6845 beyond the start address, and video wait
-states. Booting the real ROMs and DOSes has not been checked in mmsim's
-tests (they are the user's).
+Booting the real ROMs and DOSes (Level I/II BASIC, the Model III/4/4P
+ROMs; TRSDOS, LDOS, NEWDOS/80, LS-DOS) has not been checked: the ROMs and
+DOSes are the user's, and none are in mmsim's tests. Nor has the Stringy
+Floppy with the Exatron's ROM, or the hard disk with RSHARD. The Radio
+Shack hi-res board's wait states, the Model I's video "snow" and the
+Germany-only HRG1B Model I graphics card are not modelled.
 
 ## Tests
 
@@ -210,4 +292,9 @@ sector read on the Model III through WAIT, INI and the NMI and on the Model
 I by polling the FD1771, `-i image.dmk` mounting, /CMD loading, snapshots,
 and the cassette: `.cas` at 250/500/1500 baud and `.wav` played and
 recorded back, Level II-style reading through port `$FF`, and the Model
-III's 1500 baud interrupts.
+III's 1500 baud interrupts. `test_trs80_addons.cpp`: the hard disk (Reed
+headers, reads, writes, multiple sectors, errors, write protection, files),
+the Stringy Floppy (flux runs written and read back, the leader, write
+protection, files), the hi-res boards (counting, alone and overlaid, the
+Model III's Grafyx Solution), the Orchestra, the Model I's second cassette
+and sense switches, the CRTC registers, video waits and snapshots.

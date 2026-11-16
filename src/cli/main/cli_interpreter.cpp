@@ -1404,9 +1404,15 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string sub;
         if (ss >> sub) {
-            IOHandler* tape = m_ctx.machine->ioRegistry ? m_ctx.machine->ioRegistry->findHandler("Tape") : nullptr;
+            // `tape 2 ...`: a machine's second recorder (the TRS-80 Model I's)
+            std::string which = "Tape";
+            if (sub == "1" || sub == "2") {
+                if (sub == "2") which = "Tape 2";
+                if (!(ss >> sub)) { m_output("Usage: tape [2] <mount|play|stop|rewind|record|stoprecord|save>\n"); return; }
+            }
+            IOHandler* tape = m_ctx.machine->ioRegistry ? m_ctx.machine->ioRegistry->findHandler(which) : nullptr;
             if (!tape) {
-                m_output("No datasette found in this machine.\n");
+                m_output(which == "Tape" ? "No datasette found in this machine.\n" : "This machine has no second recorder.\n");
                 return;
             }
             if (sub == "mount") {
@@ -1445,7 +1451,7 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                 m_output("Tape: " + sub + "\n");
             }
         } else {
-            m_output("Usage: tape <mount|play|stop|rewind|record|stoprecord|save>\n");
+            m_output("Usage: tape [2] <mount|play|stop|rewind|record|stoprecord|save>\n");
         }
     } else if (cmd == "disk") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
@@ -3504,6 +3510,7 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape record         - Press Record button\n"
                  "  tape stoprecord     - Release Record button\n"
                  "  tape save <path>    - Write captured buffer to .tap file\n"
+                 "  tape 2 <subcommand> - The same for a second recorder (TRS-80 Model I)\n"
                  "  serial <spec>       - RS-232 far end: modem (Hayes AT: ATDT host[:port] dials TCP), loopback,\n"
                  "                        tcp:PORT (a TCP server), none\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
