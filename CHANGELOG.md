@@ -7,6 +7,29 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100/102/200: the Tandy Disk/Video Interface (#358)
+
+- **The DVI (26-3806)** is emulated from its service manual: the box's own
+  4 MHz Z80 runs its boot ROM and the DOS it loads from the system diskette.
+  The portable's own ROM and DISK-BASIC talk to it, so nothing is
+  high-level emulated. The findings from the scanned manual are written up
+  in `refs/dvi/FINDINGS.md`. The hardware:
+  - the 8255 in mode 2 at the portable's ports `$80-$83`;
+  - the box's banked memory: 1 KB boot ROM, 4 KB RAM, 2-bit attribute RAM
+    and character RAM;
+  - the STS port: column mode, bank, drive selects, CPU hold during the
+    display, VSRET, IBF, motor;
+  - a WD1793 with the box's wait at `$40-$4F` and INTRQ as NMI;
+  - an HD46505 driving 40/80 × 25 text through the character ROM, with
+    reverse, blink and the cursor.
+- **Using it:** `expansion sysbus dvi [DISK]` (or `disk mount 1|2`) fits
+  it. The monitor is drawn under the LCD.
+- **Checked with the real boot ROM, character ROM and Club100's system
+  diskette:** the Model 100 loads DISK-BASIC at power-on, `LFILES 0` lists
+  the diskette, and `SAVE`/`LOAD "0:..."` work on the image. `SCREEN 1,1`
+  and `WIDTH 80` drive the monitor. The Tandy 200 works too.
+- `Wd17xx::headLoaded()` exposes the HLD output.
+
 ### Model 100 family: TPDD2 disk images, the M10's national keys, the cold-start year (#358)
 
 - **TPDD2 disk images** now have the drive's own file system in operation

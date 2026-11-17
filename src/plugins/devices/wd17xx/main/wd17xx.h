@@ -174,6 +174,8 @@ public:
     bool ready() const;
     /** Whether the index hole is under the sensor. */
     bool indexPulse() const;
+    /** The HLD output: the head is loaded (it drops after 15 idle turns). */
+    bool headLoaded() const { return m_headLoaded; }
 
     // Status bits
     static constexpr uint8_t ST_BUSY = 0x01, ST_INDEX = 0x02, ST_DRQ = 0x02, ST_TRACK0 = 0x04,

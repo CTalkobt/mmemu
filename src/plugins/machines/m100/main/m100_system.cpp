@@ -447,14 +447,29 @@ void SerialPort::getDeviceInfo(DeviceInfo& out) const {
 // ---------------------------------------------------------------------------
 // The LCD: each dot SCALE x SCALE, a BORDER round the panel
 // ---------------------------------------------------------------------------
+// With a Disk/Video Interface fitted, its monitor goes under the LCD
 IVideoOutput::VideoDimensions Display::getDimensions() const {
-    const int w = m_sys->lcdWidth() * SCALE + 2 * BORDER, h = m_sys->lcdHeight() * SCALE + 2 * BORDER;
+    int w = m_sys->lcdWidth() * SCALE + 2 * BORDER, h = m_sys->lcdHeight() * SCALE + 2 * BORDER;
+    if (m_sys->dvi()) {
+        w = std::max(w, Dvi::OUT_W + 2 * BORDER);
+        h += Dvi::OUT_H + BORDER;
+    }
     return {w, h, w, h};
 }
 
 void Display::renderFrame(uint32_t* buf) {
     const auto d = getDimensions();
     std::fill(buf, buf + (size_t)d.width * d.height, BG);
+    if (Dvi* dvi = m_sys->dvi()) {
+        const int top = m_sys->lcdHeight() * SCALE + 2 * BORDER;
+        std::fill(buf + (size_t)top * d.width, buf + (size_t)d.width * d.height, 0xFF202020);
+        m_frame.resize((size_t)Dvi::OUT_W * Dvi::OUT_H);
+        dvi->render(m_frame.data());
+        const int left = (d.width - Dvi::OUT_W) / 2;
+        for (int y = 0; y < Dvi::OUT_H; ++y)
+            std::copy(&m_frame[(size_t)y * Dvi::OUT_W], &m_frame[(size_t)(y + 1) * Dvi::OUT_W],
+                      buf + (size_t)(top + y) * d.width + left);
+    }
     const int lw = m_sys->lcdWidth(), lh = m_sys->lcdHeight();
     std::vector<uint8_t> dots;
     if (m_sys->isT200()) dots = m_sys->lcdc.render(lw, lh);
@@ -551,6 +566,19 @@ bool System::fitRampac(const std::string& path, std::string& err) {
 
 void System::removeRampac() { m_rampac.reset(); }      // (its destructor writes the file)
 
+bool System::fitDvi(std::vector<uint8_t> rom, std::vector<uint8_t> cg, std::string& err) {
+    if (isPc8201() || m_model == Model::M10 || m_model == Model::KC85) {
+        err = "the Disk/Video Interface plugs into the Model 100, 102 and 200";
+        return false;
+    }
+    m_rampac.reset();                                   // one system bus
+    m_dvi = std::make_unique<Dvi>(std::move(rom), std::move(cg));
+    m_dvi->setHostClock(CPU_HZ);
+    return true;
+}
+
+void System::removeDvi() { m_dvi.reset(); }
+
 bool System::fitRex(Rex::Kind kind, const std::string& path, std::string& err) {
     auto r = std::make_unique<Rex>(kind);
     if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
@@ -562,6 +590,7 @@ void System::removeRex() { m_rex.reset(); }
 
 void System::flushAddons() {
     if (m_rampac) m_rampac->flush();
+    if (m_dvi) m_dvi->flush();
     if (m_rex) m_rex->flush();
 }
 
@@ -772,6 +801,7 @@ void System::advance(uint64_t t) {
         if (isPc8201()) cmtClock(t);
     }
     tape.clock(t);
+    if (m_dvi) m_dvi->advance(t);
     keyboard.clock(t, CPU_HZ);
     if (hasModem()) modem.tick(t);
     if (wandPlugged) wand.tick(t);
@@ -899,6 +929,7 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v, bool peek) {
 
 // Ports ---------------------------------------------------------------------
 uint8_t System::peekPort(uint8_t port) {
+    if (m_dvi && (port & 0xF0) == 0x80) return m_dvi->hostPeek(port);
     if (m_rampac && Rampac::decodes(port)) return m_rampac->peek(port);
     const int blk = port & 0xF0;
     if (uint8_t r; isPc8201() && inPc8201(port, r)) return r;
@@ -922,6 +953,7 @@ uint8_t System::peekPort(uint8_t port) {
 }
 
 uint8_t System::in(uint8_t port) {
+    if (m_dvi && (port & 0xF0) == 0x80) return m_dvi->hostIn(port);
     if (m_rampac && Rampac::decodes(port)) return m_rampac->in(port);
     const int blk = port & 0xF0;
     if (blk == 0xB0) return pio.readIo(port & 7);
@@ -938,6 +970,7 @@ uint8_t System::in(uint8_t port) {
 }
 
 void System::out(uint8_t port, uint8_t v) {
+    if (m_dvi && (port & 0xF0) == 0x80) { m_dvi->hostOut(port, v); return; }
     if (m_rampac && Rampac::decodes(port)) { m_rampac->out(port, v); return; }
     const int blk = port & 0xF0;
     if (isPc8201() && outPc8201(port, v)) return;
@@ -1020,6 +1053,7 @@ std::vector<uint8_t> System::addonState() const {
     put(v, wandPlugged);
     putBlock(v, m_rampac ? m_rampac->saveState() : std::vector<uint8_t>{});
     putBlock(v, m_rex ? m_rex->saveState() : std::vector<uint8_t>{});
+    putBlock(v, m_dvi ? m_dvi->saveState() : std::vector<uint8_t>{});
     return v;
 }
 
@@ -1033,6 +1067,10 @@ void System::loadAddonState(const uint8_t*& p) {
     if (m_rampac && !r.empty()) m_rampac->loadState(r);
     const auto x = getBlock(q);
     if (m_rex && !x.empty()) m_rex->loadState(x);
+    if (q < blk.data() + blk.size()) {                  // (older snapshots end here)
+        const auto dv = getBlock(q);
+        if (m_dvi && !dv.empty()) m_dvi->loadState(dv);
+    }
 }
 
 System* systemOf(MachineDescriptor* m) {

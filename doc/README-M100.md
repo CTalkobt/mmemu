@@ -360,18 +360,47 @@ files, lists the RAM image and refreshes its backup (32 KB programmed into
 the flash and its directory updated, written back to the image file).
 REX# and the Tandy 200 were checked with the stand-in programs only.
 
-**The Disk/Video Interface** (26-3806: one or two 5.25" drives and a 40/80
-column composite video output on the system bus) is not emulated. MAME,
-VirtualT and the Technical Reference Manual don't say how the computer
-talks to it. The tandy.wiki "Disk/Video Interface" page now gives what
-emulating it needs, kept in `../refs/dvi`:
-- the service manual (26-3806/3807, a 126-page scan with no text layer, so
-  it is read as page images);
-- dumps of the DVI's main ROM (`M40 P`, 4 KB) and its character generator
-  (`M17 CG`, 4 KB);
-- the system disk's files (Club100, Steve Adolph).
+**The Disk/Video Interface** (26-3806; the expansion drive 26-3807):
+`expansion sysbus dvi [DISK]` fits it on the Model 100, 102 or 200 (in the
+RAMPAC's place), with an image for drive 0; `disk mount 1|2 IMAGE` mounts
+drives 0 and 1 (and fits it). The portable's ROM looks for it at power-on
+and on RESET (`key reset`): with the system diskette in drive 0 it loads
+DISK-BASIC (`LFILES 0`, `LOAD "0:NAME"`, `SAVE "0:NAME"`, `SCREEN 1,1` to
+the monitor, `WIDTH 80`...). The monitor is drawn under the LCD.
 
-Building it means taking the port map and protocol from the schematic.
+It is the box itself that is emulated, from its service manual (the
+findings, written up from the scan, are in `refs/dvi/FINDINGS.md`): its own
+4 MHz Z80 runs the DVI's boot ROM and the DOS it loads from track 1, and the
+portable's ROM and DISK-BASIC talk to it as on the real thing:
+- the 8255 at the portable's ports `$80-$83` (`$8F`): mode 2 on port A, the
+  data mode in port B, PC0-PC2 low while the box runs (the ROM's check at
+  `$7682`); on the box, `/OBF` is its INT, IN `$60-$7F` is `/ACK`, OUT
+  `/STB`;
+- the box's memory: the 1 KB boot ROM or RAM1 at `$0000` (bank by STS bit
+  1), RAM2 at `$0800`, the 2-bit attribute RAM at `$C000`, the character
+  RAM at `$E000`;
+- the STS port (`$20`): 80 columns, bank, drive selects, HLDEN (the Z80
+  held while the display is drawn) out; port B, VSRET, IBF and MOTOR ON
+  (the FDC's head load) in;
+- a WD1793 at `$40-$5F`, double density, 40 tracks x 18 sectors x 256
+  bytes, one side; an access at `$40-$4F` waits for DRQ or INTRQ (the box's
+  WAIT), INTRQ is its NMI;
+- an HD46505 at `$00` (select) / `$02` (write) / `$03` (read): 40 x 25 or
+  80 x 25 text through the character ROM (8 rows a character, D7 the left
+  dot), attribute bit 0 clear = reverse, bit 1 = blink, and the cursor.
+
+Files in `roms/m100/` (gitignored), from tandy.wiki's "Disk/Video
+Interface" page and Club100:
+
+| file | contents |
+|------|----------|
+| `dvi.rom` (or `M40_P.bin`) | the boot ROM (M40), 1-4 KB; the first 1 KB is used |
+| `dvichar.rom` (or `M17_CG.bin`) | the character ROM (M17), 2-4 KB; the first 2 KB is used |
+| a disk image | the system diskette: Club100's `DVI.DAT` (raw, 184320 bytes, read as JVC) |
+
+Not done: the composite timing beyond the frame (the picture is drawn from
+the CRTC's registers once a frame), the RF output, the drives' mechanics
+(spin-up, step sounds), interlace. The expansion drive is drive 1.
 (VirtualT's "TDock" is a different, VirtualT-only video device.)
 
 ### Snapshots
@@ -433,6 +462,14 @@ decides):
   counts and twice them, but not with ten times them; the 100/102 ROM
   polls each HD44102 access (`$750B`) and draws correctly even with a
   200-clock busy time.
+- The Disk/Video Interface with its real boot ROM, character ROM and the
+  system diskette (`test_dvi.cpp`'s `dvi_real_system_disk`, run when the
+  files are in `roms/m100/`): the Model 100 loads DISK-BASIC at power-on
+  (24941 bytes free, 29638 without), `LFILES 0` lists the diskette, a
+  program saved with `SAVE "0:HELLO"` loads back and runs, and is on the
+  image for a fresh machine; `SCREEN 1,1` prints on the monitor and
+  `WIDTH 80` switches it to 80 columns. By hand: the Tandy 200 ("[DISK/VIDEO
+  code installed]") lists the diskette and prints on the monitor.
 - TPDD on a disk image: TS-DOS 4.00 lists the files of a `.pdd1` built
   from pdd.sh's layout (with a file chained over non-adjacent sectors),
   with the right sizes and free space, and saves a file to it that an
@@ -466,7 +503,8 @@ The parts most likely to need tuning:
   MAME itself leaves disabled. The HD61830A's internal font is a stand-in
   (the Model 200 uses graphic mode).
 - The add-ons' unverified points are listed under [Add-ons](#add-ons);
-  the Disk/Video Interface is not emulated.
+  the Disk/Video Interface's real hardware details beyond the service
+  manual (checked by running its ROM, DOS and DISK-BASIC).
 
 ## Devices
 
@@ -688,6 +726,16 @@ output (true over a space or lifted).
 `Rampac`: 256 sectors of 1 KB behind ports `$81` (sector; `$85` also
 sets it), `$83` (data, stepping); `open(path)` / `flush()` / `saveTo()`
 for the battery-backed file.
+
+### Disk/Video Interface (`dvi/`)
+
+`Dvi`: the box (its Z80 and memory, the 8255 shared with the portable, the
+WD1793 with the 40H-4FH wait, the HD46505's registers and the text
+picture, the STS port) behind `hostIn`/`hostOut` (the portable's ports
+`$80-$83`) and `advance` (the portable's time). Tests (`test_dvi.cpp`,
+with stand-in ROMs): the memory map and banks, the 8255 handshake both
+ways, the CRTC's ports, the picture (40 and 80 columns, reverse), a sector
+read through the wait, snapshots and the Model 100's `sysbus` slot.
 
 ### REX / REX# (`rex/`)
 
