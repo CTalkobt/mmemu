@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: Burke & Burke XT-RTC checked against the real board and boot ROM; its DS1215 clock (#356)
+
+- The Burke & Burke emulation was written from memory. It has now been
+  checked against the XT-RTC Rev D schematic, B&B's own OS-9 boot ROM
+  (disassembled) and MAME's `isa/hdc.cpp`. The controller protocol as
+  modelled is what the ROM does: the status values it waits for (`$09`
+  clear, `$0D`, `$0B`, `$09`, `$07`), the six-byte DCB, `$0C`'s eight data
+  bytes, the completion byte and request sense. A test runs the real ROM
+  (when `roms/coco/xt-rtc/` has it) from the cartridge's ROM socket: it
+  reads the geometry from sector 0, sends `$0C` and boots nine sectors of
+  cylinder 128 from a hand-built image.
+- **The XT-RTC's clock is now emulated.** It is a DS1215 Phantom Time Chip
+  in ROM mode on /SCS: a cycle at `$FF40-$FF5F` with A2 low writes bit A0,
+  and a read with A2 high reads bit D0. The 64-bit pattern opens the BCD
+  time, which mmsim takes from the host.
+- Corrected the description: the controller is not selected by /SCS.
+  /IOR and /IOW come from R/W, and the controller's own 10-bit decode
+  (with A4-A6 inverted) places it at `$FF50-$FF53`. What is still
+  unverified is listed in `doc/README-COCO.md`.
+
 ### CoCo: /HALT seen an instruction late, DDEN read during the ID search: OS-9 Level 2 boots (#356)
 
 - The 6809 samples /HALT at the end of an instruction, so a HALT raised in

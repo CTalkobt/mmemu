@@ -209,7 +209,7 @@ cartridge FIRQ starts it.
 | `rs232` | Deluxe RS-232 Program Pak: a 6551 ACIA at `$FF68-$FF6B`, its IRQ on CART; `serial loopback`, `serial tcp:PORT`, `serial modem` |
 | `fd500` | FD-500 disk controller: Disk BASIC (option: the ROM's path; else `disk11.rom`) and its latch at `$FF40` |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
-| `burke` | Burke & Burke CoCo XT hard disk interface at `$FF50-$FF53` (option: drive 0's raw image[,ROM]) |
+| `burke` | Burke & Burke CoCo XT-RTC hard disk interface at `$FF50-$FF53` and its DS1215 clock (option: drive 0's raw image[,ROM]) |
 | `rompak` | A ROM Pak; the option its image |
 | `gmc` | The Games Master Cartridge (bank-switched ROM and an SN76489); the option its image |
 | `banked` | A banked ROM Pak as MAME's (16 KB banks, register at `$FF40`); the option its image |
@@ -406,32 +406,74 @@ disk mount 1 ~/coco/sd/GAMES.DSK                   # SDC drive 0 (or "M:" from t
   command timing (results are ready when first polled). Not yet checked
   with SDC-DOS or a real card.
 
-### Burke & Burke CoCo XT
+### Burke & Burke CoCo XT (XT-RTC)
 
-`coco::BurkeBurke` with `XtHdc` (`src/plugins/devices/xt_hdc`). From the
-**CoCo XT & XT-RTC User's Manual v2.4** (appendix A) and **Application
-Note 5**, these are settled:
+`coco::BurkeBurke` with `XtHdc` (`src/plugins/devices/xt_hdc`) and a DS1215
+clock. Checked against the **XT-RTC Rev D schematic** (WormFood's KiCad
+transcription of a real board, with photos), **B&B's OS-9 boot ROM**
+(an 8 KB XT-ROM dump, disassembled) and MAME's `isa/hdc.cpp` and
+`machine/ds1215.cpp`; also the **CoCo XT & XT-RTC User's Manual v2.4**
+(appendix A) and **Application Note 5**. The reference files are the
+user's (`roms/coco/xt-rtc/`, not in the repository).
 
-- The interface decodes /SCS with A4 high: the controller's registers at
-  `$FF50` data (read/write), `$FF51` status / force reset, `$FF52` read
-  jumpers / start command, `$FF53` (write) select mode.
+- **Address decoding** (schematic): the CoCo's A0-A15 go to the ISA slot
+  with A4, A5, A6 (U3D-F) and A14 (U3A) inverted; AEN, BA16 and BA17 are
+  tied low, BA18 and BA19 high. /IOR and /IOW are made from R/W alone (U2D,
+  U2A; their other input is a 7400 output tied high, which the
+  transcriber notes looks like a late change), so the controller's own
+  decode of ISA `$320-$323` is what puts it at `$FF50` data, `$FF51`
+  status (read) / reset (write), `$FF52` jumpers (read) / select (write),
+  `$FF53` DMA/IRQ mask (write). Nothing on the card uses /SCS for the
+  controller.
+- **ROM socket**: /SMEMR is /CTS, so the controller's BIOS socket (ISA
+  `$C8000`) answers at `$C000`, scrambled by the inverted A4-A6 (an
+  XT-ROM: `expansion cart burke IMAGE,ROM` takes the EPROM as burned).
+  B&B's ROM starts `DK` and runs from `$C002` like Disk BASIC.
+- **Controller protocol** (the boot ROM, `$C56A-$C6F8`): reset, mask 0,
+  wait for status & `$09` = 0, select, a DCB byte each time status & `$0F`
+  = `$0D` (BUSY, C/D, REQ; `$0F` there means the command ended early),
+  read data at `$0B`, write data at `$09`, the completion byte at status &
+  `$07` = `$07`; completion bit 1 → request sense (`$03`, 4 bytes; codes 0
+  and `$18` count as success). DCB: command, drive/head, cylinder bits 8-9
+  / sector, cylinder bits 0-7, count, control. It uses recalibrate `$01`,
+  read `$08`, seek `$0B`, test ready `$00` and `$0C` (8 bytes: cylinders,
+  heads, reduced write current, precompensation, ECC burst). This is what
+  `XtHdc` does; command codes, DCB, completion and sense bytes agree with
+  MAME.
+- **How it boots**: it waits for the drive (about 13 s, a key skips it),
+  tests RAM, sets the Multi-Pak's /SCS slot to its own /CTS slot, resets
+  the controller, recalibrates, reads physical sector 0 (cylinder 0, head
+  0) to `$0600` and sends its bytes `$44-$45` (cylinders) and `$46`
+  (heads) with `$0C`, then reads 9 sectors of **cylinder 128** (129 with
+  a key held), head 0, to `$2600`. They must start `OS`; it jumps to
+  `$2602`. Failing that it boots from floppy. The real-ROM test boots a
+  hand-built image this way on a CoCo 2.
+- **XT-RTC clock** (schematic U4, a DS1215 in ROM mode with a 32.768 kHz
+  crystal and a 3 V cell): /CEI = /(SCS · E), /OE = /(R/W · E), /WE = A2,
+  D = A0, Q = D0, RST = /RESET. So any `$FF40-$FF5F` cycle with A2 low,
+  read or write, writes bit A0, and a read with A2 high reads a bit on
+  D0; 64 bits of `$C5 $3A $A3 $5C $C5 $3A $A3 $5C` (low bit first) open
+  the eight BCD registers (hundredths, seconds, minutes, hours, day,
+  date, month, year) for 64 bits, as MAME's `ds1216e`. mmsim reads the
+  host's clock (the same model as the Apple II No-Slot Clock); setting
+  it isn't kept.
 - The controller is a PC hard disk controller (WD1002-WX1 recommended;
-  WD1002-27X, DTC 5150/5160, Adaptec 2072 work) with a 2 KB buffer: "no
-  halt", and the CoCo XT doesn't use its interrupt. Sectors are 512 bytes
-  (B&B's driver packs two 256-byte OS-9 sectors into each).
-- The controller's BIOS ROM socket answers /CTS at `$C000` with address
-  lines A4-A6 inverted (an XT-ROM): `expansion cart burke IMAGE,ROM`.
-- It works on the CoCo 1, 2 and 3, normally in a Multi-Pak slot.
+  WD1002-27X, DTC 5150/5160, Adaptec 2072 work): "no halt", no interrupt
+  or DMA. Sectors are 512 bytes, 17 a track. Images are raw (CHS order);
+  until `$0C` the geometry is 4 heads and the file's length.
 
-What the manual leaves out ("beyond the scope of this manual") is the
-controller's own protocol: the status bits (REQ, I/O, C/D, BUSY), the
-six-byte command block, the command set (read, write, seek, verify,
-format, request sense, initialize drive characteristics `$0C`, sector
-buffer, diagnostics) and 17 sectors a track are the IBM XT / WD1002
-family's, written from memory and **unverified**, as is the `$FF52`
-jumper value (0). The images are raw (CHS order); until `$0C` the
-geometry is 4 heads and the file's length. The XT-RTC's clock isn't
-modelled (its registers aren't documented). Not run with B&B's driver.
+Still **unverified**: the ROM's repeat at `$E000-$FEFF` (it depends on how
+much of ISA `$C8000-$CBFFF` the controller decodes); whether the
+controller also answers `$FF54-$FF57` (ISA `$324-$327`); the jumper value
+(0); status bit 4 (MAME: DMA request) and bit 5's exact rule; sense codes
+other than 0/`$04`; D1-D7 when the clock answers (0 here); whether a
+mismatched pattern bit needs a read (A2 high) before the DS1215 listens
+again (mmsim, like AppleWin, needs one; MAME doesn't). Not modelled: since
+/IOR and /IOW ignore /SCS and the controller decodes only A0-A9, the real
+card would also see writes to `$x350-$x353` all through memory (every
+1 KB) and, in a Multi-Pak, `$FF50` writes when another slot has /SCS;
+mmsim's cartridge port only passes the selected slot's `$FF40-$FF5F`.
+Not yet run with B&B's OS-9 driver or a real OS-9 hard disk image.
 
 ```
 expansion cart mpi ; expansion mpi1 burke ~/coco/os9hd.img ; expansion mpi4 fd502
@@ -661,5 +703,8 @@ single-sided flag, raw mounts and streaming, mount by name, listings,
 directories, new / make directory / delete, disk sets, STARTUP.CFG,
 flash banks, a stand-in firmware in its flash reading a sector on a
 CoCo 2) and the XT controller (reads across tracks, writes, geometry,
-sense, the sector buffer; Burke & Burke's ROM socket; Burke & Burke and
-the SDC in a Multi-Pak on a CoCo 3).
+sense, the sector buffer; Burke & Burke's ROM socket and XT-RTC clock,
+read bit by bit and by a 6809 program in a stand-in XT-ROM; Burke & Burke
+and the SDC in a Multi-Pak on a CoCo 3). `test_coco_real_roms.cpp` boots
+B&B's own boot ROM from a hand-built hard disk image when
+`roms/coco/xt-rtc/` has it.
