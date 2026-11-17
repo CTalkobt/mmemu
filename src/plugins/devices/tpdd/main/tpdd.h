@@ -50,7 +50,7 @@
  * Names match case-insensitively. Sub-directories appear as TS-DOS
  * "NAME.<>" entries (open for read enters one, "PARENT.<>" leaves it,
  * open for write on a ".<>" name makes one, delete removes an empty one),
- * as VirtualT's server does. Both TPDD2 banks see the same directory.
+ * as VirtualT's server does. Both TPDD2 banks see the same host directory.
  * Format is a no-op on a directory (it would delete the host's files).
  * Files longer than 65535 bytes are listed as 65535.
  *
@@ -79,24 +79,28 @@
  * above range, 21 bad parameter, 3C ID not found, B0 write protected,
  * C0 invalid command, D1 no disk (pdd.sh's experimentally found codes).
  *
- * Operation mode on a TPDD1 disk image (`loadImage`, no directory): the
- * drive's own file system, as pdd.sh documents it (read_fcb, read_smt and
- * the sector ID notes). Physical sector 0 holds 40 file control blocks of
- * 31 bytes (24-byte name, attribute, size big-endian, 2 reserved, head
+ * Operation mode on a disk image (`loadImage`, no directory): the drive's
+ * own file system, as pdd.sh documents it (read_fcb, read_smt and the
+ * sector ID notes). The directory sector (TPDD1: physical sector 0; TPDD2:
+ * sector 0 for bank 0, sector 1 for bank 1) holds 40 file control blocks
+ * of 31 bytes (24-byte name, attribute, size big-endian, 2 reserved, head
  * sector, tail sector; a name starting with a zero byte is a free slot)
- * and after them, at 1240, the space management table: 20 bytes of
- * bit flags, sector p used when byte p / 4 has bit $80 >> 2 (p % 4) set,
- * then the count of used sectors. A file's data fills 1280-byte sectors
- * from its head sector; each sector's ID byte 0 names the next one ($FF
- * the last; 0 a free sector). Listings are in FCB order with each FCB's
- * own attribute; the free count is the data sectors (1-79) not in use.
- * Writes re-lay the file into free sectors (lowest first) and write the
- * image back; a sector a file touches gets LSC 0. Format writes an empty
- * table with every sector LSC 1 but sector 0 (pdd.sh: "OPR-format writes
- * LSC 1 to all untouched sectors"). Files are at most 65534 bytes
- * (PDD1_MAX_FLEN). TPDD2 images still answer "no disk" in operation
- * mode: how its chain bytes number the 160 sectors is not documented in
- * the references, and a blank disk with no image file stays "no disk".
+ * and after them, at 1240, the space management table: 20 bytes of bit
+ * flags, then the count of data sectors in use. TPDD1: sector p used when
+ * byte p / 4 has bit $80 >> 2 (p % 4) set. TPDD2: one bit a sector, $80 >>
+ * (p % 8) of byte p / 8 with p = track * 2 + sector, the same table kept
+ * in sectors 0 and 1. A file's data fills 1280-byte sectors from its head
+ * sector; each sector's ID byte 0 names the next by that number ($FF the
+ * last; 0 a free sector). The TPDD2's layout was checked against Tandy's
+ * 26-3814 Utility Disk (in dl2): its files list and read back whole.
+ * Listings are in FCB order with each FCB's own attribute; the free count
+ * is the data sectors (TPDD1 1-79, TPDD2 2-159) not in use. Writes re-lay
+ * the file into free sectors (lowest first) and write the image back; a
+ * sector a file touches gets LSC 0 (TPDD2: first byte $96, as the utility
+ * disk's). Format writes an empty table: TPDD1 every sector LSC 1 but
+ * sector 0 (pdd.sh: "OPR-format writes LSC 1 to all untouched sectors"),
+ * TPDD2 every sector's first byte $16 and the directory sectors flagged
+ * (dl2's req_format). Files are at most 65534 bytes (PDD1_MAX_FLEN).
  *
  * Timing: answers are queued at once; the UART paces them at its baud
  * rate. The drive's mechanical delays are not modelled.
@@ -192,7 +196,13 @@ private:
     void closeFile();
 
     // The TPDD1 file system on a disk image
-    bool imageFs() const { return m_root.empty() && !m_imagePath.empty() && m_model == Model::Tpdd1; }
+    bool imageFs() const { return m_root.empty() && !m_imagePath.empty(); }
+    /** The directory sector: 0, or on a TPDD2 the bank's (0 or 1). */
+    int dirSector() const { return m_model == Model::Tpdd2 ? m_bank : 0; }
+    /** The first sector a file may use (after the directory sectors). */
+    int firstDataSector() const { return m_model == Model::Tpdd2 ? 2 : 1; }
+    /** A written sector's first byte: TPDD1 LSC 0; TPDD2 $96 (Tandy's utility disk: $16 blank). */
+    uint8_t usedLsc() const { return m_model == Model::Tpdd2 ? 0x96 : 0x00; }
     std::vector<Entry> imageListing() const;
     bool sectorUsed(int p) const;
     void setSectorUsed(int p, bool used);
@@ -232,6 +242,7 @@ private:
     std::vector<uint8_t> m_imgFile;    // disk image: the open file's contents
     size_t m_imgPos = 0;
     int m_imgFcb = -1;
+    int m_bank = 0;                 // TPDD2: the bank of the request being run
     int m_listPos = -1;
 
     // Sector storage

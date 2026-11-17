@@ -90,12 +90,14 @@ int pcKey(const std::string& n) {
 //   col 3  A \ Z X C V B N          col 8  LABEL PRINT SHIFT CTRL GRAPH NUM CAPS BREAK
 //   col 4  S D F G H J K L
 // and what the M10's ROM types with them (an AZERTY layout: the digits
-// are shifted). Characters outside ASCII (the ROM's accented letters) are
-// not typed.
+// are shifted). The keys whose legends are national letters type the
+// ASCII codes that stand for them (found from the ROM, key by key): plain
+// # { } \ @ | for the 3, 4, 7, 9, 0 and ' places, shifted [ ~ ] for the
+// -, [ and / places.
 // ---------------------------------------------------------------------------
-const char* const M10_PLAIN[9] = {"az$\0\0\"'(", "y-\0_\0\0)=", "`^m\0!:;,", "q<wxcvbn", "sdfghjkl",
+const char* const M10_PLAIN[9] = {"az$#{\"'(", "y-}_\\@)=", "`^m|!:;,", "q<wxcvbn", "sdfghjkl",
                                   "ertuiop ", "        ", "        ", "        "};
-const char* const M10_SHIFT[9] = {"AZ*12345", "Y67890\0+", "&\0M%\0/.?", "Q>WXCVBN", "SDFGHJKL",
+const char* const M10_SHIFT[9] = {"AZ*12345", "Y67890[+", "&~M%]/.?", "Q>WXCVBN", "SDFGHJKL",
                                   "ERTUIOP ", "        ", "        ", "        "};
 
 int m10Char(char c) {

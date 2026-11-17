@@ -7,6 +7,30 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100 family: TPDD2 disk images, the M10's national keys, the cold-start year (#358)
+
+- **TPDD2 disk images** now have the drive's own file system in operation
+  mode, as TPDD1 images already did:
+  - each bank's FCB table is in its own sector (0 or 1);
+  - the space management table has one bit per sector (track × 2 +
+    sector), kept in both directory sectors;
+  - chains link by that sector number;
+  - format follows dl2's.
+
+  Checked against Tandy's 26-3814 Utility Disk: its files list with the
+  right sizes and read back whole. The used-sector count now leaves the
+  directory sectors out, as the real disk's does, and a TPDD1 format flags
+  sector 0, as dl2's does.
+- **Olivetti M10:** `type` now types all of printable ASCII. Its national
+  letter keys type `# { } \ @ |` and, shifted, `[ ~ ]`, found key by key
+  from the real ROM.
+- **Cold-start year:** the PC-8201A's year 83 (00 on the others) is the
+  ROM's own default after a cold start, which also resets the clock to
+  01/01. That is what the real machines show, so mmsim keeps it rather than
+  writing in the host's year as VirtualT does.
+- **Disk/Video Interface references:** the service manual and the DVI's
+  ROM dumps were found (tandy.wiki); the DVI is still not emulated.
+
 ### TRS-80: Model 4 and 4P ROMs, more DOSes, the Stringy Floppy and RSHARD with their software (#372)
 
 Real-ROM tests, all skipped when the files aren't in `roms/trs80/`:

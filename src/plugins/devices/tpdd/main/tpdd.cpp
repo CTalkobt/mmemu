@@ -329,7 +329,7 @@ std::string Tpdd::hostNameFor(const std::string& name, bool& isDir) {
 uint8_t Tpdd::freeSectors() const {
     if (imageFs()) {
         int n = 0;
-        for (int p = 1; p < (int)m_sectors.size(); ++p) n += sectorUsed(p) ? 0 : 1;
+        for (int p = firstDataSector(); p < (int)m_sectors.size(); ++p) n += sectorUsed(p) ? 0 : 1;
         return (uint8_t)n;
     }
     const int total = m_model == Model::Tpdd1 ? 80 : 160;
@@ -369,7 +369,11 @@ void Tpdd::execute(uint8_t type, const std::vector<uint8_t>& d) {
     // "M1\r" holds until the DME session ends: TS-DOS asks for the drive's
     // status between "M1\r" and its $08 (VirtualT's m_tsdosDmeStart)
     const bool dme = m_dmePending;
-    if (m_model == Model::Tpdd2 && (type & 0xC0) == 0x40 && (type & 0x3F) < 0x10) type &= 0x3F;   // bank 1
+    m_bank = 0;
+    if (m_model == Model::Tpdd2 && (type & 0xC0) == 0x40 && (type & 0x3F) < 0x10) {   // bank 1
+        type &= 0x3F;
+        m_bank = 1;
+    }
     if (m_root.empty() && !imageFs() && type <= 0x0D && type != 0x06 && type != 0x07 && type != 0x08 && type != 0x0C) {
         normal(0x70);           // no directory: nothing to file-access
         return;
@@ -650,8 +654,8 @@ void Tpdd::opDelete() {
             return;
         }
         freeChain(m_ref.fcb);
-        std::fill(m_sectors[0].data.begin() + m_ref.fcb * FCB_SIZE,
-                  m_sectors[0].data.begin() + (m_ref.fcb + 1) * FCB_SIZE, 0);
+        std::fill(m_sectors[dirSector()].data.begin() + m_ref.fcb * FCB_SIZE,
+                  m_sectors[dirSector()].data.begin() + (m_ref.fcb + 1) * FCB_SIZE, 0);
         persistImage();
         m_haveRef = false;
         normal(0x00);
@@ -691,7 +695,7 @@ void Tpdd::opRename(const std::vector<uint8_t>& d) {
     closeFile();
     if (imageFs()) {
         const std::string to24 = pad24(trimRight(fieldName(d)));
-        for (int i = 0; i < 24; ++i) m_sectors[0].data[(size_t)(m_ref.fcb * FCB_SIZE + i)] = (uint8_t)to24[(size_t)i];
+        for (int i = 0; i < 24; ++i) m_sectors[dirSector()].data[(size_t)(m_ref.fcb * FCB_SIZE + i)] = (uint8_t)to24[(size_t)i];
         persistImage();
         m_ref.name = m_ref.host = to24;
         normal(0x00);
@@ -712,7 +716,7 @@ void Tpdd::opRename(const std::vector<uint8_t>& d) {
 
 std::vector<Tpdd::Entry> Tpdd::imageListing() const {
     std::vector<Entry> v;
-    const auto& d = m_sectors[0].data;
+    const auto& d = m_sectors[dirSector()].data;
     for (int i = 0; i < FCB_COUNT; ++i) {
         const uint8_t* f = d.data() + i * FCB_SIZE;
         if (f[0] == 0) continue;
@@ -727,27 +731,37 @@ std::vector<Tpdd::Entry> Tpdd::imageListing() const {
     return v;
 }
 
+// The SMT's flag for sector p: TPDD1 bit $80 >> 2 (p % 4) of byte p / 4 (the
+// odd bits reserved); TPDD2 bit $80 >> (p % 8) of byte p / 8, p = track * 2
+// + sector (pdd.sh read_smt). The TPDD2 keeps the same SMT in sectors 0 and 1.
 bool Tpdd::sectorUsed(int p) const {
+    if (m_model == Model::Tpdd2) return m_sectors[0].data[SMT_OFFSET + p / 8] & (0x80 >> (p % 8));
     return m_sectors[0].data[SMT_OFFSET + p / 4] & (0x80 >> (2 * (p % 4)));
 }
 
 void Tpdd::setSectorUsed(int p, bool used) {
-    uint8_t& b = m_sectors[0].data[SMT_OFFSET + p / 4];
-    const uint8_t bit = (uint8_t)(0x80 >> (2 * (p % 4)));
+    const bool two = m_model == Model::Tpdd2;
+    uint8_t& b = m_sectors[0].data[SMT_OFFSET + (two ? p / 8 : p / 4)];
+    const uint8_t bit = (uint8_t)(two ? 0x80 >> (p % 8) : 0x80 >> (2 * (p % 4)));
     b = used ? (uint8_t)(b | bit) : (uint8_t)(b & ~bit);
+    // The count is of the data sectors in use (a fresh format: 0; Tandy's
+    // TPDD2 utility disk: 12 with sectors 0-13 flagged)
     int n = 0;
-    for (int s = 0; s < (int)m_sectors.size() && s < SMT_FLAGS * 4; ++s) n += sectorUsed(s) ? 1 : 0;
+    for (int s = firstDataSector(); s < (int)m_sectors.size(); ++s) n += sectorUsed(s) ? 1 : 0;
     m_sectors[0].data[SMT_OFFSET + SMT_FLAGS] = (uint8_t)n;
+    if (two)
+        std::copy(m_sectors[0].data.begin() + SMT_OFFSET, m_sectors[0].data.begin() + SMT_OFFSET + SMT_FLAGS + 1,
+                  m_sectors[1].data.begin() + SMT_OFFSET);
 }
 
 std::vector<int> Tpdd::fileChain(int fcb) const {
     std::vector<int> chain;
-    const uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    const uint8_t* f = m_sectors[dirSector()].data.data() + fcb * FCB_SIZE;
     const uint32_t size = (uint32_t)(f[25] << 8 | f[26]);
     if (size == 0) return chain;
     int p = f[29];
     const size_t want = (size + SECTOR_SIZE - 1) / SECTOR_SIZE;
-    while (p > 0 && p < (int)m_sectors.size() && chain.size() < want) {
+    while (p >= firstDataSector() && p < (int)m_sectors.size() && chain.size() < want) {
         chain.push_back(p);
         const int next = m_sectors[p].id[0];
         if (next == 0xFF) break;
@@ -757,7 +771,7 @@ std::vector<int> Tpdd::fileChain(int fcb) const {
 }
 
 std::vector<uint8_t> Tpdd::readImageFile(int fcb) const {
-    const uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    const uint8_t* f = m_sectors[dirSector()].data.data() + fcb * FCB_SIZE;
     size_t left = (size_t)(f[25] << 8 | f[26]);
     std::vector<uint8_t> v;
     for (int p : fileChain(fcb)) {
@@ -773,7 +787,7 @@ void Tpdd::freeChain(int fcb) {
         setSectorUsed(p, false);
         m_sectors[p].id[0] = 0;
     }
-    uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    uint8_t* f = m_sectors[dirSector()].data.data() + fcb * FCB_SIZE;
     f[25] = f[26] = 0;
     f[29] = f[30] = 0;
 }
@@ -782,7 +796,7 @@ bool Tpdd::writeImageFile(int fcb, const std::vector<uint8_t>& data) {
     const std::vector<int> old = fileChain(fcb);
     const size_t need = (data.size() + SECTOR_SIZE - 1) / SECTOR_SIZE;
     std::vector<int> secs;
-    for (int p = 1; p < (int)m_sectors.size() && secs.size() < need; ++p)
+    for (int p = firstDataSector(); p < (int)m_sectors.size() && secs.size() < need; ++p)
         if (!sectorUsed(p) || std::find(old.begin(), old.end(), p) != old.end()) secs.push_back(p);
     if (secs.size() < need) return false;
     freeChain(fcb);
@@ -793,25 +807,38 @@ bool Tpdd::writeImageFile(int fcb, const std::vector<uint8_t>& data) {
         std::copy(data.begin() + (long)off, data.begin() + (long)(off + n), s.data.begin());
         s.id.fill(0);
         s.id[0] = (uint8_t)(k + 1 < secs.size() ? secs[k + 1] : 0xFF);
-        s.lsc = 0;
+        s.lsc = usedLsc();
         setSectorUsed(secs[k], true);
     }
-    uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+    uint8_t* f = m_sectors[dirSector()].data.data() + fcb * FCB_SIZE;
     f[25] = (uint8_t)(data.size() >> 8);
     f[26] = (uint8_t)data.size();
     f[29] = secs.empty() ? 0 : (uint8_t)secs.front();
     f[30] = secs.empty() ? 0 : (uint8_t)secs.back();
-    m_sectors[0].lsc = 0;
+    m_sectors[dirSector()].lsc = usedLsc();
     persistImage();
     return true;
 }
 
+// TPDD1: every sector LSC 1 but sector 0 (pdd.sh: "OPR-format writes LSC 1
+// to all untouched sectors"), the SMT's flag for sector 0. TPDD2 (dl2's
+// req_format): every sector's first byte $16, the directory sectors 0 and
+// 1 ending their chain ($FF) and flagged in both SMT copies ($C0).
 void Tpdd::formatImageFs() {
+    const bool two = m_model == Model::Tpdd2;
     for (Sector& s : m_sectors) {
         s = Sector{};
-        s.lsc = 1;
+        s.lsc = two ? 0x16 : 1;
     }
-    m_sectors[0].lsc = 0;
+    if (two) {
+        for (int d = 0; d < 2; ++d) {
+            m_sectors[d].id[0] = 0xFF;
+            m_sectors[d].data[SMT_OFFSET] = 0xC0;
+        }
+    } else {
+        m_sectors[0].lsc = 0;
+        m_sectors[0].data[SMT_OFFSET] = 0x80;
+    }
     persistImage();
 }
 
@@ -827,14 +854,14 @@ void Tpdd::opOpenImage(int mode) {
     int fcb = m_ref.exists ? m_ref.fcb : -1;
     if (fcb < 0) {
         // A new file: the first free FCB
-        const auto& d = m_sectors[0].data;
+        const auto& d = m_sectors[dirSector()].data;
         for (int i = 0; i < FCB_COUNT && fcb < 0; ++i)
             if (d[i * FCB_SIZE] == 0) fcb = i;
         if (fcb < 0) {
             normal(0x60);
             return;
         }
-        uint8_t* f = m_sectors[0].data.data() + fcb * FCB_SIZE;
+        uint8_t* f = m_sectors[dirSector()].data.data() + fcb * FCB_SIZE;
         std::fill(f, f + FCB_SIZE, 0);
         for (int i = 0; i < 24; ++i) f[i] = (uint8_t)m_ref.name[(size_t)i];
         f[24] = 'F';

@@ -156,8 +156,12 @@ col 4  S D F G H J K L
 `m10rom.m12`, "3256C02-4B3/I") types an AZERTY layout from it: the Q and W
 places are `a` and `z`, A is `q`, Z `w`, the `;` place `m`, the M place
 `,`; the digits are on Shift (unshifted: `£ é " ' ( - è _ ç à`), `$`/`*` left
-of 1, `)` and `=`/`+` right of 0. `type TEXT` follows the ROM's layout (so
-`type PRINT 2+2` works); the accented letters are not typed. The M10 has no
+of 1, `)` and `=`/`+` right of 0. The national letters are ASCII codes in
+the ROM: unshifted, the 3, 4, 7, 9 and 0 places and the `'` place type `#`,
+`{`, `}`, `\`, `@` and `|`; shifted, the `-`, `[` and `/` places type `[`,
+`~` and `]` (found key by key through `INPUT$` on the real ROM). `type TEXT`
+follows the ROM's layout and types all of printable ASCII (so `type PRINT
+2+2` and `type @` work). The M10 has no
 ESC or CODE key. Memory, RAM sizes (8-32 KB), the option ROM socket and
 the other ports are the Model 100's.
 
@@ -357,15 +361,18 @@ the flash and its directory updated, written back to the image file).
 REX# and the Tandy 200 were checked with the stand-in programs only.
 
 **The Disk/Video Interface** (26-3806: one or two 5.25" drives and a 40/80
-column composite video output on the system bus) is not emulated. None of
-the references here (MAME, VirtualT, the Technical Reference Manual)
-describes how the computer talks to it: which ports or bus cycles, what
-the DVI's own controller and video chip are, and the protocol its ROM
-(DVI DISK-BASIC, loaded into the computer from the box) uses. Emulating it
-needs the DVI service manual's schematic and port map, and a DVI ROM dump
-to test with; neither is available here, and guessing a bus protocol would
-not run the real ROM. (VirtualT's "TDock" is a different, VirtualT-only
-video device.)
+column composite video output on the system bus) is not emulated. MAME,
+VirtualT and the Technical Reference Manual don't say how the computer
+talks to it. The tandy.wiki "Disk/Video Interface" page now gives what
+emulating it needs, kept in `../refs/dvi`:
+- the service manual (26-3806/3807, a 126-page scan with no text layer, so
+  it is read as page images);
+- dumps of the DVI's main ROM (`M40 P`, 4 KB) and its character generator
+  (`M17 CG`, 4 KB);
+- the system disk's files (Club100, Steve Adolph).
+
+Building it means taking the port map and protocol from the schematic.
+(VirtualT's "TDock" is a different, VirtualT-only video device.)
 
 ### Snapshots
 
@@ -438,8 +445,12 @@ The siblings, by hand with VirtualT's `PC8201rom.bin`, `M10rom.bin` and
 96 KB, 12374 with 16 KB; M10 and Kyotronic 85 29638 bytes free). BASIC
 runs `PRINT 2+2` with a line of symbols typed through `type`, plus a
 `FOR` loop. On the PC-8201A, `LPRINT` reaches `serial printer:`. The
-PC-8201A's ROM shows the year as 2083: the uPD1990AC has no year, and
-VirtualT patches the ROM's default year instead. Unchecked on the siblings:
+cold start (each ROM sets the clock to 01/01 00:00:00 with a time set)
+shows the year as the ROM's default, kept in RAM since the uPD1990AC has
+none: 83 on the PC-8201A (`$F83C`, ASCII), 00 on the others (`$F92D` on
+the 100 and 102, `$F934` on the M10 and Kyotronic 85), as the real
+machines do until `DATE$` is set. VirtualT writes the host's year there
+instead; mmsim keeps the ROM's. Unchecked on the siblings:
 switching the PC-8201A to RAM banks #2/#3 from its menu (the bank port is
 unit-tested), the cassette (`CSAVE` / `CLOAD`), RS-232 and the ROM
 cassette.
@@ -626,27 +637,33 @@ the `M1\r` holds across other requests, such as the status TS-DOS asks for
 in between, until the CRs TS-DOS sends after the answer).
 
 Storage: operation mode works on a host directory; files appear in 6.2
-form (`HELLO .BA`), longer host names as-is. On a TPDD1 disk image
-operation mode uses the drive's own file system, as pdd.sh documents it:
-sector 0 holds 40 file control blocks of 31 bytes (24-byte name,
-attribute, size big-endian, 2 reserved bytes, head and tail sector) and,
-at 1240, the space management table (20 bytes of used-sector flags, bit
-`$80 >> 2 (p % 4)` of byte `p / 4`, then the count used); a file fills
-1280-byte sectors from its head, each sector's ID byte 0 naming the next
-(`$FF` the last). Directory listings are in FCB order with each file's
-own attribute; writes re-lay the file into free sectors and write the
-image back (a sector a file touches gets LSC 0); format writes an empty
-table with every other sector LSC 1 (pdd.sh's OPR-format). Sector-level access (the
+form (`HELLO .BA`), longer host names as-is. On a disk image operation
+mode uses the drive's own file system, as pdd.sh documents it. The
+directory sector holds 40 file control blocks of 31 bytes (24-byte name,
+attribute, size big-endian, 2 reserved bytes, head and tail sector). On a
+TPDD1 that is sector 0; on a TPDD2, sector 0 for bank 0 and sector 1 for
+bank 1. At 1240 comes the space management table: 20 bytes of used-sector
+flags, then the count of data sectors in use. The TPDD1 uses bit
+`$80 >> 2 (p % 4)` of byte `p / 4`. The TPDD2 uses one bit a sector,
+`$80 >> (p % 8)` of byte `p / 8` with p = track × 2 + sector, and keeps the
+same table in sectors 0 and 1. A file fills 1280-byte sectors from its
+head, each sector's ID byte 0 naming the next by that number (`$FF` the
+last). The TPDD2 layout was checked against Tandy's 26-3814 Utility Disk
+(shipped with bkw777's dl2): its three files list with the right sizes and
+146 sectors free, and BACKUP.BA and FREMEM.BA read back whole. Directory
+listings are in FCB order with each file's own attribute; writes re-lay
+the file into free sectors and write the image back (a sector a file
+touches gets LSC 0; on a TPDD2 its first byte becomes `$96`, as on the
+utility disk). Format writes an empty table: on a TPDD1 every other sector
+gets LSC 1 (pdd.sh's OPR-format), on a TPDD2 every sector's first byte is
+`$16` (dl2's format). Sector-level access (the
 TPDD1's FDC mode: `M`, `D`, `F/G`, `A`, `B/C`, `R`, `W/X`, `S`, answered
 with 8 hex characters; the TPDD2's sector cache) works on a disk image:
 pdd.sh's `.pdd1`/`.pdd2` (per sector: size code, 12 ID bytes, 1280 data
 bytes) or a raw 100 KB / 200 KB dump, written back on every change.
 
-Limits: the TPDD2's on-disk file system is not interpreted (how its
-chain bytes number its 160 sectors is in none of the references), so
-operation mode on a TPDD2 image reports "no disk" for file commands, as
-does a TPDD1 with no image file; both TPDD2 banks see the same directory; format leaves a host
-directory alone; mechanical timing is not modelled (answers are queued
+Limits: on a host directory both TPDD2 banks see the same directory, and
+format leaves a host directory alone; mechanical timing is not modelled (answers are queued
 at once and paced by the UART).
 
 ### MC14412 modem (`mc14412/`)
