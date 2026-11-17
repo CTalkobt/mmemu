@@ -253,24 +253,33 @@ void addAddonSlots(MachineDescriptor* desc, System* sys) {
     {
         MachineDescriptor::ExpansionSlot s;
         s.name = "rex";
-        s.description = "REX / REX# (1 MB flash) in the option ROM socket, replacing any option ROM while "
-                        "fitted; the option is the host image file (written back as the flash is programmed)";
-        s.devices = {{"rex", "REX (Ken Pettit's)", {}, ""}, {"rexsharp", "REX# (Steve Adolph's)", {}, ""}};
+        s.description = "REX / REX# (1 MB flash) or the REXCPM (4 MB RAM, Model 100/102) in the option ROM "
+                        "socket, replacing any option ROM while fitted (the REXCPM also takes the RAM's "
+                        "place); the option is the host image file (written back as it changes)";
+        s.devices = {{"rex", "REX (Ken Pettit's)", {}, ""}, {"rexsharp", "REX# (Steve Adolph's)", {}, ""},
+                     {"rexcpm", "REXCPM (Steve Adolph's): 4 MB RAM, RAM and option ROM windows", {}, ""}};
         s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
-            if (device.empty()) { sys->removeRex(); return true; }
+            if (device.empty()) { sys->removeRex(); sys->removeRexCpm(); return true; }
+            if (device == "rexcpm") return sys->fitRexCpm(option, err);
             if (device != "rex" && device != "rexsharp" && device != "rex#") {
-                err = "the rex slot takes rex or rexsharp";
+                err = "the rex slot takes rex, rexsharp or rexcpm";
                 return false;
             }
             return sys->fitRex(device == "rex" ? Rex::Kind::Rex : Rex::Kind::RexSharp, option, err);
         };
         s.info = [sys]() -> std::string {
+            if (RexCpm* c = sys->rexCpm())
+                return "rexcpm (" + (c->path().empty() ? std::string("not saved") : c->path()) + ")";
             if (!sys->rex()) return "";
             const std::string& p = sys->rex()->path();
             return std::string(sys->rex()->kind() == Rex::Kind::Rex ? "rex" : "rexsharp") + " (" +
                    (p.empty() ? std::string("not saved") : p) + ")";
         };
         s.save = [sys](const std::string& path, std::string& err) {
+            if (RexCpm* c = sys->rexCpm()) {
+                if (!c->saveTo(path)) { err = "can't write '" + path + "'"; return false; }
+                return true;
+            }
             if (!sys->rex()) { err = "no REX fitted"; return false; }
             if (!sys->rex()->saveTo(path)) { err = "can't write '" + path + "'"; return false; }
             return true;

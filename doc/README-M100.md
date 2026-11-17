@@ -361,8 +361,27 @@ program, unlock-bypass program, sector erase (bottom-boot layout: 16, 8,
 busy times. `expansion rex rex FILE` (or `rexsharp`) fits it, replacing
 any option ROM while it is in; `FILE` is the 1 MB image (VirtualT's
 `.bin`; made erased if missing), written back a second after a change and
-on removal. REX2's RAM and the REXCPM are not modelled (VirtualT's REX2
-RAM path is unreachable: its sector command never selects the RAM). The REX firmware images are not included: make or
+on removal. REX2's RAM is not modelled (VirtualT's REX2 RAM path is
+unreachable: its sector command never selects the RAM).
+
+**REXCPM** (`rex/rexcpm`, after VirtualT's `rexC_read` / `rexC_set8`, by
+Steve Adolph, who made the card). `expansion rex rexcpm FILE` (Model
+100/102) fits 4 MB of RAM that takes the place of the computer's RAM and
+of its option ROM: `$8000-$BFFF` and `$C000-$FFFF` are 16 KB windows (RL,
+RU), the option ROM a 32 KB window (O); reset and power-on set O = 1, RL
+= 0, RU = 1 and write protection (16 KB blocks 2, 3 and 8 up). The windows
+are set by reads: every CPU memory read is counted, and a key of RAM reads
+whose high address bytes are `$B8 $F2 $C4 $ED $A1 $98`, at counts 1, 5, 9,
+13, 17 and 21, opens a register cycle: the RAM read counted 23 sets a
+register's high bits and the one counted 26 its low bits (by address bits
+14-12: write protect, O, RL, RU; 4 the model, `$E8`; 5-7 read them back).
+`FILE` holds the 4 MB (written a second after a change and on removal).
+Checked with the real Model 100 ROM and the card's own test, REXCPM TEST
+v2 (`rxctst.DO` in REXCPMV21_b19.ZIP; `test_m100_rexcpm.cpp`, when
+`rxctst.do` is in `roms/m100/`): the Model 100 cold-starts in the card's
+RAM (29638 bytes free), and the test finds 4 MB and passes its register,
+write protection and RAM (all 255 blocks) checks. The card's manager
+(RXCMGR, installed by `rxcini.DO` over TPDD) has not been run. The REX firmware images are not included: make or
 bring your own. Checked locally (not in the tests: the firmware is not
 ours) with a flash image laid out as VirtualT's "create flash" makes it:
 the Model 100's `CALL 63012` starts REX Manager 4.8, which installs its
@@ -748,6 +767,11 @@ ways, the CRTC's ports, the picture (40 and 80 columns, reverse), a sector
 read through the wait, snapshots and the Model 100's `sysbus` slot.
 
 ### REX / REX# (`rex/`)
+
+`RexCpm`: the REXCPM's 4 MB, its three windows and write protection, and
+the counted-read key and register cycle (`read` for CPU reads, `peek`,
+`write`; `test_rex.cpp`: the key, each register, write protection, a
+mistimed key, reset).
 
 `AmdFlash`: the JEDEC command state machine (program, unlock bypass,
 sector and chip erase, reset; busy times). `Rex`: the read-driven card

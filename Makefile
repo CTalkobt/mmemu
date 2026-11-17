@@ -282,6 +282,7 @@ PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
 	src/plugins/devices/barcode/main/barcode_wand.cpp \
 	src/plugins/devices/rampac/main/rampac.cpp \
 	src/plugins/devices/rex/main/rex.cpp \
+	src/plugins/devices/rex/main/rexcpm.cpp \
 	src/plugins/devices/dvi/main/dvi.cpp \
 	src/plugins/devices/wd17xx/main/wd17xx.cpp \
 	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
@@ -709,6 +710,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/rex/test/test_rex.cpp \
 	src/plugins/devices/dvi/test/test_dvi.cpp \
 	src/plugins/machines/m100/test/test_m100_addons.cpp \
+	src/plugins/machines/m100/test/test_m100_rexcpm.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/6801/test/test_cpu6801.cpp \
@@ -951,6 +953,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/barcode/main/barcode_wand.o \
 	src/plugins/devices/rampac/main/rampac.o \
 	src/plugins/devices/rex/main/rex.o \
+	src/plugins/devices/rex/main/rexcpm.o \
 	src/plugins/devices/dvi/main/dvi.o \
 	src/plugins/z80/main/disasm_z80.o \
 	src/plugins/devices/vdc8563/main/vdc8563.o \
