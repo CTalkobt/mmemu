@@ -6,6 +6,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <string>
 #include <unistd.h>
@@ -13,7 +14,8 @@
 
 // The CoCo SDC and the Burke & Burke interface on the cartridge port (#356):
 // attached as the CLI's `expansion` does, a stand-in "SDC-DOS" in the SDC's
-// flash run by the 6809, and the XT controller through a Multi-Pak on a CoCo 3.
+// flash run by the 6809, the XT controller through a Multi-Pak on a CoCo 3, and
+// the Disto Super Controller II.
 
 using namespace cocotest;
 
@@ -300,6 +302,312 @@ TEST_CASE(coco_burke_xt_rtc_read_by_6809) {
     ASSERT_EQ(bus->peek8(CART_MARK), 0x5D);
     for (int i = 0; i < 8; ++i) ASSERT_EQ(bus->peek8((uint16_t)(0x0600 + i)), XT_RTC_TIME[i]);
     delete m;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// ---------------------------------------------------------------------------
+// Disto Super Controller II
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/** A 35-track single-sided JVC image: track t, sector s (1-18) filled from f(t, s, i). */
+std::string sc2Image(const std::string& dir, uint8_t (*f)(int, int, int)) {
+    std::vector<uint8_t> img(35 * 18 * 256);
+    for (int t = 0; t < 35; ++t)
+        for (int s = 1; s <= 18; ++s)
+            for (int i = 0; i < 256; ++i) img[(size_t)((t * 18 + s - 1) * 256 + i)] = f(t, s, i);
+    const std::string path = dir + "/sc2.dsk";
+    writeFile(path, img);
+    return path;
+}
+
+uint8_t sc2Pattern(int t, int s, int i) { return (uint8_t)(t * 31 + s * 7 + i * 3); }
+
+/** A board on the Mini-Expansion Bus for the tests: 8 bytes of latches, its FIRQ by hand. */
+struct TestMeb : coco::MebDevice {
+    uint8_t regs[8] = {};
+    bool wasReset = false;
+    std::string describe() const override { return "test board"; }
+    void reset() override { wasReset = true; }
+    uint8_t read(int r) override { return regs[r]; }
+    uint8_t peek(int r) const override { return regs[r]; }
+    void write(int r, uint8_t v) override { regs[r] = v; }
+};
+
+struct Sc2Rig {
+    coco::DistoSc2 sc;
+    bool halt = false, nmi = false, cart = true;
+    int nmis = 0, halts = 0;
+    explicit Sc2Rig(bool alt = false) : sc(std::vector<uint8_t>(0x2000, 0x39), alt) {
+        sc.setHalt = [this](bool on) { if (on) ++halts; halt = on; };
+        sc.setNmi = [this](bool on) { if (on && !nmi) ++nmis; nmi = on; };
+        sc.setCart = [this](bool level) { cart = level; };
+        sc.reset();
+    }
+    bool tickUntil(const std::function<bool()>& done, uint64_t limit = 14318180ull * 2) {
+        for (uint64_t t = 0; t < limit && !done(); t += 16) sc.clock(16);
+        return done();
+    }
+    uint8_t rd(uint16_t a) {
+        uint8_t d = 0xFF;
+        sc.read(a, false, a >= 0xFF40 && a < 0xFF60, d);
+        return d;
+    }
+    void wr(uint16_t a, uint8_t v) { sc.write(a, false, a >= 0xFF40 && a < 0xFF60, v); }
+    /** Seek with the latch's DD + NMI enable set and the NMI masked, as NitrOS-9's rb1773 for the SC-II. */
+    void seek(int track) {
+        wr(0xFF76, coco::DistoSc2::CTRL_MASK_NMI);
+        wr(0xFF40, 0x29);
+        wr(0xFF4B, (uint8_t)track);
+        wr(0xFF48, 0x10);
+        tickUntil([&] { return !(rd(0xFF76) & 0x80); });
+        rd(0xFF48);
+    }
+};
+
+}  // namespace
+
+// The SC-II's buffered ("no halt") read, as NitrOS-9's rb1773 does it: READ SECTOR,
+// then $07 to $FF76 (read, buffered, NMI masked); the board takes the 256 bytes from
+// the WD1773 itself, the CPU never halted and no NMI; $FF76 bit 7 goes low with
+// INTRQ; $04 to $FF76 clears the counter and the CPU reads the buffer at $FF74
+TEST_CASE(coco_sc2_buffered_read_without_halt) {
+    const std::string dir = tempDir();
+    Sc2Rig r;
+    ASSERT_EQ(r.sc.kind(), std::string("sc2"));
+    ASSERT(r.sc.controller().variant() == Wd17xx::Variant::WD1773);
+    ASSERT(r.sc.mountDisk(0, sc2Image(dir, sc2Pattern)));
+    ASSERT_EQ(r.rd(0xFF76) & 0x80, 0x80);                 // no interrupt
+    r.seek(12);
+    ASSERT_EQ(r.sc.controller().trackRegister(), 12);
+    r.wr(0xFF4A, 5);
+    r.wr(0xFF48, 0x80);                                    // READ SECTOR (the command first, as rb1773)
+    r.wr(0xFF76, 0x07);
+    r.wr(0xFF40, 0xA9);                                    // even with the latch's HALT enable set
+    ASSERT(r.tickUntil([&] { return !(r.rd(0xFF76) & 0x80); }));
+    ASSERT(!r.halt);
+    ASSERT_EQ(r.halts, 0);
+    ASSERT_EQ(r.nmis, 0);                                  // INTRQ masked from /NMI
+    ASSERT_EQ(r.sc.bufferCounter(), 0);                    // 256 DRQs served: the 8-bit counter wrapped
+    ASSERT_EQ(r.rd(0xFF48) & 0x1C, 0);                     // no RNF, CRC or lost data
+    r.wr(0xFF76, coco::DistoSc2::CTRL_MASK_NMI);           // normal mode; clears the counter
+    for (int i = 0; i < 256; ++i) ASSERT_EQ(r.rd((uint16_t)(0xFF74 + (i & 1))), sc2Pattern(12, 5, i));   // $FF75 mirrors $FF74
+    ASSERT_EQ(r.sc.bufferCounter(), 0);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// A buffered write: the sector loaded into the buffer through $FF74 first ($04 to
+// $FF76 clears the counter), then WRITE SECTOR and $06 (write, buffered, NMI masked):
+// the WD1773's DRQs take the buffer's bytes; read back in normal mode with HALT, as
+// Disk BASIC on an FD-502, with INTRQ's NMI now through (bit 2 clear)
+TEST_CASE(coco_sc2_buffered_write) {
+    const std::string dir = tempDir();
+    Sc2Rig r;
+    ASSERT(r.sc.mountDisk(0, sc2Image(dir, sc2Pattern)));
+    r.seek(3);
+    r.wr(0xFF76, coco::DistoSc2::CTRL_MASK_NMI);
+    for (int i = 0; i < 256; ++i) r.wr(0xFF74, (uint8_t)(0xA5 ^ i));
+    r.wr(0xFF4A, 9);
+    r.wr(0xFF48, 0xA0);                                    // WRITE SECTOR
+    r.wr(0xFF77, 0x06);                                    // $FF77 mirrors $FF76: also clears the counter
+    ASSERT(r.tickUntil([&] { return !(r.rd(0xFF76) & 0x80); }));
+    ASSERT_EQ(r.halts, 0);
+    ASSERT_EQ(r.nmis, 0);
+    ASSERT_EQ(r.rd(0xFF48) & 0x5C, 0);                     // no write protect, RNF, CRC or lost data
+    // Back in normal mode the board is an FD-502: read it back a byte per DRQ with HALT
+    r.wr(0xFF76, 0x00);
+    r.wr(0xFF4A, 9);
+    r.wr(0xFF40, 0xA9);
+    r.wr(0xFF48, 0x80);
+    std::vector<uint8_t> got;
+    while (got.size() < 256) {
+        ASSERT(r.tickUntil([&] { return !r.halt || r.nmi; }));
+        if (r.nmi) break;
+        got.push_back(r.rd(0xFF4B));
+        r.wr(0xFF40, 0xA9);
+    }
+    ASSERT_EQ(got.size(), 256u);
+    for (int i = 0; i < 256; ++i) ASSERT_EQ(got[i], (uint8_t)(0xA5 ^ i));
+    ASSERT(r.tickUntil([&] { return r.nmi; }));             // INTRQ: NMI (not masked now)
+    ASSERT_EQ(r.nmis, 1);
+    ASSERT(r.halts > 0);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+// The SC-II's address map (manual table 1): latch $FF40-$FF47, WD1773 $FF48-$FF4F,
+// the Mini-Expansion Bus $FF50-$FF57, nothing at $FF58-$FF5F unless jumper J3 moves
+// the buffer registers there; control bit 3 puts INTRQ on CART (FIRQ), as does a MEB
+// board through J2; bit 7 of the control register reads INTRQ inverted
+TEST_CASE(coco_sc2_address_map_firq_and_meb) {
+    Sc2Rig r;
+    uint8_t d = 0;
+    ASSERT(r.sc.read(0xC000, true, false, d));
+    ASSERT_EQ(d, 0x39);                                    // the DOS socket
+    r.wr(0xFF43, 0x09);                                    // latch mirror
+    ASSERT_EQ(r.sc.latch(), 0x09);
+    r.wr(0xFF4E, 7);                                       // the WD1773's sector register at $FF4A's mirror
+    ASSERT_EQ(r.sc.controller().sectorRegister(), 7);
+    ASSERT(!r.sc.read(0xFF5A, false, true, d));            // $FF58-$FF5F: not decoded
+    r.wr(0xFF5A, 9);
+    ASSERT_EQ(r.sc.controller().sectorRegister(), 7);      // (an FD-502 mirrors the FDC there)
+    ASSERT(!r.sc.read(0xFF52, false, true, d));            // no MEB board: not driven
+    // A write to the data register counts; one to control clears the counter
+    r.wr(0xFF74, 1);
+    r.wr(0xFF75, 2);
+    ASSERT_EQ(r.sc.bufferCounter(), 2);
+    r.wr(0xFF76, 0);
+    ASSERT_EQ(r.sc.bufferCounter(), 0);
+    ASSERT_EQ(r.rd(0xFF74), 1);
+    ASSERT_EQ(r.rd(0xFF74), 2);
+    // INTRQ to CART with bit 3 (Force Interrupt $D8: INTRQ at once)
+    r.wr(0xFF76, coco::DistoSc2::CTRL_MASK_NMI);
+    r.wr(0xFF48, 0xD8);
+    ASSERT(r.sc.controller().intrq());
+    ASSERT(r.cart);                                        // FIRQ masked
+    ASSERT_EQ(r.rd(0xFF76) & 0x80, 0x00);                  // INTRQ, inverted
+    r.wr(0xFF76, coco::DistoSc2::CTRL_MASK_NMI | coco::DistoSc2::CTRL_FIRQ);
+    ASSERT(!r.cart);                                       // CART pulled low
+    r.wr(0xFF48, 0xD0);                                    // ends $D8's INTRQ
+    r.rd(0xFF48);
+    ASSERT(!r.sc.controller().intrq());
+    ASSERT(r.cart);
+    ASSERT_EQ(r.rd(0xFF76) & 0x80, 0x80);
+    // NMI: unmasking with INTRQ pending and DD set raises it
+    r.wr(0xFF40, 0x29);
+    r.wr(0xFF48, 0xD8);
+    ASSERT_EQ(r.nmis, 0);
+    r.wr(0xFF76, 0x00);
+    ASSERT_EQ(r.nmis, 1);
+    r.wr(0xFF48, 0xD0);
+    r.rd(0xFF48);
+    // A board on the MEB: $FF50-$FF57 (A0-A2), its FIRQ through J2
+    auto* meb = new TestMeb();
+    r.sc.plugMeb(std::unique_ptr<coco::MebDevice>(meb));
+    r.wr(0xFF53, 0x5A);
+    ASSERT_EQ(meb->regs[3], 0x5A);
+    ASSERT_EQ(r.rd(0xFF53), 0x5A);
+    ASSERT_EQ(r.sc.latch(), 0x29);                         // not the latch's mirror (an FD-502's)
+    meb->setFirq(true);
+    ASSERT(!r.cart);
+    meb->setFirq(false);
+    ASSERT(r.cart);
+    r.sc.reset();
+    ASSERT(meb->wasReset);
+    ASSERT(r.sc.describe().find("MEB: test board") != std::string::npos);
+    // Jumper J3 in 2-3: the registers at $FF58 (data) and $FF5A (control), not $FF74
+    Sc2Rig alt(true);
+    alt.wr(0xFF76, 0x0F);
+    ASSERT_EQ(alt.sc.control(), 0);
+    ASSERT(!alt.sc.read(0xFF74, false, false, d));
+    alt.wr(0xFF58, 0x11);
+    alt.wr(0xFF59, 0x22);
+    alt.wr(0xFF5B, coco::DistoSc2::CTRL_MASK_NMI);         // control (A1 high); clears the counter
+    ASSERT_EQ(alt.sc.control(), coco::DistoSc2::CTRL_MASK_NMI);
+    ASSERT_EQ(alt.rd(0xFF5C), 0x11);                       // A2 not decoded
+    ASSERT_EQ(alt.rd(0xFF58), 0x22);
+    ASSERT_EQ(alt.rd(0xFF5A) & 0x80, 0x80);
+}
+
+namespace {
+
+/**
+ * The 6809 running a no-halt read from the SC-II's DOS socket: READ SECTOR of
+ * track 0 sector 1, $07 to $FF76, then a busy loop counting in Y until $FF76
+ * bit 7 drops (the CPU is free meanwhile), $04 to $FF76 and 256 x LDA $FF74 to
+ * $0600. Marks $0701 = $5D with the WD1773 status at $0702 and Y at $0703; an
+ * NMI marks $0701 = $EE.
+ */
+std::vector<uint8_t> sc2Dos() {
+    Asm d(0xC000, 0x2000, 0x12);
+    d.emit({0x10, 0xCE, 0x7F, 0x00});                        // LDS #$7F00
+    d.emit({0x1A, 0x50});                                    // ORCC #$50
+    d.emit({0x86, 0x04}); d.ext(0xB7, 0xFF76);               // normal mode, NMI masked
+    d.emit({0x86, 0x29}); d.ext(0xB7, 0xFF40);               // drive 0, motor, DD + NMI enable
+    d.emit({0x86, 0x03}); d.ext(0xB7, 0xFF48);               // RESTORE
+    const uint16_t busy = d.pc;
+    d.ext(0xB6, 0xFF48);
+    d.emit({0x85, 0x01});
+    d.branch(0x26, busy);
+    d.emit({0x86, 0x01}); d.ext(0xB7, 0xFF4A);               // sector 1
+    d.emit({0x86, 0x80}); d.ext(0xB7, 0xFF48);               // READ SECTOR
+    d.emit({0x86, 0x07}); d.ext(0xB7, 0xFF76);               // read, buffered, NMI masked
+    d.emit({0x10, 0x8E, 0x00, 0x00});                        // LDY #0
+    const uint16_t wait = d.pc;
+    d.emit({0x31, 0x21});                                    // LEAY 1,Y
+    d.ext(0xB6, 0xFF76);                                     // LDA $FF76
+    d.branch(0x2B, wait);                                    // BMI wait
+    d.emit({0x86, 0x04}); d.ext(0xB7, 0xFF76);               // clear the counter
+    d.emit({0x8E, 0x06, 0x00});                              // LDX #$0600
+    d.emit({0x5F});                                          // CLRB
+    const uint16_t copy = d.pc;
+    d.ext(0xB6, 0xFF74);
+    d.emit({0xA7, 0x80});                                    // STA ,X+
+    d.emit({0x5A});                                          // DECB
+    d.branch(0x26, copy);
+    d.ext(0xB6, 0xFF48); d.ext(0xB7, CART_MARK + 1);         // status
+    d.emit({0x10, 0xBF, (CART_MARK + 2) >> 8, (CART_MARK + 2) & 0xFF});   // STY $0703
+    d.emit({0x86, 0x5D}); d.ext(0xB7, CART_MARK);
+    const uint16_t spin = d.pc;
+    d.branch(0x20, spin);
+    d.pc = 0xC200;                                           // NMI
+    d.emit({0x86, 0xEE}); d.ext(0xB7, CART_MARK);
+    const uint16_t spin2 = d.pc;
+    d.branch(0x20, spin2);
+    return d.b;
+}
+
+}  // namespace
+
+// On a CoCo 2 (`expansion cart sc2 ROM`) and in a CoCo 3's Multi-Pak slot (where
+// $FF74 reaches every slot): the 6809 reads a sector in buffered mode, spinning
+// while the board takes the bytes, no NMI
+TEST_CASE(coco_sc2_cpu_reads_without_halt) {
+    const std::string dir = tempDir();
+    const std::string dsk = sc2Image(dir, sc2Pattern);
+    writeFile(dir + "/sc2dos.rom", sc2Dos());
+    for (bool coco3 : {false, true}) {
+        coco::Roms roms;
+        if (coco3) {
+            Asm a(0x8000, 0x8000, 0x12);
+            a.emit({0x10, 0xCE, 0x7F, 0x00});
+            a.emit({0x86, 0x04}); a.ext(0xB7, 0xFF90);       // INIT0: SCS on, ROM 16K internal / 16K external
+            a.ext(0x7E, 0xC000);
+            a.word(0xFFFC, 0xC200);                          // NMI
+            a.word(0xFFFE, 0x8000);
+            roms.coco3Basic = a.b;
+        } else {
+            Asm a(0xA000);
+            a.ext(0x7E, 0xC000);
+            a.word(0xBFFC, 0xC200);
+            a.word(0xBFFE, 0xA000);
+            roms.colorBasic = a.b;
+        }
+        std::string err;
+        MachineDescriptor* m = coco::create(coco3 ? coco::Model::CoCo3 : coco::Model::CoCo2, &err, coco3 ? 128 : 64, &roms);
+        ASSERT(m);
+        if (coco3) {
+            ASSERT(m->expansionSlot("cart")->install("mpi", "2", err));
+            ASSERT(m->expansionSlot("mpi2")->install("sc2", dir + "/sc2dos.rom", err));
+        } else {
+            ASSERT(m->expansionSlot("cart")->install("sc2", dir + "/sc2dos.rom", err));
+        }
+        coco::Cart* c = coco::systemOf(m)->cart();
+        ASSERT(c->mountDisk(0, dsk));
+        ASSERT(c->describe().find("Disto Super Controller II") != std::string::npos);
+        m->onReset(*m);
+        run(m, 3000000);
+        IBus* bus = m->buses[0].bus;
+        ASSERT_EQ(bus->peek8(CART_MARK), 0x5D);
+        ASSERT_EQ(bus->peek8(CART_MARK + 1) & 0x1C, 0);
+        const int spins = bus->peek8(CART_MARK + 2) << 8 | bus->peek8(CART_MARK + 3);
+        ASSERT(spins > 100);                                  // the CPU ran while the sector came in
+        for (int i = 0; i < 256; ++i) ASSERT_EQ(bus->peek8((uint16_t)(0x0600 + i)), sc2Pattern(0, 1, i));
+        delete m;
+    }
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

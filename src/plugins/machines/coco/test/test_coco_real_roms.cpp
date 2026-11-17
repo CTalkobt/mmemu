@@ -10,7 +10,9 @@
 //    a blank disk's directory (it has no format command);
 //  - coco3.rom / extbas11.rom and paks/*.ccc (from the Color Computer
 //    Archive): RoboCop and Predator (banked), Super Pitfall and Rampage!
-//    (32 KB) put up their screens; Mind-Roll (banked) on a CoCo 2.
+//    (32 KB) put up their screens; Mind-Roll (banked) on a CoCo 2;
+//  - extbas11 + disk11: Disk BASIC on the Disto Super Controller II lists
+//    a disk's file with DIR, then SAVEs, lists, LOADs and RUNs a program.
 
 #include "test_harness.h"
 #include "coco_test_rom.h"
@@ -361,4 +363,48 @@ TEST_CASE(real_burke_xt_rom_boots_from_hard_disk) {
     EXPECT_EQ(bb->controller().heads(0), heads);
     delete m;
     std::remove(img.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// Disk BASIC 1.1 (disk11.rom) on the Disto Super Controller II
+// ---------------------------------------------------------------------------
+namespace {
+
+// A 35-track RS-DOS disk with one file, HELLO.TXT (granule 0, 5 bytes)
+std::string rsdosDisk() {
+    const std::string to = "/tmp/mmsim_coco_" + std::to_string((long)getpid()) + "_rsdos.dsk";
+    std::vector<uint8_t> img(35 * 18 * 256, 0xFF);
+    auto sec = [](int t, int s) { return (size_t)((t * 18 + s - 1) * 256); };
+    std::fill(img.begin() + (long)sec(17, 2) + 68, img.begin() + (long)sec(17, 2) + 256, 0);
+    img[sec(17, 2)] = 0xC1;                                 // granule 0: the last, one sector
+    const char name[] = "HELLO   TXT";
+    for (int i = 0; i < 11; ++i) img[sec(17, 3) + i] = (uint8_t)name[i];
+    const uint8_t rest[] = {3, 0xFF, 0, 0, 5};              // ASCII text, granule 0, 5 bytes in the last sector
+    for (int i = 0; i < 5; ++i) img[sec(17, 3) + 11 + i] = rest[i];
+    std::fill(img.begin() + (long)sec(17, 3) + 16, img.begin() + (long)sec(17, 3) + 32, 0);
+    std::ofstream f(to, std::ios::binary | std::ios::trunc);
+    f.write((const char*)img.data(), (std::streamsize)img.size());
+    return to;
+}
+
+}  // namespace
+
+// DIR lists a disk's file through the SC-II in its normal (FD-502) mode, and
+// a program SAVEd is listed, LOADed and RUN back
+TEST_CASE(real_disk_basic_on_disto_sc2) {
+    if (!haveFile(coco::firmwareDir() + "/disk11.rom") || !haveFile(coco::firmwareDir() + "/extbas11.rom")) return;
+    const std::string disk = rsdosDisk();
+    MachineDescriptor* m = makeReal(Model::CoCo2);
+    ASSERT(m != nullptr);
+    std::string err;
+    ASSERT(m->expansionSlot("cart")->install("sc2", "", err));
+    EXPECT_TRUE(m->ioRegistry->mountDisk(1, disk) != nullptr);
+    m->onReset(*m);
+    EXPECT_TRUE(waitFor(m, "OK", 10));
+    EXPECT_TRUE(command(m, "DIR", "HELLO", 30));
+    EXPECT_TRUE(onScreen(m, "TXT", "HELLO"));
+    std::printf("%s", screen(m).c_str());
+    saveListRun(m, "BAS");
+    delete m;
+    std::remove(disk.c_str());
 }

@@ -1,4 +1,5 @@
-// The CoCo SDC and Burke & Burke cartridges on the CoCo's cartridge port (#356).
+// The CoCo SDC, Burke & Burke and Disto Super Controller II cartridges on the
+// CoCo's cartridge port (#356).
 
 #include "coco_storage.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
@@ -156,6 +157,116 @@ bool BurkeBurke::diskStatus(int drive, int& track, bool& motor) const {
     track = 0;
     motor = false;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Disto Super Controller II
+// ---------------------------------------------------------------------------
+DistoSc2::DistoSc2(std::vector<uint8_t> dos, bool altRegisters) : Fd500(std::move(dos)), m_alt(altRegisters) {
+    m_fdc->setVariant(Wd17xx::Variant::WD1773);
+    m_fdc->setName("WD1773");
+}
+
+std::string DistoSc2::describe() const {
+    std::string s = std::string("Disto Super Controller II (WD1773, no-halt buffer at ") + (m_alt ? "$FF58" : "$FF74") + ")";
+    if (m_meb) s += "; MEB: " + m_meb->describe();
+    for (int i = 0; i < 4; ++i)
+        if (!m_paths[i].empty()) s += "; drive " + std::to_string(i) + ": " + leaf(m_paths[i]);
+    return s;
+}
+
+void DistoSc2::reset() {
+    // The control register (a 74HC175) and the counter clear with RESET; the 6116 keeps its bytes
+    m_ctrl = 0;
+    m_count = 0;
+    Fd500::reset();
+    if (m_meb) m_meb->reset();
+    updateCart();
+}
+
+void DistoSc2::plugMeb(std::unique_ptr<MebDevice> dev) {
+    m_meb = std::move(dev);
+    m_mebFirq = false;
+    if (m_meb) m_meb->setFirq = [this](bool on) { m_mebFirq = on; updateCart(); };
+    updateCart();
+}
+
+int DistoSc2::bufferRegister(uint16_t a, bool cts, bool scs) const {
+    if (cts) return -1;
+    if (m_alt) return scs && (a & 0x18) == 0x18 ? (a >> 1) & 1 : -1;
+    return !scs && a >= 0xFF74 && a <= 0xFF77 ? (a >> 1) & 1 : -1;
+}
+
+bool DistoSc2::read(uint16_t a, bool cts, bool scs, uint8_t& d) {
+    const int r = bufferRegister(a, cts, scs);
+    if (r == 0) { d = m_buf[m_count++]; return true; }
+    if (r == 1) { d = controlRead(); return true; }
+    if (scs && (a & 0x18) == 0x10) {
+        if (!m_meb) return false;
+        d = m_meb->read(a & 7);
+        return true;
+    }
+    if (scs && (a & 0x18) == 0x18) return false;     // J3 normal: $FF58-$FF5F not decoded
+    return Fd500::read(a, cts, scs, d);
+}
+
+bool DistoSc2::peek(uint16_t a, bool cts, bool scs, uint8_t& d) const {
+    const int r = bufferRegister(a, cts, scs);
+    if (r == 0) { d = m_buf[m_count]; return true; }
+    if (r == 1) { d = controlRead(); return true; }
+    if (scs && (a & 0x18) == 0x10) {
+        if (!m_meb) return false;
+        d = m_meb->peek(a & 7);
+        return true;
+    }
+    if (scs && (a & 0x18) == 0x18) return false;
+    return Fd500::peek(a, cts, scs, d);
+}
+
+void DistoSc2::write(uint16_t a, bool cts, bool scs, uint8_t d) {
+    const int r = bufferRegister(a, cts, scs);
+    if (r == 0) { m_buf[m_count++] = d; return; }
+    if (r == 1) { controlWrite(d); return; }
+    if (scs && (a & 0x18) == 0x10) {
+        if (m_meb) m_meb->write(a & 7, d);
+        return;
+    }
+    if (scs && (a & 0x18) == 0x18) return;
+    Fd500::write(a, cts, scs, d);
+}
+
+void DistoSc2::clock(uint64_t ticks) {
+    Fd500::clock(ticks);
+    if (m_meb) m_meb->clock(ticks);
+}
+
+void DistoSc2::controlWrite(uint8_t v) {
+    m_ctrl = v;
+    m_count = 0;
+    updateHalt();
+    if (setNmi) setNmi(m_intrq && (m_latch & 0x20) && nmiAllowed());
+    updateCart();
+    if ((m_ctrl & CTRL_BUFFERED) && m_drq) setDrq(true);     // a DRQ already up is served now
+}
+
+void DistoSc2::setDrq(bool on) {
+    Fd500::setDrq(on);
+    if (!on || !(m_ctrl & CTRL_BUFFERED)) return;
+    // Buffered mode: the board answers the WD1773's DRQ itself, the counter counting
+    if (m_ctrl & CTRL_READ) m_buf[m_count++] = m_fdc->readRegister(3);
+    else m_fdc->writeRegister(3, m_buf[m_count++]);
+}
+
+void DistoSc2::setIntrq(bool on) {
+    Fd500::setIntrq(on);
+    updateCart();
+}
+
+void DistoSc2::updateCart() {
+    const bool low = ((m_ctrl & CTRL_FIRQ) && m_intrq) || m_mebFirq;
+    if (low == m_cartLow) return;
+    m_cartLow = low;
+    if (setCart) setCart(!low);
 }
 
 }  // namespace coco

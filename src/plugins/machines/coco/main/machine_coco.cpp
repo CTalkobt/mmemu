@@ -956,6 +956,7 @@ std::vector<uint8_t> placeholderRom() {
 
 namespace {
 const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
+const char* const SC2_DESC = "Disto Super Controller II (WD1773, no-halt buffer at $FF74, mini expansion bus at $FF50); option: [the DOS ROM][,alt] (alt: the buffer at $FF58)";
 const char* const BURKE_DESC = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50-$FF53) and DS1215 clock ($FF40-$FF5F); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
 const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
 const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
@@ -978,17 +979,40 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
     if (device == "rs232") return std::unique_ptr<Cart>(new DeluxeRs232());
     if (device == "ssc") return makeSpeechSoundPak(option, err);
     if (device == "cocomax") return std::unique_ptr<Cart>(new CocoMax());
-    if (device == "fd500" || device == "fd502") {
-        std::vector<uint8_t> rom;
+    // A disk controller's DOS: the option's file, else Disk BASIC from the firmware dir
+    auto diskRom = [&err](const std::string& path, std::vector<uint8_t>& rom) {
         std::string found;
-        if (!option.empty()) {
-            if (!readFile(option, rom) || rom.empty()) { err = "can't read Disk BASIC ROM " + option; return nullptr; }
+        if (!path.empty()) {
+            if (!readFile(path, rom) || rom.empty()) { err = "can't read Disk BASIC ROM " + path; return false; }
         } else if (!loadRom(firmwareDir(), {"disk11.rom", "disk10.rom"}, rom, found)) {
             err = "Disk BASIC ROM not found: put disk11.rom (Disk Extended Color BASIC 1.1, 8 KB) in " + firmwareDir() +
                   "/ (or set MMEMU_COCO_FIRMWARE), or give its path";
-            return nullptr;
+            return false;
         }
+        return true;
+    };
+    if (device == "fd500" || device == "fd502") {
+        std::vector<uint8_t> rom;
+        if (!diskRom(option, rom)) return nullptr;
         return std::unique_ptr<Cart>(new Fd500(std::move(rom)));
+    }
+    if (device == "sc2") {
+        // Option: the DOS ROM and/or "alt" (jumper J3: the buffer registers at $FF58), comma separated
+        std::string path;
+        bool alt = false;
+        size_t at = 0;
+        while (at <= option.size()) {
+            const auto comma = option.find(',', at);
+            const std::string tok = option.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+            if (tok == "alt") alt = true;
+            else if (!tok.empty()) path = tok;
+            if (comma == std::string::npos) break;
+            at = comma + 1;
+        }
+        std::vector<uint8_t> rom;
+        if (!diskRom(path, rom)) return nullptr;
+        if (rom.size() > 0x8000) { err = "the SC-II's DOS socket takes up to a 27256 (32 KB)"; return nullptr; }
+        return std::unique_ptr<Cart>(new DistoSc2(std::move(rom), alt));
     }
     if (device == "dragondos") {
         std::vector<uint8_t> rom = loadDragonDosRom(option, err);
@@ -1035,7 +1059,7 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sdc, burke, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
+    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sc2, sdc, burke, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
     return nullptr;
 }
 
@@ -1266,6 +1290,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
                 {"cocomax", COCOMAX_DESC, {}, ""},
                 {"rs232", "Deluxe RS-232 Program Pak (6551 ACIA at $FF68; the serial command)", {}, ""},
                 {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
+                {"sc2", SC2_DESC, {}, ""},
                 {"sdc", SDC_DESC, {}, ""},
                 {"burke", BURKE_DESC, {}, ""},
                 {"rompak", "A ROM Pak (16 KB, 32 KB on the CoCo 3); option: the image (.rom, .ccc)", {}, ""},
@@ -1316,6 +1341,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"rs232", "Deluxe RS-232 Program Pak", {}, ""},
             {"fd500", "FD-500 disk controller (WD2793) with Disk BASIC; option: the ROM", {}, ""},
             {"fd502", "FD-502 disk controller (as the FD-500) with Disk BASIC 1.1; option: the ROM", {}, ""},
+            {"sc2", SC2_DESC, {}, ""},
             {"sdc", SDC_DESC, {}, ""},
             {"burke", BURKE_DESC, {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},

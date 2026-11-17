@@ -171,14 +171,18 @@ public:
     bool diskStatus(int drive, int& track, bool& motor) const override;
 
     /** From the controller (also for tests driving the latch logic alone). */
-    void setDrq(bool on);
-    void setIntrq(bool on);
+    virtual void setDrq(bool on);
+    virtual void setIntrq(bool on);
     uint8_t latch() const { return m_latch; }
     Wd17xx& controller() { return *m_fdc; }
 
-private:
+protected:
     void latchWrite(uint8_t v);
     void updateHalt();
+    /** Whether INTRQ may reach /NMI (latch bit 5 aside), and the latch's HALT
+     *  enable /HALT: a board with more glue (the Disto SC-II) can block them. */
+    virtual bool nmiAllowed() const { return true; }
+    virtual bool haltAllowed() const { return true; }
     std::unique_ptr<Wd17xx> m_fdc;
     std::string m_paths[4];
     std::vector<uint8_t> m_rom;

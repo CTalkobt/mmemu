@@ -72,7 +72,7 @@ message on the screen.
 | `$C000-$FEFF` | Cartridge (/CTS) | RAM |
 | `$FF00-$FF1F` | PIA0 (every 4 bytes) | |
 | `$FF20-$FF3F` | PIA1 | |
-| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500, the CoCo SDC, Burke & Burke (`$FF50`) | |
+| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500, the Disto SC-II, the CoCo SDC, Burke & Burke (`$FF50`) | |
 | `$FF60-$FFBF` | Cartridges that decode their own addresses (`$FF68` RS-232 Pak, `$FF7A` Orchestra-90, `$FF7F` Multi-Pak) | |
 | `$FFC0-$FFDF` | SAM control register (write: even address clears the bit, odd sets it) | |
 | `$FFE0-$FFFF` | Vectors, from Color BASIC (`$BFE0-$BFFF`) | |
@@ -208,6 +208,7 @@ cartridge FIRQ starts it.
 | `cocomax` | CoCo Max Hi-Res Input Pack: an A/D for its mouse at `$FF90-$FF97`, moved by the host mouse (not on a CoCo 3; below) |
 | `rs232` | Deluxe RS-232 Program Pak: a 6551 ACIA at `$FF68-$FF6B`, its IRQ on CART; `serial loopback`, `serial tcp:PORT`, `serial modem` |
 | `fd500` | FD-500 disk controller: Disk BASIC (option: the ROM's path; else `disk11.rom`) and its latch at `$FF40` |
+| `sc2` | Disto Super Controller II: an FD-502-compatible WD1773 controller with a 256-byte no-halt buffer at `$FF74-$FF77` and the Mini-Expansion Bus at `$FF50` (option: `[ROM][,alt]`; below) |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
 | `burke` | Burke & Burke CoCo XT-RTC hard disk interface at `$FF50-$FF53` and its DS1215 clock (option: drive 0's raw image[,ROM]) |
 | `rompak` | A ROM Pak; the option its image |
@@ -351,6 +352,80 @@ Fit it with `expansion cart fd500` (or in a Multi-Pak slot,
 numbered from 1 as on the other machines), and `load game.dsk` or `-i`
 mounts to DRIVE 0. Writes go back to the image file.
 
+### The Disto Super Controller II
+
+`coco::DistoSc2` (`src/plugins/machines/coco/main/coco_storage.h`), a
+`Fd500` with the SC-II's extras. Sources: the **Super Controller II
+Instruction Manual** (CRC Computers), the Disto schematic **SCII13.SCH
+rev 1.3** ("Disto FDC Model II", April 1993), MAME's `coco_fdc.cpp`
+(`coco_scii`) and NitrOS-9's `rb1773.asm` (built with `SCII`). Fit it
+with `expansion cart sc2` (Disk BASIC from `disk11.rom`), `expansion cart
+sc2 cdos.rom`, `expansion cart sc2 alt` or in a Multi-Pak slot; disks
+mount as on the FD-500 (`disk mount 1 game.dsk`).
+
+From the manual and schematic:
+
+- A WD1773; the drive latch at `$FF40` (mirrored to `$FF47`) and the
+  WD1773 at `$FF48-$FF4B` (mirrored to `$FF4F`) as the Radio Shack
+  controller's. At power-up it is in **normal mode**, where it is an
+  FD-502: Disk BASIC (HALT on DRQ, INTRQ to /NMI) runs unchanged.
+- `$FF50-$FF57`: the **Mini-Expansion Bus** (J1, 17 pins: RESET, E,
+  A0-A2, D0-D7, /CE, R/W, +5 V, GND), eight locations for an add-on
+  board; J2 puts an add-on's interrupt on the cartridge FIRQ (CART).
+  Unlike a Radio Shack controller the SC-II decodes this area properly,
+  so it is not a mirror of the latch. `coco::MebDevice` is the bus; no
+  add-on board is modelled yet (Disto's real-time clock / printer
+  "RTIME", 3-in-1, EPROM programmer and hard disk adapters), so with
+  nothing on it `$FF50-$FF57` is not driven.
+- `$FF58-$FF5F`: nothing, unless jumper J3 is moved to 2-3 (the option's
+  `alt`), which puts the buffer's registers there instead of `$FF74`.
+- **Buffered mode**: a 6116 RAM addressed by an 8-bit counter (74HC393,
+  A8-A10 grounded: 256 bytes) between the WD1773 and the CPU. Its four
+  registers at `$FF74-$FF77` (assigned to Disto by Tandy), A1 picking:
+  - `$FF74`/`$FF75` buffer data: read or write the byte under the counter,
+    which then counts up;
+  - `$FF76`/`$FF77` control. Write: bit 0 1 = read (the WD1773's bytes go
+    into the buffer), 0 = write (the buffer's bytes go to the WD1773), in
+    buffered mode only; bit 1 buffered mode; bit 2 masks INTRQ from /NMI;
+    bit 3 puts INTRQ on CART (FIRQ). Any write clears the counter. Read:
+    bit 7 is INTRQ, inverted (0 = the command has ended).
+
+  In buffered mode the board answers each DRQ itself and never asserts
+  /HALT; the CPU runs on, then polls bit 7 (or takes the FIRQ) and reads
+  the sector from `$FF74`. NitrOS-9's driver: READ SECTOR, `$07` to
+  `$FF76`, wait for bit 7 low, `$04` (clears the counter), 256 reads of
+  `$FF74`; to write, `$04`, 256 writes to `$FF74`, WRITE SECTOR, `$06`.
+  512-byte sectors and formatting use HALT mode.
+- The DOS socket on /CTS: a 24-pin 8 KB ROM, or a 2764, 27128 or 27256
+  (jumpers J4-J6); 16 KB is visible at `$C000`, an 8 KB ROM repeats.
+
+What could not be settled, and what mmsim does:
+
+- **Which pair is data and which control.** The manual's table 2 puts
+  control at `$FF74` and data at `$FF76`, but its own notes contradict it
+  ("`$FF77` mirror of `$FF75`"; "any write to `$FF74` or `$FF75` clears
+  the counter"). The schematic shows A1 (with R/W) choosing between the
+  two; MAME and NitrOS-9's `rb1773` (which drives real boards) put data
+  at `$FF74`/`$FF75` and control at `$FF76`/`$FF77`, and mmsim follows
+  them. The alternate block is data `$FF58`, control `$FF5A` (rb1773's
+  `SCIIALT`); A2 is not decoded there.
+- **Bits 0-6 of a control read.** The manual documents only bit 7; mmsim
+  returns the last value written in bits 0-6, as MAME (the schematic seems
+  to drive D7 alone, which would leave the rest floating).
+- **The 27256**: the manual says "a small modification is needed to access
+  all of" it and doesn't say what; mmsim shows the image's first 16 KB
+  (as MAME). A larger image is refused.
+- The common 512-byte buffer upgrade (MAME's default, rb1773's
+  `SCIIHACK`) is not modelled: the counter wraps at 256 as on a stock
+  board.
+- The DRQ is served at once; the board's own timing (its 16 MHz crystal
+  and E-clock synchronisation) is not modelled.
+
+With the real `disk11.rom`, Disk BASIC on the SC-II lists a disk with
+`DIR` and SAVEs, LOADs and RUNs a program (`real_disk_basic_on_disto_sc2`,
+which runs when the ROMs are in `roms/coco/`). Not yet run with Disto's
+C-DOS or NitrOS-9's SC-II driver.
+
 ### The CoCo SDC
 
 `coco::CocoSdcCart` (`coco_storage.h`) with `CocoSdc`
@@ -482,8 +557,8 @@ expansion cart mpi ; expansion mpi1 burke ~/coco/os9hd.img ; expansion mpi4 fd50
 (XRoar's `ide.c`/`idecart.c` model the Glenside IDE cartridge, a
 different interface that mmsim doesn't have.)
 
-The **Disto SC-II / SCSI** adapter is not modelled: no local reference
-documents its registers.
+Disto's hard disk adapters (on the SC-II's Mini-Expansion Bus, or the
+SCSI "H Disk" adapters) are not modelled.
 
 ## Color Computer 3
 
@@ -673,7 +748,8 @@ READ SECTOR). NitrOS-9 is not yet tried.
   (not available here); the CoCo Max 3 adapter's timing (MAME's guess).
 - CoCo 3: artifact colours in the CoCo 3 modes (only the VDG-compatible
   graphics are decoded); a PAL composite encoder.
-- Storage: the Disto SC-II / SCSI adapter and the Glenside IDE cartridge;
+- Storage: Disto's Mini-Expansion Bus boards (clock, printer, hard disk
+  adapters) and the Glenside IDE cartridge;
   the CoCo SDC's flash programming. The SDC and Burke & Burke are not
   yet checked with SDC-DOS, HDB-DOS or NitrOS-9.
 
@@ -705,6 +781,9 @@ flash banks, a stand-in firmware in its flash reading a sector on a
 CoCo 2) and the XT controller (reads across tracks, writes, geometry,
 sense, the sector buffer; Burke & Burke's ROM socket and XT-RTC clock,
 read bit by bit and by a 6809 program in a stand-in XT-ROM; Burke & Burke
-and the SDC in a Multi-Pak on a CoCo 3). `test_coco_real_roms.cpp` boots
-B&B's own boot ROM from a hand-built hard disk image when
-`roms/coco/xt-rtc/` has it.
+and the SDC in a Multi-Pak on a CoCo 3) and the Disto Super Controller II
+(buffered reads and writes, the address map and jumper J3, INTRQ to FIRQ
+and the NMI mask, a Mini-Expansion Bus board, and a 6809 reading a sector
+without HALT on a CoCo 2 and through a CoCo 3's Multi-Pak).
+`test_coco_real_roms.cpp` boots B&B's own boot ROM from a hand-built hard
+disk image when `roms/coco/xt-rtc/` has it.

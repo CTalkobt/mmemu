@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: the Disto Super Controller II (#356)
+
+- **`expansion cart sc2`** (or a Multi-Pak slot) fits Disto's floppy
+  controller, from its instruction manual and schematic (SCII13.SCH):
+  a WD1773 behind an FD-502-compatible latch, so Disk BASIC runs on it as
+  is, plus the 256-byte **no-halt sector buffer** at `$FF74-$FF77`: in
+  buffered mode the board serves the WD1773's DRQs itself and the CPU is
+  never halted, with control bits for read/write, the NMI mask and INTRQ
+  on the cartridge FIRQ, and bit 7 reading INTRQ. Jumper J3 (`alt`) moves
+  the registers to `$FF58`. The Mini-Expansion Bus (`$FF50-$FF57`, FIRQ
+  through J2) is decoded for add-on boards (none modelled yet).
+- The manual's register table swaps data and control; mmsim follows MAME
+  and NitrOS-9's `rb1773` (data `$FF74`, control `$FF76`). See
+  `doc/README-COCO.md` for what is unverified.
+
 ### CoCo: Burke & Burke XT-RTC checked against the real board and boot ROM; its DS1215 clock (#356)
 
 - The Burke & Burke emulation was written from memory. It has now been
