@@ -1,14 +1,17 @@
 #pragma once
 
-// Mass storage cartridges for the CoCo (#356): the CoCo SDC and the
-// Burke & Burke CoCo XT hard disk interface. The hardware is in
-// src/plugins/devices/coco_sdc and src/plugins/devices/xt_hdc; these put it
-// on the cartridge port.
+// Mass storage cartridges for the CoCo (#356): the CoCo SDC, the
+// Burke & Burke CoCo XT hard disk interface and the Disto Super Controller
+// II. The hardware is in src/plugins/devices/coco_sdc, xt_hdc and wd17xx;
+// these put it on the cartridge port.
 
 #include "coco_cart.h"
 #include "plugins/devices/coco_sdc/main/coco_sdc.h"
 #include "plugins/devices/xt_hdc/main/xt_hdc.h"
 #include "plugins/machines/apple2/main/no_slot_clock.h"   // a DS1216/DS1215 (header only)
+#include <array>
+#include <functional>
+#include <memory>
 
 namespace coco {
 
@@ -93,6 +96,93 @@ private:
     XtHdc m_hdc;
     apple2::NoSlotClock m_clock;
     std::vector<uint8_t> m_rom;
+};
+
+/**
+ * A board on the Disto Super Controller II's Mini-Expansion Bus (J1, a
+ * 17-pin header): RESET, E, A0-A2, D0-D7, /CE, R/W, +5V and GND. It sees
+ * eight locations, $FF50-$FF57 (reg 0-7). A board that interrupts drives
+ * the CART line (the CoCo's FIRQ through PIA1) through the SC-II's J2.
+ */
+class MebDevice {
+public:
+    virtual ~MebDevice() = default;
+    virtual std::string describe() const = 0;
+    virtual void reset() {}
+    virtual uint8_t read(int reg) = 0;
+    virtual uint8_t peek(int reg) const = 0;
+    virtual void write(int reg, uint8_t v) = 0;
+    /** Time, in the machine's crystal ticks as Cart::clock. */
+    virtual void clock(uint64_t ticks) { (void)ticks; }
+    /** Its interrupt to J2 (true = pulling CART low). */
+    std::function<void(bool)> setFirq;
+};
+
+/**
+ * The Disto Super Controller II (CRC Computers; Tony DiStefano's design,
+ * after its Instruction Manual and the Disto schematic SCII13.SCH rev 1.3):
+ * an FD-502-compatible controller (a WD1773, the latch at $FF40-$FF47, the
+ * WD1773 at $FF48-$FF4B mirrored to $FF4F) with
+ *  - the DOS socket on /CTS (an 8 KB ROM or a 2764 / 27128 / 27256 EPROM;
+ *    16 KB at $C000);
+ *  - a 256-byte "no halt" sector buffer (a 6116 addressed by an 8-bit
+ *    counter, 74HC393) and its registers at $FF74-$FF77, A1 picking one:
+ *      $FF74/$FF75 buffer data: read or write the byte under the counter,
+ *                  which then counts up;
+ *      $FF76/$FF77 control (write; any write clears the counter): bit 0
+ *                  1 = the FDC reads into the buffer, 0 = the buffer is
+ *                  written to the FDC (buffered mode only); bit 1 buffered
+ *                  mode (the WD1773's DRQs are served from / into the
+ *                  buffer, /HALT is never asserted); bit 2 masks the
+ *                  WD1773's INTRQ from /NMI; bit 3 puts INTRQ on CART
+ *                  (FIRQ). Read: bit 7 = INTRQ, inverted (low: interrupt).
+ *    Jumper J3 (setAltRegisters, the option's ",alt") moves the four to the
+ *    SCS area, $FF58-$FF5F (data at $FF58, control at $FF5A as NitrOS-9's
+ *    rb1773 SCIIALT);
+ *  - the Mini-Expansion Bus at $FF50-$FF57 (MebDevice).
+ * At power-on the control register is clear (normal mode): the board is
+ * then an FD-502, so Disk BASIC runs on it unchanged.
+ */
+class DistoSc2 : public Fd500 {
+public:
+    static constexpr uint8_t CTRL_READ = 0x01, CTRL_BUFFERED = 0x02, CTRL_MASK_NMI = 0x04, CTRL_FIRQ = 0x08;
+
+    explicit DistoSc2(std::vector<uint8_t> dos, bool altRegisters = false);
+    std::string kind() const override { return "sc2"; }
+    std::string describe() const override;
+    void reset() override;
+    bool read(uint16_t a, bool cts, bool scs, uint8_t& d) override;
+    bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
+    void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
+    void clock(uint64_t ticks) override;
+    void setDrq(bool on) override;
+    void setIntrq(bool on) override;
+
+    /** Jumper J3: the registers at $FF58-$FF5F instead of $FF74-$FF77. */
+    void setAltRegisters(bool alt) { m_alt = alt; }
+    bool altRegisters() const { return m_alt; }
+    /** A board on the Mini-Expansion Bus (null: none, $FF50-$FF57 not driven). */
+    void plugMeb(std::unique_ptr<MebDevice> dev);
+    MebDevice* meb() const { return m_meb.get(); }
+    /** The control register as last written; the buffer counter and RAM. */
+    uint8_t control() const { return m_ctrl; }
+    uint8_t bufferCounter() const { return m_count; }
+    const std::array<uint8_t, 256>& buffer() const { return m_buf; }
+
+protected:
+    bool nmiAllowed() const override { return !(m_ctrl & CTRL_MASK_NMI); }
+    bool haltAllowed() const override { return !(m_ctrl & CTRL_BUFFERED); }
+
+private:
+    /** 0 = buffer data, 1 = control, -1 = neither, for a cycle at a. */
+    int bufferRegister(uint16_t a, bool cts, bool scs) const;
+    void controlWrite(uint8_t v);
+    uint8_t controlRead() const { return (uint8_t)((m_ctrl & 0x7F) | (m_intrq ? 0x00 : 0x80)); }
+    void updateCart();
+    std::array<uint8_t, 256> m_buf{};
+    std::unique_ptr<MebDevice> m_meb;
+    uint8_t m_count = 0, m_ctrl = 0;
+    bool m_alt = false, m_mebFirq = false, m_cartLow = false;
 };
 
 }  // namespace coco
