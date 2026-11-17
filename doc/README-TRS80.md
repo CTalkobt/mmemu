@@ -38,10 +38,10 @@ their directory:
 | `level2.rom` (or MAME's `rom-a.z1`, `rom-b.z2`, `rom-c.z3`) | Model I Level II BASIC, 12 KB |
 | `model3.rom` (or MAME's `8041364.u104`, `8040332.u105`, `8040316c.u106`) | Model III, 14 KB |
 | `model4.rom` (MAME's `trs80m4.rom`; else the Model III's) | Model 4, 14 KB |
-| `model4p.rom` (MAME's `8075332.u69`) | Model 4P boot ROM, 4 KB |
+| `model4p.rom` or MAME's `8075332.u69` | Model 4P boot ROM, 4 KB |
 | `mcm6670p.z29` (optional) | The Model I's character generator, 1 KB |
 | `8044316a.u36` / `8049007.u103` (optional) | The Model III/4 / 4P character generator, 2 KB |
-| `esf.rom` (optional) | The Exatron Stringy Floppy's ROM (Model I, up to 2016 bytes at `$3000`) |
+| `esf.rom` (optional) | The Exatron Stringy Floppy's ROM (Model I, up to 2016 bytes at `$3000`; xtrs's `esfrom.z80` assembles to it) |
 
 Without its ROM a machine is still made (the debugger and the plugin
 checks work), with a warning naming the file and where it looked; a
@@ -274,13 +274,12 @@ length (5, 7, 6, 8), 7 even parity. The III/4's read `$FF` (xtrs).
 
 ## Not done
 
-Checked with real ROMs and DOSes (`test_trs80_roms.cpp`, below): Level I
-and Level II 1.3 BASIC, the Model III Rev C ROM, LDOS 5.3.1 on the Model I
-and III, and LS-DOS 6.3.1 on the 4P (with xtrs's free boot ROM). Not
-checked: Radio Shack's Model 4 ROM and the real 4P boot ROM, TRSDOS,
-NEWDOS/80, the Stringy Floppy with the Exatron's ROM and the hard disk with
-RSHARD. The Radio Shack hi-res board's wait states, the Model I's video
-"snow" and the Germany-only HRG1B Model I graphics card are not modelled.
+Checked with real ROMs and DOSes (`test_trs80_roms.cpp`, below). Not
+checked: TRSDOS 2.3 for the Model I. The one image found (TRSDOS23B.DMK in
+David Keil's collection) holds raw flux with no ID table, which no DMK
+reader takes. The Radio Shack hi-res board's wait states, the Model I's
+video "snow" and the Germany-only HRG1B Model I graphics card are not
+modelled.
 
 ## Tests
 
@@ -304,9 +303,38 @@ and sense switches, the CRTC registers, video waits and snapshots.
 `roms/trs80/` (or `$MMEMU_TRS80_FIRMWARE`), and otherwise says so and
 passes: `level1.rom`, `level2.rom` and `model3.rom` come up and answer
 `PRINT`; `ld1-531.dsk`, `ld3-531.dsk` (LDOS 5.3.1) and `ld4-631.dsk`
-(LS-DOS 6.3.1, with `model4p.rom`) boot, take the date and list their
-directories. The LDOS and LS-DOS images are Misosys's, free to download
-from tim-mann.org/misosys.html. A free 4P boot ROM is xtrs's
+(LS-DOS 6.3.1) boot, take the date and list their directories, on the
+Model I, III, 4 (Radio Shack's `model4.rom`: LS-DOS, and LDOS 5.3.1 in
+Model III mode) and 4P. The LDOS and LS-DOS images are Misosys's, free to
+download from tim-mann.org/misosys.html. More DOSes boot and list their
+directories: TRSDOS 1.3 (`trsdos13.dsk`, Model III), NEWDOS/80 v2.0
+(`newdos80.dsk` on the Model I, `nd80-m3.dsk` on the III) and TRSDOS 6.2.1
+(`trs621.dsk`, Model 4 and 4P). The NEWDOS/80 Model I image is
+classic-computers.org.nz's; the others are from David Keil's collection,
+now at electrickery.nl/comp/trs80-4p/dmkeilImages/dos/.
+
+The real 4P boot ROM (`8075332.u69`, with `8049007.u103` the character
+generator; the Slackware `trs80-roms` package builds its `model4p.rom` from
+the two) boots LS-DOS 6.3.1 and TRSDOS 6.2.1, and runs Model III mode its
+own way: F3 and P held at reset load `MODELA/III` from TRSDOS 6.2.1, the
+ROM says "The ROM Image Has Been Loaded - Switch Disks", LDOS 5.3.1 for the
+Model III goes in drive 0 and ENTER boots it. (Copying `MODELA/III` onto
+the LDOS disk instead fails: it has 10.5K free.) With a hard disk
+mounted the 4P ROM boots the hard disk first, so F2 picks the floppy.
+
+The Stringy Floppy runs with the Exatron's ROM (`esf.rom`: xtrs's
+public-domain `esfrom.z80` assembled with zmac): `SYSTEM`, `/12345`, then
+`@NEW` erases a wafer, `@SAVE1` writes a program and `@LOAD1` reads it
+back. The ESF's key debounce with Level II 1.3's (about 45 ms) drops a key
+pressed while BASIC is busy, as on the real thing.
+
+The hard disk runs with Misosys's RSHARD (`rshard.dsk` from tim-mann.org's
+`rshard.zip`, free to use and pass on): on the 4P, LS-DOS installs
+`RSHARD6` for drive 2 on a blank 20-cylinder, 2-head `.hdv`, `RSFORM6`
+formats it, `HDCHECK6` is copied on and, run from the hard disk, reads
+every sector back with no errors.
+
+A free 4P boot ROM is xtrs's
 `xtrsrom4p.z80` (MIT licence; assemble with zmac), with two changes: its
 model query (`ED 3C`, an xtrs trap) becomes `LD L,5`, and the select it
 writes before its read loop becomes `$C1` (`$81` in the source): the loop

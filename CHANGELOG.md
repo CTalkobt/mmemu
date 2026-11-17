@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### TRS-80: Model 4 and 4P ROMs, more DOSes, the Stringy Floppy and RSHARD with their software (#372)
+
+Real-ROM tests, all skipped when the files aren't in `roms/trs80/`:
+- Radio Shack's Model 4 ROM (`model4.rom`, MAME's `trs80m4.rom`) boots
+  LS-DOS 6.3.1, and LDOS 5.3.1 for the Model III in Model III mode.
+- The real 4P boot ROM (`8075332.u69`, now taken as well as
+  `model4p.rom`) boots LS-DOS 6.3.1 and TRSDOS 6.2.1. F3+P at reset loads
+  `MODELA/III` from TRSDOS 6.2.1, waits for a disk swap, and then boots
+  LDOS 5.3.1 in Model III mode.
+- TRSDOS 1.3 (Model III), NEWDOS/80 v2.0 (Model I and III) and TRSDOS 6.2.1
+  (Model 4 and 4P) boot and list their directories.
+- The Exatron Stringy Floppy with its own ROM (xtrs's public-domain
+  `esfrom.z80` assembled with zmac): `@NEW`, `@SAVE1` and `@LOAD1` on a
+  wafer under Level II.
+- The hard disk with Misosys's RSHARD on the 4P under LS-DOS: `RSHARD6` is
+  installed, `RSFORM6` formats a blank `.hdv`, and `HDCHECK6`, copied on
+  and run from the hard disk, reads every sector back with no errors.
+
+TRSDOS 2.3 is still unchecked: the only image found is raw flux.
+
 ### CoCo / Dragon: bank-switched ROM Paks, Dragon 200-E and Professional, more Dragon DOSes (#355)
 
 - ROM Paks over 16 KB: the Games Master Cartridge (`expansion cart gmc`,
