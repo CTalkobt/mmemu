@@ -281,3 +281,25 @@ TEST_CASE(pc8201_snapshot) {
     ASSERT_EQ(m->buses[0].bus->read8(0x8123), 0x99);
     delete m;
 }
+
+// The M10 types all of printable ASCII: its national-letter keys type the
+// ASCII codes that stand for them (checked against the real ROM, which
+// reads each back through INPUT$ in the same places): @ is the 0 place
+// unshifted, # { } \ | the 3, 4, 7, 9 and ' places, [ ~ ] shifted - [ /
+TEST_CASE(kyocera_m10_types_all_ascii) {
+    const m100::KeyLayout* l = m100::keyLayout(Model::M10);
+    ASSERT(l != nullptr);
+    for (int c = 33; c < 127; ++c) {
+        if (l->charCode((char)c) < 0) std::printf("  no key for '%c'\n", c);
+        EXPECT_TRUE(l->charCode((char)c) >= 0);
+    }
+    const int S = m100::KEY_SHIFTED;
+    EXPECT_EQ(l->charCode('@'), 1 << 3 | 5);
+    EXPECT_EQ(l->charCode('#'), 0 << 3 | 3);
+    EXPECT_EQ(l->charCode('\\'), 1 << 3 | 4);
+    EXPECT_EQ(l->charCode('|'), 2 << 3 | 3);
+    EXPECT_EQ(l->charCode('['), (1 << 3 | 6) | S);
+    EXPECT_EQ(l->charCode('~'), (2 << 3 | 1) | S);
+    EXPECT_EQ(l->charCode(']'), (2 << 3 | 4) | S);
+}
+

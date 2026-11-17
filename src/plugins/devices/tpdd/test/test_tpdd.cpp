@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
@@ -458,8 +459,8 @@ TEST_CASE(tpdd_image_file_system) {
     ASSERT_EQ(s0[30], 2);                               // tail
     ASSERT_EQ(d.sectors()[1].id[0], 2);
     ASSERT_EQ(d.sectors()[2].id[0], 0xFF);
-    ASSERT_EQ(s0[1240], 0x28);                          // sectors 1 and 2 used: bits $20, $08
-    ASSERT_EQ(s0[1260], 2);
+    ASSERT_EQ(s0[1240], 0xA8);                          // sector 0 (format: $80, dl2) and 1, 2: $20, $08
+    ASSERT_EQ(s0[1260], 2);                             // data sectors in use
     ASSERT_EQ(d.sectors()[1].lsc, 0);
     // Listed with its size; read back (from a fresh drive on the same file)
     r = xfer(d, 0x00, nameField("", 1));
@@ -518,8 +519,93 @@ TEST_CASE(tpdd_image_file_system) {
     ASSERT_EQ(back.size(), 1300u);
     ASSERT_EQ(back[0], 0x11);
     ASSERT_EQ(back[1299], 0x22);
-    // A TPDD2 image has no operation-mode file system here
+    // A new TPDD2 image has its file system too (empty: see tpdd2_image_file_system)
     Tpdd h(Tpdd::Model::Tpdd2);
     ASSERT(h.loadImage((t.path / "two.pdd2").string()));
-    ASSERT_EQ(err(xfer(h, 0x00, nameField("", 1))), 0x70);
+    r = xfer(h, 0x00, nameField("", 1));
+    ASSERT_EQ(r[0], 0x11);
+    ASSERT_EQ(r[2], 0);
 }
+
+// Operation mode on a TPDD2 image. The layout is Tandy's 26-3814 Utility
+// Disk's (in dl2), with pdd.sh's read_smt: bank 0's FCBs in sector 0,
+// bank 1's in sector 1, the same SMT in both (one bit a sector, $80 >>
+// (p % 8) of byte p / 8, p = track * 2 + sector, then the count of data
+// sectors in use), chains through ID byte 0 by that number (BACKUP.BA:
+// 11 -> 12), and a written sector's first byte $96 ($16 blank). Format
+// is dl2's req_format.
+TEST_CASE(tpdd2_image_file_system) {
+    TempDir t("img2fs");
+    const std::string img = (t.path / "fs.pdd2").string();
+    Tpdd d(Tpdd::Model::Tpdd2);
+    ASSERT(d.loadImage(img));
+    ASSERT_EQ(err(xfer(d, 0x06)), 0x00);               // format
+    for (int s : {0, 1}) {
+        ASSERT_EQ(d.sectors()[(size_t)s].lsc, 0x16);
+        ASSERT_EQ(d.sectors()[(size_t)s].id[0], 0xFF);
+        ASSERT_EQ(d.sectors()[(size_t)s].data[1240], 0xC0);
+    }
+    ASSERT_EQ(d.sectors()[159].lsc, 0x16);
+    auto r = xfer(d, 0x00, nameField("", 1));
+    ASSERT_EQ(r[2], 0);
+    ASSERT_EQ(r[2 + 27], 158);                          // free data sectors
+
+    auto write = [&](Tpdd& drv, uint8_t bank, const std::string& name, const std::vector<uint8_t>& data) {
+        xfer(drv, (uint8_t)(0x00 | bank), nameField(name, 0));
+        ASSERT_EQ(err(xfer(drv, (uint8_t)(0x01 | bank), {0x01})), 0x00);
+        for (size_t o = 0; o < data.size(); o += 100) {
+            const size_t n = std::min<size_t>(100, data.size() - o);
+            ASSERT_EQ(err(xfer(drv, (uint8_t)(0x04 | bank),
+                               std::vector<uint8_t>(data.begin() + (long)o, data.begin() + (long)(o + n)))), 0x00);
+        }
+        ASSERT_EQ(err(xfer(drv, (uint8_t)(0x02 | bank))), 0x00);
+    };
+    std::vector<uint8_t> a(2000), b(300);
+    for (size_t i = 0; i < a.size(); ++i) a[i] = (uint8_t)(i * 7);
+    for (size_t i = 0; i < b.size(); ++i) b[i] = (uint8_t)(i ^ 0x5A);
+    write(d, 0x00, "HELLO .DO", a);                     // bank 0
+    write(d, 0x40, "BANK1 .BA", b);                     // bank 1
+    const auto& s0 = d.sectors()[0].data;
+    const auto& s1 = d.sectors()[1].data;
+    ASSERT_EQ(std::string(s0.begin(), s0.begin() + 9), "HELLO .DO");
+    ASSERT_EQ(s0[29], 2);                               // head
+    ASSERT_EQ(s0[30], 3);                               // tail
+    ASSERT_EQ(d.sectors()[2].id[0], 3);
+    ASSERT_EQ(d.sectors()[3].id[0], 0xFF);
+    ASSERT_EQ(d.sectors()[2].lsc, 0x96);
+    ASSERT_EQ(std::string(s1.begin(), s1.begin() + 9), "BANK1 .BA");
+    ASSERT_EQ(s1[29], 4);
+    ASSERT_EQ(s0[1240], 0xF8);                          // sectors 0-4
+    ASSERT_EQ(s0[1260], 3);
+    for (int i = 1240; i <= 1260; ++i) ASSERT_EQ(s0[(size_t)i], s1[(size_t)i]);
+    // Each bank lists its own directory
+    r = xfer(d, 0x00, nameField("", 1));
+    ASSERT_EQ(entryName(r).substr(0, 9), "HELLO .DO");
+    ASSERT_EQ(r[2 + 27], 155);
+    r = xfer(d, 0x02, {});
+    r = xfer(d, 0x40, nameField("", 1));
+    ASSERT_EQ(entryName(r).substr(0, 9), "BANK1 .BA");
+    // Read back from a fresh drive on the same file
+    Tpdd e(Tpdd::Model::Tpdd2);
+    ASSERT(e.loadImage(img));
+    for (auto [bank, name, want] : {std::tuple<uint8_t, const char*, const std::vector<uint8_t>*>{0x00, "HELLO .DO", &a},
+                                    {0x40, "BANK1 .BA", &b}}) {
+        xfer(e, (uint8_t)(0x00 | bank), nameField(name, 0));
+        ASSERT_EQ(err(xfer(e, (uint8_t)(0x01 | bank), {0x03})), 0x00);
+        std::vector<uint8_t> back;
+        for (;;) {
+            r = xfer(e, (uint8_t)(0x03 | bank));
+            if (r[0] != 0x10) break;
+            back.insert(back.end(), r.begin() + 2, r.begin() + 2 + r[1]);
+        }
+        ASSERT(back == *want);
+        xfer(e, (uint8_t)(0x02 | bank));
+    }
+    // Delete in bank 0: its sectors are free again in both SMT copies
+    xfer(e, 0x00, nameField("HELLO .DO", 0));
+    ASSERT_EQ(err(xfer(e, 0x05)), 0x00);
+    ASSERT_EQ(e.sectors()[0].data[1240], 0xC8);         // 0, 1, 4
+    ASSERT_EQ(e.sectors()[1].data[1240], 0xC8);
+    ASSERT_EQ(e.sectors()[0].data[1260], 1);
+}
+
