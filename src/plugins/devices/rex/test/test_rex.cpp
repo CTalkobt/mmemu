@@ -184,3 +184,79 @@ TEST_CASE(rex_flash_autoselect_cfi) {
     f.write(0x00, 0xF0, 0);
     ASSERT_EQ(f.read(0x02), 0x34);
 }
+
+// The REXCPM: the key (high address bytes B8 F2 C4 ED A1 98 on the RAM reads
+// counted 1, 5, 9, 13, 17, 21), then the reads counted 23 and 26 set and
+// read back a window register; write protection; a mistimed key starts over
+#include "plugins/devices/rex/main/rexcpm.h"
+namespace {
+struct CpmDriver {
+    RexCpm& c;
+    std::vector<uint8_t> rom = std::vector<uint8_t>(0x8000, 0x77);
+    uint8_t rd(uint16_t a) { return c.read(a, false, rom); }
+    void key() {
+        const uint8_t k[6] = {0xB8, 0xF2, 0xC4, 0xED, 0xA1, 0x98};
+        rd(0x8000);              // an ordinary RAM read (as the firmware's code fetches): the count restarts
+        for (int i = 0; i < 6; ++i) {
+            rd((uint16_t)(k[i] << 8));
+            if (i < 5) for (int f = 0; f < 3; ++f) rd(0x0000);     // three other reads (the ROM)
+        }
+    }
+    // Reads 22-26: `hi` at 23, `lo` at 26; the answer
+    uint8_t reg(uint16_t hi, uint16_t lo) {
+        rd(0x0000);
+        rd(hi);
+        rd(0x0000);
+        rd(0x0000);
+        return rd(lo);
+    }
+};
+}  // namespace
+
+TEST_CASE(rexcpm_registers) {
+    RexCpm c;
+    c.reset();
+    CpmDriver d{c};
+    ASSERT_EQ(c.lowerBlock(), 0);
+    ASSERT_EQ(c.upperBlock(), 1);
+    ASSERT_EQ(c.optionBlock(), 1);
+    ASSERT(c.writeProtect());
+    ASSERT_EQ(d.rd(0x1234), 0x77);                     // the main ROM
+    c.write(0x8001, 0xAB, false);                      // block 0: writable
+    ASSERT_EQ(d.rd(0x8001), 0xAB);
+    ASSERT_EQ(c.ram()[1], 0xAB);
+    // RL = $53: high nibble 5 at 23 (bits 14-12 = 2), low 3 at 26
+    d.key();
+    ASSERT_EQ(d.reg(0xA500, 0xA300), 0x53);
+    ASSERT_EQ(c.lowerBlock(), 0x53);
+    c.write(0x8000, 0x11, false);                      // block $53 >= 8: protected
+    ASSERT_EQ(c.ram()[(size_t)0x53 << 14], 0x00);
+    // Write protect off (bits 14-12 = 0, bit 8 = 0)
+    d.key();
+    ASSERT_EQ(d.reg(0x8000, 0x8000), 0);
+    ASSERT(!c.writeProtect());
+    c.write(0x8000, 0x11, false);
+    ASSERT_EQ(c.ram()[(size_t)0x53 << 14], 0x11);
+    ASSERT_EQ(d.rd(0x8000), 0x11);
+    // O = 32 KB block 9 (high bits 1 -> 8, low 1): the option ROM
+    d.key();
+    ASSERT_EQ(d.reg(0x9100, 0x9200), 9 * 2);
+    ASSERT_EQ(c.optionBlock(), 9);
+    c.write(0x0005, 0x5A, true);
+    ASSERT_EQ(c.read(0x0005, true, d.rom), 0x5A);
+    ASSERT_EQ(c.ram()[((size_t)9 << 15) + 5], 0x5A);
+    ASSERT_EQ(c.read(0x0005, false, d.rom), 0x77);    // the main ROM when not selected
+    // The model, without changing anything
+    d.key();
+    ASSERT_EQ(d.reg(0xC000, 0xC000), RexCpm::MODEL);
+    // A key read one count late starts over: RL stays
+    for (int f = 0; f < 3; ++f) d.rd(0x0000);
+    d.rd(0xB800);
+    for (int f = 0; f < 4; ++f) d.rd(0x0000);
+    d.rd(0xF200);                                      // counted 6, not 5
+    for (int i = 0; i < 20; ++i) d.rd(0xA000);
+    ASSERT_EQ(c.lowerBlock(), 0x53);
+    // Reset: the power-on windows, protected again
+    c.reset();
+    ASSERT(c.writeProtect() && c.lowerBlock() == 0 && c.upperBlock() == 1 && c.optionBlock() == 1);
+}

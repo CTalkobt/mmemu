@@ -582,16 +582,32 @@ void System::removeDvi() { m_dvi.reset(); }
 bool System::fitRex(Rex::Kind kind, const std::string& path, std::string& err) {
     auto r = std::make_unique<Rex>(kind);
     if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
+    m_rexCpm.reset();                                   // one option ROM socket
     m_rex = std::move(r);
     return true;
 }
 
 void System::removeRex() { m_rex.reset(); }
 
+bool System::fitRexCpm(const std::string& path, std::string& err) {
+    if (m_model != Model::M100 && m_model != Model::M102) {
+        err = "the REXCPM fits the Model 100 and 102";
+        return false;
+    }
+    auto r = std::make_unique<RexCpm>();
+    if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
+    m_rex.reset();                                      // one option ROM socket
+    m_rexCpm = std::move(r);
+    return true;
+}
+
+void System::removeRexCpm() { m_rexCpm.reset(); }
+
 void System::flushAddons() {
     if (m_rampac) m_rampac->flush();
     if (m_dvi) m_dvi->flush();
     if (m_rex) m_rex->flush();
+    if (m_rexCpm) m_rexCpm->flush();
 }
 
 void System::modemLines() {
@@ -848,6 +864,7 @@ void System::hardwareReset() {
 
 void System::powerOn() {
     std::fill(m_ram.begin(), m_ram.end(), 0);
+    if (m_rexCpm) m_rexCpm->reset();
     keyboard.reset();
     lcd.reset();
     lcdc.reset();
@@ -861,6 +878,7 @@ void System::powerOn() {
 }
 
 void System::resetButton() {
+    if (m_rexCpm) m_rexCpm->reset();
     hardwareReset();
     m_powered = true;
     if (m_cpu) m_cpu->reset();
@@ -898,6 +916,11 @@ uint8_t System::peek8(uint32_t addr) { return access((uint16_t)addr, false, 0, t
 
 uint8_t System::access(uint16_t a, bool write, uint8_t v, bool peek) {
     if (isPc8201()) return accessPc8201(a, write, v);
+    if (m_rexCpm) {                                     // the RAM and the option ROM are its
+        const bool opt = m_ctrl & 1;
+        if (write) { m_rexCpm->write(a, v, opt); return 0; }
+        return peek ? m_rexCpm->peek(a, opt, m_rom) : m_rexCpm->read(a, opt, m_rom);
+    }
     if (!isT200()) {
         if (a < 0x8000) {
             if (write) return 0;
@@ -1054,6 +1077,7 @@ std::vector<uint8_t> System::addonState() const {
     putBlock(v, m_rampac ? m_rampac->saveState() : std::vector<uint8_t>{});
     putBlock(v, m_rex ? m_rex->saveState() : std::vector<uint8_t>{});
     putBlock(v, m_dvi ? m_dvi->saveState() : std::vector<uint8_t>{});
+    putBlock(v, m_rexCpm ? m_rexCpm->saveState() : std::vector<uint8_t>{});
     return v;
 }
 
@@ -1070,6 +1094,10 @@ void System::loadAddonState(const uint8_t*& p) {
     if (q < blk.data() + blk.size()) {                  // (older snapshots end here)
         const auto dv = getBlock(q);
         if (m_dvi && !dv.empty()) m_dvi->loadState(dv);
+    }
+    if (q < blk.data() + blk.size()) {
+        const auto rc = getBlock(q);
+        if (m_rexCpm && !rc.empty()) m_rexCpm->loadState(rc);
     }
 }
 

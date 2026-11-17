@@ -7,6 +7,17 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100/102: the REXCPM (#358)
+
+- **The REXCPM** (Steve Adolph's 4 MB RAM card) fits with
+  `expansion rex rexcpm FILE`. It takes the place of the computer's RAM and
+  its option ROM through 16 KB and 32 KB windows, with write protection.
+  The windows are set by a key of counted memory reads, as in VirtualT's
+  model (also by S. Adolph).
+- **Checked with the real Model 100 ROM and the card's own test** (REXCPM
+  TEST v2): it finds 4 MB and passes its register, write-protection and
+  RAM tests.
+
 ### CoCo: the Disto Super Controller II (#356)
 
 - **`expansion cart sc2`** (or a Multi-Pak slot) fits Disto's floppy

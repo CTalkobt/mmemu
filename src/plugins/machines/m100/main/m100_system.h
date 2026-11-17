@@ -13,6 +13,7 @@
 #include "plugins/devices/mc14412/main/mc14412.h"
 #include "plugins/devices/rampac/main/rampac.h"
 #include "plugins/devices/dvi/main/dvi.h"
+#include "plugins/devices/rex/main/rexcpm.h"
 #include "plugins/devices/rex/main/rex.h"
 #include "plugins/devices/serial_endpoint/main/serial_endpoint.h"
 #include "libdevices/main/io_handler.h"
@@ -507,6 +508,11 @@ public:
     bool fitRex(Rex::Kind kind, const std::string& path, std::string& err);
     void removeRex();
     Rex* rex() const { return m_rex.get(); }
+    /** A REXCPM (Model 100/102): 4 MB of RAM over the RAM and the option ROM,
+     *  backed by `path` ("": memory only); it takes the REX's place. */
+    bool fitRexCpm(const std::string& path, std::string& err);
+    void removeRexCpm();
+    RexCpm* rexCpm() const { return m_rexCpm.get(); }
     /** The Disk/Video Interface on the system bus (ports 80H-8FH; it takes
      *  the RAMPAC's place), with its boot and character ROMs. */
     bool fitDvi(std::vector<uint8_t> rom, std::vector<uint8_t> cg, std::string& err);
@@ -573,6 +579,7 @@ private:
     std::unique_ptr<Rampac> m_rampac;
     std::unique_ptr<Dvi> m_dvi;
     std::unique_ptr<Rex> m_rex;
+    std::unique_ptr<RexCpm> m_rexCpm;
     uint64_t m_flushAcc = 0;             // clocks since the add-ons' images were last checked
     bool m_rst55 = false;
 };
