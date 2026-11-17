@@ -77,13 +77,13 @@ The 81C55's port A drives the LCD chip selects 0-7, the keyboard columns 0-7
 and the printer's data. Port B: bits 0-1 the LCD selects 8-9 (bit 0 also
 keyboard column 8), 2 /MC, 3 RS-232 (0) or modem (1), 4 auto power-off, 5
 BELL, 6 /DTR, 7 /RTS. Port C (input): 0 the RTC's DATA OUT, 1 printer
-/BUSY, 2 BUSY, 3 bar code reader, 4 /CTS, 5 /DSR. The timer counts the CPU
+/BUSY, 2 BUSY, 3 bar code reader (BCR, as RST 5.5), 4 /CTS, 5 /DSR. The timer counts the CPU
 clock; TIMER OUT is both the speaker's tone and the IM6402's 16x clock (a
 count of 8 is 19200 baud).
 
 Interrupts: RST 7.5 is the uPD1990AC's TP (the ROM sets 256 Hz: the
 keyboard scan and the clock); RST 6.5 the IM6402's DR; RST 5.5 the bar code
-reader (the wand's output inverted; low with no wand); TRAP the power switch.
+reader (BCR: the wand's output inverted; low with no wand); TRAP the power switch.
 
 ### Model 200
 
@@ -284,9 +284,12 @@ only name the bits:
   when originating; 1270 Hz when answering) before it goes on line. Port C
   bit 4 (the RS-232 /CTS otherwise) reads as ORIG/ANS while the modem is
   selected: 0 originate (listen, then send), 1 answer (send, then
-  listen). mmsim gives it the side switch, `serial modem:originate`
-  (default) or `serial modem:answer`; that the switch is what is wired
-  there is unverified.
+  listen). It is the side switch: the schematic (the service manual's, as
+  transcribed in hzeller's trs80-100-schematic) has SW1B give ~CL/AS (VDD
+  in answer, ground through R11 in orig) to the 40H157 (M33) that puts the
+  modem's lines on /CTS and /DSR when the modem is selected, and SW1A the
+  MC14412's MODE (1 originate). mmsim's `serial modem:originate`
+  (default) or `serial modem:answer`.
 - Tandy 200: port B bit 1 ORIG/ANS (1 originate), 6 MEN (the carrier on),
   7 CALL (the line held; also the dial pulses), and port C bit 4 (MAME's
   "CD") is the line's signal while the modem is selected, timed by the ROM
@@ -301,7 +304,9 @@ only name the bits:
   the digits don't pick a destination (the line is whatever `modem:`
   names).
 - Ringing: a TCP client connecting while on hook rings (2 s on, 4 s off)
-  on `$D0` bit 5 ("RP", pulled up; low while ringing: unverified). The
+  on `$D0` bit 5 ("RP": pin 8 of the modem connector, pulled up by R157
+  into the status buffer M23, so 1 with nothing there; the accessory pulls
+  it low while ringing). The
   ROMs' auto-answer has not been tried.
 - Checked with the real ROMs: TELCOM `Stat M7I1E,10pps`, `Call 21<`
   dials "21", hears the tone, turns its carrier on and goes to terminal
@@ -310,15 +315,17 @@ only name the bits:
   the number TELCOM dials and hands the line back to the telephone, as the
   manual describes.)
 
-**The bar code reader** (`barcode/`). A wand on port C bit 3, its inverse
-on RST 5.5 (MAME's note "!RxDB -> RST5.5"; VirtualT and MAME read the bit
-but have no wand). `serial barcode:code39:HELLO`, `barcode:ean13:DIGITS`
+**The bar code reader** (`barcode/`). The wand's output (connector pin 2,
+pulled up by R70) goes through an inverting Schmitt trigger (M34D, a 4584)
+to BCR, which is both RST 5.5 and port C bit 3 (the schematic; MAME's
+note "!RxDB -> RST5.5"; VirtualT and MAME read the bit but have no wand). `serial barcode:code39:HELLO`, `barcode:ean13:DIGITS`
 (12 or 13 digits), `barcode:upca:DIGITS` (11 or 12) or `barcode:bits:1011...`
 (raw modules) plugs the wand in and swipes it once across that code, a
 module a millisecond with 10 modules of quiet zone each side;
-`barcode:none` unplugs it. The output is 1 over a light space or with the
-wand lifted and 0 over a bar (an open-collector HEDS-3050-type wand;
-unverified); with no wand the bit reads 0 as before. The ROMs have no bar
+`barcode:none` unplugs it. The wand's output is taken as 1 over a light
+space or with the wand lifted and 0 over a bar (an open-collector
+HEDS-3050-type wand; the wand's own polarity is unverified), so BCR is
+high over a bar; with no wand BCR reads 0. The ROMs have no bar
 code software (RST 5.5 goes through the RAM hook at `$F5F9`), so this is
 for the bar code programs that were sold for it.
 
@@ -344,15 +351,18 @@ whose low address bytes are `$B8 $F2 $34 $B0 $31 $BF`) enters command
 mode, where a read's address bits 0-2 are a command: 0 leave, 1 set the
 sector (and flash select), 2 / 5 / 6 bus writes to the flash ($AAA/$AA,
 $555/$55, a program address and data), 3 status (busy, select, sector),
-4 read the flash, 7 the ID (`$11` REX, `$13` REX#). REX# takes the data
+4 read the flash, 7 the ID (`$11` REX, `$13` REX#). In the flash's
+autoselect and CFI query modes reads give the manufacturer (`$01`) and
+device (`$49`, Am29LV160DB) IDs at byte addresses 0 and 2, and the CFI
+table at `$20-$98` (the data sheet's, as VirtualT has it). REX# takes the data
 before the address (it has no address latch). The flash takes the JEDEC
 program, unlock-bypass program, sector erase (bottom-boot layout: 16, 8,
 8, 32 KB then 64 KB sectors) and chip erase sequences, with VirtualT's
 busy times. `expansion rex rex FILE` (or `rexsharp`) fits it, replacing
 any option ROM while it is in; `FILE` is the 1 MB image (VirtualT's
 `.bin`; made erased if missing), written back a second after a change and
-on removal. REX2's RAM, the REXCPM and the flash's autoselect / CFI reads
-are not modelled. The REX firmware images are not included: make or
+on removal. REX2's RAM and the REXCPM are not modelled (VirtualT's REX2
+RAM path is unreachable: its sector command never selects the RAM). The REX firmware images are not included: make or
 bring your own. Checked locally (not in the tests: the firmware is not
 ours) with a flash image laid out as VirtualT's "create flash" makes it:
 the Model 100's `CALL 63012` starts REX Manager 4.8, which installs its
