@@ -7,6 +7,21 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### NitrOS-9 v3.3.0 boots on the CoCo 1, 2, 3 (6809 and 6309, floppy and CoCo SDC) and the Dragon 64 (#356)
+
+- **Fix: a masked `SYNC` no longer ends the run.** The CLI, MCP and source
+  stepper stopped at a 6809 `SYNC` with I and F set as "the program's
+  end". On a machine that's a wait: a masked interrupt still ends `SYNC`.
+  DragonDOS's `BOOT` waits for the disk's FIRQ that way, so NitrOS-9 never
+  booted on the Dragon from the CLI. It now counts as an end only while
+  nothing drives the CPU's /IRQ, /FIRQ or /NMI lines.
+- **Real-disk tests:** `test_coco_real_roms.cpp` boots NitrOS-9's release
+  disks when they're in `roms/coco/nitros9/` (not in the repository). Each
+  build runs its shell and `dir` on the matching machine: Level 2 6809
+  and 6309 on the CoCo 3, the CoCo SDC build from the SDC, Level 1 on the
+  CoCo 1 and 2, and the Dragon 64 build.
+- `Gime::ramByte()` reads the CoCo 3's RAM by physical address.
+
 ### Model 100/102: RXCMGR, the REXCPM's manager, installed and run (#358)
 
 - **RXCMGR runs.** A test installs the REXCPM software as its

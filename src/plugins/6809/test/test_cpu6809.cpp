@@ -154,6 +154,25 @@ TEST_CASE(m6809_cwai_sync) {
     EXPECT_EQ(r.cpu.pc(), 0x1008u);
 }
 
+// SYNC with I and F set ends a bare program, but not once a machine drives
+// the interrupt lines: a masked line still ends SYNC (DragonDOS waits for
+// its disk's FIRQ that way, and NitrOS-9's boot stopped there in the CLI)
+TEST_CASE(m6809_masked_sync_program_end) {
+    Rig r;
+    r.load(0x1000, {0x13, 0x12});                   // SYNC; NOP (I and F set by reset)
+    r.run(1);
+    EXPECT_TRUE(r.cpu.isProgramEnd(&r.mem));        // nothing can wake it
+    Rig m;
+    m.load(0x1000, {0x13, 0x12});
+    m.cpu.setFirqLine(false);                       // a machine's devices drive /FIRQ
+    m.run(1);
+    EXPECT_TRUE(m.cpu.isHalted());
+    EXPECT_TRUE(!m.cpu.isProgramEnd(&m.mem));
+    m.cpu.setFirqLine(true);                        // the disk's DRQ: masked, SYNC ends
+    m.run(1);
+    EXPECT_EQ(m.cpu.pc(), 0x1002u);
+}
+
 // The disassembler
 TEST_CASE(m6809_disassembler) {
     Rig r;

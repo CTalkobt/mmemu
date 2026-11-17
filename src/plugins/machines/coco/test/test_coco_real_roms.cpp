@@ -13,6 +13,8 @@
 //    (32 KB) put up their screens; Mind-Roll (banked) on a CoCo 2;
 //  - extbas11 + disk11: Disk BASIC on the Disto Super Controller II lists
 //    a disk's file with DIR, then SAVEs, lists, LOADs and RUNs a program.
+//  - nitros9/*.dsk (NitrOS-9 v3.3.0's release disks): each build boots to its
+//    shell and runs dir (CoCo 1/2/3, 6309, CoCo SDC, Dragon 64).
 
 #include "test_harness.h"
 #include "coco_test_rom.h"
@@ -21,6 +23,7 @@
 #include "plugins/devices/gime/main/gime.h"
 #include "libdevices/main/io_registry.h"
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -407,4 +410,194 @@ TEST_CASE(real_disk_basic_on_disto_sc2) {
     saveListRun(m, "BAS");
     delete m;
     std::remove(disk.c_str());
+}
+
+// ---------------------------------------------------------------------------
+// NitrOS-9 v3.3.0 (the project's release disks, in roms/coco/nitros9/ when
+// they're there; from sourceforge.net/projects/nitros9): each build boots
+// with the machine's own Disk BASIC (DOS) or DragonDOS (BOOT) and lists its
+// root directory with "dir"
+// ---------------------------------------------------------------------------
+namespace {
+
+// The VDG's text screen where the SAM shows it (NitrOS-9 Level 1 doesn't use $0400)
+std::string vdgText(MachineDescriptor* m) {
+    const uint16_t base = coco::systemOf(m)->sam.f();   // F0-F6 as the address (F << 9)
+    std::string s;
+    IBus* bus = m->buses[0].bus;
+    for (int i = 0; i < 512; ++i) {
+        const uint8_t c = bus->peek8((uint32_t)(uint16_t)(base + i)) & 0x3F;
+        s += (char)(c < 0x20 ? c + 0x40 : c);
+        if (i % 32 == 31) s += '\n';
+    }
+    return s;
+}
+
+// The GIME's hi-res text screen (character, attribute pairs) from its video
+// start, 24 rows of up to 80 columns, as ASCII
+std::string gimeText(MachineDescriptor* m) {
+    const Gime* g = coco::systemOf(m)->gime();
+    const uint32_t start = (uint32_t)g->reg(0xD) << 11 | (uint32_t)g->reg(0xE) << 3;
+    std::string s;
+    for (int i = 0; i < 24 * 160; i += 2) {
+        const uint8_t c = g->ramByte(start + (uint32_t)i);
+        s += (char)(c >= 0x20 && c < 0x7F ? c : ' ');
+        if (i % 160 == 158) s += '\n';
+    }
+    return s;
+}
+
+std::string os9Screen(MachineDescriptor* m) { return coco::systemOf(m)->gime() ? gimeText(m) : vdgText(m); }
+
+std::string upper(std::string s) {
+    for (char& c : s) c = (char)std::toupper((unsigned char)c);
+    return s;
+}
+
+// `text` on the screen (case aside: Level 1's VDG screen has no lower case)
+bool os9OnScreen(MachineDescriptor* m, const std::string& text) {
+    return upper(os9Screen(m)).find(upper(text)) != std::string::npos;
+}
+
+bool os9WaitFor(MachineDescriptor* m, const std::string& text, double seconds) {
+    for (double t = 0; t < seconds; t += 0.25) {
+        if (os9OnScreen(m, text)) return true;
+        runSeconds(m, 0.25);
+    }
+    if (os9OnScreen(m, text)) return true;
+    std::printf("  waiting for \"%s\"; the screen:\n%s\n", text.c_str(), os9Screen(m).c_str());
+    return false;
+}
+
+// An OS-9 module named `name` in the 64K map (its header: $87 $CD, size,
+// name offset; the name's last letter has bit 7 set)
+bool os9Module(MachineDescriptor* m, const std::string& name) {
+    IBus* bus = m->buses[0].bus;
+    for (uint32_t a = 0; a + 9 < 0x10000; ++a) {
+        if (bus->peek8(a) != 0x87 || bus->peek8(a + 1) != 0xCD) continue;
+        const uint32_t n = a + (uint32_t)(bus->peek8(a + 4) << 8 | bus->peek8(a + 5));
+        bool same = n + name.size() <= 0x10000;
+        for (size_t i = 0; same && i < name.size(); ++i) {
+            const uint8_t c = bus->peek8((uint32_t)(n + i));
+            const bool last = i + 1 == name.size();
+            same = (c & 0x7F) == (uint8_t)name[i] && ((c & 0x80) != 0) == last;
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+bool os9WaitForModule(MachineDescriptor* m, const std::string& name, double seconds, bool quiet = false) {
+    for (double t = 0; t < seconds; t += 0.5) {
+        if (os9Module(m, name)) return true;
+        runSeconds(m, 0.5);
+    }
+    const bool found = os9Module(m, name);
+    if (!found && !quiet) {
+        std::printf("  no module \"%s\" in memory; there are:", name.c_str());
+        IBus* bus = m->buses[0].bus;
+        for (uint32_t a = 0; a + 9 < 0x10000; ++a) {
+            if (bus->peek8(a) != 0x87 || bus->peek8(a + 1) != 0xCD) continue;
+            uint32_t n = a + (uint32_t)(bus->peek8(a + 4) << 8 | bus->peek8(a + 5));
+            std::string nm;
+            for (int i = 0; i < 12 && n < 0x10000; ++i, ++n) {
+                const uint8_t c = bus->peek8(n);
+                if ((c & 0x7F) < 0x20) break;
+                nm += (char)(c & 0x7F);
+                if (c & 0x80) break;
+            }
+            std::printf(" %s", nm.c_str());
+        }
+        std::printf("\n");
+    }
+    return found;
+}
+
+// Boot `disk` (in roms/coco/nitros9/) on `model` with `cart`, then "dir";
+// `prompt` is the shell's, `boot` (its case as the screen shows it) the
+// root directory's OS9Boot
+void nitros9(Model model, bool hd6309, const std::string& cart, const std::string& cartOpt, const std::string& disk,
+             const std::string& command, const std::string& prompt, const std::string& boot) {
+    const std::string path = coco::firmwareDir() + "/nitros9/" + disk;
+    if (!haveFile(path)) return;
+    if (isDragon(model) ? !haveDragon64() : !haveFile(coco::firmwareDir() + "/disk11.rom")) return;
+    std::string err;
+    MachineDescriptor* m = coco::create(model, &err, model == Model::CoCo3 ? 512 : 64, nullptr, coco::Tv::Default, hd6309);
+    ASSERT(m != nullptr);
+    ASSERT(m->expansionSlot("cart")->install(cart, cartOpt, err));
+    // A copy: NitrOS-9 writes to its disk
+    const std::string copy = "/tmp/mmsim_nitros9_" + std::to_string((long)getpid()) + ".dsk";
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+        out << in.rdbuf();
+    }
+    EXPECT_TRUE(m->ioRegistry->mountDisk(1, copy) != nullptr);
+    m->onReset(*m);
+    EXPECT_TRUE(waitFor(m, "OK", 10));
+    type(m, command + "\\n");
+    if (prompt.empty()) {
+        // The Dragon 64's text is drawn on a graphics screen: the modules
+        // say instead. OS9Boot (with the shell) loaded, then "dir" (typed
+        // until the shell runs it: the first may answer "Time ?") loaded
+        // from CMDS
+        EXPECT_TRUE(os9WaitForModule(m, "Shell", 90));
+        bool dir = false;
+        for (int i = 0; i < 30 && !dir; ++i) {
+            type(m, "dir\\n");
+            dir = os9WaitForModule(m, "Dir", 5, i < 29);
+        }
+        EXPECT_TRUE(dir);
+        delete m;
+        std::remove(copy.c_str());
+        return;
+    }
+    EXPECT_TRUE(os9WaitFor(m, "NitrOS-9", 60));
+    // "Time ?" (when there's no clock to read): Return until the shell's prompt
+    bool shell = false;
+    for (int i = 0; i < 20 && !shell; ++i) {
+        type(m, "\\n");
+        for (double t = 0; t < 3 && !shell; t += 0.25) {
+            runSeconds(m, 0.25);
+            shell = os9OnScreen(m, prompt);
+        }
+    }
+    EXPECT_TRUE(os9WaitFor(m, prompt, 0.25));
+    type(m, "dir\\n");
+    EXPECT_TRUE(os9WaitFor(m, boot, 30));
+    std::printf("%s", os9Screen(m).c_str());
+    delete m;
+    std::remove(copy.c_str());
+}
+
+}  // namespace
+
+TEST_CASE(real_nitros9_level2_coco3) {
+    nitros9(Model::CoCo3, false, "fd502", "", "nos96809l2v030300coco3_40d_1.dsk", "DOS", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level2_coco3_6309) {
+    nitros9(Model::CoCo3, true, "fd502", "", "nos96309l2v030300coco3_40d_1.dsk", "DOS", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level1_coco2) {
+    nitros9(Model::CoCo2, false, "fd502", "", "nos96809l1v030300coco2_40d_1.dsk", "DOS", "OS9:", "OS9BOOT");
+}
+TEST_CASE(real_nitros9_level1_coco1) {
+    nitros9(Model::CoCo1, false, "fd500", "", "nos96809l1v030300coco1_40d_1.dsk", "DOS", "OS9:", "OS9BOOT");
+}
+// DragonDOS's BOOT waits for the disk's FIRQ with SYNC and I and F set (a
+// wait, not the end of a program); its screen is graphics (no prompt to read)
+TEST_CASE(real_nitros9_level1_dragon64) {
+    if (!haveFile(coco::dragonFirmwareDir() + "/ddos12a.rom")) return;
+    nitros9(Model::Dragon64, false, "dragondos", coco::dragonFirmwareDir() + "/ddos12a.rom",
+            "nos96809l1v030300d64_40d_1.dsk", "BOOT", "", "");
+}
+// The CoCo SDC with stock Disk BASIC in its flash: DOS loads the boot track
+// through its FDC emulation, then NitrOS-9's SDC driver reads the hard disk
+// image by LSN in command mode
+TEST_CASE(real_nitros9_level2_coco3_sdc) {
+    const std::string disk = coco::firmwareDir() + "/nitros9/nos96809l2v030300coco3_cocosdc.dsk";
+    if (!haveFile(disk)) return;
+    const std::string card = coco::firmwareDir() + "/nitros9";
+    nitros9(Model::CoCo3, false, "sdc", card + "," + coco::firmwareDir() + "/disk11.rom",
+            "nos96809l2v030300coco3_cocosdc.dsk", "DOS", "/DD:", "OS9Boot");
 }
