@@ -159,3 +159,28 @@ TEST_CASE(rex_persist) {
     ASSERT_EQ(r2.flash().data()[0x9ABCE], 0xFF);
     std::filesystem::remove(path);
 }
+
+// Autoselect and CFI reads (the Am29LV160D's, byte mode), and F0 back to the array
+TEST_CASE(rex_flash_autoselect_cfi) {
+    AmdFlash f;
+    f.data()[0] = 0x12;
+    f.data()[2] = 0x34;
+    f.write(0xAA, 0xAA, 0);
+    f.write(0x55, 0x55, 0);
+    f.write(0xAA, 0x90, 0);
+    ASSERT_EQ(f.read(0x00), 0x01);                     // AMD
+    ASSERT_EQ(f.read(0x02), 0x49);                     // Am29LV160DB
+    ASSERT_EQ(f.read(0x8004), 0x00);                   // sector not protected
+    f.write(0x00, 0xF0, 0);
+    ASSERT_EQ(f.read(0x00), 0x12);
+    f.write(0xAA, 0x98, 0);                            // CFI query
+    ASSERT_EQ(f.read(0x20), 'Q');
+    ASSERT_EQ(f.read(0x22), 'R');
+    ASSERT_EQ(f.read(0x24), 'Y');
+    ASSERT_EQ(f.read(0x4E), 0x15);                     // 2^21 bytes
+    ASSERT_EQ(f.read(0x58), 0x04);                     // four erase regions
+    ASSERT_EQ(f.read(0x80), 'P');
+    ASSERT_EQ(f.read(0x10), 0xFF);
+    f.write(0x00, 0xF0, 0);
+    ASSERT_EQ(f.read(0x02), 0x34);
+}

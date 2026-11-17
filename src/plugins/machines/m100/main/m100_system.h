@@ -491,10 +491,13 @@ public:
     bool m100Originate = true;
     /** The bar code wand is plugged in. */
     bool wandPlugged = false;
-    /** Port C bit 3: the wand's output (1 light or lifted; 0 over a bar, and with no wand plugged in). */
-    bool wandData() const { return wandPlugged && wand.data(); }
-    /** RST 5.5: the wand's output inverted (high over a bar). */
-    bool wandRst55() const { return wandPlugged && !wand.data(); }
+    /** BCR: the wand's output (pulled up by R70 at the connector) through an
+     *  inverting Schmitt trigger (M34D, 4584); it drives both RST 5.5 and
+     *  port C bit 3 (the service manual's schematic). High over a bar; low
+     *  over a space, with the wand lifted, and with no wand plugged in. */
+    bool bcr() const { return wandPlugged && !wand.data(); }
+    bool wandData() const { return bcr(); }
+    bool wandRst55() const { return bcr(); }
 
     /** A RAMPAC on the system bus backed by `path` ("": memory only); false if the file fails. */
     bool fitRampac(const std::string& path, std::string& err);

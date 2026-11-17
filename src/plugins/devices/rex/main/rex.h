@@ -20,8 +20,12 @@
  *    $5000-$6FFF; the data sheet's $6000-$7FFF is used here);
  *  - AA@AA 55@55 20@AA: unlock bypass; then A0, data@addr programs;
  *    90, 00 leaves it;
- *  - AA@AA 55@55 90@AA autoselect, 98@AA CFI query: entered and left
- *    with F0 (their reads are not modelled: REX reads the array directly);
+ *  - AA@AA 55@55 90@AA autoselect, 98@AA CFI query: left with F0. Reads
+ *    then give, by the address's low byte (byte mode, A-1 the LSB), the
+ *    manufacturer (00: $01, AMD), the device ($02: $49, Am29LV160DB in
+ *    byte mode) and the sector protection ($04: 0); or the CFI query data
+ *    from $20 to $98 ("QRY", 2.7-3.6 V, 2 MB, four erase regions, "PRI"
+ *    1.0; VirtualT's gFlashCFIData, the data sheet's table), $FF elsewhere;
  *  - F0 (any time but mid-program): reset to reading.
  * Busy: a program takes PROGRAM_CLOCKS, a sector erase SECTOR_ERASE_CLOCKS,
  * a chip erase CHIP_ERASE_CLOCKS (VirtualT's counts, in 8085 clocks);
@@ -37,7 +41,8 @@ public:
 
     /** A bus write (the command interface); `now` in clocks. */
     void write(uint32_t addr, uint8_t v, uint64_t now);
-    uint8_t read(uint32_t addr) const { return m_data[addr % m_data.size()]; }
+    /** A read: the array, or in autoselect / CFI mode their data. */
+    uint8_t read(uint32_t addr) const;
     bool busy(uint64_t now) const { return now < m_busyUntil; }
     void reset() { m_state = RO; m_busyUntil = 0; }
 

@@ -22,6 +22,20 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - With the real ROMs, `DOS` on a `coco3` with the FD-502 now boots the OS-9
   Level 2 system disk to its `Time ?` prompt; `mdir` lists the modules.
 
+### Model 100: settled from the schematic; the REX flash's ID and CFI reads (#358)
+
+- **Bar code reader:** BCR drives both RST 5.5 and port C bit 3, as the
+  wand's output inverted through a Schmitt trigger. Port C bit 3 used to
+  read the uninverted wand output; it now reads the same level as RST 5.5.
+- **Confirmed from the Model 100 schematic** (the service manual's, as
+  transcribed in hzeller's trs80-100-schematic):
+  - port C bit 4 reads the ORIG/ANS switch while the modem is selected
+    (SW1B through the 40H157);
+  - `$D0` bit 5 (RP) is pulled up and comes from the modem connector;
+  - `$D0` bits 6 and 7 are as mmsim had them.
+- **REX flash:** autoselect reads give the manufacturer and device IDs
+  ($01, $49), and CFI query reads give the Am29LV160D's table.
+
 ### Model 100/102/200: the Tandy Disk/Video Interface (#358)
 
 - **The DVI (26-3806)** is emulated from its service manual: the box's own

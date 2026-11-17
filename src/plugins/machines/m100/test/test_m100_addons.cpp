@@ -175,7 +175,7 @@ TEST_CASE(m100_barcode_rst55) {
         "MVI A,$0E\nSIM\nEI\n"              // RST 5.5 unmasked
         "idle_: HLT\nJMP idle_\n"
         "bar_: PUSH PSW\nLDA $F100\nINR A\nSTA $F100\n"
-        "sp_: IN $B3\nANI $08\nJZ sp_\n"    // wait for the space
+        "sp_: IN $B3\nANI $08\nJNZ sp_\n"   // BCR (port C bit 3, as RST 5.5): wait for the space
         "POP PSW\nEI\nRET\n";
     MachineDescriptor* m = make(Model::M100, romFrom(src));
     auto* s = sysOf(m);
@@ -183,7 +183,7 @@ TEST_CASE(m100_barcode_rst55) {
     ASSERT_EQ(m->buses[1].bus->read8(0xB3) & 0x08, 0);     // no wand: 0
     ASSERT_EQ(serial(m, "barcode:code39:A"), std::string("Bar code reader"));
     ASSERT(s->wandPlugged && s->wand.scanning());
-    ASSERT_EQ(m->buses[1].bus->read8(0xB3) & 0x08, 0x08);  // over the quiet zone: light
+    ASSERT_EQ(m->buses[1].bus->read8(0xB3) & 0x08, 0);     // over the quiet zone: light, BCR low
     runFor(m, 0.1);
     ASSERT(!s->wand.scanning());
     ASSERT_EQ(m->buses[0].bus->read8(0xF100), 15);
