@@ -956,7 +956,7 @@ std::vector<uint8_t> placeholderRom() {
 
 namespace {
 const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
-const char* const BURKE_DESC = "Burke & Burke CoCo XT hard disk interface ($FF50-$FF53); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
+const char* const BURKE_DESC = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50-$FF53) and DS1215 clock ($FF40-$FF5F); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
 const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
 const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
 const char* const GMC_DESC = "Games Master Cartridge: banked ROM (bank at even $FF40-$FF5F) and SN76489 (odd); option: the image (up to 256 KB)";

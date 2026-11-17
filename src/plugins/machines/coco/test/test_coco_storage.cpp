@@ -3,6 +3,7 @@
 #include "plugins/machines/coco/main/coco_storage.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -195,4 +196,110 @@ TEST_CASE(coco_burke_rom_socket) {
     ASSERT(!bb.read(0xFF40, false, true, d));
     coco::BurkeBurke none;
     ASSERT(!none.read(0xC000, true, false, d));
+}
+
+namespace {
+
+// A fixed time for the XT-RTC's DS1215: Friday 25 December 2026, 12:34:56.42
+void fixClock(coco::BurkeBurke& bb) {
+    bb.clock().now = []() {
+        std::tm t{};
+        t.tm_sec = 56; t.tm_min = 34; t.tm_hour = 12;
+        t.tm_mday = 25; t.tm_mon = 11; t.tm_year = 126; t.tm_wday = 5;
+        return t;
+    };
+    bb.clock().hundredths = []() { return 42; };
+}
+
+const uint8_t XT_RTC_TIME[8] = {0x42, 0x56, 0x34, 0x12, 0x06, 0x25, 0x12, 0x26};   // BCD, low bit first
+const uint8_t DS1215_PATTERN[8] = {0xC5, 0x3A, 0xA3, 0x5C, 0xC5, 0x3A, 0xA3, 0x5C};
+
+}  // namespace
+
+// The XT-RTC's DS1215 (schematic U4: /CEI from /SCS, /WE = A2, D = A0, Q =
+// D0, ROM mode): any $FF40-$FF5F cycle with A2 low writes bit A0, read or
+// write; a read with A2 high reads a bit; a write with A2 high is nothing
+TEST_CASE(coco_burke_xt_rtc_clock_bits) {
+    coco::BurkeBurke bb;
+    fixClock(bb);
+    bb.reset();
+    uint8_t d = 0;
+    ASSERT(!bb.read(0xFF44, false, true, d));             // closed: not answering
+    int n = 0;
+    for (uint8_t byte : DS1215_PATTERN)
+        for (int i = 0; i < 8; ++i, ++n) {
+            const int bit = byte >> i & 1;
+            if (n & 1) bb.write((uint16_t)(0xFF4A | bit), false, true, 0x00);   // a write cycle, A2 low
+            else bb.read((uint16_t)(0xFF48 | bit), false, true, d);             // a read cycle, A2 low
+            bb.write(0xFF5C, false, true, 0xFF);                                 // A2 high write: ignored
+            ASSERT(!bb.peek(0xFF44, false, true, d));                            // a peek: no cycle
+        }
+    for (int i = 0; i < 64; ++i) {
+        ASSERT(bb.read(i & 1 ? 0xFF44 : 0xFF5D, false, true, d));
+        ASSERT_EQ(d, (XT_RTC_TIME[i / 8] >> (i % 8)) & 1);
+    }
+    ASSERT(!bb.read(0xFF44, false, true, d));             // closed again after 64 bits
+    // The controller is undisturbed and still answers its own ports
+    ASSERT(bb.read(0xFF51, false, true, d));
+    ASSERT_EQ(d, 0);
+}
+
+// A 6809 program in a stand-in XT-ROM (burned scrambled, as the real one
+// is) unlocks the DS1215 with reads and reads the time to $0600 on a CoCo 2
+TEST_CASE(coco_burke_xt_rtc_read_by_6809) {
+    Asm a(0xC000);
+    a.ext(0x7D, 0xFF44);                         // TST $FF44: a read resets the pattern
+    a.emit({0x8E, 0xC1, 0x00});                  // LDX #pattern
+    const uint16_t outer = a.pc;
+    a.emit({0xA6, 0x80});                        // LDA ,X+
+    a.emit({0xC6, 0x08});                        // LDB #8
+    const uint16_t inner = a.pc;
+    a.emit({0x44});                              // LSRA
+    a.emit({0x25, 0x05});                        // BCS one
+    a.ext(0x7D, 0xFF40);                         // TST $FF40 (A2 low, A0 = 0)
+    a.emit({0x20, 0x03});                        // BRA next
+    a.ext(0x7D, 0xFF41);                         // one: TST $FF41 (A0 = 1)
+    a.emit({0x5A});                              // next: DECB
+    a.branch(0x26, inner);
+    a.emit({0x8C, 0xC1, 0x08});                  // CMPX #pattern+8
+    a.branch(0x26, outer);
+    a.emit({0xCE, 0x06, 0x00});                  // LDU #$0600
+    const uint16_t outer2 = a.pc;
+    a.emit({0xC6, 0x08});                        // LDB #8
+    const uint16_t inner2 = a.pc;
+    a.ext(0xB6, 0xFF44);                         // LDA $FF44 (A2 high)
+    a.emit({0x44});                              // LSRA
+    a.emit({0x66, 0xC4});                        // ROR ,U
+    a.emit({0x5A});                              // DECB
+    a.branch(0x26, inner2);
+    a.emit({0x33, 0x41});                        // LEAU 1,U
+    a.emit({0x11, 0x83, 0x06, 0x08});            // CMPU #$0608
+    a.branch(0x26, outer2);
+    a.emit({0x86, 0x5D}); a.ext(0xB7, CART_MARK);
+    const uint16_t spin = a.pc;
+    a.branch(0x20, spin);
+    a.pc = 0xC100;
+    for (uint8_t b : DS1215_PATTERN) a.emit({b});
+    std::vector<uint8_t> eprom(a.b.size());
+    for (size_t i = 0; i < a.b.size(); ++i) eprom[i ^ 0x70] = a.b[i];   // as burned: A4-A6 inverted
+    const std::string dir = tempDir();
+    writeFile(dir + "/xt.rom", eprom);
+
+    coco::Roms roms;
+    roms.colorBasic = jumpToCart();
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    ASSERT(m);
+    ASSERT(m->expansionSlot("cart")->install("burke", "," + dir + "/xt.rom", err));
+    auto* bb = dynamic_cast<coco::BurkeBurke*>(coco::systemOf(m)->cart());
+    ASSERT(bb);
+    fixClock(*bb);
+    m->onReset(*m);
+    run(m, 100000);
+    IBus* bus = m->buses[0].bus;
+    ASSERT_EQ(bus->peek8(CART_MARK), 0x5D);
+    for (int i = 0; i < 8; ++i) ASSERT_EQ(bus->peek8((uint16_t)(0x0600 + i)), XT_RTC_TIME[i]);
+    delete m;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }

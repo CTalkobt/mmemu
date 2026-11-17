@@ -98,7 +98,7 @@ bool CocoSdcCart::diskStatus(int drive, int& track, bool& motor) const {
 // Burke & Burke CoCo XT
 // ---------------------------------------------------------------------------
 std::string BurkeBurke::describe() const {
-    std::string s = "Burke & Burke CoCo XT hard disk interface ($FF50)";
+    std::string s = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50) and DS1215 clock";
     if (!m_rom.empty()) s += " with a " + std::to_string(m_rom.size() / 1024) + " KB ROM";
     for (int i = 0; i < 2; ++i)
         if (!m_hdc.imagePath(i).empty())
@@ -109,14 +109,22 @@ std::string BurkeBurke::describe() const {
 
 bool BurkeBurke::read(uint16_t a, bool cts, bool scs, uint8_t& d) {
     if (cts) return peek(a, cts, scs, d);
-    if (!scs || (a & 0xFFFC) != BASE) return false;
-    d = m_hdc.read(a & 3);
-    return true;
+    if (!scs) return false;
+    // The DS1215 sees every /SCS cycle ($FF40-$FF5F): A2 low writes A0 to it,
+    // A2 high reads its bit on D0 (once its pattern has opened it)
+    uint8_t bit = 0;
+    const bool clockAnswers = m_clock.access(a, false, bit);
+    if ((a & 0xFFFC) == BASE) {
+        d = m_hdc.read(a & 3);
+        return true;
+    }
+    if (clockAnswers) d = bit;      // D1-D7 undriven (unverified: 0 here)
+    return clockAnswers;
 }
 
 bool BurkeBurke::peek(uint16_t a, bool cts, bool scs, uint8_t& d) const {
     if (cts) {
-        // The BIOS ROM socket: A4-A6 inverted by the interface (manual A.1.1)
+        // The BIOS ROM socket: A4-A6 inverted by the interface (schematic: U3D-F)
         if (m_rom.empty()) return false;
         d = m_rom[(size_t)((a ^ 0x0070) & 0x3FFF) % m_rom.size()];
         return true;
@@ -127,7 +135,12 @@ bool BurkeBurke::peek(uint16_t a, bool cts, bool scs, uint8_t& d) const {
 }
 
 void BurkeBurke::write(uint16_t a, bool, bool scs, uint8_t d) {
-    if (scs && (a & 0xFFFC) == BASE) m_hdc.write(a & 3, d);
+    if (!scs) return;
+    // A write cycle with A2 low is a DS1215 write too (/WE = A2); with A2
+    // high it's neither (/OE needs R/W high)
+    uint8_t unused = 0;
+    if (!(a & 0x04)) m_clock.access(a, true, unused);
+    if ((a & 0xFFFC) == BASE) m_hdc.write(a & 3, d);
 }
 
 bool BurkeBurke::mountDisk(int drive, const std::string& path) { return m_hdc.mount(drive, path); }

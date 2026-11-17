@@ -15,6 +15,7 @@
 #include "test_harness.h"
 #include "coco_test_rom.h"
 #include "plugins/machines/coco/main/coco_paks.h"
+#include "plugins/machines/coco/main/coco_storage.h"
 #include "plugins/devices/gime/main/gime.h"
 #include "libdevices/main/io_registry.h"
 #include <algorithm>
@@ -296,4 +297,68 @@ TEST_CASE(real_coco3_rampage_32k) { coco3Pak("Rampage! (1989) (26-3174) (Tandy) 
 // Mind-Roll: 32 KB, banked (XRoar's database), on a CoCo 2
 TEST_CASE(real_coco2_mind_roll_banked) {
     coco3Pak("Mind-Roll (1988) (26-3100) (Tandy) (Coco 1-2) (Coco 3).ccc", "gmc", Model::CoCo2);
+}
+
+// Burke & Burke's own OS-9 boot ROM (the CoCo XT-RTC's, an XT-ROM as burned:
+// A4-A6 scrambled; roms/coco/xt-rtc/) in the controller's BIOS socket boots a
+// CoCo 2 from a hard disk image through our interface (#356). The ROM, on a
+// cold start: waits for the drive, tests RAM, resets the controller, reads
+// physical sector 0 (cylinder 0, head 0) for the drive's geometry ($44-$45
+// cylinders, $46 heads), sends it with $0C, checks the drive with $00 and
+// reads nine 512-byte sectors of cylinder 128, head 0 to $2600, which must
+// start "OS"; then it jumps to $2602. The image here is hand-built.
+TEST_CASE(real_burke_xt_rom_boots_from_hard_disk) {
+    const std::string rom = coco::firmwareDir() + "/xt-rtc/Burke_and_Burke_CoCo_XT-RTC_OS-9_Boot_ROM_8K.bin";
+    if (!haveFile(rom)) return;
+    const int heads = 4, cyls = 130, spt = 17;
+    const std::string img = "/tmp/mmsim_burke_" + std::to_string((long)getpid()) + ".img";
+    std::vector<uint8_t> disk((size_t)cyls * heads * spt * 512, 0);
+    disk[0x44] = 0;
+    disk[0x45] = (uint8_t)cyls;
+    disk[0x46] = (uint8_t)heads;
+    const size_t boot = (size_t)128 * heads * spt * 512;
+    for (size_t i = 0; i < 9 * 512; ++i) disk[boot + i] = (uint8_t)(i * 7 + (i >> 9));
+    const uint8_t code[] = {'O', 'S', 0x86, 0x5A, 0xB7, 0x3A, 0x00, 0x20, 0xFE};   // LDA #$5A; STA $3A00; BRA *
+    std::copy(std::begin(code), std::end(code), disk.begin() + (std::ptrdiff_t)boot);
+    {
+        std::ofstream f(img, std::ios::binary | std::ios::trunc);
+        f.write((const char*)disk.data(), (std::streamsize)disk.size());
+    }
+    // Color BASIC's stand-in sets PIA0 up and starts the cartridge at $C002
+    // (after its "DK", as Extended BASIC does)
+    coco::Roms roms;
+    Asm a(0xA000);
+    a.emit({0x10, 0xCE, 0x7F, 0x00});           // LDS #$7F00
+    a.ext(0x7F, 0xFF01); a.ext(0x7F, 0xFF00);   // PIA0 A in
+    a.emit({0x86, 0x04}); a.ext(0xB7, 0xFF01);
+    a.ext(0x7F, 0xFF03);
+    a.emit({0x86, 0xFF}); a.ext(0xB7, 0xFF02);  // B out (the keyboard's columns)
+    a.emit({0x86, 0x04}); a.ext(0xB7, 0xFF03);
+    a.ext(0xB7, 0xFFDD);                        // SAM: 64K (M1)
+    a.ext(0x7E, 0xC002);                        // JMP $C002
+    a.word(0xBFF2, 0x0100); a.word(0xBFF4, 0x0103); a.word(0xBFF6, 0x010F);   // the RAM vectors BASIC's are
+    a.word(0xBFF8, 0x010C); a.word(0xBFFA, 0x0106); a.word(0xBFFC, 0x0109);
+    a.word(0xBFFE, 0xA000);
+    roms.colorBasic = a.b;
+    std::string err;
+    MachineDescriptor* m = coco::create(Model::CoCo2, &err, 64, &roms);
+    ASSERT(m != nullptr);
+    ASSERT(m->expansionSlot("cart")->install("burke", img + "," + rom, err));
+    m->onReset(*m);
+    IBus* bus = m->buses[0].bus;
+    bool booted = false;
+    for (int i = 0; i < 60 && !booted; ++i) {
+        run(m, 1000000);
+        booted = bus->peek8(0x3A00) == 0x5A;
+    }
+    EXPECT_TRUE(booted);
+    bool same = true;
+    for (size_t i = 0; i < 9 * 512; ++i) same = same && bus->peek8((uint16_t)(0x2600 + i)) == disk[boot + i];
+    EXPECT_TRUE(same);
+    auto* bb = dynamic_cast<coco::BurkeBurke*>(coco::systemOf(m)->cart());
+    ASSERT(bb != nullptr);
+    EXPECT_EQ(bb->controller().cylinders(0), cyls);   // from its $0C
+    EXPECT_EQ(bb->controller().heads(0), heads);
+    delete m;
+    std::remove(img.c_str());
 }

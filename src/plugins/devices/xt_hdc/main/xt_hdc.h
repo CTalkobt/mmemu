@@ -42,13 +42,22 @@
  * host's driver sets it) or else from the image: 4 heads and as many
  * cylinders as the file holds (setGeometry overrides). Writes go to the file.
  *
- * Sources: the port map from the CoCo XT manual (v2.4, A.1.2), which says
- * the controller's own protocol is "beyond the scope of this manual"; the
- * status bits, command block and command set are the IBM XT Fixed Disk
- * Adapter / WD1002-WX family's as recalled (no local reference), so they
- * are unverified against a real controller or B&B's OS-9 driver. 17
- * sectors a track is the MFM controllers' format (an RLL controller would
- * use 26).
+ * Sources: Burke & Burke's OS-9 boot ROM for the CoCo XT-RTC (disassembled,
+ * CoCo addresses $C56A-$C6F8) drives the controller exactly this way: reset
+ * ($FF51 write), mask 0 ($FF53), wait for status & $09 == 0, select ($FF52),
+ * each DCB byte when status & $0F == $0D (and $0F there means the command
+ * ended early: read the completion byte), read data when it's $0B, write
+ * $0C's 8 bytes when it's $09, the completion byte when status & $07 ==
+ * $07; on completion bit 1 it issues $03 and takes sense codes 0 and $18
+ * (corrected ECC) as success. Its DCBs: command, drive/head (0), cylinder
+ * bits 8-9 / sector, cylinder bits 0-7, count (1), control. It uses $00,
+ * $01, $03, $08, $0B and $0C (8 bytes: cylinders, heads, reduced write
+ * current, precompensation, ECC burst). The command codes, the DCB and $0C
+ * layouts, the completion byte (bit 1 error, bit 5 drive) and the sense
+ * bytes agree with MAME's src/devices/bus/isa/hdc.cpp. Unverified: the
+ * other commands, the sense codes beyond those, bit 4 (MAME: DMA request)
+ * and the jumper port. 17 sectors a track is the MFM controllers' format
+ * (an RLL controller would use 26).
  */
 class XtHdc {
 public:
