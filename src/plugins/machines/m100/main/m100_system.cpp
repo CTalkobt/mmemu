@@ -893,8 +893,11 @@ void System::powerSwitch() {
         m_holdup = (uint64_t)(CPU_HZ * 0.05);
         return;
     }
-    // On: the 8085 restarts; RAM was kept by its battery
+    // On: the 8085 restarts; RAM was kept by its battery. The REXCPM's
+    // registers go back to their power-on state (its documentation: power
+    // cycling puts it in its default state).
     m_switchOff = false;
+    if (m_rexCpm) m_rexCpm->reset();
     if (m_cpu) m_cpu->setTrap(false);
     hardwareReset();
     m_powered = true;
