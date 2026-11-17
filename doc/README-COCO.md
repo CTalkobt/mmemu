@@ -612,9 +612,17 @@ a real ROM to boot): the GIME's power-on and /RESET state (registers and
 palette 0, page registers kept), VSC's text row heights in the
 VDG-compatible modes (`$FF9C`, XRoar's row masks), the interrupt
 enable/acknowledge rules and the timer's reload and rates are as XRoar has
-them; the keyboard's EI1 is now re-read on each PIA0 write. Booting Super
-Extended Color BASIC and OS-9 Level II (user-supplied ROMs and disks) is
-still to be done.
+them; the keyboard's EI1 is now re-read on each PIA0 write.
+
+**Checked with the real ROMs** (local only): Super Extended Color BASIC 2.0
+(`coco3.rom`) boots and runs BASIC; with the FD-502 and Disk BASIC 1.1,
+`DIR` lists a disk, and `DOS` boots the OS-9 Level 2 v02.00.01 system disk
+(TERM_VDG) to its `Time ?` prompt, after which `mdir` lists the modules.
+That needed two fixes: the 6809 sees /HALT only at the end of the
+instruction after the one that raises it (Disk BASIC's read loop stores each
+sector's last byte before INTRQ's NMI), and the WD279x reads DDEN during
+its ID search (OS-9's boot driver selects double density after writing
+READ SECTOR). NitrOS-9 is not yet tried.
 
 ## Not done
 

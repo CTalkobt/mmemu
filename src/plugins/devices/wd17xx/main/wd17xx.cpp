@@ -80,6 +80,20 @@ bool Wd17xx::invertedBus() const {
 
 bool Wd17xx::doubleDensity() const { return !is1771() && m_dden; }
 
+void Wd17xx::setDoubleDensity(bool dd) {
+    if (m_dden == dd) return;
+    m_dden = dd;
+    // The controller samples DDEN as it reads the track, so an ID search under
+    // way looks for the other density's address marks from here on (OS-9's
+    // CoCo boot driver writes READ SECTOR before the latch that selects double
+    // density). The search keeps its five-revolution limit.
+    if (m_state == State::IdFound || m_state == State::Search) {
+        m_state = State::Idle;
+        m_slot = slotAt(m_now) + 1;
+        searchNext();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Time and the head
 // ---------------------------------------------------------------------------

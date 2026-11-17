@@ -499,7 +499,7 @@ void System::setCart(std::unique_ptr<Cart> cart) {
     m_cart = std::move(cart);
     m_cartLine = true;
     pia1.setCb1(true);
-    m_halt = false;
+    m_halt = m_halted = false;
     if (m_nmi && m_cpu) m_cpu->setNmiLine(m_proNmi);
     m_nmi = false;
     if (!m_cart) return;
@@ -547,7 +547,7 @@ void System::resetButton() {
     vdg.reset();
     keyboard.reset();
     if (m_cart) m_cart->reset();
-    m_halt = false;
+    m_halt = m_halted = false;
     m_ramp = false;
     ramSizeUpdate();
     if (dragon()) dragonRomSelect();
@@ -818,7 +818,13 @@ int System::step() {
     m_instr = 0;
     m_accesses = 0;
     int cycles = 1;
-    if (!m_halt && m_cpu) cycles = m_cpu->step();
+    // The 6809 samples /HALT at the end of an instruction; one raised by the
+    // instruction's own last cycle (a read of the FDC's data register clearing
+    // DRQ, or the write of $FF40's HALT enable) is only seen at the end of the
+    // next. So Disk BASIC's LDB $FF4B / STB ,X+ / STA $FF40 / BRA stores each
+    // byte before halting, the 256th one too, ahead of INTRQ's NMI.
+    const bool haltBefore = m_halt;
+    if (!m_halted && m_cpu) cycles = m_cpu->step();
     // Cycles without a bus access (the 6809's "don't care" cycles, a
     // halted CPU) put $FFFF on the bus
     for (int dead = cycles - m_accesses; dead > 0; --dead)
@@ -827,6 +833,7 @@ int System::step() {
     sync(m_ticks);
     if (m_gime) coco3Lines();
     updateLines();
+    m_halted = haltBefore && m_halt;
     const uint64_t slow = m_ticks / TICKS_SLOW;
     const int r = (int)(slow - m_reported);
     m_reported = slow;

@@ -483,6 +483,7 @@ private:
     uint64_t m_instr = 0;                      // ticks into the current instruction
     int m_accesses = 0;
     bool m_halt = false, m_nmi = false;
+    bool m_halted = false;              // the CPU is halted (m_halt seen at an instruction end)
     bool m_cartLine = true;
 
     uint16_t m_axis[2][2] = {{32768, 32768}, {32768, 32768}};
