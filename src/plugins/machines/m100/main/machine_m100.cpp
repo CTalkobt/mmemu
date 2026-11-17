@@ -148,23 +148,97 @@ std::vector<std::string> wrap(const std::string& s, size_t width) {
  * option ROM socket). Each takes the host file that holds its memory as
  * the option (`expansion sysbus rampac FILE`, `expansion rex rex FILE`).
  */
+// The Disk/Video Interface's two ROMs: the boot ROM (M40; its first 1 KB is
+// used) and the character generator (M17; its first 2 KB), the user's files
+bool loadDviRoms(std::vector<uint8_t>& rom, std::vector<uint8_t>& cg, std::string& err) {
+    const std::string dir = firmwareDir();
+    if (!loadOne(dir, {"dvi.rom", "M40_P.bin", "m40_p.bin", "M40 P.bin"}, 0x400, 0x1000, rom)) {
+        err = "Disk/Video Interface boot ROM not found: put dvi.rom (the M40 P-ROM, 1-4 KB) in " + dir + "/";
+        return false;
+    }
+    if (!loadOne(dir, {"dvichar.rom", "M17_CG.bin", "m17_cg.bin", "M17 CG.bin"}, 0x800, 0x1000, cg)) {
+        err = "Disk/Video Interface character ROM not found: put dvichar.rom (the M17 P-ROM, 2-4 KB) in " + dir + "/";
+        return false;
+    }
+    return true;
+}
+
+bool fitDvi(System* sys, std::string& err) {
+    if (sys->dvi()) return true;
+    std::vector<uint8_t> rom, cg;
+    return loadDviRoms(rom, cg, err) && sys->fitDvi(std::move(rom), std::move(cg), err);
+}
+
+/**
+ * The Disk/Video Interface's drives as the frontends' disk units 1 and 2
+ * (drives 0 and 1). Mounting a disk fits the DVI when it isn't there.
+ */
+class DviDrives : public IOHandler {
+public:
+    explicit DviDrives(System* s) : m_sys(s) {}
+    const char* name() const override { return "DVI drives"; }
+    uint32_t baseAddr() const override { return 0x80; }
+    uint32_t addrMask() const override { return 0; }
+    bool ioRead(IBus*, uint32_t, uint8_t*) override { return false; }
+    bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
+    void reset() override {}
+    void tick(uint64_t) override {}
+    bool mountDisk(int unit, const std::string& path) override {
+        if (unit < 1 || unit > 2) return false;
+        std::string err;
+        if (!fitDvi(m_sys, err)) return false;
+        return m_sys->dvi()->mountDisk(unit - 1, path, &err);
+    }
+    void ejectDisk(int unit) override {
+        if (m_sys->dvi() && unit >= 1 && unit <= 2) m_sys->dvi()->ejectDisk(unit - 1);
+    }
+    std::string getMountedDiskPath(int unit) override {
+        return (m_sys->dvi() && unit >= 1 && unit <= 2) ? m_sys->dvi()->diskPath(unit - 1) : "";
+    }
+    bool getDiskStatus(int unit, int& track, int& sector, bool& led) override {
+        if (!m_sys->dvi() || unit < 1 || unit > 2) return false;
+        Wd17xx& f = m_sys->dvi()->fdc();
+        return f.getDiskStatus(unit - 1, track, sector, led);
+    }
+
+private:
+    System* m_sys;
+};
+
 void addAddonSlots(MachineDescriptor* desc, System* sys) {
     {
         MachineDescriptor::ExpansionSlot s;
         s.name = "sysbus";
         s.description = "The 40-pin system bus: a RAMPAC / Node Datapac (256 KB battery-backed RAM disk at "
-                        "ports $81/$83; the option is the host file that holds it)";
+                        "ports $81/$83; the option is the host file that holds it), or the Disk/Video "
+                        "Interface (ports $80-$83; the option is a disk image for drive 0)";
         s.devices = {{"rampac", "RAMPAC: 256 KB RAM disk, saved to the file given", {}, ""},
-                     {"datapac", "Node Datapac (as the RAMPAC)", {}, ""}};
+                     {"datapac", "Node Datapac (as the RAMPAC)", {}, ""},
+                     {"dvi", "Disk/Video Interface (26-3806): 5.25\" drives and a 40/80-column monitor", {}, ""}};
         s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
-            if (device.empty()) { sys->removeRampac(); return true; }
+            if (device.empty()) { sys->removeRampac(); sys->removeDvi(); return true; }
+            if (device == "dvi") {
+                sys->removeDvi();
+                if (!fitDvi(sys, err)) return false;
+                if (!option.empty() && !sys->dvi()->mountDisk(0, option, &err)) {
+                    if (err.empty()) err = "can't read the disk image '" + option + "'";
+                    return false;
+                }
+                return true;
+            }
             if (device != "rampac" && device != "datapac") {
-                err = "the sysbus slot takes rampac or datapac";
+                err = "the sysbus slot takes rampac, datapac or dvi";
                 return false;
             }
+            sys->removeDvi();
             return sys->fitRampac(option, err);
         };
         s.info = [sys]() -> std::string {
+            if (Dvi* d = sys->dvi()) {
+                const std::string p0 = d->diskPath(0), p1 = d->diskPath(1);
+                return "dvi (drive 0: " + (p0.empty() ? std::string("empty") : p0) +
+                       (p1.empty() ? std::string("") : ", drive 1: " + p1) + ")";
+            }
             if (!sys->rampac()) return "";
             const std::string& p = sys->rampac()->path();
             return "rampac (256K, " + (p.empty() ? std::string("not saved") : p) + ")";
@@ -354,6 +428,11 @@ MachineDescriptor* create(Model model, std::string* err, const Roms* roms, int r
     if (sys->hasModem()) io->registerHandler(&sys->modemPort);    // `modem:SPEC`
     io->registerHandler(&sys->barcodePort);   // `barcode:...`
     io->registerHandler(&sys->serial);
+    if (!sys->isPc8201() && model != Model::M10 && model != Model::KC85) {
+        auto* drives = new DviDrives(sys);
+        io->registerHandler(drives);
+        desc->deleters.push_back([drives]() { delete drives; });
+    }
 
     desc->onKey = [sys](const std::string& name, bool down) {
         if (name == "reset") { if (down) sys->resetButton(); return true; }
