@@ -218,7 +218,7 @@ cartridge FIRQ starts it.
 | `sc2` | Disto Super Controller II: an FD-502-compatible WD1773 controller with a 256-byte no-halt buffer at `$FF74-$FF77` and the Mini-Expansion Bus at `$FF50` (option: `[ROM][,alt]`; below) |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
 | `burke` | Burke & Burke CoCo XT-RTC hard disk interface at `$FF50-$FF53` and its DS1215 clock (option: drive 0's raw image[,ROM]) |
-| `becker` | The Becker port at `$FF41/$FF42` to mmsim's built-in DriveWire 4 server (option: `[ROM][,cow]`; below) |
+| `becker` | The Becker port at `$FF41/$FF42` to mmsim's built-in DriveWire 4 server (option: `[ROM][,cow][,net]`; below) |
 | `dosrom` | A DOS ROM at `$C000` with no hardware behind it and no autostart: HDB-DOS for DriveWire over the bit banger (`serial drivewire`; below) |
 | `rompak` | A ROM Pak; the option its image |
 | `gmc` | The Games Master Cartridge (bank-switched ROM and an SN76489); the option its image |
@@ -617,13 +617,13 @@ wiki, checked against what NitrOS-9's `rbdw`, `dwio`, `clock2_dw` and
   time), `OP_SETTIME` `$24` (taken, not applied), `OP_INIT` `$49`,
   `OP_TERM` `$54`, `OP_RESET1-3` `$FE` `$FF` `$F8`, `OP_NOP` `$00`,
   `OP_GETSTAT` `$47` / `OP_SETSTAT` `$53` (logged only).
-- Virtual serial, for now "no data": `OP_SERREAD` `$43` answers 0, 0;
-  `OP_SERWRITE` `$C3`, `OP_SERWRITEM` `$64`, `OP_FASTWRITE` `$80-$8E`,
-  `OP_SERINIT` `$45`, `OP_SERTERM` `$C5`, `OP_SERGETSTAT` `$44` and
-  `OP_SERSETSTAT` `$C4` (with SS.ComSt's 26 bytes) are taken whole and
-  dropped; `OP_SERREADM` `$63` gets nothing (as the spec, asking for more
-  than is queued; it is only asked after `OP_SERREAD` announces data,
-  which never happens).
+- Virtual serial channels (below): `OP_SERREAD` `$43`, `OP_SERREADM`
+  `$63`, `OP_SERWRITE` `$C3`, `OP_SERWRITEM` `$64`, `OP_FASTWRITE`
+  `$80-$9F`, `OP_SERINIT` `$45`, `OP_SERTERM` `$C5`, `OP_SERGETSTAT` `$44`
+  (advertised by the driver; no answer, but SS.KySns `$27` answers 0: Level
+  1's `scdwv` reads a byte back there, Level 2's doesn't, and a new command
+  drops answer bytes left unread) and `OP_SERSETSTAT` `$C4`
+  (SS.Open `$29`, SS.Close `$2A`, SS.ComSt `$28` with PD.OPT's 26 bytes).
 - `OP_PRINT` `$50` bytes are kept (`printBuffer`), `OP_PRINTFLUSH` `$46`;
   `OP_NAMEOBJ_MOUNT` / `CREATE` `$01` / `$02` answer 0 (failed).
 - Any other opcode is one byte and ignored; a command whose bytes stop for
@@ -660,7 +660,7 @@ server at the far end of that cable:
 
 ```
 expansion cart dosrom roms/coco/hdbdw3cc3.rom      # HDB-DOS for the serial port, no controller
-serial drivewire                                   # (or drivewire:38400, drivewire,cow)
+serial drivewire                                   # (or drivewire:38400, drivewire,cow,net)
 disk mount 1 nos96809l2v030300coco3_dw.dsk         # DriveWire drive 0
 DOS                                                # (typed at OK) boots NitrOS-9
 ```
@@ -718,14 +718,117 @@ and 6309) and fails at the wrong rate; with the local HDB-DOS builds the
 `_dw` disks boot to the shell and run `dir`: Level 2 6809 and 6309 on the
 CoCo 3 (115200), Level 1 on the CoCo 2 (57600) and the CoCo 1 (38400).
 
+**Virtual serial channels.** NitrOS-9's `scdwv` driver puts SCF devices
+on DriveWire channels, numbered by the descriptor's port: `/Term` (the
+headless builds' console) 0, `/N1-/N13` 1-13, `/MIDI` 14, the windows
+`/Z1-/Z7` (`/Z1-/Z15` possible) `$11-$1F`; `/N` is a wildcard that takes
+the next free `/Nx`. The driver opens a channel with `OP_SERINIT`, writes
+to it (`OP_FASTWRITE` `$80` + port, one byte; `SERWRITE`, `SERWRITEM`),
+tells the server of each path's open and close (`SERSETSTAT` SS.Open /
+SS.Close) and closes it with `OP_SERTERM`. Bytes for the guest wait at the
+server until `dwio` polls, `OP_SERREAD` from a VIRQ (every 3-40 ticks,
+faster while data flows), which the server answers, round robin over the
+channels the guest has open (checked against `dwio.asm`'s IRQ handler and
+pyDriveWire):
+
+| Answer | Meaning |
+|--------|---------|
+| `0, 0` | nothing |
+| `1 + port, byte` | one byte for serial channel 0-14 (sent this way while one or two wait) |
+| `$11 + port, n` | n (up to 255) wait: the guest asks `OP_SERREADM port, count` (count up to n, the room in its buffer) |
+| `$10, port` | the host closed serial channel `port`: the guest sends S$HUP to the processes with a path to it. Sent 0.5 s (guest time) after the guest last took a byte of the channel: S$HUP to a reader that hasn't yet run cuts its read short (`dw` died with error 4 when it came at once) |
+| `$40 + (port & $0F), key` | a key for window `$10-$1F` |
+
+Each channel's host side is the in-process API (`DriveWireServer::
+hostWrite`, `channelOutput`, `hostClose`, for tests and the frontends)
+and one of these far ends, set with the CLI's `drivewire` command
+(`drivewire channel CH SPEC`, CH being `term`, `n1`-`n13`, `midi`,
+`z1`-`z15` or a number):
+
+| Spec | The far end |
+|------|-------------|
+| `tcp:PORT` | a listening socket on 127.0.0.1, one client at a time (`nc localhost PORT`, `telnet`); text in is telnet-style (LF and CR LF become SCF's CR, IAC sequences dropped); `tcp:PORT,raw` passes bytes as they come. A client hanging up a `/N` channel is the guest's S$HUP |
+| `file:PATH` | what the guest writes, to a file |
+| `loopback` | what the guest writes comes back |
+| `modem` | (the default on `/N1-/MIDI`) the DriveWire server's virtual modem, below |
+| `none` | (the default on `/Term` and the windows) the in-process API only |
+
+```
+expansion cart becker roms/coco/hdbdw3bc3.rom
+disk mount 1 nos96809l2v030300coco3_becker_headless.dsk
+drivewire channel term tcp:6809       # the headless console on a TCP port
+drivewire channel n1 tcp:6810         # (then on the guest: shell i=/n1&)
+DOS                                   # (typed at OK); then `nc localhost 6809`
+drivewire                             # the drives and channels
+drivewire type term dir               # a line to /Term from the CLI ...
+drivewire read term                   # ... and what the guest wrote since
+drivewire hangup n1                   # S$HUP to /N1's processes
+```
+
+The **virtual modem** answers the lines the guest writes to a `/N`
+channel with no far end, as the DriveWire 4 server's API (NitrOS-9's
+`dw`, `telnet` and `inetd` open `/N` and write commands there; the
+replies are in the form `dw.as` and `net.as` read): `dw disk show`, `dw
+disk eject N`, `dw server version` and `dw port show` answer `OK`, the
+text, and then the channel closes (which ends `dw`); `tcp connect HOST
+PORT` connects the channel to a TCP server (`OK connected to HOST:PORT`,
+then the channel carries the connection until either end closes: the
+guest's `telnet`) when network access is on; anything else answers `FAIL 208 not supported: ...`
+(`dw ...` then closes; E$UnkSvc). `tcp listen` / `tcp join` (`inetd`),
+the AT command set, `dw disk insert` and the rest of the DW4 server's
+commands are not there.
+
+**Network access is off by default**: `tcp connect` would let a program
+in the guest open a connection to any host, so it answers `FAIL 205
+network access is off` until the host allows it. Turn it on with `,net`
+when fitting the server (`expansion cart becker [ROM],net`, `serial
+drivewire,net`), with `drivewire network on|off` while it runs, with the
+device option `network` (`devopt cart network on` for the Becker
+cartridge, `devopt rs-232 network on` for the bit banger; a machine
+JSON's device `"options": {"network": "on"}`), or in the GUI with the
+**DriveWire network access** toggle in the Devices pane (the `Cartridge`
+or `RS-232` device). `drivewire` alone shows the setting. While a
+connection opens, the emulation waits for it.
+
+A device option can also be **held until startup has finished**: `devopt
+cart network on when started` waits until the guest's DriveWire driver
+starts (it sends DWINIT, or DriveWire 3's INIT; HDB-DOS at its prompt
+doesn't, NitrOS-9's boot does), and `devopt cart network on when 5` waits
+five seconds of guest time from when it was set. A machine JSON's device
+option takes `{ "value": "on", "when": "started" }` for the same.
+`devinfo` and the GUI's Devices pane list the held options; a held option
+that the device refuses when its time comes is shown there as "Held option
+refused". The Becker cartridge's port and the bit banger take `network`,
+and the bit banger also `baud` and `turnaround`, this way.
+
+The `_becker_headless` and `_dw_headless` builds
+boot to their shell on `/Term`; `test_coco_real_roms.cpp` runs `dir` there,
+a second shell on `/N1`, and `dw disk show` while `/N1` is still busy,
+and then both shells again (Level 2 on the CoCo 3, Becker and bit banger;
+Level 1 on the CoCo 2).
+
+**A channel's close waits for a quiet guest.** NitrOS-9 Level 1's `dwio`
+answers the close notice (`$10, port`) by signalling, then calling
+`F$AProc` on, every process with a path open to the channel. Level 1's
+`F$AProc` doesn't check whether the process is already in the active
+queue. `dw` polls `SS.Ready` and sleeps a tick between polls; if it is
+waiting for a time slice when the notice comes (another process keeps the
+CPU busy, as `/N1`'s `dir` does), it is inserted a second time, its
+`P$Queue` link points at itself, and the kernel loops in `F$AProc` for
+good. That is a race in the guest's driver, which a real DW4 server could
+hit as well; the server here avoids it by announcing a close only after
+the usual 0.5 s and once the guest has written to no channel for 0.25 s
+with no bytes waiting for it on any (`CLOSE_QUIET`). A process that keeps
+the CPU busy without DriveWire traffic could still meet it.
+
 **Unverified / not done**: the bit-banger link's behaviour against a
 real CoCo (its exact sampling points within a cycle, the PIA's own
 delays: all edges are at cycle boundaries here), a DriveWire server's
-real turnaround time, virtual
-serial channels and windows (`/N`, `/Z`, networking), named objects, the
-printer's output, `OP_SETTIME` changing anything, DW4's turbo mode, a TCP
-link to an external server (pyDriveWire, DW4) as XRoar's, and the
-`_becker_headless` builds (whose console is a DriveWire window). The
+real turnaround time, the `/Z` windows with a guest (the release disks
+have their descriptors but no window-aware program; the protocol is per
+`dwio.asm`), `inetd`'s listen side, named objects, the
+printer's output, `OP_SETTIME` changing anything, DW4's turbo mode, and a
+TCP link to an external server (pyDriveWire, DW4) as XRoar's. The
 CoCo3FPGA's exact decoding of the Becker port (mirrors, the WiFi variant
 at `$FF6C`) is not modelled. HDB-DOS's floppy paths (it keeps Disk
 BASIC's FDC code) find no controller on this cartridge.
@@ -937,8 +1040,9 @@ Dragon's text is drawn on a graphics screen, so it checks that `dir` is
 loaded from CMDS instead of reading the screen). The `_becker` builds
 boot through the Becker port and the built-in DriveWire server (above),
 the `_dw` builds through the same server on the serial port (`serial
-drivewire`). The `_headless` builds (their console a DriveWire window) are
-not tried.
+drivewire`); the `_becker_headless` and `_dw_headless` builds (their
+console DriveWire channel 0) take `dir`, a second shell on `/N1` and `dw
+disk show` through the server's virtual channels.
 
 ## Not done
 
@@ -949,8 +1053,8 @@ not tried.
   graphics are decoded); a PAL composite encoder.
 - Storage: Disto's Mini-Expansion Bus boards (clock, printer, hard disk
   adapters) and the Glenside IDE cartridge;
-  the CoCo SDC's flash programming; DriveWire's virtual serial channels
-  and named objects. The SDC is not yet checked with
+  the CoCo SDC's flash programming; DriveWire's named objects, `inetd`'s
+  `tcp listen`. The SDC is not yet checked with
   SDC-DOS, nor Burke & Burke with HDB-DOS or a NitrOS-9 hard disk.
 
 ## Tests
@@ -990,7 +1094,11 @@ disk image when `roms/coco/xt-rtc/` has it.
 `src/plugins/devices/drivewire/test` covers the DriveWire server byte by
 byte (READEX with its checksum, E$CRC and REREADEX, the DW3 READ, WRITE and
 REWRITE with a bad checksum, writes past the end, copy-on-write and read
-only, TIME, SETTIME, DWINIT, INIT/TERM/RESET, the virtual-serial and
-printer opcodes, named objects, unknown opcodes and the command timeout);
+only, TIME, SETTIME, DWINIT, INIT/TERM/RESET, the printer's opcodes, named
+objects, unknown opcodes and the command timeout; the virtual channels:
+SERREAD's single-byte, multi-byte (with SERREADM), window-key and
+channel-closed answers, round robin, SERWRITE / SERWRITEM / FASTWRITE per
+channel, SS.Open / SS.Close / SS.ComSt, a cooked far end, the virtual
+modem's `dw` replies and FAIL, `tcp connect` to a local socket and its hang-up, the CLI's command);
 `test_coco_storage.cpp` the Becker port's registers (also in a Multi-Pak)
 and a 6809 reading a sector through it on a CoCo 2.

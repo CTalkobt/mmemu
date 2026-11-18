@@ -276,6 +276,7 @@ std::string BeckerCart::describe() const {
     std::string s = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server";
     if (!m_rom.empty()) s += ", ROM " + (m_label.empty() ? std::string("at $C000") : m_label);
     if (m_cow) s += ", copy on write";
+    if (m_dw.network()) s += ", network on";
     const std::string drives = m_dw.describe();
     if (!drives.empty()) s += "; " + drives;
     return s;

@@ -1,6 +1,7 @@
 #include "test_harness.h"
 #include "coco_test_rom.h"
 #include "plugins/machines/coco/main/coco_storage.h"
+#include "libdevices/main/device_info.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
 #include <cstdio>
 #include <ctime>
@@ -994,6 +995,128 @@ TEST_CASE(coco_pb0_sampled_on_the_read_cycle) {
         }
     }
 }
+// DriveWire's network access (the virtual modem's tcp connect): off unless
+// asked for (",net", the "network" option); a switch in the device's info
+TEST_CASE(coco_drivewire_network_switch) {
+    auto switchOf = [](IOHandler* h) {
+        DeviceInfo info;
+        h->getDeviceInfo(info);
+        for (const auto& sw : info.switches)
+            if (sw.key == "network") return sw.on ? 1 : 0;
+        return -1;
+    };
+    std::string err;
+    // The bit banger: the option is kept until DriveWire is attached
+    coco::BitBanger bb;
+    ASSERT_EQ(switchOf(&bb), -1);                           // no DriveWire, no switch
+    ASSERT(bb.attachSerial("drivewire"));
+    ASSERT_EQ(switchOf(&bb), 0);
+    ASSERT(!bb.driveWire()->network());
+    ASSERT(bb.setOption("network", "on", err));
+    ASSERT(bb.driveWire()->network());
+    ASSERT_EQ(switchOf(&bb), 1);
+    ASSERT(!bb.setOption("network", "sometimes", err));
+    ASSERT(bb.setOption("network", "off", err));
+    ASSERT_EQ(switchOf(&bb), 0);
+    ASSERT(bb.attachSerial("drivewire:38400,cow,net"));
+    ASSERT(bb.driveWire()->network());
+    ASSERT(!bb.attachSerial("drivewire,net,ro"));
+    coco::BitBanger early;
+    ASSERT(early.setOption("network", "on", err));          // before the attach: kept
+    ASSERT(early.attachSerial("drivewire"));
+    ASSERT(early.driveWire()->network());
+
+    // The Becker cartridge, through the machine's cartridge port
+    coco::Roms roms;
+    roms.colorBasic = jumpToCart();
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    ASSERT(m);
+    IOHandler* port = m->ioRegistry->findHandler("Cartridge");
+    ASSERT(port);
+    ASSERT_EQ(switchOf(port), -1);
+    ASSERT(!port->setOption("network", "on", err));         // no Becker cartridge
+    ASSERT(m->expansionSlot("cart")->install("becker", "", err));
+    auto* becker = dynamic_cast<coco::BeckerCart*>(coco::systemOf(m)->cart());
+    ASSERT(becker && !becker->server().network());
+    ASSERT_EQ(switchOf(port), 0);
+    ASSERT(port->setOption("network", "on", err));
+    ASSERT(becker->server().network());
+    ASSERT_EQ(switchOf(port), 1);
+    ASSERT(becker->describe().find("network on") != std::string::npos);
+    ASSERT(m->expansionSlot("cart")->install("becker", "cow,net", err));
+    becker = dynamic_cast<coco::BeckerCart*>(coco::systemOf(m)->cart());
+    ASSERT(becker && becker->server().network() && becker->copyOnWrite());
+    delete m;
+}
+
+// Held options: set "when started" they wait for the guest's DriveWire
+// driver to start (DWINIT / INIT); with a delay, for that much guest time
+TEST_CASE(coco_drivewire_held_options) {
+    OptionTiming t;
+    ASSERT(OptionTiming::parse("started", t) && t.kind == OptionTiming::Kind::Started);
+    ASSERT(OptionTiming::parse("2.5s", t) && t.kind == OptionTiming::Kind::Delay && t.seconds == 2.5);
+    ASSERT(OptionTiming::parse("now", t) && t.kind == OptionTiming::Kind::Now);
+    ASSERT(!OptionTiming::parse("later", t));
+    ASSERT(!OptionTiming::parse("-1", t));
+    std::string err;
+    const uint64_t ms = (uint64_t)(coco::MASTER_HZ / 1000);
+
+    // The bit banger: "started" waits for DWINIT
+    coco::BitBanger bb;
+    ASSERT(bb.attachSerial("drivewire"));
+    ASSERT(!bb.setOptionWhen("network", "maybe", OptionTiming::started(), err));   // checked at once
+    ASSERT(!bb.setOptionWhen("speed", "1", OptionTiming::started(), err));
+    ASSERT(bb.setOptionWhen("network", "on", OptionTiming::started(), err));
+    ASSERT_EQ((int)bb.pendingOptions().size(), 1);
+    uint64_t now = 0;
+    for (int i = 0; i < 50; ++i) bb.clock(now += ms);
+    ASSERT(!bb.driveWire()->network());                     // no init yet
+    bb.driveWire()->receive(DriveWireServer::OP_DWINIT);
+    bb.driveWire()->receive(0x00);
+    bb.clock(now += 2 * ms);
+    ASSERT(bb.driveWire()->network());
+    ASSERT(bb.pendingOptions().empty());
+    // A delay: 0.2 s of guest time from when it was set
+    ASSERT(bb.setOptionWhen("network", "off", OptionTiming::delay(0.2), err));
+    for (int i = 0; i < 150; ++i) bb.clock(now += ms);
+    ASSERT(bb.driveWire()->network());
+    for (int i = 0; i < 60; ++i) bb.clock(now += ms);
+    ASSERT(!bb.driveWire()->network());
+    // A setting now replaces a held one
+    ASSERT(bb.setOptionWhen("network", "on", OptionTiming::delay(0.1), err));
+    ASSERT(bb.setOptionWhen("network", "off", OptionTiming::now(), err));
+    ASSERT(bb.pendingOptions().empty());
+
+    // The cartridge port: held before the Becker cartridge is there; DriveWire 3's INIT
+    coco::Roms roms;
+    roms.colorBasic = jumpToCart();
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    ASSERT(m);
+    IOHandler* port = m->ioRegistry->findHandler("Cartridge");
+    ASSERT(port);
+    ASSERT(port->setOptionWhen("network", "on", OptionTiming::started(), err));
+    ASSERT(m->expansionSlot("cart")->install("becker", "", err));
+    auto* becker = dynamic_cast<coco::BeckerCart*>(coco::systemOf(m)->cart());
+    ASSERT(becker);
+    auto& cp = coco::systemOf(m)->cartPort;
+    for (int i = 0; i < 20; ++i) cp.clock(ms);
+    ASSERT(!becker->server().network());
+    becker->write(0xFF42, false, true, DriveWireServer::OP_INIT);
+    for (int i = 0; i < 3; ++i) cp.clock(ms);
+    ASSERT(becker->server().network());
+    ASSERT(port->pendingOptions().empty());
+    // A held option the device then refuses: shown in its info
+    ASSERT(port->setOptionWhen("network", "off", OptionTiming::delay(0.01), err));
+    ASSERT(m->expansionSlot("cart")->install("", "", err));    // the cartridge taken out
+    for (int i = 0; i < 20; ++i) cp.clock(ms);
+    DeviceInfo info;
+    port->getDeviceInfo(info);
+    bool refused = false;
+    for (const auto& st : info.state) refused |= st.first == "Held option refused";
+    ASSERT(refused);
+    delete m;
+}
+
 
 // The transport: a command's frames off PA1 to the server, its answer down
 // PB0 TURNAROUND_US after the stop bit, 8N1 back to back; one server only

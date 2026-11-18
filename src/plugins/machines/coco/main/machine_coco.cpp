@@ -2,6 +2,7 @@
 // after the Color Computer Technical Reference Manual and XRoar
 // (dragon/dragon.c, dragon/coco.c; GPL-3.0-or-later), mmsim's own code.
 
+#include <sstream>
 #include "coco_system.h"
 #include "coco_storage.h"
 #include "coco_addons.h"
@@ -243,14 +244,18 @@ bool BitBanger::attachSerial(const std::string& spec) {
         receive(bytes);
         return true;
     }
-    // drivewire[:BAUD][,cow]
+    // drivewire[:BAUD][,cow][,net]
     if (spec.rfind("drivewire", 0) == 0) {
         std::string rest = spec.substr(9);
-        bool cow = false;
+        bool cow = false, net = false;
         const auto comma = rest.find(',');
         if (comma != std::string::npos) {
-            if (rest.substr(comma + 1) != "cow") return false;
-            cow = true;
+            std::stringstream flags(rest.substr(comma + 1));
+            for (std::string f; std::getline(flags, f, ',');) {
+                if (f == "cow") cow = true;
+                else if (f == "net") net = true;
+                else return false;
+            }
             rest = rest.substr(0, comma);
         }
         int baud = 0;
@@ -259,7 +264,7 @@ bool BitBanger::attachSerial(const std::string& spec) {
             baud = std::atoi(rest.c_str() + 1);
             if (baud < 50 || baud > 115200) return false;
         }
-        return attachDriveWire(baud, cow);
+        return attachDriveWire(baud, cow, net);
     }
     if (spec == "none" && (m_file || !m_rxQueue.empty() || m_dw || m_rxConnected)) {
         if (m_file) std::fclose(m_file);
@@ -273,11 +278,22 @@ bool BitBanger::attachSerial(const std::string& spec) {
     return false;
 }
 
-bool BitBanger::attachDriveWire(int baud, bool copyOnWrite) {
+bool BitBanger::deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) {
+    if (verb != "drivewire" || !m_dw) return false;
+    out = m_dw->hostCommand(args);
+    return true;
+}
+
+bool BitBanger::attachDriveWire(int baud, bool copyOnWrite, bool network) {
     if (driveWireElsewhere && driveWireElsewhere()) return false;
     m_baud = baud > 0 ? baud : m_dwBaud;
     m_dwCow = copyOnWrite;
-    if (!m_dw) m_dw.reset(new DriveWireServer());
+    if (!m_dw) {
+        m_dw.reset(new DriveWireServer());
+        m_dwInits = 0;
+    }
+    if (network) m_dwNetwork = true;
+    m_dw->setNetwork(m_dwNetwork);
     m_rxConnected = true;            // the host's transmitter holds the line at mark
     m_rxQueue.clear();
     m_rxBusy = false;
@@ -339,14 +355,52 @@ bool BitBanger::rxLevel(uint64_t now) {
     }
 }
 
+namespace {
+
+/** BitBanger's options' values, checked without applying them. */
+bool checkBitBangerOption(const std::string& key, const std::string& value, std::string& err) {
+    bool on = false;
+    if (key == "turnaround") {
+        const double us = std::atof(value.c_str());
+        if (us < 0 || us > 1e6) { err = "turnaround: 0-1000000 (microseconds)"; return false; }
+    } else if (key == "network") {
+        if (!DriveWireServer::parseOnOff(value, on)) { err = "network: on or off"; return false; }
+    } else if (key == "baud") {
+        const int b = std::atoi(value.c_str());
+        if (b < 50 || b > 115200) { err = "baud: 50-115200"; return false; }
+    } else {
+        err = "no such option (baud, turnaround, network)";
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool BitBanger::setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                              std::string& err) {
+    if (when.kind == OptionTiming::Kind::Now) return setOption(key, value, err);
+    if (!checkBitBangerOption(key, value, err)) return false;
+    m_deferred.queue(key, value, when);
+    return true;
+}
+
 bool BitBanger::setOption(const std::string& key, const std::string& value, std::string& err) {
+    m_deferred.cancel(key);                 // a setting now replaces a held one
     if (key == "turnaround") {
         const double us = std::atof(value.c_str());
         if (us < 0 || us > 1e6) { err = "turnaround: 0-1000000 (microseconds)"; return false; }
         m_turnaroundUs = us;
         return true;
     }
-    if (key != "baud") { err = "no such option (baud, turnaround)"; return false; }
+    if (key == "network") {
+        bool on = false;
+        if (!DriveWireServer::parseOnOff(value, on)) { err = "network: on or off"; return false; }
+        m_dwNetwork = on;
+        if (m_dw) m_dw->setNetwork(on);
+        return true;
+    }
+    if (key != "baud") { err = "no such option (baud, turnaround, network)"; return false; }
     const int b = std::atoi(value.c_str());
     if (b < 50 || b > 115200) { err = "baud: 50-115200"; return false; }
     m_baud = b;
@@ -355,12 +409,18 @@ bool BitBanger::setOption(const std::string& key, const std::string& value, std:
 
 void BitBanger::getDeviceInfo(DeviceInfo& out) const {
     IOHandler::getDeviceInfo(out);
+    const std::string held = m_deferred.lastError();
+    if (!held.empty()) out.state.push_back({"Held option refused", held});
     if (!m_dw) return;
     std::string s = "DriveWire 4 server at " + std::to_string(m_baud) + " baud";
     if (m_dwCow) s += ", copy on write";
+    if (m_dw->network()) s += ", network on";
     const std::string drives = m_dw->describe();
     if (!drives.empty()) s += "; " + drives;
     out.state.push_back({"DriveWire", s});
+    out.switches.push_back({"network", "DriveWire network access",
+                            "Lets the guest's tcp connect (NitrOS-9's telnet) open connections to other hosts",
+                            m_dw->network()});
 }
 
 bool BitBanger::mountDisk(int unit, const std::string& path) {
@@ -390,9 +450,18 @@ void BitBanger::clock(uint64_t now) {
     if (now <= m_clockAt) return;
     m_clockAcc += now - m_clockAt;
     m_clockAt = now;
-    if (!m_dw || m_clockAcc < 14318) return;           // in steps of about a millisecond
+    if (m_clockAcc < 14318) return;                     // in steps of about a millisecond
     const double s = (double)m_clockAcc / m_hz;
     m_clockAcc = 0;
+    // Held options: the guest's DriveWire driver starting, or a delay, brings them in
+    const bool started = m_dw && m_dw->stats().inits != m_dwInits;
+    if (m_dw) m_dwInits = m_dw->stats().inits;
+    if (!m_deferred.empty()) {
+        auto apply = [this](const std::string& k, const std::string& v, std::string& e) { return setOption(k, v, e); };
+        if (started) m_deferred.started(apply);
+        m_deferred.elapse(s, apply);
+    }
+    if (!m_dw) return;
     m_dw->advance(s);
     const auto& st = m_dw->stats();
     const uint64_t count = st.reads + st.writes + st.rereads;
@@ -430,6 +499,8 @@ void BitBanger::byteIn(uint8_t v, uint64_t frameEnd) {
         sent.push_back(v);
         return;
     }
+    // A new command: answer bytes not yet on the line are stale (as the server's own)
+    if (m_dw->idle()) m_rxQueue.clear();
     m_dw->receive(v);
     if (!m_dw->hasOutput()) return;
     std::vector<uint8_t> answer;
@@ -508,6 +579,52 @@ bool CartPort::attachSerial(const std::string& spec) {
     return m_sys->cart() && m_sys->cart()->attachSerial(spec);
 }
 
+bool CartPort::deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) {
+    BeckerCart* becker = verb == "drivewire" ? findBecker(m_sys->cart()) : nullptr;
+    if (!becker) return false;
+    out = becker->server().hostCommand(args);
+    return true;
+}
+
+bool CartPort::setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                             std::string& err) {
+    if (when.kind == OptionTiming::Kind::Now) return setOption(key, value, err);
+    bool on = false;
+    if (key != "network") { err = "no such option (network)"; return false; }
+    if (!DriveWireServer::parseOnOff(value, on)) { err = "network: on or off"; return false; }
+    m_deferred.queue(key, value, when);     // (the Becker cartridge may come later)
+    return true;
+}
+
+void CartPort::clock(uint64_t ticks) {
+    m_acc += ticks;
+    if (m_acc < 14318) return;              // about a millisecond
+    const double s = (double)m_acc / m_sys->masterHz();
+    m_acc = 0;
+    // The Becker cartridge's server: its guest driver starting is the startup's end
+    BeckerCart* becker = findBecker(m_sys->cart());
+    const void* server = becker ? &becker->server() : nullptr;
+    const uint64_t inits = becker ? becker->server().stats().inits : 0;
+    const bool started = server && server == m_becker && inits != m_inits;
+    m_becker = server;
+    m_inits = inits;
+    if (m_deferred.empty()) return;
+    auto apply = [this](const std::string& k, const std::string& v, std::string& e) { return setOption(k, v, e); };
+    if (started) m_deferred.started(apply);
+    m_deferred.elapse(s, apply);
+}
+
+bool CartPort::setOption(const std::string& key, const std::string& value, std::string& err) {
+    m_deferred.cancel(key);                 // a setting now replaces a held one
+    BeckerCart* becker = findBecker(m_sys->cart());
+    if (key != "network") { err = "no such option (network)"; return false; }
+    if (!becker) { err = "no Becker cartridge (expansion cart becker)"; return false; }
+    bool on = false;
+    if (!DriveWireServer::parseOnOff(value, on)) { err = "network: on or off"; return false; }
+    becker->server().setNetwork(on);
+    return true;
+}
+
 bool CartPort::mountDisk(int unit, const std::string& path) {
     return m_sys->cart() && m_sys->cart()->mountDisk(unit - 1, path);
 }
@@ -527,6 +644,13 @@ std::string CartPort::getMountedDiskPath(int unit) {
 
 void CartPort::getDeviceInfo(DeviceInfo& out) const {
     IOHandler::getDeviceInfo(out);
+    const std::string held = m_deferred.lastError();
+    if (!held.empty()) out.state.push_back({"Held option refused", held});
+    if (m_sys->cart()) out.state.push_back({"Cartridge", m_sys->cart()->describe()});
+    if (BeckerCart* becker = findBecker(m_sys->cart()))
+        out.switches.push_back({"network", "DriveWire network access",
+                                "Lets the guest's tcp connect (NitrOS-9's telnet) open connections to other hosts",
+                                becker->server().network()});
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +960,7 @@ void System::sync(uint64_t to) {
         m_cart->clock(d);
         soundChanged();                 // a cartridge's own sound (the SSC, the GMC's SN76489) moves with time
     }
+    cartPort.clock(d);
     keyboard.clock(d);
     if (dragon()) dragonClock(d);
     else {
@@ -1110,7 +1235,7 @@ const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); o
 const char* const SC2_DESC = "Disto Super Controller II (WD1773, no-halt buffer at $FF74, mini expansion bus at $FF50); option: [the DOS ROM][,alt] (alt: the buffer at $FF58)";
 const char* const BURKE_DESC = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50-$FF53) and DS1215 clock ($FF40-$FF5F); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
 const char* const DOSROM_DESC = "A DOS ROM at $C000 with no hardware behind it and no autostart (HDB-DOS for DriveWire over the bit banger: serial drivewire); option: the ROM (8 or 16 KB)";
-const char* const BECKER_DESC = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server (disk mount N: DriveWire drive N-1); option: [ROM at $C000, e.g. HDB-DOS for the Becker port][,cow] (cow: writes kept in memory)";
+const char* const BECKER_DESC = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server (disk mount N: DriveWire drive N-1); option: [ROM at $C000, e.g. HDB-DOS for the Becker port][,cow][,net] (cow: writes kept in memory; net: the guest's tcp connect may reach the network)";
 const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
 const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
 const char* const GMC_DESC = "Games Master Cartridge: banked ROM (bank at even $FF40-$FF5F) and SN76489 (odd); option: the image (up to 256 KB)";
@@ -1207,14 +1332,15 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         return std::unique_ptr<Cart>(c.release());
     }
     if (device == "becker") {
-        // Option: a ROM for /CTS (HDB-DOS built for the Becker port) and/or "cow", comma separated
+        // Option: a ROM for /CTS (HDB-DOS built for the Becker port), "cow" and/or "net", comma separated
         std::string path;
-        bool cow = false;
+        bool cow = false, net = false;
         size_t at = 0;
         while (at <= option.size()) {
             const auto comma = option.find(',', at);
             const std::string tok = option.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
             if (tok == "cow") cow = true;
+            else if (tok == "net") net = true;
             else if (!tok.empty()) path = tok;
             if (comma == std::string::npos) break;
             at = comma + 1;
@@ -1223,7 +1349,9 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         if (!path.empty() && (!readFile(path, rom) || rom.empty())) { err = "can't read the ROM " + path; return nullptr; }
         if (rom.size() > 0x4000) { err = "the Becker cartridge's ROM is up to 16 KB"; return nullptr; }
         const auto slash = path.find_last_of('/');
-        return std::unique_ptr<Cart>(new BeckerCart(std::move(rom), slash == std::string::npos ? path : path.substr(slash + 1), cow));
+        auto* becker = new BeckerCart(std::move(rom), slash == std::string::npos ? path : path.substr(slash + 1), cow);
+        becker->server().setNetwork(net);
+        return std::unique_ptr<Cart>(becker);
     }
     if (device == "dosrom") {
         // A DOS's ROM with no controller behind it (CART not tied to Q: no autostart)

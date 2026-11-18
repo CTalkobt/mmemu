@@ -3,6 +3,10 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
 
@@ -270,4 +274,340 @@ TEST_CASE(drivewire_command_timeout) {
     ASSERT(dw.idle());
     dw.receive(DW::OP_SERREAD);
     ASSERT_EQ((int)drain(dw).size(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Virtual channels: dwio's OP_SERREAD poll and scdwv's writes and status
+// calls (NitrOS-9 level1/modules/dwio.asm, scdwv.asm)
+// ---------------------------------------------------------------------------
+namespace {
+
+std::vector<uint8_t> serRead(DW& dw) {
+    dw.receive(DW::OP_SERREAD);
+    return drain(dw);
+}
+
+std::vector<uint8_t> bytes(std::initializer_list<int> b) {
+    std::vector<uint8_t> v;
+    for (int x : b) v.push_back((uint8_t)x);
+    return v;
+}
+
+// A channel's answers until it has nothing (single bytes and SERREADMs), and the last poll's answer
+std::string readChannel(DW& dw, int port, std::vector<uint8_t>& last) {
+    std::string s;
+    for (;;) {
+        last = serRead(dw);
+        if (last[0] == 1 + port) {
+            s += (char)last[1];
+        } else if (last[0] == 0x11 + port) {
+            sendAll(dw, {DW::OP_SERREADM, port, last[1]});
+            for (uint8_t b : drain(dw)) s += (char)b;
+        } else {
+            return s;
+        }
+    }
+}
+
+}  // namespace
+
+// One or two bytes waiting: (1 + port, byte) per poll; a channel the guest's
+// driver hasn't opened (OP_SERINIT) isn't offered
+TEST_CASE(drivewire_serread_single_byte) {
+    DW dw;
+    dw.hostWrite(0, "A");
+    ASSERT(serRead(dw) == bytes({0, 0}));                   // /Term not open yet: kept
+    sendAll(dw, {DW::OP_SERINIT, 0});
+    ASSERT(dw.channelOpen(0));
+    ASSERT(serRead(dw) == bytes({1, 'A'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    dw.hostWrite(7, "xy");
+    sendAll(dw, {DW::OP_SERINIT, 7});
+    ASSERT(serRead(dw) == bytes({8, 'x'}));
+    ASSERT(serRead(dw) == bytes({8, 'y'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    ASSERT_EQ((int)dw.stats().serialIn, 3);
+    ASSERT(dw.idle());
+}
+
+// Three or more: ($11 + port, count), then OP_SERREADM port, n takes n of them
+TEST_CASE(drivewire_serread_multi_byte) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 5});
+    dw.hostWrite(5, "0123456789");
+    ASSERT(serRead(dw) == bytes({0x16, 10}));
+    sendAll(dw, {DW::OP_SERREADM, 5, 4});                   // dwio's buffer had room for 4
+    ASSERT(drain(dw) == bytes({'0', '1', '2', '3'}));
+    ASSERT(serRead(dw) == bytes({0x16, 6}));
+    sendAll(dw, {DW::OP_SERREADM, 5, 6});
+    ASSERT(drain(dw) == bytes({'4', '5', '6', '7', '8', '9'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    // At most 255 announced
+    dw.hostWrite(5, std::string(300, 'z'));
+    ASSERT(serRead(dw) == bytes({0x16, 255}));
+    sendAll(dw, {DW::OP_SERREADM, 5, 255});
+    ASSERT_EQ((int)drain(dw).size(), 255);
+    ASSERT(serRead(dw) == bytes({0x16, 45}));
+    ASSERT_EQ((int)dw.hostPending(5), 45);
+}
+
+// A window (/Z1-/Z15, ports $11-$1F) takes keys one at a time: ($40 + n, key)
+TEST_CASE(drivewire_serread_window_keys) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 0x11, DW::OP_SERINIT, 0x1F});
+    dw.hostWrite(0x11, "dir");
+    ASSERT(serRead(dw) == bytes({0x41, 'd'}));
+    ASSERT(serRead(dw) == bytes({0x41, 'i'}));
+    ASSERT(serRead(dw) == bytes({0x41, 'r'}));
+    dw.hostWrite(0x1F, "q");
+    ASSERT(serRead(dw) == bytes({0x4F, 'q'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+}
+
+// Channels with data take turns
+TEST_CASE(drivewire_serread_round_robin) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 1, DW::OP_SERINIT, 2});
+    dw.hostWrite(1, "ac");
+    dw.hostWrite(2, "b");
+    ASSERT(serRead(dw) == bytes({2, 'a'}));
+    ASSERT(serRead(dw) == bytes({3, 'b'}));
+    ASSERT(serRead(dw) == bytes({2, 'c'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+}
+
+// SERWRITE, SERWRITEM and FASTWRITE ($80 + port) reach their own channels
+TEST_CASE(drivewire_serwrite_per_channel) {
+    DW dw;
+    std::string err;
+    ASSERT(dw.attachChannel(3, "none", err));               // (not the virtual modem)
+    ASSERT(dw.attachChannel(4, "none", err));
+    sendAll(dw, {DW::OP_SERINIT, 0, DW::OP_SERINIT, 3, DW::OP_SERINIT, 4, DW::OP_SERINIT, 0x11});
+    sendAll(dw, {DW::OP_SERWRITE, 3, 'a', DW::OP_SERWRITEM, 4, 3, 'x', 'y', 'z'});
+    sendAll(dw, {DW::OP_FASTWRITE + 0, 'T', DW::OP_FASTWRITE + 3, 'b', DW::OP_FASTWRITE + 0x11, 'w'});
+    sendAll(dw, {DW::OP_SERWRITEM, 4, 0});                  // (an empty one)
+    ASSERT(dw.idle());
+    ASSERT(!dw.hasOutput());
+    ASSERT_EQ(dw.channelOutput(0), std::string("T"));
+    ASSERT_EQ(dw.channelOutput(3), std::string("ab"));
+    ASSERT_EQ(dw.channelOutput(4), std::string("xyz"));
+    ASSERT_EQ(dw.channelOutput(0x11), std::string("w"));
+    ASSERT_EQ((int)dw.stats().serialOut, 7);
+    ASSERT_EQ((int)dw.stats().unknownOps, 0);
+    dw.clearChannelOutput(3);
+    ASSERT(dw.channelOutput(3).empty());
+    // To a far end: loopback (cooked: LF and CR LF in become CR, telnet's IAC dropped)
+    ASSERT(dw.attachChannel(3, "loopback", err));
+    sendAll(dw, {DW::OP_SERWRITEM, 3, 9, 'o', 'k', '\n', 0xFF, 0xFB, 0x01, 'z', '\r', '\n'});
+    dw.pollChannels();
+    ASSERT(serRead(dw) == bytes({0x14, 5}));
+    sendAll(dw, {DW::OP_SERREADM, 3, 5});
+    ASSERT(drain(dw) == bytes({'o', 'k', '\r', 'z', '\r'}));
+    ASSERT(dw.attachChannel(3, "loopback,raw", err));
+    sendAll(dw, {DW::OP_SERWRITE, 3, '\n'});
+    dw.pollChannels();
+    ASSERT(serRead(dw) == bytes({4, '\n'}));
+    ASSERT(!dw.attachChannel(3, "bogus:1", err));
+    ASSERT(!dw.attachChannel(0, "modem", err));             // (the modem is on /N1-/N14)
+}
+
+// SS.Open / SS.Close (SERSETSTAT) mark a path open; SS.ComSt carries PD.OPT's
+// 26 bytes; SERTERM closes the channel
+TEST_CASE(drivewire_sersetstat_open_close_comst) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 2, DW::OP_SERSETSTAT, 2, DW::SS_OPEN});
+    ASSERT(dw.channelOpen(2));
+    ASSERT(dw.channelPathOpen(2));
+    sendAll(dw, {DW::OP_SERSETSTAT, 2, DW::SS_COMST});
+    for (int i = 0; i < DW::COMST_BYTES; ++i) {
+        ASSERT(!dw.idle());
+        dw.receive((uint8_t)(0x40 + i));
+    }
+    ASSERT(dw.idle());
+    const std::vector<uint8_t> opt = dw.channelComSt(2);
+    ASSERT_EQ((int)opt.size(), 26);
+    ASSERT_EQ(opt[0], 0x40);
+    ASSERT_EQ(opt[25], 0x40 + 25);
+    sendAll(dw, {DW::OP_SERGETSTAT, 2, 0x26});              // advertised, no answer
+    ASSERT(!dw.hasOutput());
+    sendAll(dw, {DW::OP_SERGETSTAT, 2, DW::SS_KYSNS});      // Level 1 reads SS.KySns's byte
+    ASSERT(drain(dw) == bytes({0}));
+    sendAll(dw, {DW::OP_SERGETSTAT, 2, DW::SS_KYSNS});      // Level 2 doesn't: the next command drops it
+    ASSERT_EQ((int)dw.outputSize(), 1);
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    sendAll(dw, {DW::OP_SERSETSTAT, 2, DW::SS_CLOSE});
+    ASSERT(!dw.channelPathOpen(2));
+    ASSERT(dw.channelOpen(2));
+    sendAll(dw, {DW::OP_SERTERM, 2});
+    ASSERT(!dw.channelOpen(2));
+    ASSERT(!dw.hasOutput());
+    // The guest's reset (and dwio's OP_DWINIT) close them all
+    sendAll(dw, {DW::OP_SERINIT, 2, DW::OP_SERINIT, 0});
+    sendAll(dw, {DW::OP_DWINIT, 1});
+    ASSERT_EQ(dw.send(), DW::SERVER_VERSION);
+    ASSERT(!dw.channelOpen(2));
+    ASSERT(!dw.channelOpen(0));
+}
+
+// The host hangs up: ($10, port) once what was waiting has been read and
+// its reader has had CLOSE_DELAY to take it
+TEST_CASE(drivewire_serread_channel_closed) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 6, DW::OP_SERSETSTAT, 6, DW::SS_OPEN, DW::OP_SERINIT, 8});
+    dw.hostClose(8);
+    ASSERT(serRead(dw) == bytes({0x10, 8}));                // (nothing was read: at once)
+    dw.hostWrite(6, "!");
+    dw.hostClose(6);
+    ASSERT(serRead(dw) == bytes({7, '!'}));
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    dw.advance(DW::CLOSE_DELAY / 2);
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    dw.advance(DW::CLOSE_DELAY / 2);
+    ASSERT(serRead(dw) == bytes({0x10, 6}));
+    ASSERT(serRead(dw) == bytes({0, 0}));                   // once
+    dw.hostClose(0x11);                                     // (a window doesn't hang up)
+    ASSERT(serRead(dw) == bytes({0, 0}));
+}
+
+// The virtual modem (/N1-/N14 with no far end): `dw ...` answers, then the
+// channel closes; other lines answer FAIL (net.as's "FAIL nnn" format)
+TEST_CASE(drivewire_modem_dw_commands) {
+    const std::string img = tempImage("modem", 4);
+    DW dw;
+    ASSERT(dw.mount(0, img));
+    sendAll(dw, {DW::OP_SERINIT, 1, DW::OP_SERSETSTAT, 1, DW::SS_OPEN});
+    const std::string cmd = "dw disk show\r";
+    sendAll(dw, {DW::OP_SERWRITEM, 1, (int)cmd.size()});
+    for (char c : cmd) dw.receive((uint8_t)c);
+    std::vector<uint8_t> last;
+    const std::string text = readChannel(dw, 1, last);
+    ASSERT(text.rfind("OK\r", 0) == 0);
+    ASSERT(text.find(img) != std::string::npos);
+    ASSERT(last == bytes({0, 0}));
+    dw.advance(DW::CLOSE_DELAY);
+    ASSERT(serRead(dw) == bytes({0x10, 1}));                // then the channel closes
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    sendAll(dw, {DW::OP_SERSETSTAT, 1, DW::SS_CLOSE, DW::OP_SERTERM, 1});
+    // An unknown command
+    sendAll(dw, {DW::OP_SERINIT, 1});
+    for (char c : std::string("dw frob\r")) sendAll(dw, {DW::OP_FASTWRITE + 1, (uint8_t)c});
+    const std::string fail = readChannel(dw, 1, last);
+    ASSERT(fail.rfind("FAIL 208 ", 0) == 0);
+    dw.advance(DW::CLOSE_DELAY);
+    ASSERT(serRead(dw) == bytes({0x10, 1}));
+    // Not a command: FAIL, the channel stays
+    sendAll(dw, {DW::OP_SERINIT, 1});
+    for (char c : std::string("ATZ\r")) sendAll(dw, {DW::OP_FASTWRITE + 1, (uint8_t)c});
+    ASSERT(readChannel(dw, 1, last).rfind("FAIL ", 0) == 0);
+    ASSERT(last == bytes({0, 0}));
+    std::remove(img.c_str());
+}
+
+// Ports by name, and the CLI's `drivewire` command
+TEST_CASE(drivewire_port_names_and_cli) {
+    ASSERT_EQ(DW::parsePort("term"), 0);
+    ASSERT_EQ(DW::parsePort("/N3"), 3);
+    ASSERT_EQ(DW::parsePort("n13"), 13);
+    ASSERT_EQ(DW::parsePort("midi"), 14);
+    ASSERT_EQ(DW::parsePort("z1"), 0x11);
+    ASSERT_EQ(DW::parsePort("$1F"), 0x1F);
+    ASSERT_EQ(DW::parsePort("15"), -1);
+    ASSERT_EQ(DW::parsePort("n15"), -1);
+    ASSERT_EQ(DW::parsePort("z16"), -1);
+    ASSERT_EQ(DW::portName(0), std::string("Term"));
+    ASSERT_EQ(DW::portName(0x12), std::string("Z2"));
+    DW dw;
+    ASSERT(dw.hostCommand({"type", "term", "dir"}).find("4 bytes") != std::string::npos);
+    ASSERT_EQ((int)dw.hostPending(0), 4);
+    sendAll(dw, {DW::OP_SERINIT, 0, DW::OP_FASTWRITE, 'h', DW::OP_FASTWRITE, '\r', DW::OP_FASTWRITE, '\n'});
+    ASSERT_EQ(dw.hostCommand({"read", "term"}), std::string("h\n"));
+    ASSERT(dw.hostCommand({"read", "term"}).find("nothing") != std::string::npos);
+    ASSERT(dw.hostCommand({}).find("/Term") != std::string::npos);
+    ASSERT(dw.hostCommand({"channel", "n2", "loopback"}).find("loopback") != std::string::npos);
+    // Network access: off by default; on/off and its synonyms
+    ASSERT(dw.hostCommand({}).find("network access (tcp connect): off") != std::string::npos);
+    ASSERT(dw.hostCommand({"network", "yes"}).find(": on") != std::string::npos);
+    ASSERT(dw.hostCommand({"network"}).find(": on") != std::string::npos);
+    ASSERT(dw.hostCommand({"net", "0"}).find(": off") != std::string::npos);
+    ASSERT(dw.hostCommand({"network", "maybe"}).find("Syntax") != std::string::npos);
+    ASSERT(!dw.network());
+}
+
+// `tcp connect HOST PORT` (NitrOS-9's telnet): the channel carries the
+// connection both ways; the far end's hang-up closes it
+TEST_CASE(drivewire_modem_tcp_connect) {
+    const int lfd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT(lfd >= 0);
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT(::bind(lfd, (sockaddr*)&a, sizeof a) == 0 && ::listen(lfd, 1) == 0);
+    socklen_t al = sizeof a;
+    ::getsockname(lfd, (sockaddr*)&a, &al);
+    const int port = ntohs(a.sin_port);
+    DW dw;
+    ASSERT(!dw.network());                                  // off until the host allows it
+    sendAll(dw, {DW::OP_SERINIT, 3, DW::OP_SERSETSTAT, 3, DW::SS_OPEN});
+    for (char c : "tcp connect 127.0.0.1 " + std::to_string(port) + "\r") sendAll(dw, {DW::OP_FASTWRITE + 3, (uint8_t)c});
+    std::vector<uint8_t> last;
+    ASSERT(readChannel(dw, 3, last).rfind("FAIL 205 ", 0) == 0);
+    ASSERT(last == bytes({0, 0}));                          // the channel stays, no connection
+    pollfd pf{lfd, POLLIN, 0};
+    ASSERT_EQ(::poll(&pf, 1, 50), 0);
+    ASSERT(dw.hostCommand({"network", "on"}).find(": on") != std::string::npos);
+    ASSERT(dw.network());
+    for (char c : "tcp connect 127.0.0.1 " + std::to_string(port) + "\r") sendAll(dw, {DW::OP_FASTWRITE + 3, (uint8_t)c});
+    ASSERT(readChannel(dw, 3, last).rfind("OK connected to 127.0.0.1:", 0) == 0);
+    const int peer = ::accept(lfd, nullptr, nullptr);
+    ASSERT(peer >= 0);
+    sendAll(dw, {DW::OP_FASTWRITE + 3, 'x', DW::OP_SERWRITEM, 3, 2, 'y', '\n'});
+    char buf[8] = {};
+    size_t got = 0;
+    while (got < 3) {
+        const ssize_t n = ::recv(peer, buf + got, sizeof buf - got, 0);
+        ASSERT(n > 0);
+        got += (size_t)n;
+    }
+    ASSERT_EQ(std::string(buf, 3), std::string("xy\n"));
+    ASSERT(::send(peer, "hi\n", 3, 0) == 3);
+    std::string in;
+    for (int i = 0; i < 200 && in.size() < 3; ++i) {
+        usleep(1000);
+        dw.pollChannels();
+        in += readChannel(dw, 3, last);
+    }
+    ASSERT_EQ(in, std::string("hi\n"));                     // (raw: bytes as they come)
+    ::close(peer);
+    for (int i = 0; i < 200 && dw.channelEndpoint(3).find("connected") != std::string::npos; ++i) {
+        usleep(1000);
+        dw.pollChannels();
+    }
+    dw.advance(DW::CLOSE_DELAY);
+    ASSERT(serRead(dw) == bytes({0x10, 3}));                // the guest's telnet hears the hang-up
+    ::close(lfd);
+}
+
+// A hang-up waits until the guest is quiet on DriveWire: while it writes to
+// another channel, or has bytes waiting on one, the close isn't announced
+// (NitrOS-9 Level 1's dwio would corrupt a busy process queue)
+TEST_CASE(drivewire_close_waits_for_a_quiet_guest) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 1, DW::OP_SERINIT, 2});
+    dw.hostClose(2);
+    dw.advance(DW::CLOSE_DELAY);
+    // The guest keeps writing to /N1: no announcement
+    for (int i = 0; i < 20; ++i) {
+        sendAll(dw, {DW::OP_FASTWRITE + 1, 'x'});
+        dw.advance(0.1);
+        ASSERT(serRead(dw) == bytes({0, 0}));
+    }
+    // Bytes waiting for the guest on /N1 go first; the quiet time counts
+    // from its last write (0.1 s ago)
+    dw.hostWrite(1, "a");
+    ASSERT(serRead(dw) == bytes({2, 'a'}));
+    dw.advance(DW::CLOSE_QUIET - 0.15);
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    dw.advance(0.1);
+    ASSERT(serRead(dw) == bytes({0x10, 2}));                // quiet: the close
+    ASSERT(serRead(dw) == bytes({0, 0}));
 }

@@ -170,10 +170,18 @@ public:
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override {}
     void tick(uint64_t) override {}
-    /** file:PATH, in:PATH, drivewire[:BAUD][,cow], none. */
+    /** file:PATH, in:PATH, drivewire[:BAUD][,cow][,net], none. */
     bool attachSerial(const std::string& spec) override;
-    /** baud (50-115200); turnaround (DriveWire's, in microseconds). */
+    /** `drivewire ...` (DriveWireServer::hostCommand) while DriveWire is attached. */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
+    /** baud (50-115200); turnaround (DriveWire's, in microseconds); network
+     *  (on/off: DriveWire's network access, kept for a later attach). */
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    /** Held options: "started" applies when the guest's DriveWire driver starts
+     *  (its DWINIT / INIT), a delay counts guest time from when it was set. */
+    bool setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                       std::string& err) override;
+    std::vector<PendingOption> pendingOptions() const override { return m_deferred.pending(); }
     void getDeviceInfo(DeviceInfo& out) const override;
     /** With DriveWire attached: unit 1-256 is DriveWire drive 0-255. */
     bool mountDisk(int unit, const std::string& path) override;
@@ -201,8 +209,9 @@ public:
     void lineReset();
 
     /** DriveWire on the port at `baud` (0: the machine's rate); false if another
-     *  DriveWire server (a Becker cartridge's) has the drives. */
-    bool attachDriveWire(int baud = 0, bool copyOnWrite = false);
+     *  DriveWire server (a Becker cartridge's) has the drives. `network`: the
+     *  server's network access (DriveWireServer::setNetwork). */
+    bool attachDriveWire(int baud = 0, bool copyOnWrite = false, bool network = false);
     void detachDriveWire();
     DriveWireServer* driveWire() const { return m_dw.get(); }
     /** The machine's DriveWire rate (57600, or 115200 on the CoCo 3). */
@@ -233,6 +242,9 @@ private:
     // DriveWire
     std::unique_ptr<DriveWireServer> m_dw;
     bool m_dwCow = false;
+    bool m_dwNetwork = false;
+    DeferredOptions m_deferred;
+    uint64_t m_dwInits = 0;                  // the server's inits seen
     int m_dwBaud = 57600;
     double m_turnaroundUs = TURNAROUND_US;
     uint64_t m_clockAt = 0, m_clockAcc = 0;
@@ -348,6 +360,17 @@ public:
     void reset() override {}
     void tick(uint64_t) override {}
     bool attachSerial(const std::string& spec) override;
+    /** `drivewire ...` for a Becker cartridge's server (alone or in a Multi-Pak). */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
+    /** network (on/off): a Becker cartridge's DriveWire network access. */
+    bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    /** Held options: "started" applies when the Becker cartridge's DriveWire
+     *  driver starts in the guest, a delay counts guest time from when it was set. */
+    bool setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                       std::string& err) override;
+    std::vector<PendingOption> pendingOptions() const override { return m_deferred.pending(); }
+    /** Guest time passing (the System's sync): held options come due. */
+    void clock(uint64_t ticks);
     /** Disks in the cartridge's controller (an FD-500, alone or in a Multi-Pak slot):
      *  unit 1-4 is Disk BASIC's DRIVE 0-3, as other machines number from 1. */
     bool mountDisk(int unit, const std::string& path) override;
@@ -357,6 +380,10 @@ public:
     void getDeviceInfo(DeviceInfo& out) const override;
 private:
     System* m_sys;
+    DeferredOptions m_deferred;
+    const void* m_becker = nullptr;          // the server whose inits m_inits counts
+    uint64_t m_inits = 0;
+    uint64_t m_acc = 0;
 };
 
 /**
