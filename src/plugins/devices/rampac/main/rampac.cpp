@@ -5,24 +5,32 @@
 #include <cstring>
 #include <fstream>
 
+Rampac::Rampac(int kb) {
+    if (kb != 128 && kb != 512 && kb != 1024) kb = 256;
+    m_kb = kb;
+    m_banks = kb <= 256 ? 1 : kb / 256;
+    m_ram.assign((size_t)m_banks * BANK_SIZE, 0);
+}
+
 Rampac::~Rampac() { flush(); }
 
 bool Rampac::open(const std::string& path) {
     flush();
-    std::vector<uint8_t> ram(SIZE, 0);
+    std::vector<uint8_t> ram(m_ram.size(), 0);
     if (!path.empty()) {
         std::ifstream f(path, std::ios::binary);
         if (f) {
-            f.read(reinterpret_cast<char*>(ram.data()), (std::streamsize)SIZE);
+            f.read(reinterpret_cast<char*>(ram.data()), (std::streamsize)ram.size());
         } else {
             std::ofstream make(path, std::ios::binary);       // a new card: all zeros
             if (!make) return false;
-            make.write(reinterpret_cast<const char*>(ram.data()), (std::streamsize)SIZE);
+            make.write(reinterpret_cast<const char*>(ram.data()), (std::streamsize)ram.size());
         }
     }
     m_ram = std::move(ram);
     m_path = path;
     m_sector = 0;
+    m_bank = 0;
     m_counter = 0;
     m_dirty = false;
     return true;
@@ -42,37 +50,40 @@ bool Rampac::flush() {
     return true;
 }
 
-void Rampac::step() {
-    if (++m_counter >= SECTOR_SIZE) {
-        m_counter = 0;
-        ++m_sector;                         // uint8_t: 255 wraps to 0
-    }
+// SELECT BLOCK's address side: the counter to 0, the bank from bus A10-A11
+void Rampac::select(uint8_t port) {
+    m_counter = 0;
+    m_bank = ((port >> 2) & 3) & (m_banks - 1);
 }
 
 uint8_t Rampac::in(uint8_t port) {
-    if (port == 0x83) {
-        const uint8_t v = m_ram[(size_t)m_sector * SECTOR_SIZE + m_counter];
-        step();
-        return v;
+    if (!decodes(port)) return 0xFF;
+    if ((port & 2) == 0) {                  // SELECT BLOCK on a read: nothing drives the bus
+        select(port);
+        return 0xFF;
     }
-    return peek(port);
+    const uint8_t v = present() ? m_ram[addr()] : 0xFF;
+    m_counter = (m_counter + 1) & (SECTOR_SIZE - 1);
+    return v;
 }
 
 uint8_t Rampac::peek(uint8_t port) const {
-    if (port == 0x81) return m_sector;
-    if (port == 0x83) return m_ram[(size_t)m_sector * SECTOR_SIZE + m_counter];
-    return 0xFF;
+    if (!decodes(port) || (port & 2) == 0) return 0xFF;
+    return present() ? m_ram[addr()] : 0xFF;
 }
 
 void Rampac::out(uint8_t port, uint8_t v) {
-    if (port == 0x81 || port == 0x85) {
+    if (!decodes(port)) return;
+    if ((port & 2) == 0) {
+        select(port);
         m_sector = v;
-        m_counter = 0;
-    } else if (port == 0x83) {
-        m_ram[(size_t)m_sector * SECTOR_SIZE + m_counter] = v;
-        m_dirty = true;
-        step();
+        return;
     }
+    if (present()) {
+        m_ram[addr()] = v;
+        m_dirty = true;
+    }
+    m_counter = (m_counter + 1) & (SECTOR_SIZE - 1);
 }
 
 std::vector<uint8_t> Rampac::saveState() const {
@@ -80,13 +91,16 @@ std::vector<uint8_t> Rampac::saveState() const {
     v.push_back(m_sector);
     v.push_back((uint8_t)(m_counter & 0xFF));
     v.push_back((uint8_t)(m_counter >> 8));
+    v.push_back((uint8_t)m_bank);
     return v;
 }
 
 void Rampac::loadState(const std::vector<uint8_t>& s) {
-    if (s.size() != SIZE + 3) return;
-    std::memcpy(m_ram.data(), s.data(), SIZE);
-    m_sector = s[SIZE];
-    m_counter = (s[SIZE + 1] | s[SIZE + 2] << 8) % SECTOR_SIZE;
+    const size_t n = m_ram.size();
+    if (s.size() != n + 3 && s.size() != n + 4) return;   // (older snapshots: no bank byte)
+    std::memcpy(m_ram.data(), s.data(), n);
+    m_sector = s[n];
+    m_counter = (s[n + 1] | s[n + 2] << 8) % SECTOR_SIZE;
+    m_bank = s.size() == n + 4 ? (s[n + 3] & (m_banks - 1)) : 0;
     m_dirty = true;
 }

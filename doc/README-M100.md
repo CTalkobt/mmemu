@@ -65,7 +65,7 @@ I/O ports (each block mirrored over its 16 ports):
 | port      | read | write |
 |-----------|------|-------|
 | `$A0`     | -    | Model 100: the modem's control: 0 the line relay (off hook), 1 the MC14412's enable (see [Add-ons](#add-ons)) |
-| `$81`, `$83` (`$85` written) | a RAMPAC, if fitted | a RAMPAC, if fitted |
+| `$80-$8F` odd (`$81`, `$83`; banks at `$85`, `$89`, `$8D`) | a RAMPAC, if fitted | a RAMPAC, if fitted |
 | `$B0-$BF` | the 81C55 (`port & 7`) | the 81C55 |
 | `$C0-$CF` | the IM6402's received byte (and clears DR) | the byte to send |
 | `$D0-$DF` | status: 0 the modem line's signal (MAME's CD; see [Add-ons](#add-ons)), 1 OE, 2 FE, 3 PE, 4 TBRE, 5 RP, 6 +5 V, 7 /LPS | the IM6402's control (bits 0-4: stop bits, even parity, no parity, word length) |
@@ -329,19 +329,44 @@ high over a bar; with no wand BCR reads 0. The ROMs have no bar
 code software (RST 5.5 goes through the RAM hook at `$F5F9`), so this is
 for the bar code programs that were sold for it.
 
-**RAMPAC / Node Datapac** (`rampac/`, VirtualT's `RAMPAC_SECTOR_PORT` /
-`RAMPAC_DATA_PORT`). 256 KB of battery-backed RAM on the system bus:
-`OUT $81` (or `$85`) selects a 1 KB sector and clears the byte counter,
-`IN $81` reads the sector back, `IN`/`OUT $83` read or write a byte and
-step the counter (into the next sector after 1024; 255 wraps to 0).
-`expansion sysbus rampac FILE` (or `datapac`) fits it, backed by `FILE`
-(raw 256 KB, VirtualT's layout; made, zeroed, if missing); the file is
-written a second after a change and when the card is removed
-(`expansion sysbus remove`) or the machine goes; `expansion sysbus save
-PATH` writes a copy. Unverified: whether the cards decode fewer address
-lines (mirrors in `$80-$8F`), and any difference between the RAMPAC and
-the Datapac (treated alike); the 64/128 KB Datapacs are not offered.
-Checked with stand-in programs only (no RAMPAC software here).
+**RAMPAC / Node Datapac** (`rampac/`). Battery-backed RAM on the system
+bus, from the Datapac's schematic and theory of operation in bkw777's
+NODE_DATAPAC (VirtualT's `RAMPAC_SECTOR_PORT` / `RAMPAC_DATA_PORT` first).
+The card decodes /Y0 (`$80-$8F`) and port bits 0-1 on any I/O cycle:
+`OUT $81` (bits 01) selects a 1 KB block and clears the byte counter;
+`IN`/`OUT $83` (bits 11) read or write a byte and step the 10-bit counter,
+which wraps to byte 0 of the same block after 1023. Even ports are not the
+card's, and the other odd ports mirror these. `IN $81` also selects, but the
+card drives nothing (it reads `$FF`); the block it latches then is whatever
+floats on the bus, and mmsim keeps the old one (unverified).
+
+Sizes, as `expansion sysbus DEVICE FILE`:
+- `rampac` / `datapac`: 256 KB, one bank (port bits 2-3 ignored).
+- `rampac512`: two banks, picked by port bit 2 of the select (`$85` is
+  bank 1).
+- `rampac1m`: four banks, `$81 + 4n` (bkw777's MiniNDP; RAMDSK's newest
+  version uses them).
+- `datapac128`: the 128 KB Datapac; blocks 128-255 aren't fitted (writes
+  are lost, reads give `$FF`).
+
+The card is backed by `FILE` (raw, bank 0 first: a 256 KB card's file is
+VirtualT's layout; made, zeroed, if missing). The file is written a second
+after a change and when the card is removed (`expansion sysbus remove`) or
+the machine goes; `expansion sysbus save PATH` writes a copy. Unverified:
+any difference between the RAMPAC and the Datapac beyond size.
+
+Checked with real software: Paul Globman's RAMDSK (the current RAM100.CO
+and RAM200.CO from NODE_DATAPAC; `test_m100_rampac_real.cpp`, when
+`ram100.do` / `ram200.do` are in `roms/m100/`), on a 512 KB card with the
+Model 100's and the Tandy 200's real ROMs. Its loader comes in over RS-232
+as its README says (`LOAD "COM:98N1E"` on the 100, `"COM:98N1ENN"` on the
+200). RAMDSK then:
+- formats the card (255K free);
+- saves itself to it (listed with its size, 253K free; its name and `.CO`
+  header found in the card's first file block);
+- finds the second bank by its bank test, and formats it without touching
+  bank 0;
+- starts again from the menu, listing the saved file.
 
 **REX and REX#** (`rex/`, after VirtualT's `rex_read` and
 `amd_flash_write`). A 1 MB AMD-type flash in the option ROM socket,
@@ -760,9 +785,13 @@ output (true over a space or lifted).
 
 ### RAMPAC (`rampac/`)
 
-`Rampac`: 256 sectors of 1 KB behind ports `$81` (sector; `$85` also
-sets it), `$83` (data, stepping); `open(path)` / `flush()` / `saveTo()`
-for the battery-backed file.
+`Rampac(kb)`: 128 KB to 1 MB in banks of 256 blocks of 1 KB, behind the
+card's decode of `$80-$8F` (`$81 + 4n` selects a block in bank n, `$83`
+the byte, its counter wrapping within the block); `open(path)` /
+`flush()` / `saveTo()` for the battery-backed file. Tests
+(`test_rampac.cpp`): the select and the counter's wrap, the mirrors,
+RAMDSK's bank count on 256 KB, 512 KB and 1 MB cards, the 128 KB card's
+missing half, the file.
 
 ### Disk/Video Interface (`dvi/`)
 

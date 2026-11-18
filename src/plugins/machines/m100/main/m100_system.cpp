@@ -557,8 +557,8 @@ System::System(Model model, std::vector<uint8_t> rom) : m_model(model), m_rom(st
 System::~System() = default;
 
 // The add-ons ----------------------------------------------------------------
-bool System::fitRampac(const std::string& path, std::string& err) {
-    auto r = std::make_unique<Rampac>();
+bool System::fitRampac(const std::string& path, std::string& err, int kb) {
+    auto r = std::make_unique<Rampac>(kb);
     if (!r->open(path)) { err = "can't open or create '" + path + "'"; return false; }
     m_rampac = std::move(r);
     return true;
