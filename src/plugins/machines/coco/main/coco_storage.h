@@ -2,12 +2,14 @@
 
 // Mass storage cartridges for the CoCo (#356): the CoCo SDC, the
 // Burke & Burke CoCo XT hard disk interface and the Disto Super Controller
-// II. The hardware is in src/plugins/devices/coco_sdc, xt_hdc and wd17xx;
+// II, and the Becker port to a built-in DriveWire server. The hardware is in
+// src/plugins/devices/coco_sdc, xt_hdc, wd17xx and drivewire;
 // these put it on the cartridge port.
 
 #include "coco_cart.h"
 #include "plugins/devices/coco_sdc/main/coco_sdc.h"
 #include "plugins/devices/xt_hdc/main/xt_hdc.h"
+#include "plugins/devices/drivewire/main/drivewire_server.h"
 #include "plugins/machines/apple2/main/no_slot_clock.h"   // a DS1216/DS1215 (header only)
 #include <array>
 #include <functional>
@@ -183,6 +185,58 @@ private:
     std::unique_ptr<MebDevice> m_meb;
     uint8_t m_count = 0, m_ctrl = 0;
     bool m_alt = false, m_mebFirq = false, m_cartLow = false;
+};
+
+/**
+ * The Becker port (Gary Becker's, from the CoCo3FPGA; XRoar's becker.c): a
+ * DriveWire byte stream through two registers, here to the built-in
+ * DriveWire 4 server (DriveWireServer) instead of a TCP link:
+ *  - $FF41 status (read): bit 1 set while a byte from the server waits;
+ *  - $FF42 data: read takes the server's next byte (0 if none), write
+ *    sends one to it.
+ * Decoded on /SCS (in a Multi-Pak, the slot $FF7F routes $FF40-$FF5F to).
+ * Answers are ready at once (the server is in-process): NitrOS-9's
+ * Becker dwread polls $FF41 with a timeout, HDB-DOS's without one.
+ *
+ * Its option ROM (for HDB-DOS built for the Becker port, hdbdw3bck.rom /
+ * hdbdw3bc3.rom) answers /CTS at $C000 as a disk controller's DOS does (8 KB
+ * repeated over the 16 KB). There is no floppy controller: $FF40 and
+ * $FF48-$FF4B are open. mountDisk(n) puts an image in DriveWire drive n
+ * (CLI `disk mount 1 FILE`: drive 0), written through to the file, or
+ * kept in memory with copy-on-write (option ",cow").
+ */
+class BeckerCart : public Cart {
+public:
+    static constexpr uint16_t STATUS = 0xFF41, DATA = 0xFF42;
+    explicit BeckerCart(std::vector<uint8_t> rom = {}, std::string romLabel = "", bool copyOnWrite = false)
+        : m_rom(std::move(rom)), m_label(std::move(romLabel)), m_cow(copyOnWrite) {}
+    std::string kind() const override { return "becker"; }
+    std::string describe() const override;
+    void reset() override { m_dw.reset(); }
+    bool read(uint16_t a, bool cts, bool scs, uint8_t& d) override;
+    bool peek(uint16_t a, bool cts, bool scs, uint8_t& d) const override;
+    void write(uint16_t a, bool cts, bool scs, uint8_t d) override;
+    void clock(uint64_t ticks) override;
+    void setClockHz(double hz) override { m_hz = hz; }
+    /** DriveWire drive 0-255 (the CLI's unit 1 is drive 0). */
+    bool mountDisk(int drive, const std::string& path) override;
+    bool ejectDisk(int drive) override { return m_dw.eject(drive); }
+    std::string diskPath(int drive) const override { return m_dw.imagePath(drive); }
+    /** "track": the last LSN's / 18; "motor": a transfer within the last half second. */
+    bool diskStatus(int drive, int& track, bool& motor) const override;
+
+    DriveWireServer& server() { return m_dw; }
+    bool copyOnWrite() const { return m_cow; }
+
+private:
+    DriveWireServer m_dw;
+    std::vector<uint8_t> m_rom;
+    std::string m_label;
+    bool m_cow;
+    double m_hz = 14318180.0;
+    uint64_t m_acc = 0;
+    double m_sinceAccess = 1e9;     // seconds since the last disk transfer
+    uint64_t m_lastCount = 0;
 };
 
 }  // namespace coco

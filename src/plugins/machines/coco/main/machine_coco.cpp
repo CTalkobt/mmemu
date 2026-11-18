@@ -958,6 +958,7 @@ namespace {
 const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
 const char* const SC2_DESC = "Disto Super Controller II (WD1773, no-halt buffer at $FF74, mini expansion bus at $FF50); option: [the DOS ROM][,alt] (alt: the buffer at $FF58)";
 const char* const BURKE_DESC = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50-$FF53) and DS1215 clock ($FF40-$FF5F); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
+const char* const BECKER_DESC = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server (disk mount N: DriveWire drive N-1); option: [ROM at $C000, e.g. HDB-DOS for the Becker port][,cow] (cow: writes kept in memory)";
 const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
 const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
 const char* const GMC_DESC = "Games Master Cartridge: banked ROM (bank at even $FF40-$FF5F) and SN76489 (odd); option: the image (up to 256 KB)";
@@ -1053,13 +1054,32 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         if (!image.empty() && !c->mountDisk(0, image)) { err = "can't open the hard disk image " + image; return nullptr; }
         return std::unique_ptr<Cart>(c.release());
     }
+    if (device == "becker") {
+        // Option: a ROM for /CTS (HDB-DOS built for the Becker port) and/or "cow", comma separated
+        std::string path;
+        bool cow = false;
+        size_t at = 0;
+        while (at <= option.size()) {
+            const auto comma = option.find(',', at);
+            const std::string tok = option.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+            if (tok == "cow") cow = true;
+            else if (!tok.empty()) path = tok;
+            if (comma == std::string::npos) break;
+            at = comma + 1;
+        }
+        std::vector<uint8_t> rom;
+        if (!path.empty() && (!readFile(path, rom) || rom.empty())) { err = "can't read the ROM " + path; return nullptr; }
+        if (rom.size() > 0x4000) { err = "the Becker cartridge's ROM is up to 16 KB"; return nullptr; }
+        const auto slash = path.find_last_of('/');
+        return std::unique_ptr<Cart>(new BeckerCart(std::move(rom), slash == std::string::npos ? path : path.substr(slash + 1), cow));
+    }
     if (device == "rompak") {
         std::vector<uint8_t> rom;
         if (option.empty() || !readFile(option, rom) || rom.empty()) { err = "rompak needs the image's path"; return nullptr; }
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sc2, sdc, burke, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
+    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sc2, sdc, burke, becker, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
     return nullptr;
 }
 
@@ -1293,6 +1313,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
                 {"sc2", SC2_DESC, {}, ""},
                 {"sdc", SDC_DESC, {}, ""},
                 {"burke", BURKE_DESC, {}, ""},
+                {"becker", BECKER_DESC, {}, ""},
                 {"rompak", "A ROM Pak (16 KB, 32 KB on the CoCo 3); option: the image (.rom, .ccc)", {}, ""},
                 {"gmc", GMC_DESC, {}, ""},
                 {"banked", BANKED_DESC, {}, ""},
@@ -1344,6 +1365,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"sc2", SC2_DESC, {}, ""},
             {"sdc", SDC_DESC, {}, ""},
             {"burke", BURKE_DESC, {}, ""},
+            {"becker", BECKER_DESC, {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
             {"gmc", GMC_DESC, {}, ""},
             {"banked", BANKED_DESC, {}, ""},

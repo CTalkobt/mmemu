@@ -611,3 +611,133 @@ TEST_CASE(coco_sc2_cpu_reads_without_halt) {
     std::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+// ---------------------------------------------------------------------------
+// The Becker port and the built-in DriveWire server
+// ---------------------------------------------------------------------------
+namespace {
+
+/** A stand-in DriveWire DOS at $C000: OP_READEX of drive 0's LSN 1 through the
+ *  Becker port into $0600 (as HDB-DOS's Becker DWRead: poll $FF41 bit 1, take
+ *  $FF42), the checksum sent back, the server's status byte to $0702, $5D to $0701. */
+std::vector<uint8_t> beckerReadProgram() {
+    Asm a(0xC000, 0x2000, 0xFF);
+    const uint16_t cmdRef = a.pc;
+    a.emit({0x8E, 0x00, 0x00});                 // LDX #cmd (patched)
+    a.emit({0xC6, 0x05});                       // LDB #5
+    const uint16_t tx = a.pc;
+    a.emit({0xA6, 0x80});                       // LDA ,X+
+    a.ext(0xB7, 0xFF42);                        // STA $FF42
+    a.emit({0x5A});                             // DECB
+    a.branch(0x26, tx);                         // BNE
+    a.emit({0x8E, 0x06, 0x00});                 // LDX #$0600
+    const uint16_t rx = a.pc;
+    a.ext(0xB6, 0xFF41);                        // LDA $FF41
+    a.emit({0x85, 0x02});                       // BITA #2
+    a.branch(0x27, rx);                         // BEQ rx
+    a.ext(0xB6, 0xFF42);                        // LDA $FF42
+    a.emit({0xA7, 0x80});                       // STA ,X+
+    a.emit({0x8C, 0x07, 0x00});                 // CMPX #$0700
+    a.branch(0x26, rx);                         // BNE rx
+    a.emit({0x8E, 0x06, 0x00});                 // LDX #$0600
+    a.emit({0xCC, 0x00, 0x00});                 // LDD #0
+    const uint16_t sum = a.pc;
+    a.emit({0xEB, 0x80});                       // ADDB ,X+
+    a.emit({0x89, 0x00});                       // ADCA #0
+    a.emit({0x8C, 0x07, 0x00});                 // CMPX #$0700
+    a.branch(0x26, sum);                        // BNE sum
+    a.ext(0xB7, 0xFF42);                        // STA $FF42 (checksum, MSB first)
+    a.ext(0xF7, 0xFF42);                        // STB $FF42
+    const uint16_t st = a.pc;
+    a.ext(0xB6, 0xFF41);
+    a.emit({0x85, 0x02});
+    a.branch(0x27, st);
+    a.ext(0xB6, 0xFF42);                        // the status byte
+    a.ext(0xB7, 0x0702);
+    a.emit({0x86, 0x5D}); a.ext(0xB7, CART_MARK);
+    const uint16_t spin = a.pc;
+    a.branch(0x20, spin);
+    const uint16_t cmd = a.pc;
+    a.emit({0xD2, 0x00, 0x00, 0x00, 0x01});     // OP_READEX, drive 0, LSN 1
+    a.word((uint16_t)(cmdRef + 1), cmd);
+    return a.b;
+}
+
+}  // namespace
+
+// The Becker port's registers: $FF41 bit 1 while the server has a byte, $FF42 the data
+TEST_CASE(coco_becker_port_registers) {
+    coco::BeckerCart c;
+    c.reset();
+    uint8_t d = 0xAA;
+    ASSERT(c.read(0xFF41, false, true, d));
+    ASSERT_EQ(d, 0x00);
+    c.write(0xFF42, false, true, DriveWireServer::OP_TIME);
+    ASSERT(c.peek(0xFF41, false, true, d));
+    ASSERT_EQ(d, 0x02);
+    int n = 0;
+    while (c.read(0xFF41, false, true, d) && (d & 2)) {
+        ASSERT(c.read(0xFF42, false, true, d));
+        ++n;
+    }
+    ASSERT_EQ(n, 6);
+    // Only on /SCS, only $FF41/$FF42; no ROM: /CTS open
+    c.write(0xFF42, false, true, DriveWireServer::OP_SERREAD);
+    ASSERT(!c.read(0xFF41, false, false, d));
+    ASSERT(!c.read(0xFF43, false, true, d));
+    ASSERT(!c.read(0xFF40, false, true, d));
+    ASSERT(!c.read(0xC000, true, false, d));
+    c.write(0xFF41, false, true, DriveWireServer::OP_TIME);   // not the data register
+    ASSERT_EQ((int)c.server().outputSize(), 2);
+    // A reset (the CoCo's) drops what the server had for it
+    c.reset();
+    ASSERT(c.read(0xFF41, false, true, d));
+    ASSERT_EQ(d, 0x00);
+    // In a Multi-Pak slot: reached when $FF7F routes /SCS to it
+    coco::MultiPak mpi;
+    mpi.insert(1, std::unique_ptr<coco::Cart>(new coco::BeckerCart({0x39, 0x12})));
+    mpi.reset();                                             // switch 4: slot 4
+    ASSERT(!mpi.read(0xFF41, false, true, d));
+    mpi.write(0xFF7F, false, false, 0x11);                   // /CTS and /SCS to slot 2
+    mpi.write(0xFF42, false, true, DriveWireServer::OP_SERREAD);
+    ASSERT(mpi.read(0xFF41, false, true, d));
+    ASSERT_EQ(d, 0x02);
+    ASSERT(mpi.read(0xC001, true, false, d));                // its ROM
+    ASSERT_EQ(d, 0x12);
+}
+
+// A CoCo 2 with the Becker cartridge: a 6809 program in its ROM reads a sector over DriveWire
+TEST_CASE(coco2_becker_readex_from_6809) {
+    const std::string dir = tempDir();
+    std::vector<uint8_t> img(630 * 256);
+    for (size_t i = 0; i < img.size(); ++i) img[i] = (uint8_t)(i * 3 + (i >> 8));
+    writeFile(dir + "/os9.dsk", img);
+    writeFile(dir + "/dw.rom", beckerReadProgram());
+
+    coco::Roms roms;
+    roms.colorBasic = jumpToCart();
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    ASSERT(m);
+    ASSERT(m->expansionSlot("cart")->install("becker", dir + "/dw.rom", err));
+    auto* becker = dynamic_cast<coco::BeckerCart*>(coco::systemOf(m)->cart());
+    ASSERT(becker);
+    ASSERT(m->ioRegistry->mountDisk(1, dir + "/os9.dsk") != nullptr);   // `disk mount 1`: DriveWire drive 0
+    ASSERT_EQ(becker->diskPath(0), dir + "/os9.dsk");
+    ASSERT(becker->describe().find("ROM dw.rom; drive 0: os9.dsk") != std::string::npos);
+    m->onReset(*m);
+    run(m, 100000);
+    IBus* bus = m->buses[0].bus;
+    ASSERT_EQ(bus->peek8(CART_MARK), 0x5D);
+    ASSERT_EQ(bus->peek8(0x0702), 0x00);                     // checksum accepted
+    for (int i = 0; i < 256; ++i) ASSERT_EQ(bus->peek8((uint16_t)(0x0600 + i)), img[256 + i]);
+    ASSERT_EQ((int)becker->server().stats().reads, 1);
+    ASSERT(becker->server().idle());
+    int track = -1;
+    bool motor = false;
+    ASSERT(becker->diskStatus(0, track, motor));
+    ASSERT_EQ(track, 0);
+    delete m;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
