@@ -713,6 +713,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/dvi/test/test_dvi.cpp \
 	src/plugins/machines/m100/test/test_m100_addons.cpp \
 	src/plugins/machines/m100/test/test_m100_rexcpm.cpp \
+	src/plugins/machines/m100/test/test_m100_rampac_real.cpp \
 	src/plugins/machines/coco/test/test_coco_machine.cpp \
 	src/plugins/machines/coco/test/test_coco_tape.cpp \
 	src/plugins/6801/test/test_cpu6801.cpp \

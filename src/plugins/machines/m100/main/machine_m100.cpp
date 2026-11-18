@@ -209,11 +209,15 @@ void addAddonSlots(MachineDescriptor* desc, System* sys) {
     {
         MachineDescriptor::ExpansionSlot s;
         s.name = "sysbus";
-        s.description = "The 40-pin system bus: a RAMPAC / Node Datapac (256 KB battery-backed RAM disk at "
-                        "ports $81/$83; the option is the host file that holds it), or the Disk/Video "
-                        "Interface (ports $80-$83; the option is a disk image for drive 0)";
+        s.description = "The 40-pin system bus: a RAMPAC / Node Datapac (a battery-backed RAM disk at "
+                        "ports $81/$83, more banks at $85/$89/$8D; the option is the host file that holds "
+                        "it), or the Disk/Video Interface (ports $80-$83; the option is a disk image for "
+                        "drive 0)";
         s.devices = {{"rampac", "RAMPAC: 256 KB RAM disk, saved to the file given", {}, ""},
-                     {"datapac", "Node Datapac (as the RAMPAC)", {}, ""},
+                     {"rampac512", "RAMPAC with a second bank: 512 KB", {}, ""},
+                     {"rampac1m", "1 MB in 4 banks (a MiniNDP; RAMDSK's newest version uses them)", {}, ""},
+                     {"datapac", "Node Datapac, 256 KB (as the RAMPAC)", {}, ""},
+                     {"datapac128", "Node Datapac, 128 KB (blocks 128-255 not fitted)", {}, ""},
                      {"dvi", "Disk/Video Interface (26-3806): 5.25\" drives and a 40/80-column monitor", {}, ""}};
         s.install = [sys](const std::string& device, const std::string& option, std::string& err) {
             if (device.empty()) { sys->removeRampac(); sys->removeDvi(); return true; }
@@ -226,12 +230,17 @@ void addAddonSlots(MachineDescriptor* desc, System* sys) {
                 }
                 return true;
             }
-            if (device != "rampac" && device != "datapac") {
-                err = "the sysbus slot takes rampac, datapac or dvi";
+            int kb = 0;
+            if (device == "rampac" || device == "datapac") kb = 256;
+            else if (device == "rampac512") kb = 512;
+            else if (device == "rampac1m") kb = 1024;
+            else if (device == "datapac128") kb = 128;
+            if (!kb) {
+                err = "the sysbus slot takes rampac, rampac512, rampac1m, datapac, datapac128 or dvi";
                 return false;
             }
             sys->removeDvi();
-            return sys->fitRampac(option, err);
+            return sys->fitRampac(option, err, kb);
         };
         s.info = [sys]() -> std::string {
             if (Dvi* d = sys->dvi()) {
@@ -241,7 +250,9 @@ void addAddonSlots(MachineDescriptor* desc, System* sys) {
             }
             if (!sys->rampac()) return "";
             const std::string& p = sys->rampac()->path();
-            return "rampac (256K, " + (p.empty() ? std::string("not saved") : p) + ")";
+            const int kb = sys->rampac()->sizeKb();
+            return "rampac (" + (kb == 1024 ? std::string("1M") : std::to_string(kb) + "K") + ", " +
+                   (p.empty() ? std::string("not saved") : p) + ")";
         };
         s.save = [sys](const std::string& path, std::string& err) {
             if (!sys->rampac()) { err = "no RAMPAC fitted"; return false; }

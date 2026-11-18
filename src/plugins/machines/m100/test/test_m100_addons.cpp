@@ -202,7 +202,7 @@ TEST_CASE(m100_rampac) {
         "start_: LXI SP,$0000\n"
         "MVI A,7\nOUT $81\nMVI B,0\n"
         "wr_: MOV A,B\nOUT $83\nINR B\nJNZ wr_\n"   // 256 bytes 0..255 into sector 7
-        "MVI A,7\nOUT $81\nIN $83\nSTA $F100\nIN $83\nSTA $F101\nIN $81\nSTA $F102\n"
+        "MVI A,7\nOUT $81\nIN $83\nSTA $F100\nIN $83\nSTA $F101\nIN $81\nSTA $F102\nIN $83\nSTA $F103\n"
         "idle_: HLT\nJMP idle_\n";
     MachineDescriptor* m = make(Model::M100, romFrom(src));
     auto* slot = m->expansionSlot("sysbus");
@@ -214,7 +214,8 @@ TEST_CASE(m100_rampac) {
     IBus* bus = m->buses[0].bus;
     ASSERT_EQ(bus->read8(0xF100), 0);
     ASSERT_EQ(bus->read8(0xF101), 1);
-    ASSERT_EQ(bus->read8(0xF102), 7);
+    ASSERT_EQ(bus->read8(0xF102), 0xFF);       // IN $81: a select, nothing on the bus
+    ASSERT_EQ(bus->read8(0xF103), 0);          // ... and the counter back at byte 0
     ASSERT_EQ(sysOf(m)->rampac()->ram()[7 * 1024 + 200], 200);
     ASSERT(slot->info().find("rampac") == 0);
     // A snapshot carries it

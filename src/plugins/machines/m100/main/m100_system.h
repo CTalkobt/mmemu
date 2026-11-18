@@ -343,7 +343,7 @@ private:
  * I/O (each block mirrored over its 16 ports):
  *  - $A0 (Model 100) modem control: 0 the line relay (the modem to the
  *    line), 1 the modem's carrier on (see mc14412.h and README-M100);
- *  - $81/$83 (and $85 written) a RAMPAC / Node Datapac, if fitted;
+ *  - $80-$8F, odd ports: a RAMPAC / Node Datapac, if fitted;
  *  - $B0-$BF the 81C55 (address & 7). Port A: the LCD chip selects 0-7,
  *    the keyboard columns 0-7 (active low), the uPD1990AC's C0-C2 (bits
  *    0-2), CLK (3) and DATA IN (4), the printer data. Port B: LCD selects
@@ -500,8 +500,9 @@ public:
     bool wandData() const { return bcr(); }
     bool wandRst55() const { return bcr(); }
 
-    /** A RAMPAC on the system bus backed by `path` ("": memory only); false if the file fails. */
-    bool fitRampac(const std::string& path, std::string& err);
+    /** A RAMPAC of `kb` (128, 256, 512, 1024) on the system bus backed by `path` ("": memory
+     *  only); false if the file fails. */
+    bool fitRampac(const std::string& path, std::string& err, int kb = 256);
     void removeRampac();
     Rampac* rampac() const { return m_rampac.get(); }
     /** A REX / REX# in the option ROM socket (replacing an option ROM while fitted). */

@@ -7,6 +7,27 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100/200: the RAMPAC follows the card's logic, with banks; RAMDSK runs (#358)
+
+- **The RAMPAC / Node Datapac now works the way the card does.** The model
+  follows the Datapac's schematic and theory of operation (bkw777's
+  NODE_DATAPAC); before, it came from VirtualT.
+  - The byte counter wraps to byte 0 of the same 1 KB block. Before, it
+    went on into the next block.
+  - The card answers on every odd port in `$80-$8F`.
+  - `IN $81` reads `$FF`, since the card can't drive the bus there. Before,
+    it read back the block number.
+- **Banks and sizes:** `expansion sysbus rampac512` adds a second bank at
+  `$85`, `rampac1m` four banks (`$81 + 4n`, the MiniNDP), and `datapac128`
+  the 128 KB Datapac. Smaller cards mirror the bank ports as the hardware
+  does, which is how RAMDSK counts banks.
+- **Checked with real software:** Paul Globman's RAMDSK (RAM100.CO and
+  RAM200.CO), on the Model 100's and the Tandy 200's real ROMs. Its loader
+  comes in over RS-232 with `LOAD "COM:..."`. RAMDSK then formats the card,
+  saves itself to it, finds and formats the 512 KB card's second bank, and
+  restarts from the menu with the file listed. It needs NODE_DATAPAC's
+  `RAM100.DO` / `RAM200.DO` in `roms/m100/`.
+
 ### CoCo: DriveWire 4 over the Becker port; NitrOS-9's `_becker` builds boot (#356)
 
 - **A built-in DriveWire 4 server** (`src/plugins/devices/drivewire`,
