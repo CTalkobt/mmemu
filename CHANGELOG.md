@@ -7,6 +7,26 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Switching machines in the GUI no longer crashes (#391)
+
+- **Load Machine from a running machine** (for example C64 → C16) crashed.
+  The audio thread and the screen pane were still using the old machine
+  after it was deleted. The audio stream now stops first, and the old
+  machine is deleted only once no pane points at it.
+- **Leaving an Apple II** wrote to its speaker after the speaker was
+  freed: taking the cards out of their slots remixes the speaker. The
+  speaker and the other parts are now deleted last. This probably caused the
+  occasional `double free` a few switches later.
+- **Sound samples are passed to the audio thread through a locked queue**
+  (`SampleQueue`). The Apple II, IIgs, MC-10, CoCo/Dragon, TRS-80, Spectrum,
+  Model 100, BBC Micro and Electron shared an unlocked `std::deque` with
+  the audio thread, which could corrupt the heap.
+- **Z80 and 8085 flags:** the register pane, the breakpoint-condition
+  flags (`.Z`, `.C`, ...) and the tool runner now read F from AF's low byte.
+  Before, the 16-bit loop ran past the 8 flag letters and read A's bits.
+- Checked under AddressSanitizer: all 98 machines created and run in one CLI
+  session, and about 60 GUI machine switches, running and paused.
+
 ### CoCo: DriveWire's virtual serial channels; NitrOS-9's headless builds run (#356)
 
 - **The built-in DriveWire 4 server carries virtual channels**: NitrOS-9's

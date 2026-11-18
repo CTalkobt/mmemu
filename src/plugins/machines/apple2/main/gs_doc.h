@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 namespace apple2 {
 
@@ -100,7 +101,7 @@ private:
     double m_acc = 0;
     int m_accCount = 0;
     float m_last = 0;
-    std::deque<float> m_out;
+    SampleQueue m_out;   // pulled on the host's audio thread
 };
 
 }  // namespace apple2

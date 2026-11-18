@@ -114,8 +114,7 @@ void GsSound::advance(uint64_t slowCycle) {
             if (m_accCount) m_last = (float)(m_acc / m_accCount / (32768.0 * 8.0)) * vol;
             m_acc = 0;
             m_accCount = 0;
-            m_out.push_back(m_last);
-            if (m_out.size() > (size_t)SAMPLE_RATE) m_out.pop_front();
+            m_out.push(m_last, SAMPLE_RATE);
             m_nextOut += m_outPeriod;
         }
     }
@@ -123,13 +122,11 @@ void GsSound::advance(uint64_t slowCycle) {
 }
 
 int GsSound::pullSamples(float* buffer, int maxSamples) {
-    const int n = std::min(maxSamples, (int)m_out.size());
+    const int n = m_out.pull(buffer, maxSamples);
     std::vector<float> spk((size_t)std::max(n, 1), 0.0f);
     const int got = m_speaker ? m_speaker->pullSamples(spk.data(), n) : 0;
-    for (int i = 0; i < n; ++i) {
-        buffer[i] = std::clamp(m_out.front() + (i < got ? spk[(size_t)i] : 0.0f), -1.0f, 1.0f);
-        m_out.pop_front();
-    }
+    for (int i = 0; i < n; ++i)
+        buffer[i] = std::clamp(buffer[i] + (i < got ? spk[(size_t)i] : 0.0f), -1.0f, 1.0f);
     return n;
 }
 

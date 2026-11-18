@@ -2,6 +2,7 @@
 #include "libdebug/main/expression_evaluator.h"
 #include "libdebug/main/debug_context.h"
 #include "plugins/6502/main/cpu6502.h"
+#include "plugins/z80/main/cpu_z80.h"
 #include "libmem/main/memory_bus.h"
 #include <cmath>
 
@@ -312,6 +313,29 @@ TEST_CASE(expression_evaluator_flag_and_reg_shortcuts) {
 
     // No cpu → flag fails gracefully
     ASSERT(!ExpressionEvaluator::evaluate(".C", nullptr, res));
+}
+
+// The Z80's AF is 16 bits with the flags (SZYHXPNC) in its low byte, F:
+// .flag reads F, not A (#391)
+TEST_CASE(expression_evaluator_flags_in_low_byte_of_16bit_status) {
+    FlatMemoryBus bus("test", 16);
+    Z80 cpu;
+    DebugContext dbg(&cpu, &bus);
+    uint32_t res;
+
+    cpu.regWrite(Z80::R_AF, 0x0141);   // A = $01, F = Z and C
+    EXPECT_TRUE(ExpressionEvaluator::evaluate(".C", &dbg, res));
+    EXPECT_EQ(res, 1u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate(".Z", &dbg, res));
+    EXPECT_EQ(res, 1u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate(".S", &dbg, res));
+    EXPECT_EQ(res, 0u);
+
+    cpu.regWrite(Z80::R_AF, 0xFF00);   // A = $FF, F clear
+    EXPECT_TRUE(ExpressionEvaluator::evaluate(".C", &dbg, res));
+    EXPECT_EQ(res, 0u);
+    EXPECT_TRUE(ExpressionEvaluator::evaluate(".S", &dbg, res));
+    EXPECT_EQ(res, 0u);
 }
 
 TEST_CASE(expression_evaluator_condition) {

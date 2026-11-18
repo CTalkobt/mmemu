@@ -72,14 +72,15 @@ void RegisterPane::RefreshValues() {
         // For status registers with named flags, append the flag display.
         if ((desc->flags & REGFLAG_STATUS) && desc->flagNames) {
             ss << "  ";
+            // 8 letters for the low byte, whatever the register's width
+            // (the Z80's and 8085's AF keep F there)
             const char* fn = desc->flagNames;
-            int nbits = (int)(desc->width == RegWidth::R8 ? 8 : 16);
-            for (int b = 0; b < nbits; ++b) {
+            for (int b = 0; b < 8; ++b) {
                 char letter = fn[b] ? fn[b] : '?';
                 if (letter == '-') {
                     ss << '-';
                 } else {
-                    bool set = (val >> (nbits - 1 - b)) & 1;
+                    bool set = (val >> (7 - b)) & 1;
                     ss << (set ? letter : '.');
                 }
             }

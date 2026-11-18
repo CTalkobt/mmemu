@@ -28,6 +28,7 @@
 #include <functional>
 #include <map>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 namespace spectrum {
 
@@ -418,12 +419,10 @@ public:
     // IAudioOutput
     int nativeSampleRate() const override { return SAMPLE_RATE; }
     int pullSamples(float* buffer, int maxSamples) override {
-        int n = 0;
-        while (n < maxSamples && !m_samples.empty()) { buffer[n++] = m_samples.front(); m_samples.pop_front(); }
-        return n;
+        return m_samples.pull(buffer, maxSamples);
     }
     /** The beeper's samples so far (tests). */
-    const std::deque<float>& samples() const { return m_samples; }
+    std::deque<float> samples() const { return m_samples.snapshot(); }
 
 private:
     static int pixelAddr(int y) { return ((y & 0xC0) << 5) | ((y & 7) << 8) | ((y & 0x38) << 2); }
@@ -480,8 +479,7 @@ private:
                     const uint64_t step = (uint64_t)room + ((room - (double)(uint64_t)room) > 0 ? 1 : 0);
                     m_acc += level * room;
                     m_audT += step;
-                    m_samples.push_back((float)(m_acc / per) - 0.28f);
-                    if (m_samples.size() > (size_t)SAMPLE_RATE) m_samples.pop_front();
+                    m_samples.push((float)(m_acc / per) - 0.28f, SAMPLE_RATE);
                     m_acc = 0;
                     m_accT = (double)step - room;
                     continue;
@@ -509,7 +507,7 @@ private:
     uint64_t m_audT = 0;
     float m_level = 0;
     double m_acc = 0, m_accT = 0;
-    std::deque<float> m_samples;
+    SampleQueue m_samples;   // pulled on the host's audio thread
 };
 
 // ---------------------------------------------------------------------------

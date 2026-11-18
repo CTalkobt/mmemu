@@ -273,9 +273,8 @@ void ExpressionTextCtrl::ShowCompletions(const std::string& prefix) {
 
             // Status flags: .N, .Z, .C, etc.
             if (prefix[0] == '.' && (d->flags & 0x04) && d->flagNames) {
-                int nbits = (d->width == RegWidth::R8) ? 8 : 16;
-                for (int b = 0; b < nbits; ++b) {
-                    if (d->flagNames[b] && d->flagNames[b] != '-') {
+                for (int b = 0; b < 8 && d->flagNames[b]; ++b) {   // 8 letters, low byte
+                    if (d->flagNames[b] != '-') {
                         std::string flag = std::string(".") + d->flagNames[b];
                         std::string upperFlag = flag;
                         std::transform(upperFlag.begin(), upperFlag.end(), upperFlag.begin(), ::toupper);

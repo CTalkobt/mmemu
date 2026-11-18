@@ -28,6 +28,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 class I8085;
 
@@ -184,11 +185,11 @@ public:
     void run(uint64_t ticks, float level);
     size_t buffered() const { return m_samples.size(); }
     /** Samples taken (tests). */
-    const std::deque<float>& samples() const { return m_samples; }
+    std::deque<float> samples() const { return m_samples.snapshot(); }
 
     static constexpr int TICKS_PER_SAMPLE = 56;       // 43886 Hz
 private:
-    std::deque<float> m_samples;
+    SampleQueue m_samples;   // pulled on the host's audio thread
     double m_sum = 0;
     uint64_t m_acc = 0;
     double m_lastIn = 0, m_dc = 0;      // the DC blocker

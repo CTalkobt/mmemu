@@ -1294,7 +1294,14 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         return;
     }
 
-    if (m_machine != md) delete m_machine;
+    // The audio thread pulls samples from the old machine's sound chip:
+    // stop it before that machine is deleted (#391)
+    delete m_audio;
+    m_audio = nullptr;
+
+    // The old machine is deleted at the end, once no pane points at it:
+    // laying out the dock below paints panes synchronously (#391)
+    MachineDescriptor* oldMachine = (m_machine != md) ? m_machine : nullptr;
     m_machine = md;
     {
         std::string speedErr;   // #169: start at real time
@@ -1390,9 +1397,7 @@ void MmemuFrame::loadMachineById(const std::string& id) {
 
     if (m_machine->onReset) m_machine->onReset(*m_machine);
 
-    // Discover and start audio output
-    delete m_audio;
-    m_audio = nullptr;
+    // Discover and start audio output (the old stream was stopped above)
     if (m_machine->ioRegistry) {
         std::vector<IOHandler*> handlers;
         m_machine->ioRegistry->enumerate(handlers);
@@ -1421,6 +1426,8 @@ void MmemuFrame::loadMachineById(const std::string& id) {
         if (m_capturePane)
             m_capturePane->SetCaptureCallback([this](bool active) { setKeyCapture(active); });
     }
+
+    delete oldMachine;
 
     std::string statusMsg = "Loaded machine: " + id;
     if (!m_machine->onKey) statusMsg += " (no keyboard)";

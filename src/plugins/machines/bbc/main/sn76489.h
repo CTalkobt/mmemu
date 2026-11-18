@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <deque>
+#include "libdevices/main/sample_queue.h"
 
 namespace bbc {
 
@@ -46,7 +47,7 @@ private:
     int m_div = 0;
     double m_phase = 0, m_acc = 0;
     int m_accN = 0;
-    std::deque<float> m_samples;
+    SampleQueue m_samples;   // pulled on the host's audio thread
 };
 
 }  // namespace bbc

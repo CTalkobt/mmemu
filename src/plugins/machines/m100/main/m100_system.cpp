@@ -301,7 +301,7 @@ void Sound::run(uint64_t ticks, float level) {
             const double x = m_sum / TICKS_PER_SAMPLE;
             m_dc = x - m_lastIn + 0.995 * m_dc;
             m_lastIn = x;
-            if (m_samples.size() < 44100) m_samples.push_back((float)m_dc);
+            m_samples.push((float)m_dc, 44100, false);
             m_sum = 0;
             m_acc = 0;
         }
@@ -309,12 +309,7 @@ void Sound::run(uint64_t ticks, float level) {
 }
 
 int Sound::pullSamples(float* buffer, int maxSamples) {
-    int n = 0;
-    while (n < maxSamples && !m_samples.empty()) {
-        buffer[n++] = m_samples.front();
-        m_samples.pop_front();
-    }
-    return n;
+    return m_samples.pull(buffer, maxSamples);
 }
 
 // ---------------------------------------------------------------------------

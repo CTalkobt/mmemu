@@ -14,6 +14,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 namespace apple2 {
 
@@ -64,8 +65,7 @@ public:
                 const float y = x - m_prevX + 0.995f * m_prevY;     // DC blocker
                 m_prevX = x;
                 m_prevY = y;
-                m_out.push_back(y);
-                if (m_out.size() > SAMPLE_RATE) m_out.pop_front();
+                m_out.push(y, SAMPLE_RATE);
                 m_acc = 0;
                 m_phase -= PER_SAMPLE;
             }
@@ -75,9 +75,7 @@ public:
 
     int nativeSampleRate() const override { return SAMPLE_RATE; }
     int pullSamples(float* buffer, int maxSamples) override {
-        int n = 0;
-        while (n < maxSamples && !m_out.empty()) { buffer[n++] = m_out.front(); m_out.pop_front(); }
-        return n;
+        return m_out.pull(buffer, maxSamples);
     }
 
 private:
@@ -85,7 +83,7 @@ private:
     uint64_t m_time = 0, m_toggles = 0;
     double m_phase = 0, m_acc = 0;
     float m_level = 1.0f, m_prevX = 0, m_prevY = 0;
-    std::deque<float> m_out;
+    SampleQueue m_out;   // pulled on the host's audio thread
     std::function<float(uint64_t)> m_mix;
 };
 
