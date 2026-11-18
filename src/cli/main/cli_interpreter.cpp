@@ -2287,6 +2287,11 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
                     m_output("\nInternal State:\n");
                     for (const auto& s : info.state) m_output("  " + s.first + ": " + s.second + "\n");
                 }
+                if (!info.switches.empty()) {
+                    m_output("\nSwitches:\n");
+                    for (const auto& sw : info.switches)
+                        m_output("  " + sw.key + ": " + (sw.on ? "on" : "off") + "  (" + sw.label + ")\n");
+                }
                 if (!info.registers.empty()) {
                     m_output("\nRegisters:\n");
                     for (size_t i = 0; i < info.registers.size(); ++i) {
@@ -2984,7 +2989,66 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             for (const auto& [k, v] : info.state)
                 os << "    " << k << " = " << v << "\n";
         }
+        if (!info.switches.empty()) {
+            os << "  Switches (devopt " << devName << " <key> on|off):\n";
+            for (const auto& sw : info.switches)
+                os << "    " << std::left << std::setw(12) << sw.key << (sw.on ? "on " : "off") << "  " << sw.label << "\n";
+        }
+        const auto pending = handler->pendingOptions();
+        if (!pending.empty()) {
+            os << "  Held options:\n";
+            for (const auto& p : pending) os << "    " << p.key << " = " << p.value << ", " << p.when.str() << "\n";
+        }
         m_output(os.str());
+    } else if (cmd == "devopt") {
+        // devopt <device> [<key> <value> [when now|started|SECONDS]]: a device's
+        // settings (its switches), now or held until the device has started
+        if (!m_ctx.machine || !m_ctx.machine->ioRegistry) { m_output("No machine created.\n"); return; }
+        const std::string syntax = "Syntax: devopt <device> [<key> <value> [when now|started|<seconds>]]\n";
+        std::string devName, key, value;
+        ss >> devName >> key;
+        std::getline(ss, value);
+        while (!value.empty() && value[0] == ' ') value.erase(0, 1);
+        OptionTiming when;
+        const auto w = value.rfind(" when ");
+        if (w != std::string::npos) {
+            if (!OptionTiming::parse(value.substr(w + 6), when)) { m_output(syntax); return; }
+            value = value.substr(0, w);
+        }
+        if (devName.empty()) { m_output(syntax); return; }
+        IOHandler* handler = m_ctx.machine->ioRegistry->findHandler(devName);
+        if (!handler) {
+            std::vector<IOHandler*> handlers;
+            m_ctx.machine->ioRegistry->enumerate(handlers);
+            std::string target = devName;
+            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
+            for (auto* h : handlers) {
+                std::string hn = h->name();
+                std::transform(hn.begin(), hn.end(), hn.begin(), ::tolower);
+                if (hn.find(target) != std::string::npos) { handler = h; break; }
+            }
+        }
+        if (!handler) { m_output("Device '" + devName + "' not found.\n"); return; }
+        if (!key.empty()) {
+            if (value.empty()) { m_output(syntax); return; }
+            std::string err;
+            if (!handler->setOptionWhen(key, value, when, err)) {
+                m_output(std::string(handler->name()) + ": " + key + ": " + err + "\n");
+                return;
+            }
+        }
+        DeviceInfo info;
+        handler->getDeviceInfo(info);
+        const auto pending = handler->pendingOptions();
+        if (info.switches.empty() && pending.empty()) {
+            m_output(key.empty() ? std::string(handler->name()) + " has no switches.\n"
+                                 : std::string(handler->name()) + ": " + key + " = " + value + "\n");
+            return;
+        }
+        for (const auto& sw : info.switches)
+            m_output(std::string(handler->name()) + ": " + sw.key + " " + (sw.on ? "on " : "off") + "  " + sw.label + "\n");
+        for (const auto& p : pending)
+            m_output(std::string(handler->name()) + ": " + p.key + " = " + p.value + " held, " + p.when.str() + "\n");
     } else if (cmd == "profile") {
         if (!m_ctx.cpu) { m_output("No machine created.\n"); return; }
         int steps = 1000000, top = 20;
@@ -3594,6 +3658,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  recordaudio <f> <d> - Record D ms of audio to WAV file\n"
                  "  stack [n]           - Show stack trace (default 8 entries)\n"
                  "  devinfo <name>      - Show device registers and state\n"
+                 "  devopt <name> [k v [when started|<secs>]] - Show a device's switches and held\n"
+                 "                        options, or set one now or once the device has started\n"
                  "  iomap [addr]        - Show I/O handler for address\n"
                  "  heatmap <cmd>       - Memory access heat map\n"
                  "  raster              - Show current raster beam position\n"

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <array>
 #include <cstdint>
 #include <ctime>
@@ -97,7 +98,9 @@ class SerialEndpoint;
  * (a line the client skips, the text, then the channel closes);
  * `tcp connect HOST PORT` connects the channel to a TCP server ("OK
  * connected", then the channel carries the connection until either end
- * closes); anything else answers `FAIL 010 ...` (net.as's error format).
+ * closes) while network access is on (setNetwork; off by default: the
+ * guest would otherwise reach any host), else `FAIL 205`; anything else
+ * answers `FAIL 208 ...` (net.as's error format).
  */
 class DriveWireServer {
 public:
@@ -127,6 +130,7 @@ public:
     struct Stats {
         uint64_t reads = 0, writes = 0, rereads = 0, crcErrors = 0, unknownOps = 0, serialPolls = 0;
         uint64_t serialIn = 0, serialOut = 0;   // bytes to / from the guest's channels
+        uint64_t inits = 0;                     // the guest's driver started (OP_DWINIT, OP_INIT): its startup has finished
         int lastOp = -1, lastDrive = -1;
         uint32_t lastLsn = 0;
     };
@@ -202,6 +206,12 @@ public:
     static std::string portName(int port);
     /** A port from a name: 0-31, $1F, term, n3, midi, z2 (-1 if none). */
     static int parsePort(const std::string& name);
+    /** Whether the virtual modem's `tcp connect` may open connections (the
+     *  guest reaching hosts on the network): off until the host allows it. */
+    void setNetwork(bool on) { m_network = on; }
+    bool network() const { return m_network; }
+    /** An on/off option's value: on, off, 1, 0, true, false, yes, no; false if none of these. */
+    static bool parseOnOff(const std::string& value, bool& on);
     /** The CLI's `drivewire` command (the arguments after it); its reply. */
     std::string hostCommand(const std::vector<std::string>& args);
     static constexpr size_t MAX_OUTPUT = 1 << 20;
@@ -238,5 +248,6 @@ private:
     Stats m_stats;
     std::unique_ptr<Channel> m_channels[CHANNELS];
     int m_nextPoll = 0;                     // round robin over the channels
+    std::atomic<bool> m_network{false};     // `tcp connect` allowed (the GUI may set it while the guest runs)
     double m_sincePoll = 0;
 };

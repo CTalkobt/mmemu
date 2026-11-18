@@ -218,7 +218,7 @@ cartridge FIRQ starts it.
 | `sc2` | Disto Super Controller II: an FD-502-compatible WD1773 controller with a 256-byte no-halt buffer at `$FF74-$FF77` and the Mini-Expansion Bus at `$FF50` (option: `[ROM][,alt]`; below) |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
 | `burke` | Burke & Burke CoCo XT-RTC hard disk interface at `$FF50-$FF53` and its DS1215 clock (option: drive 0's raw image[,ROM]) |
-| `becker` | The Becker port at `$FF41/$FF42` to mmsim's built-in DriveWire 4 server (option: `[ROM][,cow]`; below) |
+| `becker` | The Becker port at `$FF41/$FF42` to mmsim's built-in DriveWire 4 server (option: `[ROM][,cow][,net]`; below) |
 | `dosrom` | A DOS ROM at `$C000` with no hardware behind it and no autostart: HDB-DOS for DriveWire over the bit banger (`serial drivewire`; below) |
 | `rompak` | A ROM Pak; the option its image |
 | `gmc` | The Games Master Cartridge (bank-switched ROM and an SN76489); the option its image |
@@ -660,7 +660,7 @@ server at the far end of that cable:
 
 ```
 expansion cart dosrom roms/coco/hdbdw3cc3.rom      # HDB-DOS for the serial port, no controller
-serial drivewire                                   # (or drivewire:38400, drivewire,cow)
+serial drivewire                                   # (or drivewire:38400, drivewire,cow,net)
 disk mount 1 nos96809l2v030300coco3_dw.dsk         # DriveWire drive 0
 DOS                                                # (typed at OK) boots NitrOS-9
 ```
@@ -773,10 +773,35 @@ disk eject N`, `dw server version` and `dw port show` answer `OK`, the
 text, and then the channel closes (which ends `dw`); `tcp connect HOST
 PORT` connects the channel to a TCP server (`OK connected to HOST:PORT`,
 then the channel carries the connection until either end closes: the
-guest's `telnet`); anything else answers `FAIL 208 not supported: ...`
+guest's `telnet`) when network access is on; anything else answers `FAIL 208 not supported: ...`
 (`dw ...` then closes; E$UnkSvc). `tcp listen` / `tcp join` (`inetd`),
 the AT command set, `dw disk insert` and the rest of the DW4 server's
-commands are not there. The `_becker_headless` and `_dw_headless` builds
+commands are not there.
+
+**Network access is off by default**: `tcp connect` would let a program
+in the guest open a connection to any host, so it answers `FAIL 205
+network access is off` until the host allows it. Turn it on with `,net`
+when fitting the server (`expansion cart becker [ROM],net`, `serial
+drivewire,net`), with `drivewire network on|off` while it runs, with the
+device option `network` (`devopt cart network on` for the Becker
+cartridge, `devopt rs-232 network on` for the bit banger; a machine
+JSON's device `"options": {"network": "on"}`), or in the GUI with the
+**DriveWire network access** toggle in the Devices pane (the `Cartridge`
+or `RS-232` device). `drivewire` alone shows the setting. While a
+connection opens, the emulation waits for it.
+
+A device option can also be **held until startup has finished**: `devopt
+cart network on when started` waits until the guest's DriveWire driver
+starts (it sends DWINIT, or DriveWire 3's INIT; HDB-DOS at its prompt
+doesn't, NitrOS-9's boot does), and `devopt cart network on when 5` waits
+five seconds of guest time from when it was set. A machine JSON's device
+option takes `{ "value": "on", "when": "started" }` for the same.
+`devinfo` and the GUI's Devices pane list the held options; a held option
+that the device refuses when its time comes is shown there as "Held option
+refused". The Becker cartridge's port and the bit banger take `network`,
+and the bit banger also `baud` and `turnaround`, this way.
+
+The `_becker_headless` and `_dw_headless` builds
 boot to their shell on `/Term`; `test_coco_real_roms.cpp` runs `dir` there,
 a second shell on `/N1`, and `dw disk show` (Level 2 on the CoCo 3, Becker
 and bit banger; Level 1 on the CoCo 2, whose `dw` prints the reply but

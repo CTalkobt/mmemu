@@ -2,7 +2,9 @@
 #include <iomanip>
 #include <sstream>
 #include <wx/splitter.h>
+#include <wx/wrapsizer.h>
 #include <wx/dcbuffer.h>
+#include <wx/tglbtn.h>
 
 static std::string toHex(uint32_t v, int width = 4) {
     std::ostringstream ss;
@@ -18,6 +20,11 @@ DeviceInfoPane::DeviceInfoPane(wxWindow* parent)
     m_deviceSelector = new wxComboBox(this, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
     m_deviceSelector->Bind(wxEVT_COMBOBOX, &DeviceInfoPane::onDeviceSelected, this);
     sizer->Add(m_deviceSelector, 0, wxEXPAND | wxALL, 5);
+
+    m_switchPanel = new wxPanel(this, wxID_ANY);
+    m_switchPanel->SetSizer(new wxWrapSizer(wxHORIZONTAL));
+    m_switchPanel->Hide();
+    sizer->Add(m_switchPanel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 5);
 
     auto* splitter = new wxSplitterWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxSP_LIVE_UPDATE);
     sizer->Add(splitter, 1, wxEXPAND | wxALL, 0);
@@ -59,10 +66,11 @@ void DeviceInfoPane::onDeviceSelected(wxCommandEvent& /*evt*/) {
 void DeviceInfoPane::refreshValues() {
     m_tree->DeleteAllItems();
     m_regItemMap.clear();
-    if (!m_desc || !m_desc->ioRegistry) return;
+    if (!m_desc || !m_desc->ioRegistry) { updateSwitches(nullptr); return; }
 
     int sel = m_deviceSelector->GetSelection();
     if (sel == wxNOT_FOUND) {
+        updateSwitches(nullptr);
         m_currentInfo = DeviceInfo();
         m_bitmapWindow->Refresh();
         return;
@@ -71,6 +79,7 @@ void DeviceInfoPane::refreshValues() {
     std::string name = m_deviceSelector->GetString(sel).ToStdString();
     IOHandler* handler = m_desc->ioRegistry->findHandler(name);
     if (!handler) {
+        updateSwitches(nullptr);
         m_currentInfo = DeviceInfo();
         m_bitmapWindow->Refresh();
         return;
@@ -79,6 +88,7 @@ void DeviceInfoPane::refreshValues() {
     m_currentInfo = DeviceInfo();
     handler->getDeviceInfo(m_currentInfo);
     const DeviceInfo& info = m_currentInfo;
+    updateSwitches(handler);
 
     wxTreeItemId root = m_tree->AddRoot("Device");
     
@@ -102,6 +112,13 @@ void DeviceInfoPane::refreshValues() {
             m_tree->AppendItem(stateNode, s.first + ": " + s.second);
         }
         m_tree->Expand(stateNode);
+    }
+
+    const auto held = handler->pendingOptions();
+    if (!held.empty()) {
+        wxTreeItemId heldNode = m_tree->AppendItem(root, "Held Options");
+        for (const auto& p : held) m_tree->AppendItem(heldNode, p.key + " = " + p.value + ", " + p.when.str());
+        m_tree->Expand(heldNode);
     }
 
     if (!info.registers.empty()) {
@@ -130,6 +147,51 @@ void DeviceInfoPane::refreshValues() {
     m_bitmapWindow->SetVirtualSize(maxWidth, totalHeight);
     m_bitmapWindow->SetScrollRate(10, 10);
     m_bitmapWindow->Refresh();
+}
+
+void DeviceInfoPane::updateSwitches(IOHandler* handler) {
+    const std::vector<DeviceSwitch> none;
+    const std::vector<DeviceSwitch>& switches = handler ? m_currentInfo.switches : none;
+    const std::string device = handler ? handler->name() : "";
+    auto label = [](const DeviceSwitch& sw) { return sw.label + ": " + (sw.on ? "On" : "Off"); };
+
+    std::vector<std::string> keys;
+    for (const auto& sw : switches) keys.push_back(sw.key);
+    if (keys == m_switchKeys && device == m_switchDevice) {
+        // Same buttons: follow changes made elsewhere (the CLI, the guest's machine)
+        wxWindowList& buttons = m_switchPanel->GetChildren();
+        size_t i = 0;
+        for (wxWindow* w : buttons) {
+            if (i >= switches.size()) break;
+            if (auto* b = dynamic_cast<wxToggleButton*>(w)) {
+                b->SetValue(switches[i].on);
+                b->SetLabel(label(switches[i]));
+            }
+            ++i;
+        }
+        return;
+    }
+    m_switchKeys = keys;
+    m_switchDevice = device;
+    m_switchPanel->DestroyChildren();
+    wxSizer* row = m_switchPanel->GetSizer();
+    row->Clear();
+    for (const auto& sw : switches) {
+        auto* b = new wxToggleButton(m_switchPanel, wxID_ANY, label(sw));
+        b->SetValue(sw.on);
+        if (!sw.description.empty()) b->SetToolTip(sw.description);
+        b->Bind(wxEVT_TOGGLEBUTTON, [this, key = sw.key, device](wxCommandEvent& e) {
+            IOHandler* h = m_desc && m_desc->ioRegistry ? m_desc->ioRegistry->findHandler(device) : nullptr;
+            std::string err;
+            if (h && !h->setOption(key, e.IsChecked() ? "on" : "off", err))
+                wxMessageBox(device + ": " + key + ": " + err, "Device option", wxOK | wxICON_ERROR, this);
+            // Re-read: the button shows what the device took
+            CallAfter([this] { refreshValues(); });
+        });
+        row->Add(b, 0, wxRIGHT | wxTOP, 4);
+    }
+    m_switchPanel->Show(!switches.empty());
+    Layout();
 }
 
 void DeviceInfoPane::onTreeRightClick(wxTreeEvent& evt) {

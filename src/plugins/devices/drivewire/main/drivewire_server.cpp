@@ -242,6 +242,7 @@ void DriveWireServer::dispatch() {
         case OP_DWINIT:
             resetChannels();                // (dwio's Init: before any channel opens)
             push(SERVER_VERSION);
+            ++m_stats.inits;
             break;
         case OP_SERREAD:
             ++m_stats.serialPolls;
@@ -360,11 +361,16 @@ void DriveWireServer::dispatch() {
             }
             break;
         }
-        case OP_NOP: case OP_INIT: case OP_TERM: case OP_RESET1: case OP_RESET2: case OP_RESET3:
+        case OP_INIT:
+            // The guest's driver started (DriveWire 3's init; 4's is OP_DWINIT)
+            ++m_stats.inits;
+            break;
+        case OP_NOP: case OP_TERM: case OP_RESET1: case OP_RESET2: case OP_RESET3:
+            break;
         case OP_SERGETSTAT:
             // The driver advertises its GetStats; Level 1's scdwv then reads
             // SS.KySns's key-sense byte back (no keys down)
-            if (m_cmd[2] == SS_KYSNS) push(0);
+            if (m_cmd.size() > 2 && m_cmd[2] == SS_KYSNS) push(0);
             break;
         case OP_GETSTAT: case OP_SETSTAT: case OP_PRINTFLUSH: case OP_SETTIME:
             break;
@@ -591,6 +597,10 @@ void DriveWireServer::modemLine(Channel& ch, const std::string& line) {
             port = words[3];
         }
         const int p = std::atoi(port.c_str());
+        if (!m_network) {
+            modemReply(ch, "FAIL 205 network access is off (on the host: drivewire network on)\r", false);
+            return;
+        }
         if (host.empty() || p <= 0 || p > 65535) {
             modemReply(ch, "FAIL 203 usage: tcp connect HOST PORT\r", false);
             return;
@@ -832,6 +842,13 @@ std::string DriveWireServer::describeChannels() const {
 }
 
 // The CLI's `drivewire` command
+bool DriveWireServer::parseOnOff(const std::string& value, bool& on) {
+    const std::string v = lower(value);
+    if (v == "on" || v == "1" || v == "true" || v == "yes") { on = true; return true; }
+    if (v == "off" || v == "0" || v == "false" || v == "no") { on = false; return true; }
+    return false;
+}
+
 std::string DriveWireServer::hostCommand(const std::vector<std::string>& args) {
     const std::string usage =
         "Usage: drivewire                     the drives and virtual channels\n"
@@ -840,14 +857,24 @@ std::string DriveWireServer::hostCommand(const std::vector<std::string>& args) {
         "       drivewire send CH TEXT...     TEXT alone (escapes: \\r \\n \\e \\xHH)\n"
         "       drivewire read CH             what the guest wrote to CH since the last read\n"
         "       drivewire hangup CH           tell the guest CH closed (serial channels)\n"
+        "       drivewire network [on|off]    whether the guest's tcp connect may reach the network (default off)\n"
         "  CH: term (0), n1-n13, midi (14), z1-z15 ($11-$1F), or a number\n";
     if (args.empty() || args[0] == "show" || args[0] == "status") {
         std::string s = "DriveWire 4 server: " + (describe().empty() ? std::string("no drives") : describe()) + "\n";
+        s += std::string("  network access (tcp connect): ") + (m_network ? "on" : "off") + "\n";
         const std::string ch = describeChannels();
         s += ch.empty() ? "  no virtual channel in use\n" : ch;
         return s;
     }
     const std::string verb = lower(args[0]);
+    if (verb == "network" || verb == "net") {
+        if (args.size() >= 2) {
+            bool on = false;
+            if (!parseOnOff(args[1], on)) return "Syntax: drivewire network [on|off]\n";
+            m_network = on;
+        }
+        return std::string("DriveWire network access (tcp connect): ") + (m_network ? "on" : "off") + "\n";
+    }
     if (args.size() < 2) return usage;
     const int port = parsePort(args[1]);
     if (port < 0) return "No channel '" + args[1] + "'.\n" + usage;

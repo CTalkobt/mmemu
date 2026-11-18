@@ -31,6 +31,23 @@ The canonical version is defined in the `VERSION` file at the repository root.
   answer and close the channel; `tcp connect HOST PORT` connects it to a
   TCP server; anything else answers `FAIL 208` (`tcp listen` for `inetd`
   is not there).
+- **Network access is opt-in**: `tcp connect` answers `FAIL 205` until the
+  host turns it on: `,net` on `expansion cart becker` / `serial drivewire`,
+  `drivewire network on|off`, or the device option `network`.
+- **Device switches**: a device can list on/off settings
+  (`DeviceInfo::switches`, set through `IOHandler::setOption`). The GUI's
+  Devices pane shows each as a toggle button; the CLI's new `devopt <device>
+  [<key> <value>]` lists and sets them, `devinfo` shows them, and MCP's
+  device info returns them. DriveWire's network access is the first.
+- **Held device options**: `IOHandler::setOptionWhen` applies an option now,
+  once the device's startup has finished (`started`: the device says when;
+  for DriveWire, the guest's driver sending DWINIT / INIT), or after a delay
+  of guest time (for devices the reset line doesn't reach). The CLI's
+  `devopt ... when started|<seconds>` and a machine JSON's `{ "value": ...,
+  "when": ... }` set them; `devinfo`, the GUI's Devices pane and MCP list
+  the held ones. A header-only `DeferredOptions` helper does the holding.
+- Fixed: the DriveWire server read past a one-byte command (NOP, INIT,
+  TERM, the resets) looking for SS.KySns, and could answer a stray byte.
 - `OP_SERGETSTAT` SS.KySns answers 0 (Level 1's `scdwv` reads it; Level 2's
   doesn't, so a new command now drops answer bytes the guest left unread,
   on the Becker port and the bit banger). A channel's close is announced

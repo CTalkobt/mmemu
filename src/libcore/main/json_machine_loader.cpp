@@ -333,13 +333,33 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
                 dev->setBaseAddr(hexStrToU32(devSpec["baseAddr"].get<std::string>()));
             if (devSpec.contains("clockHz") && !devSpec["clockHz"].is_null())
                 dev->setClockHz(devSpec["clockHz"].get<uint32_t>());
-            // Device settings: "options": { "model": "6526A" }
+            // Device settings: "options": { "model": "6526A" }, or held until the
+            // device has started: { "network": { "value": "on", "when": "started" } }
+            // ("when": "now", "started", or seconds of guest time, e.g. "2.5")
             if (devSpec.contains("options") && devSpec["options"].is_object()) {
                 for (const auto& [key, value] : devSpec["options"].items()) {
-                    std::string err;
-                    if (!value.is_string() || !dev->setOption(key, value.get<std::string>(), err))
-                        fprintf(stderr, "machine JSON: device %s: option %s: %s\n", devName.c_str(), key.c_str(),
-                                err.empty() ? "not a string" : err.c_str());
+                    std::string err, text;
+                    OptionTiming when;
+                    bool ok = false;
+                    if (value.is_string()) {
+                        text = value.get<std::string>();
+                        ok = true;
+                    } else if (value.is_object() && value.contains("value") && value["value"].is_string()) {
+                        text = value["value"].get<std::string>();
+                        std::string w = "now";
+                        if (value.contains("when")) {
+                            const auto& wj = value["when"];
+                            if (wj.is_number()) w = std::to_string(wj.get<double>());
+                            else if (wj.is_string()) w = wj.get<std::string>();
+                        }
+                        ok = OptionTiming::parse(w, when);
+                        if (!ok) err = "\"when\": now, started or seconds";
+                    } else {
+                        err = "a string, or { \"value\": ..., \"when\": ... }";
+                    }
+                    if (ok) ok = dev->setOptionWhen(key, text, when, err);
+                    if (!ok)
+                        fprintf(stderr, "machine JSON: device %s: option %s: %s\n", devName.c_str(), key.c_str(), err.c_str());
                 }
             }
 

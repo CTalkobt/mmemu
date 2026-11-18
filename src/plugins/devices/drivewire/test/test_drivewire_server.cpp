@@ -5,6 +5,7 @@
 #include <string>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <vector>
@@ -523,6 +524,13 @@ TEST_CASE(drivewire_port_names_and_cli) {
     ASSERT(dw.hostCommand({"read", "term"}).find("nothing") != std::string::npos);
     ASSERT(dw.hostCommand({}).find("/Term") != std::string::npos);
     ASSERT(dw.hostCommand({"channel", "n2", "loopback"}).find("loopback") != std::string::npos);
+    // Network access: off by default; on/off and its synonyms
+    ASSERT(dw.hostCommand({}).find("network access (tcp connect): off") != std::string::npos);
+    ASSERT(dw.hostCommand({"network", "yes"}).find(": on") != std::string::npos);
+    ASSERT(dw.hostCommand({"network"}).find(": on") != std::string::npos);
+    ASSERT(dw.hostCommand({"net", "0"}).find(": off") != std::string::npos);
+    ASSERT(dw.hostCommand({"network", "maybe"}).find("Syntax") != std::string::npos);
+    ASSERT(!dw.network());
 }
 
 // `tcp connect HOST PORT` (NitrOS-9's telnet): the channel carries the
@@ -538,9 +546,17 @@ TEST_CASE(drivewire_modem_tcp_connect) {
     ::getsockname(lfd, (sockaddr*)&a, &al);
     const int port = ntohs(a.sin_port);
     DW dw;
+    ASSERT(!dw.network());                                  // off until the host allows it
     sendAll(dw, {DW::OP_SERINIT, 3, DW::OP_SERSETSTAT, 3, DW::SS_OPEN});
     for (char c : "tcp connect 127.0.0.1 " + std::to_string(port) + "\r") sendAll(dw, {DW::OP_FASTWRITE + 3, (uint8_t)c});
     std::vector<uint8_t> last;
+    ASSERT(readChannel(dw, 3, last).rfind("FAIL 205 ", 0) == 0);
+    ASSERT(last == bytes({0, 0}));                          // the channel stays, no connection
+    pollfd pf{lfd, POLLIN, 0};
+    ASSERT_EQ(::poll(&pf, 1, 50), 0);
+    ASSERT(dw.hostCommand({"network", "on"}).find(": on") != std::string::npos);
+    ASSERT(dw.network());
+    for (char c : "tcp connect 127.0.0.1 " + std::to_string(port) + "\r") sendAll(dw, {DW::OP_FASTWRITE + 3, (uint8_t)c});
     ASSERT(readChannel(dw, 3, last).rfind("OK connected to 127.0.0.1:", 0) == 0);
     const int peer = ::accept(lfd, nullptr, nullptr);
     ASSERT(peer >= 0);

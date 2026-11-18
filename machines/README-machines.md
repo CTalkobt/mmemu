@@ -69,6 +69,14 @@ Individual hardware components.
 - `name`: Instance name (e.g., `"VIA1"`, `"VIC-II"`).
 - `baseAddr`: Hex string of the memory-mapped base address, or `null`.
 - `clockHz`: (Optional) Custom clock frequency for the device.
+- `options`: (Optional) The device's settings, `{ "key": "value" }`, applied
+  when the machine is built (`IOHandler::setOption`). A setting that has to
+  wait until the device has started (the guest must send its init codes
+  first, or the device isn't on the reset line) takes `{ "value": "on",
+  "when": "started" }` or a delay in guest seconds, `"when": "2.5"`; only
+  devices that can tell when they've started take these
+  (`IOHandler::setOptionWhen`). The CLI's `devopt <device> <key> <value>
+  when started|<seconds>` does the same while the machine runs.
 - `colorRam`: (Optional, bool) Indicates the device needs access to the color RAM.
 - `dmaBus`: (Optional, bool) Indicates the device needs a DMA bus.
 - `lines`: (Optional) Map of device pins to signal names (e.g., `{"ca1": "vsync"}`).

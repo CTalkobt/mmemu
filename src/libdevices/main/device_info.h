@@ -25,6 +25,18 @@ struct DeviceBitmap {
     std::vector<uint32_t> pixels; // RGBA8888
 };
 
+/**
+ * An on/off setting a device lets the user change while it runs (a front
+ * end shows it as a toggle). Changing it is IOHandler::setOption(key, "on"
+ * or "off"), as the machine's JSON "options" and the CLI's `devopt` do.
+ */
+struct DeviceSwitch {
+    std::string key;            // setOption's key
+    std::string label;          // e.g. "DriveWire network access"
+    std::string description;    // what turning it on does (a tooltip)
+    bool        on = false;
+};
+
 struct DeviceInfo {
     std::string name;
     uint32_t    baseAddr;
@@ -33,4 +45,5 @@ struct DeviceInfo {
     std::vector<std::pair<std::string, std::string>> state;
     std::vector<std::pair<std::string, std::string>> dependencies;
     std::vector<DeviceBitmap> bitmaps;
+    std::vector<DeviceSwitch> switches;
 };
