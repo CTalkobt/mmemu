@@ -239,4 +239,7 @@ private:
     uint64_t m_lastCount = 0;
 };
 
+/** The Becker cartridge in the port or a Multi-Pak slot (nullptr if none). */
+BeckerCart* findBecker(Cart* port);
+
 }  // namespace coco

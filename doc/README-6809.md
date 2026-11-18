@@ -7,6 +7,7 @@ The core follows the MC6809/MC6809E data sheet (Motorola).
 - **Indexed modes:** 5-, 8- and 16-bit offsets, A/B/D offsets, auto-increment and decrement, PC-relative, extended indirect, and the indirect forms, each with its extra cycles.
 - **Other instructions:** TFR/EXG (an 8-bit register reads as `$FF00` | it in a 16-bit transfer), PSH/PUL, CWAI, SYNC, SWI/SWI2/SWI3, DAA and MUL.
 - **Cycles:** `step()` returns the data sheet's cycle counts.
+- **Bus cycles in order:** an instruction's dead (VMA) cycles before its operand's read or write, and the one between a read-modify-write's read and write, are placed where the data sheet and XRoar's cycle-by-cycle core have them (`LDA $FF22`: opcode, address, address, dead, read; `ROR $2000`: ..., dead, read, dead, write; `LDA [,X]`: ..., dead, pointer, pointer, dead, read). `setDeadCycleHook` reports each as it passes, so a machine that keeps time by the bus cycle (the CoCo) sees an I/O access on its own cycle; dead cycles after an instruction's last access (a branch's, SUBD's ALU cycle) are the rest of `step()`'s count. The HD6309 reports all of its dead cycles the same way.
 - **Interrupts:**
   - /IRQ (`setIrqLine`) and /FIRQ (`setFirqLine`) are level-sensitive; /NMI is edge-triggered.
   - NMI is not taken until S has been loaded (LDS, LEAS, TFR/EXG or PULU into S), as the data sheet says.

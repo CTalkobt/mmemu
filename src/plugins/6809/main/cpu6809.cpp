@@ -172,6 +172,7 @@ uint16_t& M6809::indexReg(int r) {
 // The indexed modes (data sheet table 2): the effective address, and the
 // cycles the postbyte adds in m_extra
 uint16_t M6809::indexed() {
+    const int start = m_bc;                                  // the opcode's bytes
     const uint8_t pb = fetch();
     uint16_t& r = indexReg(pb >> 5);
     uint16_t ea;
@@ -196,7 +197,11 @@ uint16_t M6809::indexed() {
         case 0xF: ea = fetch16(); m_extra = 2; break;                         // [n16]
         default: ea = r; m_extra = 0; break;                                  // $7, $A, $E: undefined
     }
-    if (pb & 0x10) { ea = rd16(ea); m_extra += 3; }                           // indirect
+    if (pb & 0x10) {                                                          // indirect
+        deadTo(start + 2 + m_extra);                                          // the pointer after the mode's dead cycles
+        ea = rd16(ea);
+        m_extra += 3;                                                         // (and one more before the operand)
+    }
     return ea;
 }
 
@@ -280,6 +285,7 @@ int M6809::interrupt() {
 // Execution
 // ---------------------------------------------------------------------------
 int M6809::step() {
+    m_bc = 0;
     if (m_pcHook && m_pcHook->armed(m_pc) && m_pcHook->fire(this, m_pc)) {
         m_cycles += 2;
         return 2;
@@ -326,8 +332,10 @@ int M6809::execPage0(uint8_t op) {
         else if (hi == 0x6) { ea = indexed(); base = 6; }
         else { ea = fetch16(); base = 7; m_extra = 0; }
         if (lo == 0xE) { m_pc = ea; return base - 3 + m_extra; }                 // JMP
+        deadTo(base + m_extra - 3);                                               // read, dead, write: the last three
         const uint8_t v = rd(ea);
         const uint8_t r = rmw(lo, v);
+        deadTo(m_bc + 1);
         if (lo != 0xD) wr(ea, r);                                                 // TST only reads
         return base + m_extra;
     }
@@ -475,15 +483,27 @@ int M6809::execPage0(uint8_t op) {
     };
     auto cyc8 = [&]() { return (mode == 0 ? 2 : mode == 1 ? 4 : mode == 2 ? 4 : 5) + m_extra; };
     auto cyc16 = [&](int base) { return (mode == 0 ? base : mode == 1 ? base + 2 : mode == 2 ? base + 2 : base + 3) + m_extra; };
-    auto read8op = [&]() -> uint8_t { if (mode == 0) { m_extra = 0; return fetch(); } return rd(ea()); };
-    auto read16op = [&]() -> uint16_t { if (mode == 0) { m_extra = 0; return fetch16(); } return rd16(ea()); };
+    // The operand's access is the instruction's last cycle (two for 16 bits): the dead cycles come first
+    auto read8op = [&]() -> uint8_t {
+        if (mode == 0) { m_extra = 0; return fetch(); }
+        const uint16_t a = ea();
+        deadTo(cyc8() - 1);
+        return rd(a);
+    };
+    // (`after`: the dead cycles that follow it, SUBD's, ADDD's and CMPX's ALU cycle)
+    auto read16op = [&](int base, int after) -> uint16_t {
+        if (mode == 0) { m_extra = 0; return fetch16(); }
+        const uint16_t a = ea();
+        deadTo(cyc16(base) - 2 - after);
+        return rd16(a);
+    };
     uint8_t& acc = bSide ? m_b : m_a;
     switch (lo) {
         case 0x0: acc = sub8(acc, read8op(), 0); return cyc8();                   // SUB
         case 0x1: sub8(acc, read8op(), 0); return cyc8();                         // CMP
         case 0x2: acc = sub8(acc, read8op(), m_cc & CC_C); return cyc8();         // SBC
         case 0x3: {                                                               // SUBD / ADDD
-            const uint16_t v = read16op();
+            const uint16_t v = read16op(4, 1);
             setD(bSide ? add16(d(), v) : sub16(d(), v));
             return cyc16(4);
         }
@@ -493,6 +513,7 @@ int M6809::execPage0(uint8_t op) {
         case 0x7: {                                                               // ST
             if (mode == 0) return 2;                                              // undefined
             const uint16_t a = ea();
+            deadTo(cyc8() - 1);
             wr(a, acc); nz8(acc); flag(CC_V, false);
             return cyc8();
         }
@@ -501,8 +522,8 @@ int M6809::execPage0(uint8_t op) {
         case 0xA: acc |= read8op(); nz8(acc); flag(CC_V, false); return cyc8();   // OR
         case 0xB: acc = add8(acc, read8op(), 0); return cyc8();                   // ADD
         case 0xC:
-            if (!bSide) { sub16(m_x, read16op()); return cyc16(4); }              // CMPX
-            setD(read16op()); nz16(d()); flag(CC_V, false); return cyc16(3);      // LDD
+            if (!bSide) { sub16(m_x, read16op(4, 1)); return cyc16(4); }          // CMPX
+            setD(read16op(3, 0)); nz16(d()); flag(CC_V, false); return cyc16(3);  // LDD
         case 0xD:
             if (!bSide) {
                 if (mode == 0) {                                                  // BSR
@@ -517,16 +538,17 @@ int M6809::execPage0(uint8_t op) {
                 return (mode == 1 ? 7 : mode == 2 ? 7 : 8) + m_extra;
             }
             if (mode == 0) return 2;                                              // undefined
-            { const uint16_t a = ea(); wr16(a, d()); nz16(d()); flag(CC_V, false); return cyc16(3); }   // STD
+            { const uint16_t a = ea(); deadTo(cyc16(3) - 2); wr16(a, d()); nz16(d()); flag(CC_V, false); return cyc16(3); }   // STD
         case 0xE: {                                                               // LDX / LDU
             uint16_t& r = bSide ? m_u : m_x;
-            r = read16op(); nz16(r); flag(CC_V, false);
+            r = read16op(3, 0); nz16(r); flag(CC_V, false);
             return cyc16(3);
         }
         default: {                                                                // STX / STU
             if (mode == 0) return 2;                                              // undefined
             const uint16_t r = bSide ? m_u : m_x;
             const uint16_t a = ea();
+            deadTo(cyc16(3) - 2);
             wr16(a, r); nz16(r); flag(CC_V, false);
             return cyc16(3);
         }
@@ -565,19 +587,24 @@ int M6809::execPage2(uint8_t op) {
         if (mode == 2) return indexed();
         return fetch16();
     };
-    auto read16op = [&]() -> uint16_t { if (mode == 0) { m_extra = 0; return fetch16(); } return rd16(ea()); };
     auto cyc = [&](int base) { return (mode == 0 ? base : mode == 1 ? base + 2 : mode == 2 ? base + 2 : base + 3) + m_extra; };
+    auto read16op = [&](int base, int after) -> uint16_t {
+        if (mode == 0) { m_extra = 0; return fetch16(); }
+        const uint16_t a = ea();
+        deadTo(cyc(base) - 2 - after);
+        return rd16(a);
+    };
     switch (op & 0xCF) {
-        case 0x83: sub16(d(), read16op()); return cyc(5);                        // CMPD
-        case 0x8C: sub16(m_y, read16op()); return cyc(5);                        // CMPY
-        case 0x8E: m_y = read16op(); nz16(m_y); flag(CC_V, false); return cyc(4); // LDY
+        case 0x83: sub16(d(), read16op(5, 1)); return cyc(5);                    // CMPD
+        case 0x8C: sub16(m_y, read16op(5, 1)); return cyc(5);                    // CMPY
+        case 0x8E: m_y = read16op(4, 0); nz16(m_y); flag(CC_V, false); return cyc(4);  // LDY
         case 0x8F:                                                               // STY
             if (mode == 0) return 2;
-            { const uint16_t a = ea(); wr16(a, m_y); nz16(m_y); flag(CC_V, false); return cyc(4); }
-        case 0xCE: m_s = read16op(); m_nmiArmed = true; nz16(m_s); flag(CC_V, false); return cyc(4);  // LDS
+            { const uint16_t a = ea(); deadTo(cyc(4) - 2); wr16(a, m_y); nz16(m_y); flag(CC_V, false); return cyc(4); }
+        case 0xCE: m_s = read16op(4, 0); m_nmiArmed = true; nz16(m_s); flag(CC_V, false); return cyc(4);  // LDS
         case 0xCF:                                                               // STS
             if (mode == 0) return 2;
-            { const uint16_t a = ea(); wr16(a, m_s); nz16(m_s); flag(CC_V, false); return cyc(4); }
+            { const uint16_t a = ea(); deadTo(cyc(4) - 2); wr16(a, m_s); nz16(m_s); flag(CC_V, false); return cyc(4); }
     }
     return 2;                                                                    // undefined
 }
@@ -591,14 +618,14 @@ int M6809::execPage3(uint8_t op) {
     }
     if (op < 0x80 || op >= 0xC0) return 2;                                       // undefined
     const int mode = (op >> 4) & 3;
+    auto cyc = [&](int base) { return (mode == 0 ? base : mode == 1 ? base + 2 : mode == 2 ? base + 2 : base + 3) + m_extra; };
     auto read16op = [&]() -> uint16_t {
         m_extra = 0;
         if (mode == 0) return fetch16();
-        if (mode == 1) return rd16((uint16_t)(m_dp << 8 | fetch()));
-        if (mode == 2) return rd16(indexed());
-        return rd16(fetch16());
+        const uint16_t a = mode == 1 ? (uint16_t)(m_dp << 8 | fetch()) : mode == 2 ? indexed() : fetch16();
+        deadTo(cyc(5) - 3);                                                      // (then the ALU's dead cycle)
+        return rd16(a);
     };
-    auto cyc = [&](int base) { return (mode == 0 ? base : mode == 1 ? base + 2 : mode == 2 ? base + 2 : base + 3) + m_extra; };
     switch (op & 0x0F) {
         case 0x3: sub16(m_u, read16op()); return cyc(5);                         // CMPU
         case 0xC: sub16(m_s, read16op()); return cyc(5);                         // CMPS

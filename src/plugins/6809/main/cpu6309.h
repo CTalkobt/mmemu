@@ -81,8 +81,8 @@ private:
     void     w16(uint16_t a, uint16_t v) { w8(a, (uint8_t)(v >> 8)); w8((uint16_t)(a + 1), (uint8_t)v); }
     uint8_t  imm8() { return r8(m_pc++); }
     uint16_t imm16() { const uint8_t h = imm8(); return (uint16_t)(h << 8 | imm8()); }
-    void     idle(int n = 1) { m_cyc += n; }
-    void     emu(int n = 1) { if (!nativeMode()) m_cyc += n; }      // a 6809 dead cycle native mode drops
+    void     idle(int n = 1) { m_cyc += n; if (m_onDead) while (n-- > 0) m_onDead(); }
+    void     emu(int n = 1) { if (!nativeMode()) idle(n); }          // a 6809 dead cycle native mode drops
     void     psh8(uint16_t& sp, uint8_t v) { w8(--sp, v); }
     void     psh16(uint16_t& sp, uint16_t v) { psh8(sp, (uint8_t)v); psh8(sp, (uint8_t)(v >> 8)); }
     uint8_t  pul8(uint16_t& sp) { return r8(sp++); }

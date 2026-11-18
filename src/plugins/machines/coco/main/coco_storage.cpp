@@ -336,6 +336,15 @@ bool BeckerCart::mountDisk(int drive, const std::string& path) {
     return m_dw.mount(drive, path, m_cow ? DriveWireServer::Mode::CopyOnWrite : DriveWireServer::Mode::WriteThrough);
 }
 
+BeckerCart* findBecker(Cart* port) {
+    if (auto* b = dynamic_cast<BeckerCart*>(port)) return b;
+    if (auto* mpi = dynamic_cast<MultiPak*>(port)) {
+        for (int i = 0; i < 4; ++i)
+            if (auto* b = dynamic_cast<BeckerCart*>(mpi->slot(i))) return b;
+    }
+    return nullptr;
+}
+
 bool BeckerCart::diskStatus(int drive, int& track, bool& motor) const {
     if (!m_dw.mounted(drive)) return false;
     const auto& st = m_dw.stats();

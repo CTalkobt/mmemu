@@ -15,7 +15,9 @@
 //    a disk's file with DIR, then SAVEs, lists, LOADs and RUNs a program.
 //  - nitros9/*.dsk (NitrOS-9 v3.3.0's release disks): each build boots to its
 //    shell and runs dir (CoCo 1/2/3, 6309, CoCo SDC, Dragon 64), and the
-//    Becker builds over DriveWire with HDB-DOS (hdbdw3bc3.rom, hdbdw3bck.rom).
+//    Becker builds over DriveWire with HDB-DOS (hdbdw3bc3.rom, hdbdw3bck.rom),
+//    and the bit-banger (_dw) builds over DriveWire on the serial port with
+//    HDB-DOS built for it (hdbdw3cc3.rom, hdbdw3cc2.rom, hdbdw3cc1.rom).
 
 #include "test_harness.h"
 #include "coco_test_rom.h"
@@ -521,7 +523,7 @@ bool os9WaitForModule(MachineDescriptor* m, const std::string& name, double seco
 // root directory's OS9Boot
 void nitros9(Model model, bool hd6309, const std::string& cart, const std::string& cartOpt, const std::string& disk,
              const std::string& command, const std::string& prompt, const std::string& boot,
-             const std::function<void(MachineDescriptor*)>& then = nullptr) {
+             const std::function<void(MachineDescriptor*)>& then = nullptr, const std::string& serial = "") {
     const std::string path = coco::firmwareDir() + "/nitros9/" + disk;
     if (!haveFile(path)) return;
     if (isDragon(model) ? !haveDragon64() : !haveFile(coco::firmwareDir() + "/disk11.rom")) return;
@@ -529,6 +531,7 @@ void nitros9(Model model, bool hd6309, const std::string& cart, const std::strin
     MachineDescriptor* m = coco::create(model, &err, model == Model::CoCo3 ? 512 : 64, nullptr, coco::Tv::Default, hd6309);
     ASSERT(m != nullptr);
     ASSERT(m->expansionSlot("cart")->install(cart, cartOpt, err));
+    if (!serial.empty()) ASSERT(coco::systemOf(m)->rs232.attachSerial(serial));   // `serial drivewire`
     // A copy: NitrOS-9 writes to its disk
     const std::string copy = "/tmp/mmsim_nitros9_" + std::to_string((long)getpid()) + ".dsk";
     {
@@ -641,4 +644,48 @@ TEST_CASE(real_nitros9_level2_coco3_6309_becker) {
 }
 TEST_CASE(real_nitros9_level1_coco2_becker) {
     nitros9Becker(Model::CoCo2, false, "hdbdw3bck.rom", "nos96809l1v030300coco2_becker.dsk", "OS9:", "OS9BOOT");
+}
+
+// DriveWire over the bit banger: HDB-DOS built for the serial port
+// (hdbdw3cc3.rom: the CoCo 3 at 115200 baud, 1.79 MHz; hdbdw3cc2.rom: the
+// CoCo 2 at 57600; hdbdw3cc1.rom: 38400; toolshed's hdbdos/, see
+// doc/README-COCO.md) in a ROM socket with no controller (`dosrom`), the
+// built-in server on the serial port (`serial drivewire`); DOS loads the
+// boot track, then NitrOS-9's own bit-banger rbdw/dwio (the _dw builds)
+// read the rest, every bit cycle-counted on PIA1 PA1 / PB0
+namespace {
+void nitros9BitBanger(Model model, bool hd6309, const std::string& rom, const std::string& disk, const std::string& prompt,
+                      const std::string& boot, const std::string& serial = "drivewire",
+                      const std::function<void(MachineDescriptor*)>& then = nullptr) {
+    const std::string hdb = coco::firmwareDir() + "/" + rom;
+    if (!haveFile(hdb)) return;
+    nitros9(model, hd6309, "dosrom", hdb, disk, "DOS", prompt, boot, then, serial);
+}
+}  // namespace
+TEST_CASE(real_nitros9_level2_coco3_bitbanger) {
+    nitros9BitBanger(Model::CoCo3, false, "hdbdw3cc3.rom", "nos96809l2v030300coco3_dw.dsk", "/DD:", "OS9Boot", "drivewire",
+                     [](MachineDescriptor* m) {
+                         coco::System* sys = coco::systemOf(m);
+                         EXPECT_EQ(sys->rs232.baud(), 115200);
+                         const auto& st = sys->rs232.driveWire()->stats();
+                         EXPECT_TRUE(st.reads > 20);
+                         EXPECT_EQ((int)st.crcErrors, 0);
+                         EXPECT_TRUE(st.serialPolls > 0);              // dwio polls the virtual channels
+                     });
+}
+TEST_CASE(real_nitros9_level2_coco3_6309_bitbanger) {
+    nitros9BitBanger(Model::CoCo3, true, "hdbdw3cc3.rom", "nos96309l2v030300coco3_dw.dsk", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level1_coco2_bitbanger) {
+    nitros9BitBanger(Model::CoCo2, false, "hdbdw3cc2.rom", "nos96809l1v030300coco2_dw.dsk", "OS9:", "OS9BOOT", "drivewire",
+                     [](MachineDescriptor* m) {
+                         coco::System* sys = coco::systemOf(m);
+                         EXPECT_EQ(sys->rs232.baud(), 57600);
+                         EXPECT_EQ((int)sys->rs232.driveWire()->stats().crcErrors, 0);
+                     });
+}
+// The CoCo 1 builds' driver and HDB-DOS's hdbdw3cc1 run at 38400
+TEST_CASE(real_nitros9_level1_coco1_bitbanger) {
+    nitros9BitBanger(Model::CoCo1, false, "hdbdw3cc1.rom", "nos96809l1v030300coco1_dw.dsk", "OS9:", "OS9BOOT",
+                     "drivewire:38400");
 }

@@ -26,6 +26,7 @@ RomPak::RomPak(std::vector<uint8_t> image, std::string label, bool autostart)
 }
 
 std::string RomPak::describe() const {
+    if (!m_autostart) return "DOS ROM (" + m_label + ", " + std::to_string(m_rom.size() / 1024) + " KB, no autostart)";
     return "ROM Pak (" + m_label + ", " + std::to_string(m_rom.size() / 1024) + " KB)";
 }
 

@@ -7,6 +7,41 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: DriveWire over the bit banger; NitrOS-9's `_dw` builds boot (#356)
+
+- **`serial drivewire[:BAUD][,cow]`** puts the built-in DriveWire 4 server
+  on the CoCo's serial port, as a PC on the end of the bit-banger cable:
+  the guest's 8N1 frames off PIA1 PA1 are its commands, the answers go down
+  PB0 at the same rate, starting 500 us after the stop bit of the byte
+  that completed the command (device option `turnaround`), back to back.
+  57600 baud on the CoCo 1/2 and 115200 on the CoCo 3 unless given (38400
+  for the CoCo 1 builds). `disk mount N FILE` puts an image in DriveWire
+  drive N-1 while it's attached; refused while a Becker cartridge (in the
+  port or a Multi-Pak slot) has its own server.
+- **PB0 on the CoCo 1/2**: the receive line is now read by PIA1 port B
+  there too (it was wired on the CoCo 3 only), sampled as the read's cycle
+  starts.
+- **The 6809's dead cycles in their place**: an instruction's VMA cycles
+  before its operand's access (and the one inside a read-modify-write) are
+  placed where the data sheet and XRoar have them and reported through a
+  new dead-cycle hook (the HD6309's too); the CoCo's System counts them
+  as they pass, so an `LDA $FF22` reads PIA1 on its 5th cycle rather than
+  its 4th (they used to be added after the instruction). Cycle counts are
+  unchanged.
+- **`expansion cart dosrom ROM`**: a DOS ROM at `$C000` with no hardware
+  and no autostart, for HDB-DOS built for the bit banger.
+- With HDB-DOS built from ToolShed for the serial port (`hdbdw3cc3.rom`,
+  `hdbdw3cc2.rom`, `hdbdw3cc1.rom`; steps in doc/README-COCO.md, local
+  only), NitrOS-9 v3.3.0's `_dw` disks boot to the shell and run `dir`:
+  Level 2 6809 and 6309 on the CoCo 3 (115200), Level 1 on the CoCo 2
+  (57600) and CoCo 1 (38400).
+- Tests: the 6809's bus-cycle order for 19 instruction forms; PB0 seen on
+  the exact read cycle (CoCo 2, CoCo 3 at 1.79 MHz); the transport's
+  framing and turnaround; a cycle-counted 6809 client in the drivers'
+  style reading a sector with READEX at 57600 on a CoCo 2 and 115200 on a
+  CoCo 3 (6809 and 6309), and failing at the wrong rate; real-disk boots
+  of the four `_dw` builds when the ROMs and disks are present.
+
 ### GUI: the machine list is a tree of vendors
 
 - **Load Machine** (Ctrl-L) shows a node per vendor, with that vendor's
