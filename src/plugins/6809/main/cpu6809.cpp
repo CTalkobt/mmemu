@@ -801,7 +801,13 @@ bool M6809::isReturnAt(IBus* bus, uint32_t addr) {
     return false;
 }
 
-bool M6809::isProgramEnd(IBus* bus) { (void)bus; return m_wait == WAIT_SYNC && (m_cc & CC_I) && (m_cc & CC_F); }
+// SYNC with I and F set ends a bare program (nothing can wake it), but on a
+// machine whose devices drive the interrupt lines it's a wait: a masked
+// interrupt still ends SYNC (DragonDOS waits for the disk's FIRQ that way)
+bool M6809::isProgramEnd(IBus* bus) {
+    (void)bus;
+    return m_wait == WAIT_SYNC && (m_cc & CC_I) && (m_cc & CC_F) && !m_linesDriven;
+}
 
 int M6809::writeCallHarness(IBus* bus, uint32_t scratch, uint32_t routineAddr) {
     // JSR routine ; ORCC #$50 ; SYNC (ends with interrupts masked)

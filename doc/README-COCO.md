@@ -739,7 +739,28 @@ That needed two fixes: the 6809 sees /HALT only at the end of the
 instruction after the one that raises it (Disk BASIC's read loop stores each
 sector's last byte before INTRQ's NMI), and the WD279x reads DDEN during
 its ID search (OS-9's boot driver selects double density after writing
-READ SECTOR). NitrOS-9 is not yet tried.
+READ SECTOR).
+
+**NitrOS-9 v3.3.0** (the project's release disks, from
+sourceforge.net/projects/nitros9, kept in `roms/coco/nitros9/`) boots to
+its shell and lists its root directory with `dir` on:
+
+| Build | Machine | Booted by |
+|-------|---------|-----------|
+| Level 2, 6809 (`_40d_1`, `_80d`) | CoCo 3 | Disk BASIC `DOS`, FD-502 |
+| Level 2, 6309 (`_40d_1`) | CoCo 3 with HD6309 (`coco3h`) | Disk BASIC `DOS`, FD-502 |
+| Level 2, 6809 (`_cocosdc`) | CoCo 3 | Disk BASIC `DOS` in the CoCo SDC's flash; then its SDC driver by LSN |
+| Level 1 (`coco2`, `coco1` `_40d_1`) | CoCo 2, CoCo 1 | Disk BASIC `DOS`, FD-502 / FD-500 |
+| Level 1 (`d64` `_40d_1`) | Dragon 64 | DragonDOS 1.2 `BOOT` |
+
+The Dragon's boot needed a CLI fix: DragonDOS waits for the disk's FIRQ
+with `SYNC` and I and F set, which the 6809 treated as the end of a
+program (it is, on a bare CPU: nothing can wake it). Now that is so only
+while nothing drives the CPU's interrupt lines; a machine's devices do.
+`test_coco_real_roms.cpp` boots each build when its disk is there (the
+Dragon's text is drawn on a graphics screen, so it checks that `dir` is
+loaded from CMDS instead of reading the screen). The DriveWire and Becker
+builds aren't tried (no DriveWire server).
 
 ## Not done
 
@@ -750,8 +771,8 @@ READ SECTOR). NitrOS-9 is not yet tried.
   graphics are decoded); a PAL composite encoder.
 - Storage: Disto's Mini-Expansion Bus boards (clock, printer, hard disk
   adapters) and the Glenside IDE cartridge;
-  the CoCo SDC's flash programming. The SDC and Burke & Burke are not
-  yet checked with SDC-DOS, HDB-DOS or NitrOS-9.
+  the CoCo SDC's flash programming. The SDC is not yet checked with
+  SDC-DOS, nor Burke & Burke with HDB-DOS or a NitrOS-9 hard disk.
 
 ## Tests
 

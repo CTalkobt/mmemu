@@ -105,6 +105,8 @@ public:
     /** The mask of the RAM's physical addresses (0x1FFFF ... 0x1FFFFF). */
     uint32_t ramMask() const { return m_ramMask; }
     void setRam(const uint8_t* ram) { m_ram = ram; }
+    /** A byte of the RAM by physical address (for debuggers and tests). */
+    uint8_t ramByte(uint32_t a) const { return m_ram ? m_ram[a & m_ramMask] : 0; }
     void setMonitor(Monitor m) { m_monitor = m; }
     Monitor monitor() const { return m_monitor; }
     /** A PAL board: composite is made from the RGB signals (no NTSC hues). */

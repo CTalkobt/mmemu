@@ -47,13 +47,17 @@ public:
     void triggerIrq()   override { m_irq = true; }
     void triggerNmi()   override { m_nmiPending = true; }
     void triggerReset() override { reset(); }
-    void setIrqLine(bool asserted) override { m_irq = asserted; }
-    void setNmiLine(bool asserted) override { if (asserted && !m_nmiLine) m_nmiPending = true; m_nmiLine = asserted; }
+    void setIrqLine(bool asserted) override { m_irq = asserted; m_linesDriven = true; }
+    void setNmiLine(bool asserted) override {
+        if (asserted && !m_nmiLine) m_nmiPending = true;
+        m_nmiLine = asserted;
+        m_linesDriven = true;
+    }
     /** Where the vectors are read ($FFF0 by default): b-em's 6809 Second
      *  Processor board fetches them from $FEF0-$FEFF, inside its ROM. */
     void setVectorBase(uint16_t base) { m_vectors = base; }
     /** /FIRQ (level-sensitive). */
-    void setFirqLine(bool asserted) { m_firq = asserted; }
+    void setFirqLine(bool asserted) { m_firq = asserted; m_linesDriven = true; }
     bool isHalted() const override { return m_wait != WAIT_NONE; }
 
     int  disassembleOne  (IBus* bus, uint32_t addr, char* buf, int bufsz) override;
@@ -130,6 +134,8 @@ protected:
     uint16_t m_x = 0, m_y = 0, m_u = 0, m_s = 0, m_pc = 0;
     bool m_irq = false, m_firq = false, m_nmiLine = false, m_nmiPending = false, m_nmiArmed = false;
     Wait m_wait = WAIT_NONE;
+    /** A machine drives /IRQ, /FIRQ or /NMI (so a masked SYNC can still end). */
+    bool m_linesDriven = false;
     bool m_cwaiStacked = false;
     int m_extra = 0;
     uint16_t m_vectors = 0xFFF0;
