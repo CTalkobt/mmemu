@@ -918,9 +918,11 @@ MachineDescriptor* create(Model model, std::string* err) {
     io->registerHandler(kbd);
     io->registerHandler(spk);
     io->registerHandler(disk);
-    desc->deleters.push_back([video, display, kbd, spk, disk]() {
+    // Deleters run in the order added: the parts the bus uses go last, as
+    // taking the cards out of their slots below remixes the speaker (#391)
+    auto deleteParts = [video, display, kbd, spk, disk]() {
         delete display; delete video; delete kbd; delete spk; delete disk;
-    });
+    };
     if (rom32k) {
         // The disk port's SmartPort bus (UniDisk 3.5s, hard disks), as the
         // 32 KB ROMs drive it
@@ -1149,6 +1151,7 @@ MachineDescriptor* create(Model model, std::string* err) {
         io->tickAll((uint64_t)c);
         return c;
     };
+    desc->deleters.push_back(deleteParts);
     if (desc->onReset) desc->onReset(*desc);
     return desc;
 }

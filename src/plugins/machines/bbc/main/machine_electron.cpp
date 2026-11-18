@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 namespace electron {
 
@@ -340,9 +341,7 @@ public:
     // IAudioOutput
     int nativeSampleRate() const override { return SAMPLE_RATE; }
     int pullSamples(float* buffer, int maxSamples) override {
-        int n = 0;
-        while (n < maxSamples && !m_samples.empty()) { buffer[n++] = m_samples.front(); m_samples.pop_front(); }
-        return n;
+        return m_samples.pull(buffer, maxSamples);
     }
     uint64_t frames() const { return m_frames; }
 
@@ -458,8 +457,7 @@ private:
         m_phase += 1.0;
         if (m_phase >= (double)CPU_HZ / SAMPLE_RATE) {
             m_phase -= (double)CPU_HZ / SAMPLE_RATE;
-            m_samples.push_back((float)(m_acc / m_accN));
-            if (m_samples.size() > SAMPLE_RATE) m_samples.pop_front();
+            m_samples.push((float)(m_acc / m_accN), SAMPLE_RATE);
             m_acc = 0;
             m_accN = 0;
         }
@@ -482,7 +480,7 @@ private:
     bool m_soundLevel = false;
     double m_acc = 0, m_phase = 0;
     int m_accN = 0;
-    std::deque<float> m_samples;
+    SampleQueue m_samples;   // pulled on the host's audio thread
     uint64_t m_frames = 0;
 };
 

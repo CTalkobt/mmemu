@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "libdevices/main/sample_queue.h"
 
 class Acia6551;
 
@@ -233,7 +234,7 @@ public:
 
 private:
     double m_hz = MASTER_HZ;
-    std::deque<float> m_samples;
+    SampleQueue m_samples;   // pulled on the host's audio thread
     double m_sum = 0;
     uint64_t m_acc = 0;
 };

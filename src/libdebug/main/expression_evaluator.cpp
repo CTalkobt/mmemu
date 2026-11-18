@@ -381,10 +381,10 @@ bool ExpressionEvaluator::evaluate(const std::string& expression, DebugContext* 
             for (int i = 0; i < cpu->regCount(); ++i) {
                 const RegDescriptor* d = cpu->regDescriptor(i);
                 if (!(d->flags & REGFLAG_STATUS) || !d->flagNames) continue;
-                int nbits = (d->width == RegWidth::R8) ? 8 : 16;
-                for (int b = 0; b < nbits; ++b) {
+                // 8 letters for the low byte (the Z80's and 8085's AF keep F there)
+                for (int b = 0; b < 8 && d->flagNames[b]; ++b) {
                     if (std::toupper((unsigned char)d->flagNames[b]) == flagLetter) {
-                        result = (double)((cpu->regRead(i) >> (nbits - 1 - b)) & 1);
+                        result = (double)((cpu->regRead(i) >> (7 - b)) & 1);
                         return true;
                     }
                 }

@@ -109,8 +109,7 @@ void Sn76489::advance(uint64_t cycles) {
         m_phase += 1.0;
         if (m_phase >= PER_SAMPLE) {
             m_phase -= PER_SAMPLE;
-            m_samples.push_back((float)(m_acc / m_accN));
-            if (m_samples.size() > SAMPLE_RATE) m_samples.pop_front();
+            m_samples.push((float)(m_acc / m_accN), SAMPLE_RATE);
             m_acc = 0;
             m_accN = 0;
         }
@@ -118,12 +117,7 @@ void Sn76489::advance(uint64_t cycles) {
 }
 
 int Sn76489::pull(float* buffer, int maxSamples) {
-    int n = 0;
-    while (n < maxSamples && !m_samples.empty()) {
-        buffer[n++] = m_samples.front();
-        m_samples.pop_front();
-    }
-    return n;
+    return m_samples.pull(buffer, maxSamples);
 }
 
 }  // namespace bbc
