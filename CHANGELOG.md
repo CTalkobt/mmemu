@@ -7,6 +7,18 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Model 100/102: RXCMGR, the REXCPM's manager, installed and run (#358)
+
+- **RXCMGR runs.** A test installs the REXCPM software as its
+  documentation says: `rxcini.DO` from BASIC loads `RXC_12.BR` over
+  `serial tpdd:DIR`, and after a power cycle `CALL 63012` puts RXCMGR in
+  the menu. RXCMGR then runs from the menu (its groups, help and exit).
+  It needs the REXCPM download's files in `roms/m100/`.
+- **Fix:** turning the power switch off and on now resets the REXCPM's
+  window registers, as the card's documentation says a power cycle does.
+  Before, only power-on and the reset button did. (The install above passes
+  either way: the registers are already in their default state by then.)
+
 ### Model 100/102: the REXCPM (#358)
 
 - **The REXCPM** (Steve Adolph's 4 MB RAM card) fits with

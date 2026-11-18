@@ -380,8 +380,16 @@ Checked with the real Model 100 ROM and the card's own test, REXCPM TEST
 v2 (`rxctst.DO` in REXCPMV21_b19.ZIP; `test_m100_rexcpm.cpp`, when
 `rxctst.do` is in `roms/m100/`): the Model 100 cold-starts in the card's
 RAM (29638 bytes free), and the test finds 4 MB and passes its register,
-write protection and RAM (all 255 blocks) checks. The card's manager
-(RXCMGR, installed by `rxcini.DO` over TPDD) has not been run. The REX firmware images are not included: make or
+write protection and RAM (all 255 blocks) checks. The card's manager,
+RXCMGR (REXCPM 2.1), is installed as its documentation says
+(`m100_rexcpm_rxcmgr`, when `rxcini.do` and `RXC_12.BR` are in
+`roms/m100/`): `rxcini.DO` (REXCPM INITIALIZE v3) run from BASIC loads
+`RXC_12.BR` (24576 bytes) from `serial tpdd:DIR` and sets up the card's
+directory; after the power switch is turned off and on, `CALL 63012` adds
+RXCMGR to the menu, and RXCMGR runs from it (its RAM and ROM groups, help,
+exit, and the menu's Ctrl-B quick command). Turning the power switch off
+and on resets the card's registers, as the reset button and power-on do.
+The REX firmware images are not included: make or
 bring your own. Checked locally (not in the tests: the firmware is not
 ours) with a flash image laid out as VirtualT's "create flash" makes it:
 the Model 100's `CALL 63012` starts REX Manager 4.8, which installs its
