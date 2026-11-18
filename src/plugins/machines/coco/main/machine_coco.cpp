@@ -222,7 +222,7 @@ void Keyboard::clock(uint64_t ticks) {
 }
 
 // ---------------------------------------------------------------------------
-// The bit banger's transmit line
+// The bit banger: the serial port's lines, and DriveWire over them
 // ---------------------------------------------------------------------------
 BitBanger::~BitBanger() {
     if (m_file) std::fclose(m_file);
@@ -243,14 +243,67 @@ bool BitBanger::attachSerial(const std::string& spec) {
         receive(bytes);
         return true;
     }
-    if (spec == "none" && (m_file || !m_rxQueue.empty())) {
+    // drivewire[:BAUD][,cow]
+    if (spec.rfind("drivewire", 0) == 0) {
+        std::string rest = spec.substr(9);
+        bool cow = false;
+        const auto comma = rest.find(',');
+        if (comma != std::string::npos) {
+            if (rest.substr(comma + 1) != "cow") return false;
+            cow = true;
+            rest = rest.substr(0, comma);
+        }
+        int baud = 0;
+        if (!rest.empty()) {
+            if (rest[0] != ':') return false;
+            baud = std::atoi(rest.c_str() + 1);
+            if (baud < 50 || baud > 115200) return false;
+        }
+        return attachDriveWire(baud, cow);
+    }
+    if (spec == "none" && (m_file || !m_rxQueue.empty() || m_dw || m_rxConnected)) {
         if (m_file) std::fclose(m_file);
         m_file = nullptr;
         m_rxQueue.clear();
+        m_rxBusy = false;
         m_rxConnected = false;
+        m_dw.reset();
         return true;
     }
     return false;
+}
+
+bool BitBanger::attachDriveWire(int baud, bool copyOnWrite) {
+    if (driveWireElsewhere && driveWireElsewhere()) return false;
+    m_baud = baud > 0 ? baud : m_dwBaud;
+    m_dwCow = copyOnWrite;
+    if (!m_dw) m_dw.reset(new DriveWireServer());
+    m_rxConnected = true;            // the host's transmitter holds the line at mark
+    m_rxQueue.clear();
+    m_rxBusy = false;
+    m_rxReady = RX_ASAP;
+    m_sinceAccess = 1e9;
+    return true;
+}
+
+void BitBanger::detachDriveWire() {
+    m_dw.reset();
+    m_rxQueue.clear();
+    m_rxBusy = false;
+    m_rxConnected = false;
+}
+
+void BitBanger::lineReset() {
+    if (!m_dw) return;
+    m_dw->reset();
+    m_rxQueue.clear();
+    m_rxBusy = false;
+}
+
+void BitBanger::receiveAt(const std::vector<uint8_t>& bytes, uint64_t at) {
+    if (m_rxQueue.empty()) m_rxReady = at;      // (after the frame on the line now, if any)
+    m_rxQueue.insert(m_rxQueue.end(), bytes.begin(), bytes.end());
+    m_rxConnected = true;
 }
 
 // 8N1, LSB first: the start bit at space (low), the stop bit and the idle line at mark
@@ -262,10 +315,17 @@ bool BitBanger::rxLevel(uint64_t now) {
                 m_rxPoll = now;
                 return true;
             }
+            // Back to back after the last frame; else from the next look (receive()) or the given time
+            const uint64_t start = m_rxReady == RX_ASAP ? (m_rxEnd > m_rxPoll ? m_rxEnd : now)
+                                                        : std::max(m_rxReady, m_rxEnd);
+            if (start > now) {
+                m_rxPoll = now;
+                return true;
+            }
             m_rxByte = m_rxQueue.front();
             m_rxQueue.pop_front();
             m_rxBusy = true;
-            m_rxStart = m_rxEnd > m_rxPoll ? m_rxEnd : now;     // back to back, or from now
+            m_rxStart = start;
         }
         const double t = (double)(now - m_rxStart) / bit;
         if (t >= 10.0) {
@@ -280,11 +340,68 @@ bool BitBanger::rxLevel(uint64_t now) {
 }
 
 bool BitBanger::setOption(const std::string& key, const std::string& value, std::string& err) {
-    if (key != "baud") { err = "no such option (baud)"; return false; }
+    if (key == "turnaround") {
+        const double us = std::atof(value.c_str());
+        if (us < 0 || us > 1e6) { err = "turnaround: 0-1000000 (microseconds)"; return false; }
+        m_turnaroundUs = us;
+        return true;
+    }
+    if (key != "baud") { err = "no such option (baud, turnaround)"; return false; }
     const int b = std::atoi(value.c_str());
     if (b < 50 || b > 115200) { err = "baud: 50-115200"; return false; }
     m_baud = b;
     return true;
+}
+
+void BitBanger::getDeviceInfo(DeviceInfo& out) const {
+    IOHandler::getDeviceInfo(out);
+    if (!m_dw) return;
+    std::string s = "DriveWire 4 server at " + std::to_string(m_baud) + " baud";
+    if (m_dwCow) s += ", copy on write";
+    const std::string drives = m_dw->describe();
+    if (!drives.empty()) s += "; " + drives;
+    out.state.push_back({"DriveWire", s});
+}
+
+bool BitBanger::mountDisk(int unit, const std::string& path) {
+    if (!m_dw || unit < 1 || unit > DriveWireServer::DRIVES) return false;
+    return m_dw->mount(unit - 1, path, m_dwCow ? DriveWireServer::Mode::CopyOnWrite : DriveWireServer::Mode::WriteThrough);
+}
+
+void BitBanger::ejectDisk(int unit) {
+    if (m_dw) m_dw->eject(unit - 1);
+}
+
+bool BitBanger::getDiskStatus(int unit, int& track, int& sector, bool& led) {
+    if (!m_dw || !m_dw->mounted(unit - 1)) return false;
+    const auto& st = m_dw->stats();
+    const bool last = st.lastDrive == unit - 1;
+    track = last ? (int)(st.lastLsn / 18) : 0;
+    sector = 0;
+    led = last && m_sinceAccess < 0.5;
+    return true;
+}
+
+std::string BitBanger::getMountedDiskPath(int unit) {
+    return m_dw ? m_dw->imagePath(unit - 1) : "";
+}
+
+void BitBanger::clock(uint64_t now) {
+    if (now <= m_clockAt) return;
+    m_clockAcc += now - m_clockAt;
+    m_clockAt = now;
+    if (!m_dw || m_clockAcc < 14318) return;           // in steps of about a millisecond
+    const double s = (double)m_clockAcc / m_hz;
+    m_clockAcc = 0;
+    m_dw->advance(s);
+    const auto& st = m_dw->stats();
+    const uint64_t count = st.reads + st.writes + st.rereads;
+    if (count != m_lastCount) {
+        m_lastCount = count;
+        m_sinceAccess = 0;
+    } else {
+        m_sinceAccess += s;
+    }
 }
 
 void BitBanger::txLevel(uint64_t now, bool level) {
@@ -300,6 +417,24 @@ void BitBanger::txLevel(uint64_t now, bool level) {
         return;
     }
     m_edges.emplace_back(now, level);
+}
+
+// A byte off the transmit line: to the file, or DriveWire's, whose answer
+// goes down the receive line after the turnaround
+void BitBanger::byteIn(uint8_t v, uint64_t frameEnd) {
+    if (m_file) {
+        std::fputc(v, m_file);
+        std::fflush(m_file);
+    }
+    if (!m_dw) {
+        sent.push_back(v);
+        return;
+    }
+    m_dw->receive(v);
+    if (!m_dw->hasOutput()) return;
+    std::vector<uint8_t> answer;
+    while (m_dw->hasOutput()) answer.push_back(m_dw->send());
+    receiveAt(answer, frameEnd + (uint64_t)(m_turnaroundUs * m_hz / 1e6));
 }
 
 // A frame is done ten bit times after its start bit: sample the middle of each data bit
@@ -318,11 +453,7 @@ void BitBanger::decodeFrame(uint64_t now) {
         if (level) v |= (uint8_t)(1 << i);
     }
     m_inFrame = false;
-    sent.push_back(v);
-    if (m_file) {
-        std::fputc(v, m_file);
-        std::fflush(m_file);
-    }
+    byteIn(v, m_frameStart + (uint64_t)(bit * 10.0));
     // A start bit already under way (the line went low again after the stop bit)
     const uint64_t stop = m_frameStart + (uint64_t)(bit * 9.0);
     bool level = false;
@@ -407,6 +538,8 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
     m_masterHz = !m_pal ? MASTER_HZ : isDragon(model) ? DRAGON_PAL_HZ : COCO_PAL_HZ;
     sound.setMasterHz(m_masterHz);
     rs232.setMasterHz(m_masterHz);
+    rs232.setDriveWireBaud(model == Model::CoCo3 ? 115200 : 57600);
+    rs232.driveWireElsewhere = [this]() { return findBecker(m_cart.get()) != nullptr; };
     tape.setMasterHz(m_masterHz);
     m_cfg = {16, 8, BusRole::DATA, false, 0xFFFF};
     m_rom.assign(0x4000, 0xFF);
@@ -451,7 +584,7 @@ System::System(Model model, int ramKb, std::vector<uint8_t> extBasic, std::vecto
         hiresTrigger();
     };
     pia1.a.onControl = [this]() { tape.setMotor(pia1.ca2()); };   // CA2: the cassette relay
-    pia1.b.preRead = [this]() { ramSizeUpdate(); };
+    pia1.b.preRead = [this]() { ramSizeUpdate(); serialInUpdate(); };
     pia1.b.postWrite = [this]() {
         vdg.setMode((uint8_t)(pia1.portB() & 0xF8));            // PB3 CSS, PB4-6 GM0-2, PB7 A/G
         soundChanged();
@@ -546,6 +679,7 @@ void System::resetButton() {
     pia1.reset();
     vdg.reset();
     keyboard.reset();
+    rs232.lineReset();
     if (m_cart) m_cart->reset();
     m_halt = m_halted = false;
     m_ramp = false;
@@ -704,7 +838,10 @@ void System::sync(uint64_t to) {
     }
     keyboard.clock(d);
     if (dragon()) dragonClock(d);
-    else rs232.txLevel(m_dev, pia1.portA() & 2);
+    else {
+        rs232.clock(m_dev);
+        rs232.txLevel(m_dev, pia1.portA() & 2);
+    }
     pia0.advance(to);
     pia1.advance(to);
 }
@@ -766,6 +903,20 @@ uint8_t System::access(uint16_t a, bool write, uint8_t v) {
         if (m_cart->read(a, cts, scs, cd)) d = cd;
     }
     return d;
+}
+
+// A dead cycle inside an instruction (the CPU's hook), in its place among the accesses: $FFFF on the bus
+void System::deadCycle() {
+    m_instr += m_gime ? (uint64_t)m_gime->cycleTicks() : (uint64_t)sam.access(0xFFFF, false).ticks;
+    ++m_accesses;
+}
+
+// PIA1 PB0, the RS-232 receive line, as the read's cycle starts (the devices are
+// brought up to it first): low with nothing connected (XRoar's observation)
+void System::serialInUpdate() {
+    if (!rs232.rxConnected()) return;
+    if (rs232.rxLevel(m_dev)) { pia1.b.inSource |= 0x01; pia1.b.inSink |= 0x01; }
+    else { pia1.b.inSource &= (uint8_t)~0x01; pia1.b.inSink &= (uint8_t)~0x01; }
 }
 
 uint8_t System::read8(uint32_t addr) {
@@ -958,6 +1109,7 @@ namespace {
 const char* const SDC_DESC = "CoCo SDC (SD card as floppies/LBA, $FF40-$FF4F); option: the SD card folder[,SDC-DOS firmware[,DIP bank 0-7]]";
 const char* const SC2_DESC = "Disto Super Controller II (WD1773, no-halt buffer at $FF74, mini expansion bus at $FF50); option: [the DOS ROM][,alt] (alt: the buffer at $FF58)";
 const char* const BURKE_DESC = "Burke & Burke CoCo XT-RTC hard disk interface ($FF50-$FF53) and DS1215 clock ($FF40-$FF5F); option: drive 0's raw image[,XT-ROM for the BIOS socket]";
+const char* const DOSROM_DESC = "A DOS ROM at $C000 with no hardware behind it and no autostart (HDB-DOS for DriveWire over the bit banger: serial drivewire); option: the ROM (8 or 16 KB)";
 const char* const BECKER_DESC = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server (disk mount N: DriveWire drive N-1); option: [ROM at $C000, e.g. HDB-DOS for the Becker port][,cow] (cow: writes kept in memory)";
 const char* const SSC_DESC = "Speech/Sound Cartridge 26-3144 (TMS7040, SP0256-AL2, AY-3-8913 at $FF7D/$FF7E); option: [TMS7040 ROM][,SP0256-AL2 ROM]";
 const char* const COCOMAX_DESC = "CoCo Max Hi-Res Input Pack (A/D at $FF90-$FF97, the host mouse; not on a CoCo 3)";
@@ -1073,13 +1225,21 @@ std::unique_ptr<Cart> makeCart(const std::string& device, const std::string& opt
         const auto slash = path.find_last_of('/');
         return std::unique_ptr<Cart>(new BeckerCart(std::move(rom), slash == std::string::npos ? path : path.substr(slash + 1), cow));
     }
+    if (device == "dosrom") {
+        // A DOS's ROM with no controller behind it (CART not tied to Q: no autostart)
+        std::vector<uint8_t> rom;
+        if (option.empty() || !readFile(option, rom) || rom.empty()) { err = "dosrom needs the ROM's path"; return nullptr; }
+        if (rom.size() > 0x4000) { err = "the DOS ROM is up to 16 KB"; return nullptr; }
+        const auto slash = option.find_last_of('/');
+        return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1), false));
+    }
     if (device == "rompak") {
         std::vector<uint8_t> rom;
         if (option.empty() || !readFile(option, rom) || rom.empty()) { err = "rompak needs the image's path"; return nullptr; }
         const auto slash = option.find_last_of('/');
         return std::unique_ptr<Cart>(new RomPak(std::move(rom), slash == std::string::npos ? option : option.substr(slash + 1)));
     }
-    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sc2, sdc, burke, becker, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
+    err = "no cartridge '" + device + "' (mpi, orch90, ssc, cocomax, rs232, fd500, sc2, sdc, burke, becker, dosrom, dragondos, deltados, cumana, superdos, dosplus, rompak, gmc, banked)";
     return nullptr;
 }
 
@@ -1314,6 +1474,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
                 {"sdc", SDC_DESC, {}, ""},
                 {"burke", BURKE_DESC, {}, ""},
                 {"becker", BECKER_DESC, {}, ""},
+                {"dosrom", DOSROM_DESC, {}, ""},
                 {"rompak", "A ROM Pak (16 KB, 32 KB on the CoCo 3); option: the image (.rom, .ccc)", {}, ""},
                 {"gmc", GMC_DESC, {}, ""},
                 {"banked", BANKED_DESC, {}, ""},
@@ -1366,6 +1527,7 @@ MachineDescriptor* create(Model model, std::string* err, int ramKb, const Roms* 
             {"sdc", SDC_DESC, {}, ""},
             {"burke", BURKE_DESC, {}, ""},
             {"becker", BECKER_DESC, {}, ""},
+            {"dosrom", DOSROM_DESC, {}, ""},
             {"rompak", "A ROM Pak; option: the image (.rom, .ccc)", {}, ""},
             {"gmc", GMC_DESC, {}, ""},
             {"banked", BANKED_DESC, {}, ""},

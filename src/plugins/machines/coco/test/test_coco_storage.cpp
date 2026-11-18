@@ -741,3 +741,322 @@ TEST_CASE(coco2_becker_readex_from_6809) {
     std::error_code ec;
     fs::remove_all(dir, ec);
 }
+
+// ---------------------------------------------------------------------------
+// DriveWire over the bit banger
+// ---------------------------------------------------------------------------
+namespace {
+
+// The serial driver of a bit-banger DriveWire client, in the style of
+// NitrOS-9's dwread/dwwrite and HDB-DOS's (our own code): DP = $FF,
+// interrupts masked, each bit cell counted out in CPU cycles, 15 and 16 in
+// turn: 15.5 cycles a bit, 57600 baud at 0.894886 MHz and 115200 at
+// 1.789773 MHz. PA1 ($FF20 bit 1) out, PB0 ($FF22 bit 0) in.
+
+/** DWWRITE: Y bytes from X, 8N1. Edge to edge: start 15, d0 16, d1 15, ... d7 17. */
+void bbWrite(Asm& a) {
+    const uint16_t byte = a.pc;
+    a.emit({0x86, 0x04});                       // LDA #4          pairs of data bits
+    a.emit({0x0F, 0x20});                       // CLR <$20        the start bit (CLR writes on its 6th cycle)
+    a.emit({0xE6, 0x80});                       // LDB ,X+     6
+    a.emit({0x58});                             // LSLB        2   d0 to bit 1, d7 to C
+    a.emit({0x21, 0x00});                       // BRN         3
+    const uint16_t loop = a.pc;
+    a.emit({0xD7, 0x20});                       // STB <$20    4   d0 d2 d4 d6
+    a.emit({0x56});                             // RORB        2   the next bit to bit 1
+    a.emit({0x21, 0x00, 0x21, 0x00});           // BRN, BRN    6
+    a.emit({0x12, 0x12});                       // NOP, NOP    4
+    a.emit({0xD7, 0x20});                       // STB <$20    4   d1 d3 d5 d7: 16 after
+    a.emit({0x56});                             // RORB        2
+    a.emit({0x12, 0x12});                       // NOP, NOP    4
+    a.emit({0x4A});                             // DECA        2
+    a.branch(0x26, loop);                       // BNE loop    3   (15 to the next STB's write)
+    a.emit({0x86, 0x02});                       // LDA #2      2
+    a.emit({0x97, 0x20});                       // STA <$20    4   the stop bit
+    a.emit({0x31, 0x3F});                       // LEAY -1,Y
+    a.branch(0x26, byte);                       // BNE byte
+    a.emit({0x39});                             // RTS
+}
+
+/** DWREAD: Y bytes to X, 8N1, no timeout. The start bit looked for every 7
+ *  cycles; d0 read 20 cycles after it was seen (1.29-1.74 bits into the
+ *  frame), the rest 15 or 16 apart; looking again 9.4-9.8 bits in. */
+void bbRead(Asm& a) {
+    a.emit({0x86, 0x01});                       // LDA #1          PB0
+    const uint16_t wait = a.pc;
+    a.emit({0x95, 0x22});                       // BITA <$22   4
+    a.branch(0x26, wait);                       // BNE wait    3
+    a.emit({0x30, 0x01});                       // LEAX 1,X    5
+    a.emit({0x31, 0x3F});                       // LEAY -1,Y   5
+    a.emit({0x21, 0x00});                       // BRN         3
+    uint16_t beqFinal = 0;
+    for (int i = 0; i < 7; ++i) {
+        a.emit({0x96, 0x22});                   // LDA <$22    4   d0 .. d6
+        a.emit({0x44});                         // LSRA        2
+        a.emit({0x56});                         // RORB        2
+        if (i == 6) {
+            a.emit({0x31, 0xA4});               // LEAY ,Y     4   the last byte?
+            beqFinal = a.pc;
+            a.emit({0x27, 0x00});               // BEQ final   3
+        } else if (i % 2 == 0) {
+            a.emit({0x21, 0x00, 0x12, 0x12});   // BRN NOP NOP 7   (15)
+        } else {
+            a.emit({0x21, 0x00, 0x21, 0x00, 0x12});   // BRN BRN NOP 8   (16)
+        }
+    }
+    a.emit({0x96, 0x22});                       // LDA <$22        d7
+    a.emit({0x44});
+    a.emit({0x56});
+    a.emit({0xE7, 0x1F});                       // STB -1,X    5
+    a.emit({0x86, 0x01});                       // LDA #1      2
+    a.branch(0x20, wait);                       // BRA wait    3
+    const uint16_t fin = a.pc;
+    a.b[(size_t)(beqFinal + 1 - a.org)] = (uint8_t)(fin - (beqFinal + 2));
+    a.emit({0x96, 0x22});                       // LDA <$22        d7 of the last byte
+    a.emit({0x44});
+    a.emit({0x56});
+    a.emit({0xE7, 0x1F});                       // STB -1,X
+    a.emit({0x39});                             // RTS
+}
+
+/** OP_READEX of drive 0's LSN 1 over the bit banger into $0600; the checksum
+ *  sent back; the server's status byte to $0702, $5D to $0701. At `org`
+ *  ($C000 a cartridge's, $8000 the CoCo 3's ROM); `fast`: the CoCo 3 at 1.79 MHz. */
+std::vector<uint8_t> bbReadProgram(uint16_t org, bool fast) {
+    Asm a(org, org == 0x8000 ? 0x8000 : 0x2000, 0xFF);
+    a.emit({0x1A, 0x50});                       // ORCC #$50
+    a.emit({0x10, 0xCE, 0x7F, 0x00});           // LDS #$7F00
+    if (fast) a.ext(0xB7, 0xFFD9);              // STA $FFD9: 1.79 MHz
+    if (org != 0x8000) a.ext(0xB7, 0xFFDD);     // the SAM: 64K (the stack's RAM)
+    a.emit({0x86, 0x34}); a.ext(0xB7, 0xFF21);  // PIA1: PA1 at mark before it's an output
+    a.emit({0x86, 0x02}); a.ext(0xB7, 0xFF20);
+    a.ext(0x7F, 0xFF21);                        // DDRA $FE, DDRB $FA (PB0, PB2 in)
+    a.emit({0x86, 0xFE}); a.ext(0xB7, 0xFF20);
+    a.emit({0x86, 0x34}); a.ext(0xB7, 0xFF21);
+    a.ext(0x7F, 0xFF23);
+    a.emit({0x86, 0xFA}); a.ext(0xB7, 0xFF22);
+    a.emit({0x86, 0x34}); a.ext(0xB7, 0xFF23);
+    a.emit({0x86, 0x02}); a.ext(0xB7, 0xFF20);  // PA1 at mark
+    a.emit({0x86, 0xFF});
+    a.emit({0x1F, 0x8B});                       // TFR A,DP
+    const uint16_t cmdRef = a.pc;
+    a.emit({0x8E, 0x00, 0x00});                 // LDX #cmd (patched)
+    a.emit({0x10, 0x8E, 0x00, 0x05});           // LDY #5
+    const uint16_t call1 = a.pc;
+    a.emit({0xBD, 0x00, 0x00});                 // JSR write (patched)
+    a.emit({0x8E, 0x06, 0x00});                 // LDX #$0600
+    a.emit({0x10, 0x8E, 0x01, 0x00});           // LDY #256
+    const uint16_t call2 = a.pc;
+    a.emit({0xBD, 0x00, 0x00});                 // JSR read
+    a.emit({0x8E, 0x06, 0x00});                 // LDX #$0600
+    a.emit({0xCC, 0x00, 0x00});                 // LDD #0
+    const uint16_t sum = a.pc;
+    a.emit({0xEB, 0x80});                       // ADDB ,X+
+    a.emit({0x89, 0x00});                       // ADCA #0
+    a.emit({0x8C, 0x07, 0x00});                 // CMPX #$0700
+    a.branch(0x26, sum);
+    a.ext(0xFD, 0x0704);                        // STD $0704
+    a.emit({0x8E, 0x07, 0x04});                 // LDX #$0704
+    a.emit({0x10, 0x8E, 0x00, 0x02});           // LDY #2
+    const uint16_t call3 = a.pc;
+    a.emit({0xBD, 0x00, 0x00});                 // JSR write
+    a.emit({0x8E, 0x07, 0x02});                 // LDX #$0702
+    a.emit({0x10, 0x8E, 0x00, 0x01});           // LDY #1
+    const uint16_t call4 = a.pc;
+    a.emit({0xBD, 0x00, 0x00});                 // JSR read
+    a.emit({0x86, 0x5D}); a.ext(0xB7, CART_MARK);
+    const uint16_t spin = a.pc;
+    a.branch(0x20, spin);
+    const uint16_t cmd = a.pc;
+    a.emit({0xD2, 0x00, 0x00, 0x00, 0x01});     // OP_READEX, drive 0, LSN 1
+    const uint16_t write = a.pc;
+    bbWrite(a);
+    const uint16_t read = a.pc;
+    bbRead(a);
+    a.word((uint16_t)(cmdRef + 1), cmd);
+    a.word((uint16_t)(call1 + 1), write);
+    a.word((uint16_t)(call3 + 1), write);
+    a.word((uint16_t)(call2 + 1), read);
+    a.word((uint16_t)(call4 + 1), read);
+    if (org == 0x8000) a.word(0xFFFE, 0x8000);
+    return a.b;
+}
+
+/** The stand-in on `model`, DriveWire on the bit banger (`serial`), drive 0 a
+ *  test image: true if the sector came in whole and the server took the checksum. */
+bool bbReadex(coco::Model model, bool hd6309, const std::string& serial, bool fast = true,
+              const std::function<void(MachineDescriptor*)>& check = nullptr) {
+    const std::string dir = tempDir();
+    std::vector<uint8_t> img(630 * 256);
+    for (size_t i = 0; i < img.size(); ++i) img[i] = (uint8_t)(i * 7 + (i >> 8) + 1);
+    writeFile(dir + "/os9.dsk", img);
+    coco::Roms roms;
+    std::string err;
+    const bool c3 = model == coco::Model::CoCo3;
+    if (c3) roms.coco3Basic = bbReadProgram(0x8000, fast);
+    else roms.colorBasic = jumpToCart();
+    MachineDescriptor* m = coco::create(model, &err, c3 ? 128 : 64, &roms, coco::Tv::Default, hd6309);
+    if (!m) return false;
+    if (!c3) {
+        writeFile(dir + "/dw.rom", bbReadProgram(0xC000, false));
+        EXPECT_TRUE(m->expansionSlot("cart")->install("dosrom", dir + "/dw.rom", err));
+    }
+    coco::System* sys = coco::systemOf(m);
+    EXPECT_TRUE(sys->rs232.attachSerial(serial));
+    IOHandler* h = m->ioRegistry->mountDisk(1, dir + "/os9.dsk");      // `disk mount 1`: DriveWire drive 0
+    EXPECT_TRUE(h == &sys->rs232);
+    m->onReset(*m);
+    run(m, 400000);
+    IBus* bus = m->buses[0].bus;
+    bool ok = bus->peek8(CART_MARK) == 0x5D && bus->peek8(0x0702) == 0x00;
+    for (int i = 0; ok && i < 256; ++i) ok = bus->peek8((uint16_t)(0x0600 + i)) == img[256 + i];
+    if (ok) {
+        const auto& st = sys->rs232.driveWire()->stats();
+        EXPECT_EQ((int)st.reads, 1);
+        EXPECT_EQ((int)st.crcErrors, 0);
+        EXPECT_TRUE(sys->rs232.driveWire()->idle());
+        if (check) check(m);
+    }
+    delete m;
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    return ok;
+}
+
+}  // namespace
+
+// A CoCo 2 (0.89 MHz): 57600 baud, the machine's rate; HDB-DOS's ROM socket without a controller
+TEST_CASE(coco2_drivewire_bitbanger_readex) {
+    ASSERT(bbReadex(coco::Model::CoCo2, false, "drivewire", true, [](MachineDescriptor* m) {
+        coco::System* sys = coco::systemOf(m);
+        ASSERT_EQ(sys->rs232.baud(), 57600);
+        ASSERT(sys->cart()->describe().find("DOS ROM (dw.rom, 8 KB, no autostart)") != std::string::npos);
+        int track = -1, sector = -1;
+        bool led = false;
+        ASSERT(sys->rs232.getDiskStatus(1, track, sector, led));
+        ASSERT(sys->rs232.getMountedDiskPath(1).find("os9.dsk") != std::string::npos);
+        ASSERT(sys->rs232.sent.empty());                    // DriveWire's commands aren't "printed"
+    }));
+    // The guest's cycle counts are for 57600: at another rate nothing gets through
+    ASSERT(!bbReadex(coco::Model::CoCo2, false, "drivewire:38400"));
+    ASSERT(!bbReadex(coco::Model::CoCo2, false, "drivewire:115200"));
+}
+
+// A CoCo 3 at 1.79 MHz: 115200 baud (the 6809, and the HD6309 in its 6809 mode)
+TEST_CASE(coco3_drivewire_bitbanger_readex) {
+    ASSERT(bbReadex(coco::Model::CoCo3, false, "drivewire", true, [](MachineDescriptor* m) {
+        ASSERT_EQ(coco::systemOf(m)->rs232.baud(), 115200);
+    }));
+    ASSERT(bbReadex(coco::Model::CoCo3, true, "drivewire"));
+    ASSERT(bbReadex(coco::Model::CoCo3, false, "drivewire:57600", false));   // at 0.89 MHz: 57600
+    ASSERT(!bbReadex(coco::Model::CoCo3, false, "drivewire", false));        // 0.89 MHz against 115200
+}
+
+// PB0 is sampled on the cycle the 6809 reads PIA1, its dead cycles in their
+// place: LDA $FF22 reads on its 5th cycle (opcode, address x2, dead, read),
+// LDA <$22 on its 4th. The line falls exactly as that cycle starts (seen
+// low) or a tick after (seen high). On a CoCo 2 (16 ticks a cycle) and a
+// CoCo 3 at 1.79 MHz (8).
+TEST_CASE(coco_pb0_sampled_on_the_read_cycle) {
+    for (int coco3 = 0; coco3 < 2; ++coco3) {
+        for (int ext = 0; ext < 2; ++ext) {
+            for (int late = 0; late < 2; ++late) {
+                const uint16_t org = coco3 ? 0x8000 : 0xA000;
+                Asm a(org, coco3 ? 0x8000 : 0x2000, 0x12);
+                if (coco3) a.ext(0xB7, 0xFFD9);                 // 1.79 MHz
+                a.emit({0x86, 0x34}); a.ext(0xB7, 0xFF23);      // PIA1 port B: the data register (all inputs)
+                a.emit({0x86, 0xFF}); a.emit({0x1F, 0x8B});     // DP = $FF
+                a.emit({0x12});
+                const uint16_t at = a.pc;
+                if (ext) a.ext(0xB6, 0xFF22);                   // LDA $FF22
+                else a.emit({0x96, 0x22});                      // LDA <$22
+                const uint16_t spin = a.pc;
+                a.branch(0x20, spin);
+                a.word(coco3 ? 0xFFFE : 0xBFFE, org);
+                coco::Roms roms;
+                if (coco3) roms.coco3Basic = a.b;
+                else roms.colorBasic = a.b;
+                std::string err;
+                MachineDescriptor* m = coco::create(coco3 ? coco::Model::CoCo3 : coco::Model::CoCo2, &err, coco3 ? 128 : 64, &roms);
+                ASSERT(m);
+                coco::System* sys = coco::systemOf(m);
+                m->onReset(*m);
+                for (int i = 0; i < 100 && m->cpus[0].cpu->pc() != at; ++i) m->schedulerStep(*m);
+                ASSERT_EQ(m->cpus[0].cpu->pc(), at);
+                const uint64_t cycle = coco3 ? 8 : 16;
+                const uint64_t readCycle = sys->ticks() + (ext ? 4 : 3) * cycle;
+                sys->rs232.receiveAt({0x00}, readCycle + (uint64_t)late);
+                m->schedulerStep(*m);
+                ASSERT_EQ(m->cpus[0].cpu->pc(), spin);
+                ASSERT_EQ((int)(m->cpus[0].cpu->regRead(0) & 1), late);
+                delete m;
+            }
+        }
+    }
+}
+
+// The transport: a command's frames off PA1 to the server, its answer down
+// PB0 TURNAROUND_US after the stop bit, 8N1 back to back; one server only
+TEST_CASE(coco_bitbanger_drivewire_line) {
+    coco::BitBanger bb;
+    bb.setDriveWireBaud(57600);
+    ASSERT(!bb.rxConnected());
+    ASSERT(!bb.attachSerial("drivewire:300000"));
+    ASSERT(!bb.attachSerial("drivewire,ro"));
+    ASSERT(bb.attachSerial("drivewire"));
+    ASSERT_EQ(bb.baud(), 57600);
+    ASSERT(bb.rxConnected());
+    ASSERT(bb.rxLevel(0));                                  // idle: mark
+    const double bit = coco::MASTER_HZ / 57600.0;
+    // OP_TIME ($23), 8N1 from t = 1000
+    const uint64_t t0 = 1000;
+    bb.txLevel(t0, false);
+    for (int i = 0; i < 8; ++i) bb.txLevel(t0 + (uint64_t)(bit * (1 + i)), (DriveWireServer::OP_TIME >> i) & 1);
+    bb.txLevel(t0 + (uint64_t)(bit * 9), true);
+    bb.txLevel(t0 + (uint64_t)(bit * 9.6), true);           // the frame is complete
+    ASSERT(bb.receiving());
+    const uint64_t start = t0 + (uint64_t)(bit * 10.0) + (uint64_t)(coco::BitBanger::TURNAROUND_US * coco::MASTER_HZ / 1e6);
+    ASSERT(bb.rxLevel(start - 1));                          // not yet
+    ASSERT(!bb.rxLevel(start));                             // the start bit of the year
+    std::time_t now = std::time(nullptr);
+    std::tm tm{};
+    localtime_r(&now, &tm);
+    uint8_t year = 0;
+    for (int i = 0; i < 8; ++i)
+        if (bb.rxLevel(start + (uint64_t)(bit * (1.5 + i)))) year |= (uint8_t)(1 << i);
+    ASSERT_EQ(year, (uint8_t)tm.tm_year);
+    ASSERT(bb.rxLevel(start + (uint64_t)(bit * 9.5)));      // stop
+    ASSERT(!bb.rxLevel(start + (uint64_t)(bit * 10.2)));    // the month's start bit, straight after
+    ASSERT(bb.rxLevel(start + (uint64_t)(bit * 70)));       // six bytes, then mark
+    ASSERT(!bb.receiving());
+    // Drives: `disk mount N` is drive N-1
+    char path[] = "/tmp/coco_bbdw_XXXXXX";
+    const int fd = mkstemp(path);
+    ASSERT(fd >= 0);
+    std::vector<uint8_t> sector(256, 0xA5);
+    ASSERT(write(fd, sector.data(), sector.size()) == 256);
+    close(fd);
+    ASSERT(bb.mountDisk(2, path));
+    ASSERT(bb.driveWire()->mounted(1));
+    DeviceInfo info;
+    bb.getDeviceInfo(info);
+    ASSERT(!info.state.empty() && info.state[0].second.find("57600 baud; drive 1:") != std::string::npos);
+    bb.ejectDisk(2);
+    ASSERT(!bb.driveWire()->mounted(1));
+    unlink(path);
+    // `serial none` takes it off; with a Becker cartridge's server in the machine it won't go on
+    ASSERT(bb.attachSerial("none"));
+    ASSERT(!bb.driveWire() && !bb.rxConnected());
+    ASSERT(!bb.mountDisk(1, "/dev/null"));
+    coco::Roms roms;
+    roms.colorBasic = jumpToCart();
+    std::string err;
+    MachineDescriptor* m = coco::create(coco::Model::CoCo2, &err, 64, &roms);
+    ASSERT(m);
+    ASSERT(m->expansionSlot("cart")->install("mpi", "", err));
+    ASSERT(m->expansionSlot("mpi2")->install("becker", "", err));
+    ASSERT(!coco::systemOf(m)->rs232.attachSerial("drivewire"));
+    ASSERT(m->expansionSlot("mpi2")->install("", "", err));
+    ASSERT(coco::systemOf(m)->rs232.attachSerial("drivewire,cow"));
+    delete m;
+}
