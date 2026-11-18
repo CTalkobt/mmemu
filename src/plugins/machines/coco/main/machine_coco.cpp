@@ -273,6 +273,12 @@ bool BitBanger::attachSerial(const std::string& spec) {
     return false;
 }
 
+bool BitBanger::deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) {
+    if (verb != "drivewire" || !m_dw) return false;
+    out = m_dw->hostCommand(args);
+    return true;
+}
+
 bool BitBanger::attachDriveWire(int baud, bool copyOnWrite) {
     if (driveWireElsewhere && driveWireElsewhere()) return false;
     m_baud = baud > 0 ? baud : m_dwBaud;
@@ -430,6 +436,8 @@ void BitBanger::byteIn(uint8_t v, uint64_t frameEnd) {
         sent.push_back(v);
         return;
     }
+    // A new command: answer bytes not yet on the line are stale (as the server's own)
+    if (m_dw->idle()) m_rxQueue.clear();
     m_dw->receive(v);
     if (!m_dw->hasOutput()) return;
     std::vector<uint8_t> answer;
@@ -506,6 +514,13 @@ void Display::renderFrame(uint32_t* buffer) {
 
 bool CartPort::attachSerial(const std::string& spec) {
     return m_sys->cart() && m_sys->cart()->attachSerial(spec);
+}
+
+bool CartPort::deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) {
+    BeckerCart* becker = verb == "drivewire" ? findBecker(m_sys->cart()) : nullptr;
+    if (!becker) return false;
+    out = becker->server().hostCommand(args);
+    return true;
 }
 
 bool CartPort::mountDisk(int unit, const std::string& path) {

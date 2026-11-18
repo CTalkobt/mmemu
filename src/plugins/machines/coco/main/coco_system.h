@@ -172,6 +172,8 @@ public:
     void tick(uint64_t) override {}
     /** file:PATH, in:PATH, drivewire[:BAUD][,cow], none. */
     bool attachSerial(const std::string& spec) override;
+    /** `drivewire ...` (DriveWireServer::hostCommand) while DriveWire is attached. */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
     /** baud (50-115200); turnaround (DriveWire's, in microseconds). */
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
     void getDeviceInfo(DeviceInfo& out) const override;
@@ -348,6 +350,8 @@ public:
     void reset() override {}
     void tick(uint64_t) override {}
     bool attachSerial(const std::string& spec) override;
+    /** `drivewire ...` for a Becker cartridge's server (alone or in a Multi-Pak). */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
     /** Disks in the cartridge's controller (an FD-500, alone or in a Multi-Pak slot):
      *  unit 1-4 is Disk BASIC's DRIVE 0-3, as other machines number from 1. */
     bool mountDisk(int unit, const std::string& path) override;

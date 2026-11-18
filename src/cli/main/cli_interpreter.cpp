@@ -1400,6 +1400,20 @@ void CliInterpreter::handleNormalCommand(const std::string& line) {
             }
         }
         if (!done) m_output("No serial port took '" + spec + "' (none in this machine, or the port is in use).\n");
+    } else if (cmd == "drivewire" || cmd == "dw") {
+        // The CoCo's built-in DriveWire 4 server (a Becker cartridge's, or on
+        // the bit banger): its drives and virtual serial channels
+        if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
+        std::vector<std::string> args;
+        for (std::string a; ss >> a;) args.push_back(a);
+        std::vector<IOHandler*> handlers;
+        if (m_ctx.machine->ioRegistry) m_ctx.machine->ioRegistry->enumerate(handlers);
+        std::string out;
+        bool done = false;
+        for (auto* h : handlers) {
+            if (h->deviceCommand("drivewire", args, out)) { done = true; break; }
+        }
+        m_output(done ? out : "No DriveWire server (CoCo: expansion cart becker, or serial drivewire).\n");
     } else if (cmd == "tape") {
         if (!m_ctx.machine) { m_output("No machine created.\n"); return; }
         std::string sub;
@@ -3513,6 +3527,8 @@ void CliInterpreter::printHelpCategory(const std::string& category) {
                  "  tape 2 <subcommand> - The same for a second recorder (TRS-80 Model I)\n"
                  "  serial <spec>       - RS-232 far end: modem (Hayes AT: ATDT host[:port] dials TCP), loopback,\n"
                  "                        tcp:PORT (a TCP server), none\n"
+                 "  drivewire [...]     - The DriveWire server (CoCo): drives and virtual channels;\n"
+                 "                        drivewire channel term tcp:6809 puts /Term on a TCP port\n"
                  "  sid load <path>     - Load a SID music file (C64)\n"
                  "  sid voices [chip]   - Show each SID voice: waveform, frequency/note, PW, ADSR, envelope\n"
                  "  sid scope <file>    - Save the SID oscilloscope as .png, or .gif with 'frames N'\n"

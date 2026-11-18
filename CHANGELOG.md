@@ -7,6 +7,45 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: DriveWire's virtual serial channels; NitrOS-9's headless builds run (#356)
+
+- **The built-in DriveWire 4 server carries virtual channels**: NitrOS-9's
+  `scdwv` devices (`/Term` 0, `/N1-/N13`, `/MIDI` 14, the windows `/Z1-/Z15`
+  `$11-$1F`) open them with `OP_SERINIT` / `OP_SERTERM`, write with
+  `OP_FASTWRITE` (`$80` + port), `SERWRITE` and `SERWRITEM`, and report
+  paths with `SERSETSTAT` (SS.Open, SS.Close, SS.ComSt's 26 bytes). Bytes
+  for the guest are offered when `dwio` polls (`OP_SERREAD`), round robin:
+  one byte (`1 + port, byte`), several (`$11 + port, n`, then
+  `OP_SERREADM`), a window's key (`$40 + n, key`) or the host's hang-up
+  (`$10, port`: S$HUP to the guest's processes on it).
+- **`drivewire` CLI command**: `drivewire channel CH tcp:PORT[,raw] |
+  file:PATH | loopback | modem | none` gives a channel a far end (`nc
+  localhost PORT` gets the headless console or a shell on `/N1`; text in
+  is telnet-style, LF to CR); `drivewire type|send|read|hangup CH` work it
+  from the CLI; `drivewire` alone lists the drives and channels. An
+  in-process API (`hostWrite`, `channelOutput`, `hostClose`) for tests and
+  frontends. A new `IOHandler::deviceCommand` hook carries it.
+- **The virtual modem**: on a `/N` channel with no far end the lines the
+  guest writes are DW4 API commands, as NitrOS-9's `dw` and `telnet` send
+  them: `dw disk show`, `dw disk eject`, `dw server version`, `dw port show`
+  answer and close the channel; `tcp connect HOST PORT` connects it to a
+  TCP server; anything else answers `FAIL 208` (`tcp listen` for `inetd`
+  is not there).
+- `OP_SERGETSTAT` SS.KySns answers 0 (Level 1's `scdwv` reads it; Level 2's
+  doesn't, so a new command now drops answer bytes the guest left unread,
+  on the Becker port and the bit banger). A channel's close is announced
+  0.5 s after the guest last took a byte of it, so its reader runs first.
+- With the local HDB-DOS builds, NitrOS-9 v3.3.0's `_becker_headless`
+  (CoCo 3, CoCo 2) and `_dw_headless` (CoCo 3) disks boot to the shell on
+  DriveWire channel 0 and run `dir` there, a second shell on `/N1`, and
+  `dw disk show` (Level 1's `dw` then hangs when the channel closes: not
+  checked).
+- Tests: byte-level SERREAD single / multi-byte (SERREADM), window keys,
+  closed-channel notice, round robin, writes per channel, SS.Open /
+  SS.Close / SS.ComSt, SS.KySns, a cooked far end, the modem's `dw` and FAIL
+  replies, `tcp connect` both ways and its hang-up, the CLI command;
+  real-disk boots of the headless builds.
+
 ### CoCo: DriveWire over the bit banger; NitrOS-9's `_dw` builds boot (#356)
 
 - **`serial drivewire[:BAUD][,cow]`** puts the built-in DriveWire 4 server

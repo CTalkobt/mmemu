@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <vector>
 #include "device_info.h"
 
 class IBus;
@@ -99,6 +100,11 @@ public:
     /** A serial port's far end (CLI `serial`): e.g. "loopback", "tcp:PORT",
      *  "none". False if this device has no serial port or the spec fails. */
     virtual bool attachSerial(const std::string& /*spec*/)   { return false; }
+    /** A command for a device's own host-side features, by name (the CLI
+     *  `drivewire ...`: the CoCo's DriveWire server and its virtual channels).
+     *  False if this device doesn't take `verb`; else `out` is the reply. */
+    virtual bool deviceCommand(const std::string& /*verb*/, const std::vector<std::string>& /*args*/,
+                               std::string& /*out*/) { return false; }
     /** A bus master (an REU's DMA): while it holds the bus, run one cycle of
      *  its work and return the cycles used (the CPU waits); 0 while it
      *  doesn't. Machines with a device that can take the bus call it before
