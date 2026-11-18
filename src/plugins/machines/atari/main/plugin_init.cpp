@@ -109,16 +109,16 @@ static SimPluginManifest s_manifest = {
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
     auto& reg = MachineRegistry::instance();
     reg.registerMachine("atari800",
-        []() { return atari::create(atari::Model::Atari800); }, "Atari 800");
+        []() { return atari::create(atari::Model::Atari800); }, "Atari 800", "Atari");
     reg.registerMachine("atari800xl",
-        []() { return atari::create(atari::Model::Atari800XL); }, "Atari 800XL");
+        []() { return atari::create(atari::Model::Atari800XL); }, "Atari 800XL", "Atari");
     reg.registerMachine("atari65xe",
-        []() { return atari::create(atari::Model::Atari65XE); }, "Atari 65XE");
+        []() { return atari::create(atari::Model::Atari65XE); }, "Atari 65XE", "Atari");
     reg.registerMachine("atari800-pal",
-        []() { return atari::create(atari::Model::Atari800, nullptr, true); }, "Atari 800 (PAL)");
+        []() { return atari::create(atari::Model::Atari800, nullptr, true); }, "Atari 800 (PAL)", "Atari");
     reg.registerMachine("atari800xl-pal",
-        []() { return atari::create(atari::Model::Atari800XL, nullptr, true); }, "Atari 800XL (PAL)");
+        []() { return atari::create(atari::Model::Atari800XL, nullptr, true); }, "Atari 800XL (PAL)", "Atari");
     reg.registerMachine("atari65xe-pal",
-        []() { return atari::create(atari::Model::Atari65XE, nullptr, true); }, "Atari 65XE (PAL)");
+        []() { return atari::create(atari::Model::Atari65XE, nullptr, true); }, "Atari 65XE (PAL)", "Atari");
     return &s_manifest;
 }

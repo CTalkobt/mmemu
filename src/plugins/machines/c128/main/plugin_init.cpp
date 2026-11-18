@@ -91,7 +91,7 @@ static void reg(const char* id, bool ntsc, const char* desc) {
         MachineDescriptor* m = c128::create(ntsc, &err);
         if (!m) LogRegistry::instance().getLogger("c128")->error("{}: {}", id, err);
         return m;
-    }, desc);
+    }, desc, "Commodore");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

@@ -10,7 +10,7 @@ extern "C" {
 
 // mmemu public plugin ABI version — upper 16 bits: major, lower 16 bits: minor.
 // Major version changes are breaking; minor version changes are additive.
-#define MMEMU_PLUGIN_API_VERSION  0x00010000u
+#define MMEMU_PLUGIN_API_VERSION  0x00020000u   // 2.0: MachinePluginInfo.vendor
 #define MMEMU_PLUGIN_API_MAJOR(v) ((v) >> 16)
 #define MMEMU_PLUGIN_API_MINOR(v) ((v) & 0xFFFFu)
 
@@ -144,6 +144,7 @@ struct MachinePluginInfo {
     const char* machineId;
     MachineDescriptor* (*create)(void);
     const char* description;  // Human-readable description (optional, may be nullptr)
+    const char* vendor;       // The maker's family for menus (optional, may be nullptr): see MachineDescriptor::vendor
 };
 
 /**

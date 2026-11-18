@@ -26,7 +26,7 @@ static void reg(const char* id, apple2::Model model, const char* desc) {
         MachineDescriptor* m = apple2::create(model, &err);
         if (!m) LogRegistry::instance().getLogger("apple2")->error("{}: {}", id, err);
         return m;
-    }, desc);
+    }, desc, "Apple");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

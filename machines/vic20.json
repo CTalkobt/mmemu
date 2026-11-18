@@ -3,6 +3,7 @@
 
     {
       "id": "vic20",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
               "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
               "screenButtons": [
@@ -78,6 +79,7 @@
 
     {
       "id": "vic20+3k",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
               "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
               "screenButtons": [
@@ -153,6 +155,7 @@
 
     {
       "id": "vic20+8k",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
               "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
               "screenButtons": [
@@ -228,6 +231,7 @@
 
     {
       "id": "vic20+16k",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
               "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
               "screenButtons": [
@@ -303,6 +307,7 @@
 
     {
       "id": "vic20+32k",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "cartridge", "graphics-vic"],
               "graphicsFormats": ["char", "char-mc", "char16", "char16-mc"],
               "screenButtons": [

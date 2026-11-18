@@ -71,8 +71,8 @@ static ToolchainPluginInfo s_toolchains[] = {
     {"6309", nullptr, createDisasm6309, nullptr},
 };
 static MachinePluginInfo s_machines[] = {
-    {"raw6809", createMachineRaw6809, "Raw 6809 with 64 KB of RAM"},
-    {"raw6309", createMachineRaw6309, "Raw HD6309 with 64 KB of RAM"},
+    {"raw6809", createMachineRaw6809, "Raw 6809 with 64 KB of RAM", "Bare CPU"},
+    {"raw6309", createMachineRaw6309, "Raw HD6309 with 64 KB of RAM", "Bare CPU"},
 };
 
 static SimPluginManifest s_manifest = {

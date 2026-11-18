@@ -156,7 +156,7 @@ int JsonMachineLoader::registerAll(const nlohmann::json& doc) {
             [specCopy]() -> MachineDescriptor* {
                 LogRegistry::instance().getLogger("system")->debug("Factory lambda called for machine");
                 return JsonMachineLoader::buildFromSpec(specCopy);
-            }, displayName);
+            }, displayName, spec.value("vendor", ""));
         ++count;
     }
     return count;
@@ -172,6 +172,7 @@ MachineDescriptor* JsonMachineLoader::buildFromSpec(const nlohmann::json& spec) 
 
     desc->machineId        = spec.value("id",          "");
     desc->displayName      = spec.value("displayName",  "");
+    desc->vendor           = spec.value("vendor",       "");
     desc->licenseClass     = spec.value("licenseClass", "");
     if (spec.contains("clockHz") && spec["clockHz"].is_number())
         desc->clockHz      = spec["clockHz"].get<double>();   // real-time pacing (#169)

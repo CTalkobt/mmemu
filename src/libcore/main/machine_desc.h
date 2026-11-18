@@ -61,6 +61,11 @@ struct MachineDescriptor {
 
     std::string machineId;
     std::string displayName;
+    /** The maker whose family the machine belongs to, for grouping in menus
+     *  ("Commodore", "Tandy", ...). A third-party machine names the vendor
+     *  it is compatible with (the MEGA65: Commodore; the Dragons: Tandy).
+     *  Set at registration (MachineRegistry); "" if not given. */
+    std::string vendor;
     std::string licenseClass;
     std::string preferredAssembler;  // From machine JSON "assembler" key, e.g. "ca45"
 

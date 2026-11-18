@@ -37,7 +37,7 @@ static MachineDescriptor* createMachineRawArm() {
 
 static CorePluginInfo s_cores[] = { {"arm2", "ARM2", "open", createCoreArm2}, {"arm1", "ARM1", "open", createCoreArm1} };
 static ToolchainPluginInfo s_toolchains[] = { {"arm", nullptr, createDisasmArm, nullptr} };
-static MachinePluginInfo s_machines[] = { {"rawarm", createMachineRawArm, "Raw ARM2 with 4 MB of RAM"} };
+static MachinePluginInfo s_machines[] = { {"rawarm", createMachineRawArm, "Raw ARM2 with 4 MB of RAM", "Bare CPU"} };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,

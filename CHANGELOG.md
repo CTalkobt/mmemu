@@ -7,6 +7,29 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### GUI: the machine list is a tree of vendors
+
+- **Load Machine** (Ctrl-L) shows a node per vendor, with that vendor's
+  machines and the third-party machines compatible with them under it:
+  Acorn, Apple, Atari, Bare CPU, Commodore, Nintendo, Sinclair, Tandy. Each
+  machine reads "description [id]". A filter box keeps the machines whose
+  id, description or vendor matches, opens their vendors, and Enter takes
+  the first match.
+- **The vendor comes from each machine's registration, not a list in the
+  GUI.** `MachineDescriptor::vendor`, the 4-argument
+  `MachineRegistry::registerMachine(id, factory, description, vendor)`,
+  `MachinePluginInfo.vendor` and the machine JSON's `"vendor"` key carry
+  it. A third-party machine names the vendor it's compatible with: the
+  MEGA65 and Commander X16 under Commodore; the Dragons, Matra Alice and
+  the Kyocera, NEC and Olivetti Model 100 siblings under Tandy. Machines
+  without a vendor appear under "Other".
+- **Plugin API 2.0:** `MachinePluginInfo` gained `vendor`, so the API's
+  major version is now 2 and plugins built for 1.x are refused (the
+  struct's size changed).
+- The registry also records the plugin that registered each machine
+  (`sourceOf`). `validate_all_plugins` checks that every plugin's machine
+  has a vendor. New `MachineRegistry::unregisterMachine`.
+
 ### Model 100/200: the RAMPAC follows the card's logic, with banks; RAMDSK runs (#358)
 
 - **The RAMPAC / Node Datapac now works the way the card does.** The model

@@ -3,6 +3,7 @@
 
     {
       "id": "c64",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "drive", "cartridge", "sidscope", "graphics-vic"],
               "graphicsFormats": ["sprite", "sprite-mc", "char", "char-mc"],
               "screenButtons": [

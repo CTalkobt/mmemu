@@ -75,7 +75,7 @@ static SimPluginManifest s_manifest = {
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
     auto& reg = MachineRegistry::instance();
-    reg.registerMachine("atari2600", []() { return a2600::create(false); }, "Atari 2600 (NTSC)");
-    reg.registerMachine("atari2600-pal", []() { return a2600::create(true); }, "Atari 2600 (PAL)");
+    reg.registerMachine("atari2600", []() { return a2600::create(false); }, "Atari 2600 (NTSC)", "Atari");
+    reg.registerMachine("atari2600-pal", []() { return a2600::create(true); }, "Atari 2600 (PAL)", "Atari");
     return &s_manifest;
 }
