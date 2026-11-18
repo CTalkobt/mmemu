@@ -72,7 +72,7 @@ message on the screen.
 | `$C000-$FEFF` | Cartridge (/CTS) | RAM |
 | `$FF00-$FF1F` | PIA0 (every 4 bytes) | |
 | `$FF20-$FF3F` | PIA1 | |
-| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500, the Disto SC-II, the CoCo SDC, Burke & Burke (`$FF50`) | |
+| `$FF40-$FF5F` | Cartridge I/O (/SCS): the FD-500, the Disto SC-II, the CoCo SDC, Burke & Burke (`$FF50`), the Becker port (`$FF41/$FF42`) | |
 | `$FF60-$FFBF` | Cartridges that decode their own addresses (`$FF68` RS-232 Pak, `$FF7A` Orchestra-90, `$FF7F` Multi-Pak) | |
 | `$FFC0-$FFDF` | SAM control register (write: even address clears the bit, odd sets it) | |
 | `$FFE0-$FFFF` | Vectors, from Color BASIC (`$BFE0-$BFFF`) | |
@@ -211,6 +211,7 @@ cartridge FIRQ starts it.
 | `sc2` | Disto Super Controller II: an FD-502-compatible WD1773 controller with a 256-byte no-halt buffer at `$FF74-$FF77` and the Mini-Expansion Bus at `$FF50` (option: `[ROM][,alt]`; below) |
 | `sdc` | The CoCo SDC: a host folder as its SD card (option: `FOLDER[,FIRMWARE[,BANK]]`) |
 | `burke` | Burke & Burke CoCo XT-RTC hard disk interface at `$FF50-$FF53` and its DS1215 clock (option: drive 0's raw image[,ROM]) |
+| `becker` | The Becker port at `$FF41/$FF42` to mmsim's built-in DriveWire 4 server (option: `[ROM][,cow]`; below) |
 | `rompak` | A ROM Pak; the option its image |
 | `gmc` | The Games Master Cartridge (bank-switched ROM and an SN76489); the option its image |
 | `banked` | A banked ROM Pak as MAME's (16 KB banks, register at `$FF40`); the option its image |
@@ -560,6 +561,105 @@ different interface that mmsim doesn't have.)
 Disto's hard disk adapters (on the SC-II's Mini-Expansion Bus, or the
 SCSI "H Disk" adapters) are not modelled.
 
+### DriveWire and the Becker port
+
+DriveWire (Cloud-9's; the DriveWire 4 protocol) puts a CoCo's disks, clock
+and serial channels on a host computer at the far end of a byte stream.
+mmsim has the host side built in: `DriveWireServer`
+(`src/plugins/devices/drivewire`), which takes the guest's bytes and gives
+back its answers, knowing nothing of the transport. The first transport is
+the **Becker port** (Gary Becker's, from the CoCo3FPGA; XRoar's `becker.c`
+talks to an external server over TCP instead):
+
+| Address | Read | Write |
+|---------|------|-------|
+| `$FF41` | status: bit 1 set while a byte from the server waits | - |
+| `$FF42` | the server's next byte (0 if none) | a byte to the server |
+
+```
+expansion cart becker roms/coco/hdbdw3bc3.rom      # the Becker port, HDB-DOS at $C000
+disk mount 1 nos96809l2v030300coco3_becker.dsk     # DriveWire drive 0
+DOS                                                # (typed at OK) boots NitrOS-9
+```
+
+`coco::BeckerCart` decodes the two registers on /SCS (in a Multi-Pak, the
+slot `$FF7F` gives `$FF40-$FF5F` to) and answers /CTS with its option ROM
+as a disk controller's DOS does (8 KB repeated over `$C000-$FEFF`); there is
+no floppy controller on it. `disk mount N FILE` puts an image in DriveWire
+drive N-1 (drives 0-255 are possible; `expansion` lists them). Images are
+raw 256-byte sectors (LSN n at byte n x 256: NitrOS-9 and RS-DOS `.dsk`);
+reading past the end gives zeros, writing there extends the file. Writes go
+straight through to the file (as a real DriveWire server's), or with
+`,cow` stay in memory. The server answers at once; NitrOS-9's Becker
+`dwread` polls `$FF41` with a timeout, HDB-DOS's without one.
+
+**Protocol coverage** (the DriveWire 4 specification on the DriveWire
+wiki, checked against what NitrOS-9's `rbdw`, `dwio`, `clock2_dw` and
+`boot_dw`, HDB-DOS and pyDriveWire do):
+
+- Disks: `OP_READEX` `$D2` / `OP_REREADEX` `$F2` (256 bytes, the guest's
+  16-bit checksum, then 0 or `$F3` E$CRC; an unreadable sector sends 256
+  zeros and then its error), `OP_READ` `$52` / `OP_REREAD` `$72` (DW3:
+  status, checksum, data), `OP_WRITE` `$57` / `OP_REWRITE` `$77` (0, `$F3`
+  on a bad checksum, `$F2` E$WP read only, `$F6` E$NotRdy no image).
+  The checksum is the 16-bit sum of the 256 bytes.
+- System: `OP_DWINIT` `$5A` (answers 4: a DriveWire 4 server, so NitrOS-9's
+  `dwio` installs its virtual-serial poll), `OP_TIME` `$23` (six bytes:
+  year-1900, month, day, hour, minute, second from the host's local
+  time), `OP_SETTIME` `$24` (taken, not applied), `OP_INIT` `$49`,
+  `OP_TERM` `$54`, `OP_RESET1-3` `$FE` `$FF` `$F8`, `OP_NOP` `$00`,
+  `OP_GETSTAT` `$47` / `OP_SETSTAT` `$53` (logged only).
+- Virtual serial, for now "no data": `OP_SERREAD` `$43` answers 0, 0;
+  `OP_SERWRITE` `$C3`, `OP_SERWRITEM` `$64`, `OP_FASTWRITE` `$80-$8E`,
+  `OP_SERINIT` `$45`, `OP_SERTERM` `$C5`, `OP_SERGETSTAT` `$44` and
+  `OP_SERSETSTAT` `$C4` (with SS.ComSt's 26 bytes) are taken whole and
+  dropped; `OP_SERREADM` `$63` gets nothing (as the spec, asking for more
+  than is queued; it is only asked after `OP_SERREAD` announces data,
+  which never happens).
+- `OP_PRINT` `$50` bytes are kept (`printBuffer`), `OP_PRINTFLUSH` `$46`;
+  `OP_NAMEOBJ_MOUNT` / `CREATE` `$01` / `$02` answer 0 (failed).
+- Any other opcode is one byte and ignored; a command whose bytes stop for
+  250 ms of guest time (the spec's host timeout) is dropped, and a CoCo
+  reset drops a half-received command and unread answers.
+
+**HDB-DOS for the Becker port.** NitrOS-9's `_becker` disks are booted
+the real way by HDB-DOS built for the Becker port (its `DOS` command loads
+the boot track, LSN 612-629, from DriveWire drive 0). It is free (ToolShed)
+but not in the repository; build it with LWTools:
+
+```
+# LWTools 4.24 from http://www.lwtools.ca/releases/lwtools/ (make; no install needed)
+# ToolShed from https://github.com/nitros9project/toolshed
+cd toolshed/cocoroms
+lwasm --symbol-dump --no-output equates.asm bas.asm extbas.asm > ecb_equates.asm
+cd ../hdbdos
+make AS="lwasm -r --pragma=condundefzero,nodollarlocal,noindex0tonone" hdbdw3bc3.rom hdbdw3bck.rom
+cp hdbdw3bc3.rom hdbdw3bck.rom <mmsim>/roms/coco/
+```
+
+`hdbdw3bc3.rom` (`-DDW -DLevel=2 -DBECKER`) is for the CoCo 3,
+`hdbdw3bck.rom` (`-DLevel=1`) for the CoCo 1/2. Both sign on as "HDB-DOS
+1.5 BECKER"; on power-up they read LSN 0 and the directory track looking
+for AUTOEXEC.BAS. (A key typed the moment `OK` appears can be lost;
+the test waits a second.)
+
+**Checked**: byte-level tests of every transaction above; a 6809 program
+reading a sector through the Becker port on a CoCo 2; with the local
+HDB-DOS builds, NitrOS-9 v3.3.0's `_becker` disks (Level 2 6809 and 6309
+on the CoCo 3, Level 1 on the CoCo 2) boot to the shell and run `dir`, and
+`date` shows the host's date once `clock2_dw` has asked for it (it does at
+each minute; sysgo first sets the build date).
+
+**Unverified / not done**: the bit-banger transport (the same server
+behind the CoCo's serial port at 57600/115200 baud: later work), virtual
+serial channels and windows (`/N`, `/Z`, networking), named objects, the
+printer's output, `OP_SETTIME` changing anything, DW4's turbo mode, a TCP
+link to an external server (pyDriveWire, DW4) as XRoar's, and the
+`_becker_headless` builds (whose console is a DriveWire window). The
+CoCo3FPGA's exact decoding of the Becker port (mirrors, the WiFi variant
+at `$FF6C`) is not modelled. HDB-DOS's floppy paths (it keeps Disk
+BASIC's FDC code) find no controller on this cartridge.
+
 ## Color Computer 3
 
 The Color Computer 3 (#332) is the same board (PIAs, keyboard, joysticks,
@@ -694,7 +794,8 @@ it too), so finer differences are not modelled.
 **Expansions**: `expansion ram ram 512K`; the FD-502 (`fd502`, the FD-500's
 code with Disk BASIC 1.1), the Deluxe RS-232 Pak (`rs232`, the 6551 at
 `$FF68`; `serial`), the CoCo SDC (`sdc`; its `$FF40-$FF4F` needs INIT0's
-SCS bit, as on the real machine), Burke & Burke (`burke`), the
+SCS bit, as on the real machine), Burke & Burke (`burke`), the Becker
+port (`becker`, DriveWire), the
 Orchestra-90 and ROM Paks, alone or in the
 Multi-Pak (`mpi`, slots `mpi1-mpi4`); the hi-res joystick interface
 (`expansion joyright hires`, which the host mouse drives) as on the CoCo 2.
@@ -752,6 +853,8 @@ its shell and lists its root directory with `dir` on:
 | Level 2, 6809 (`_cocosdc`) | CoCo 3 | Disk BASIC `DOS` in the CoCo SDC's flash; then its SDC driver by LSN |
 | Level 1 (`coco2`, `coco1` `_40d_1`) | CoCo 2, CoCo 1 | Disk BASIC `DOS`, FD-502 / FD-500 |
 | Level 1 (`d64` `_40d_1`) | Dragon 64 | DragonDOS 1.2 `BOOT` |
+| Level 2, 6809 and 6309 (`_becker`) | CoCo 3 (`coco3h` for the 6309) | HDB-DOS (Becker) `DOS` over DriveWire; then `rbdw`/`dwio` |
+| Level 1 (`coco2` `_becker`) | CoCo 2 | HDB-DOS (Becker) `DOS` over DriveWire |
 
 The Dragon's boot needed a CLI fix: DragonDOS waits for the disk's FIRQ
 with `SYNC` and I and F set, which the 6809 treated as the end of a
@@ -759,8 +862,9 @@ program (it is, on a bare CPU: nothing can wake it). Now that is so only
 while nothing drives the CPU's interrupt lines; a machine's devices do.
 `test_coco_real_roms.cpp` boots each build when its disk is there (the
 Dragon's text is drawn on a graphics screen, so it checks that `dir` is
-loaded from CMDS instead of reading the screen). The DriveWire and Becker
-builds aren't tried (no DriveWire server).
+loaded from CMDS instead of reading the screen). The `_becker` builds
+boot through the Becker port and the built-in DriveWire server (above);
+the bit-banger DriveWire builds aren't tried (no bit-banger transport yet).
 
 ## Not done
 
@@ -771,7 +875,8 @@ builds aren't tried (no DriveWire server).
   graphics are decoded); a PAL composite encoder.
 - Storage: Disto's Mini-Expansion Bus boards (clock, printer, hard disk
   adapters) and the Glenside IDE cartridge;
-  the CoCo SDC's flash programming. The SDC is not yet checked with
+  the CoCo SDC's flash programming; DriveWire over the bit banger, its
+  virtual serial channels and named objects. The SDC is not yet checked with
   SDC-DOS, nor Burke & Burke with HDB-DOS or a NitrOS-9 hard disk.
 
 ## Tests
@@ -808,3 +913,10 @@ and the NMI mask, a Mini-Expansion Bus board, and a 6809 reading a sector
 without HALT on a CoCo 2 and through a CoCo 3's Multi-Pak).
 `test_coco_real_roms.cpp` boots B&B's own boot ROM from a hand-built hard
 disk image when `roms/coco/xt-rtc/` has it.
+`src/plugins/devices/drivewire/test` covers the DriveWire server byte by
+byte (READEX with its checksum, E$CRC and REREADEX, the DW3 READ, WRITE and
+REWRITE with a bad checksum, writes past the end, copy-on-write and read
+only, TIME, SETTIME, DWINIT, INIT/TERM/RESET, the virtual-serial and
+printer opcodes, named objects, unknown opcodes and the command timeout);
+`test_coco_storage.cpp` the Becker port's registers (also in a Multi-Pak)
+and a 6809 reading a sector through it on a CoCo 2.

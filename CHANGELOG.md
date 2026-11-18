@@ -7,6 +7,34 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### CoCo: DriveWire 4 over the Becker port; NitrOS-9's `_becker` builds boot (#356)
+
+- **A built-in DriveWire 4 server** (`src/plugins/devices/drivewire`,
+  `DriveWireServer`): the host side of the protocol as a byte stream in and
+  out, independent of the transport (a bit-banger transport can feed it
+  later). Virtual drives 0-255 backed by raw 256-byte-sector images,
+  written through to the file or copy-on-write; `OP_READEX`/`OP_REREADEX`
+  with the guest's checksum and E$CRC, DW3 `OP_READ`/`OP_REREAD`,
+  `OP_WRITE`/`OP_REWRITE`, `OP_TIME` from the host clock, `OP_DWINIT`
+  (answers 4), `OP_INIT`/`OP_TERM`/`OP_RESET*`/`OP_NOP`,
+  `OP_GETSTAT`/`OP_SETSTAT`, `OP_SETTIME`; the virtual-serial opcodes are
+  parsed and answer "no data" (`OP_SERREAD` 0, 0); `OP_PRINT` kept;
+  named objects refused; unknown opcodes ignored; a stalled command
+  dropped after 250 ms. Checked against the DriveWire 4 spec, NitrOS-9's
+  `rbdw`/`dwio`/`clock2_dw`, HDB-DOS and pyDriveWire.
+- **The Becker port** (`expansion cart becker [ROM][,cow]`, also in a
+  Multi-Pak slot): `$FF41` status (bit 1: data waiting), `$FF42` data, to the
+  built-in server; its optional ROM at `$C000` (HDB-DOS built for the
+  Becker port). `disk mount N FILE` puts an image in DriveWire drive N-1;
+  `expansion` lists the drives.
+- With HDB-DOS built from ToolShed (`hdbdw3bc3.rom`, `hdbdw3bck.rom`; build
+  steps in doc/README-COCO.md, the ROMs stay local), NitrOS-9 v3.3.0's
+  `_becker` disks boot to the shell and run `dir`: Level 2 6809 and 6309 on
+  the CoCo 3, Level 1 on the CoCo 2; `date` then shows the host's date.
+- Tests: the server byte by byte (10), the Becker registers and a 6809
+  stand-in reading a sector through the port on a CoCo 2; real-disk boots
+  of the three `_becker` builds when the ROMs and disks are present.
+
 ### NitrOS-9 v3.3.0 boots on the CoCo 1, 2, 3 (6809 and 6309, floppy and CoCo SDC) and the Dragon 64 (#356)
 
 - **Fix: a masked `SYNC` no longer ends the run.** The CLI, MCP and source

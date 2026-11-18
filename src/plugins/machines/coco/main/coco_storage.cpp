@@ -1,5 +1,5 @@
-// The CoCo SDC, Burke & Burke and Disto Super Controller II cartridges on the
-// CoCo's cartridge port (#356).
+// The CoCo SDC, Burke & Burke, Disto Super Controller II and Becker port
+// cartridges on the CoCo's cartridge port (#356).
 
 #include "coco_storage.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
@@ -267,6 +267,82 @@ void DistoSc2::updateCart() {
     if (low == m_cartLow) return;
     m_cartLow = low;
     if (setCart) setCart(!low);
+}
+
+// ---------------------------------------------------------------------------
+// Becker port
+// ---------------------------------------------------------------------------
+std::string BeckerCart::describe() const {
+    std::string s = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server";
+    if (!m_rom.empty()) s += ", ROM " + (m_label.empty() ? std::string("at $C000") : m_label);
+    if (m_cow) s += ", copy on write";
+    const std::string drives = m_dw.describe();
+    if (!drives.empty()) s += "; " + drives;
+    return s;
+}
+
+bool BeckerCart::read(uint16_t a, bool cts, bool scs, uint8_t& d) {
+    if (cts || !scs) return peek(a, cts, scs, d);
+    if (a == STATUS) {
+        d = m_dw.hasOutput() ? 0x02 : 0x00;
+        return true;
+    }
+    if (a == DATA) {
+        d = m_dw.send();
+        return true;
+    }
+    return false;
+}
+
+bool BeckerCart::peek(uint16_t a, bool cts, bool scs, uint8_t& d) const {
+    if (cts) {
+        if (m_rom.empty()) return false;
+        d = m_rom[(a & 0x3FFF) % m_rom.size()];
+        return true;
+    }
+    if (!scs) return false;
+    if (a == STATUS) {
+        d = m_dw.hasOutput() ? 0x02 : 0x00;
+        return true;
+    }
+    if (a == DATA) {
+        d = m_dw.peekOutput();
+        return true;
+    }
+    return false;
+}
+
+void BeckerCart::write(uint16_t a, bool, bool scs, uint8_t d) {
+    if (scs && a == DATA) m_dw.receive(d);
+}
+
+void BeckerCart::clock(uint64_t ticks) {
+    m_acc += ticks;
+    if (m_acc < 14318) return;                      // in steps of about a millisecond
+    const double s = (double)m_acc / m_hz;
+    m_acc = 0;
+    m_dw.advance(s);
+    const auto& st = m_dw.stats();
+    const uint64_t count = st.reads + st.writes + st.rereads;
+    if (count != m_lastCount) {
+        m_lastCount = count;
+        m_sinceAccess = 0;
+    } else {
+        m_sinceAccess += s;
+    }
+}
+
+bool BeckerCart::mountDisk(int drive, const std::string& path) {
+    return m_dw.mount(drive, path, m_cow ? DriveWireServer::Mode::CopyOnWrite : DriveWireServer::Mode::WriteThrough);
+}
+
+bool BeckerCart::diskStatus(int drive, int& track, bool& motor) const {
+    if (!m_dw.mounted(drive)) return false;
+    const auto& st = m_dw.stats();
+    const bool last = st.lastDrive == drive;
+    track = last ? (int)(st.lastLsn / 18) : 0;
+    motor = last && m_sinceAccess < 0.5;
+    return true;
 }
 
 }  // namespace coco

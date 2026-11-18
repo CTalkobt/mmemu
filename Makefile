@@ -202,6 +202,7 @@ PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
 	src/plugins/devices/coco_sdc/main/coco_sdc.cpp \
 	src/plugins/devices/xt_hdc/main/xt_hdc.cpp \
+	src/plugins/devices/drivewire/main/drivewire_server.cpp \
 	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/machines/coco/main/machine_dragon.cpp \
 	src/plugins/machines/coco/main/dragon_dos.cpp \
@@ -608,6 +609,7 @@ TEST_SRCS = tests/src/test_main.cpp \
 	src/plugins/devices/tms7000/test/test_tms7000.cpp \
 	src/plugins/devices/sp0256/test/test_sp0256.cpp \
 	src/plugins/devices/xt_hdc/test/test_xt_hdc.cpp \
+	src/plugins/devices/drivewire/test/test_drivewire_server.cpp \
 	src/plugins/devices/wd17xx/test/test_floppy_images.cpp \
 	tests/src/test_c64_tape.cpp \
 	tests/src/test_tape_roundtrip.cpp \
@@ -915,6 +917,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/sp0256/main/sp0256.o \
 	src/plugins/devices/coco_sdc/main/coco_sdc.o \
 	src/plugins/devices/xt_hdc/main/xt_hdc.o \
+	src/plugins/devices/drivewire/main/drivewire_server.o \
 	src/plugins/machines/coco/main/coco_tape.o \
 	src/plugins/machines/coco/main/machine_dragon.o \
 	src/plugins/machines/coco/main/dragon_dos.o \

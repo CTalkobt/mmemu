@@ -14,7 +14,8 @@
 //  - extbas11 + disk11: Disk BASIC on the Disto Super Controller II lists
 //    a disk's file with DIR, then SAVEs, lists, LOADs and RUNs a program.
 //  - nitros9/*.dsk (NitrOS-9 v3.3.0's release disks): each build boots to its
-//    shell and runs dir (CoCo 1/2/3, 6309, CoCo SDC, Dragon 64).
+//    shell and runs dir (CoCo 1/2/3, 6309, CoCo SDC, Dragon 64), and the
+//    Becker builds over DriveWire with HDB-DOS (hdbdw3bc3.rom, hdbdw3bck.rom).
 
 #include "test_harness.h"
 #include "coco_test_rom.h"
@@ -26,7 +27,9 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <unistd.h>
 
@@ -517,7 +520,8 @@ bool os9WaitForModule(MachineDescriptor* m, const std::string& name, double seco
 // `prompt` is the shell's, `boot` (its case as the screen shows it) the
 // root directory's OS9Boot
 void nitros9(Model model, bool hd6309, const std::string& cart, const std::string& cartOpt, const std::string& disk,
-             const std::string& command, const std::string& prompt, const std::string& boot) {
+             const std::string& command, const std::string& prompt, const std::string& boot,
+             const std::function<void(MachineDescriptor*)>& then = nullptr) {
     const std::string path = coco::firmwareDir() + "/nitros9/" + disk;
     if (!haveFile(path)) return;
     if (isDragon(model) ? !haveDragon64() : !haveFile(coco::firmwareDir() + "/disk11.rom")) return;
@@ -535,6 +539,7 @@ void nitros9(Model model, bool hd6309, const std::string& cart, const std::strin
     EXPECT_TRUE(m->ioRegistry->mountDisk(1, copy) != nullptr);
     m->onReset(*m);
     EXPECT_TRUE(waitFor(m, "OK", 10));
+    runSeconds(m, 1.0);              // (HDB-DOS drops a key typed as soon as OK shows)
     type(m, command + "\\n");
     if (prompt.empty()) {
         // The Dragon 64's text is drawn on a graphics screen: the modules
@@ -565,6 +570,7 @@ void nitros9(Model model, bool hd6309, const std::string& cart, const std::strin
     EXPECT_TRUE(os9WaitFor(m, prompt, 0.25));
     type(m, "dir\\n");
     EXPECT_TRUE(os9WaitFor(m, boot, 30));
+    if (then) then(m);
     std::printf("%s", os9Screen(m).c_str());
     delete m;
     std::remove(copy.c_str());
@@ -600,4 +606,39 @@ TEST_CASE(real_nitros9_level2_coco3_sdc) {
     const std::string card = coco::firmwareDir() + "/nitros9";
     nitros9(Model::CoCo3, false, "sdc", card + "," + coco::firmwareDir() + "/disk11.rom",
             "nos96809l2v030300coco3_cocosdc.dsk", "DOS", "/DD:", "OS9Boot");
+}
+// The Becker port and the built-in DriveWire server: HDB-DOS built for the
+// Becker port (hdbdw3bc3.rom for the CoCo 3, hdbdw3bck.rom for the CoCo 1/2;
+// toolshed's hdbdos/, see doc/README-COCO.md) loads the boot track from
+// DriveWire drive 0 with DOS, then NitrOS-9's rbdw/dwio (Becker build) read
+// the rest by LSN and poll the server's virtual serial channels
+namespace {
+void nitros9Becker(Model model, bool hd6309, const std::string& rom, const std::string& disk, const std::string& prompt,
+                   const std::string& boot, const std::function<void(MachineDescriptor*)>& then = nullptr) {
+    const std::string hdb = coco::firmwareDir() + "/" + rom;
+    if (!haveFile(hdb)) return;
+    nitros9(model, hd6309, "becker", hdb, disk, "DOS", prompt, boot, then);
+}
+}  // namespace
+TEST_CASE(real_nitros9_level2_coco3_becker) {
+    // The clock: sysgo sets the build date, clock2_dw asks the server (OP_TIME)
+    // when the minute turns over; then date shows the host's year
+    nitros9Becker(Model::CoCo3, false, "hdbdw3bc3.rom", "nos96809l2v030300coco3_becker.dsk", "/DD:", "OS9Boot",
+                  [](MachineDescriptor* m) {
+                      auto* becker = dynamic_cast<coco::BeckerCart*>(coco::systemOf(m)->cart());
+                      ASSERT(becker);
+                      EXPECT_TRUE(becker->server().stats().serialPolls > 0);   // dwio polls the virtual channels
+                      runSeconds(m, 61);
+                      const std::time_t now = std::time(nullptr);
+                      std::tm t{};
+                      localtime_r(&now, &t);
+                      type(m, "date\\n");
+                      EXPECT_TRUE(os9WaitFor(m, ", " + std::to_string(1900 + t.tm_year), 10));
+                  });
+}
+TEST_CASE(real_nitros9_level2_coco3_6309_becker) {
+    nitros9Becker(Model::CoCo3, true, "hdbdw3bc3.rom", "nos96309l2v030300coco3_becker.dsk", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level1_coco2_becker) {
+    nitros9Becker(Model::CoCo2, false, "hdbdw3bck.rom", "nos96809l1v030300coco2_becker.dsk", "OS9:", "OS9BOOT");
 }
