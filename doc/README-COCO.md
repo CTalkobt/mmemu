@@ -803,19 +803,30 @@ and the bit banger also `baud` and `turnaround`, this way.
 
 The `_becker_headless` and `_dw_headless` builds
 boot to their shell on `/Term`; `test_coco_real_roms.cpp` runs `dir` there,
-a second shell on `/N1`, and `dw disk show` (Level 2 on the CoCo 3, Becker
-and bit banger; Level 1 on the CoCo 2, whose `dw` prints the reply but
-then hangs the machine when the channel's close is announced: not
-understood, see below).
+a second shell on `/N1`, and `dw disk show` while `/N1` is still busy,
+and then both shells again (Level 2 on the CoCo 3, Becker and bit banger;
+Level 1 on the CoCo 2).
+
+**A channel's close waits for a quiet guest.** NitrOS-9 Level 1's `dwio`
+answers the close notice (`$10, port`) by signalling, then calling
+`F$AProc` on, every process with a path open to the channel. Level 1's
+`F$AProc` doesn't check whether the process is already in the active
+queue. `dw` polls `SS.Ready` and sleeps a tick between polls; if it is
+waiting for a time slice when the notice comes (another process keeps the
+CPU busy, as `/N1`'s `dir` does), it is inserted a second time, its
+`P$Queue` link points at itself, and the kernel loops in `F$AProc` for
+good. That is a race in the guest's driver, which a real DW4 server could
+hit as well; the server here avoids it by announcing a close only after
+the usual 0.5 s and once the guest has written to no channel for 0.25 s
+with no bytes waiting for it on any (`CLOSE_QUIET`). A process that keeps
+the CPU busy without DriveWire traffic could still meet it.
 
 **Unverified / not done**: the bit-banger link's behaviour against a
 real CoCo (its exact sampling points within a cycle, the PIA's own
 delays: all edges are at cycle boundaries here), a DriveWire server's
 real turnaround time, the `/Z` windows with a guest (the release disks
 have their descriptors but no window-aware program; the protocol is per
-`dwio.asm`), Level 1's hang after a channel-close notice (`dw` on the
-CoCo 2 headless build: the system stops polling once `dwio` takes `$10,
-port`), `inetd`'s listen side, named objects, the
+`dwio.asm`), `inetd`'s listen side, named objects, the
 printer's output, `OP_SETTIME` changing anything, DW4's turbo mode, and a
 TCP link to an external server (pyDriveWire, DW4) as XRoar's. The
 CoCo3FPGA's exact decoding of the Becker port (mirrors, the WiFi variant

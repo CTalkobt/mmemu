@@ -586,3 +586,28 @@ TEST_CASE(drivewire_modem_tcp_connect) {
     ASSERT(serRead(dw) == bytes({0x10, 3}));                // the guest's telnet hears the hang-up
     ::close(lfd);
 }
+
+// A hang-up waits until the guest is quiet on DriveWire: while it writes to
+// another channel, or has bytes waiting on one, the close isn't announced
+// (NitrOS-9 Level 1's dwio would corrupt a busy process queue)
+TEST_CASE(drivewire_close_waits_for_a_quiet_guest) {
+    DW dw;
+    sendAll(dw, {DW::OP_SERINIT, 1, DW::OP_SERINIT, 2});
+    dw.hostClose(2);
+    dw.advance(DW::CLOSE_DELAY);
+    // The guest keeps writing to /N1: no announcement
+    for (int i = 0; i < 20; ++i) {
+        sendAll(dw, {DW::OP_FASTWRITE + 1, 'x'});
+        dw.advance(0.1);
+        ASSERT(serRead(dw) == bytes({0, 0}));
+    }
+    // Bytes waiting for the guest on /N1 go first; the quiet time counts
+    // from its last write (0.1 s ago)
+    dw.hostWrite(1, "a");
+    ASSERT(serRead(dw) == bytes({2, 'a'}));
+    dw.advance(DW::CLOSE_QUIET - 0.15);
+    ASSERT(serRead(dw) == bytes({0, 0}));
+    dw.advance(0.1);
+    ASSERT(serRead(dw) == bytes({0x10, 2}));                // quiet: the close
+    ASSERT(serRead(dw) == bytes({0, 0}));
+}

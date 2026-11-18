@@ -174,6 +174,7 @@ uint8_t DriveWireServer::send() {
 
 void DriveWireServer::advance(double seconds) {
     m_sincePoll += seconds;
+    m_sinceWrite += seconds;
     for (auto& c : m_channels)
         if (c) c->sinceRead += seconds;
     if (m_sincePoll >= 0.005) {             // the endpoints, every 5 ms of guest time
@@ -498,6 +499,13 @@ const DriveWireServer::Channel* DriveWireServer::channel(int port) const {
     return port >= 0 && port < CHANNELS ? m_channels[port].get() : nullptr;
 }
 
+bool DriveWireServer::guestQuiet() const {
+    if (m_sinceWrite < CLOSE_QUIET) return false;
+    for (const auto& c : m_channels)
+        if (c && c->open && !c->in.empty()) return false;
+    return true;
+}
+
 // OP_SERREAD: the next open channel (round robin) with something for the guest
 void DriveWireServer::serRead() {
     for (int i = 0; i < CHANNELS; ++i) {
@@ -507,6 +515,7 @@ void DriveWireServer::serRead() {
         if (serialPort(port)) {
             if (ch->in.empty()) {
                 if (!ch->closing || ch->sinceRead < CLOSE_DELAY) continue;   // (its reader may not have run yet)
+                if (!guestQuiet()) continue;    // (NitrOS-9 Level 1's dwio: see CLOSE_QUIET)
                 ch->closing = false;
                 push(0x10);                     // the channel closed: the guest hangs up
                 push((uint8_t)port);
@@ -541,6 +550,7 @@ void DriveWireServer::serRead() {
 void DriveWireServer::guestWrite(int port, const uint8_t* data, size_t n) {
     Channel* ch = channel(port);
     if (!ch) return;
+    m_sinceWrite = 0;
     m_stats.serialOut += n;
     ch->out.append((const char*)data, n);
     if (ch->out.size() > MAX_OUTPUT) ch->out.erase(0, ch->out.size() - MAX_OUTPUT);

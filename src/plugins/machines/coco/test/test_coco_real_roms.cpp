@@ -768,16 +768,22 @@ void nitros9Headless(Model model, bool hd6309, const std::string& rom, const std
     EXPECT_TRUE(dw->channelOpen(1));
     dw->hostWrite(1, "dir /dd/cmds\r");
     EXPECT_TRUE(channelWaitFor(m, dw, 1, "Shell", 30));
-    // The dw utility: /N (the next free one, N2) to the virtual modem. (Level
-    // 1 prints the reply but hangs when the channel's close is announced: not
-    // checked there)
+    // The dw utility: /N (the next free one, N2) to the virtual modem, while
+    // /N1's dir may still be printing. dw returns when the channel's close is
+    // announced (on Level 1, an announcement while the guest is busy would
+    // hang its kernel: DriveWireServer::CLOSE_QUIET)
     dw->clearChannelOutput(0);
     dw->hostWrite(0, "dw disk show\r");
     EXPECT_TRUE(channelWaitFor(m, dw, 0, "mmsim_nitros9_hl_", 30));
-    if (model == Model::CoCo3) {
-        EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 20));     // dw returned when the channel closed
-        EXPECT_TRUE(!dw->channelOpen(2));
-    }
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 20));
+    EXPECT_TRUE(!dw->channelOpen(2));
+    // Both shells still answer
+    dw->clearChannelOutput(0);
+    dw->clearChannelOutput(1);
+    dw->hostWrite(0, "dir\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, boot, 30));
+    dw->hostWrite(1, "dir\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 1, boot, 30));
     for (int port : {0, 1}) {
         std::string out;
         for (char c : dw->channelOutput(port)) if (c) out += c == '\r' ? '\n' : c;

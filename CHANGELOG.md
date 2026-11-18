@@ -46,6 +46,16 @@ The canonical version is defined in the `VERSION` file at the repository root.
   `devopt ... when started|<seconds>` and a machine JSON's `{ "value": ...,
   "when": ... }` set them; `devinfo`, the GUI's Devices pane and MCP list
   the held ones. A header-only `DeferredOptions` helper does the holding.
+- Fixed: Level 1's `dw` no longer hangs the machine when its channel
+  closes. NitrOS-9 Level 1's `dwio` handles the close notice with
+  `F$AProc` on each process holding the channel, and Level 1's `F$AProc`
+  inserts a process that is already in the active queue a second time (its
+  queue link then points at itself and the kernel loops). That happens
+  when `dw` is waiting for a time slice, e.g. while `/N1` is listing a
+  directory. The server now announces a close only once the guest has
+  been quiet on DriveWire for 0.25 s (`CLOSE_QUIET`). The headless Level 1
+  test now runs `dw disk show` while `/N1` is busy and checks both shells
+  afterwards.
 - Fixed: the DriveWire server read past a one-byte command (NOP, INIT,
   TERM, the resets) looking for SS.KySns, and could answer a stray byte.
 - `OP_SERGETSTAT` SS.KySns answers 0 (Level 1's `scdwv` reads it; Level 2's
@@ -55,8 +65,7 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - With the local HDB-DOS builds, NitrOS-9 v3.3.0's `_becker_headless`
   (CoCo 3, CoCo 2) and `_dw_headless` (CoCo 3) disks boot to the shell on
   DriveWire channel 0 and run `dir` there, a second shell on `/N1`, and
-  `dw disk show` (Level 1's `dw` then hangs when the channel closes: not
-  checked).
+  `dw disk show`, on Level 1 too (below).
 - Tests: byte-level SERREAD single / multi-byte (SERREADM), window keys,
   closed-channel notice, round robin, writes per channel, SS.Open /
   SS.Close / SS.ComSt, SS.KySns, a cooked far end, the modem's `dw` and FAIL

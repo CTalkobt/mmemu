@@ -126,6 +126,15 @@ public:
     /** A hang-up waits this long (guest time) after the guest last took a byte
      *  of the channel: its reader must run first, or S$HUP cuts the read short. */
     static constexpr double CLOSE_DELAY = 0.5;
+    /** And waits until the guest is quiet on DriveWire: it has written to no
+     *  channel for this long, and no channel has bytes waiting for it.
+     *  NitrOS-9 Level 1's dwio answers the close with F$AProc on each process
+     *  that has a path to the channel, and Level 1's F$AProc doesn't check
+     *  whether the process is in the active queue already: if it is (the
+     *  `dw` command waiting for a time slice while another process keeps the
+     *  CPU busy), its queue link ends up pointing at itself and the kernel
+     *  loops for good. A quiet guest has run its readers, which then sleep. */
+    static constexpr double CLOSE_QUIET = 0.25;
 
     struct Stats {
         uint64_t reads = 0, writes = 0, rereads = 0, crcErrors = 0, unknownOps = 0, serialPolls = 0;
@@ -229,6 +238,8 @@ private:
     void modemLine(Channel& ch, const std::string& line);
     void modemReply(Channel& ch, const std::string& text, bool close);
     void resetChannels();
+    /** No channel traffic for CLOSE_QUIET (a hang-up may be announced). */
+    bool guestQuiet() const;
     std::string apiCommand(const std::vector<std::string>& words, bool& ok);
     size_t lengthOf(uint8_t op) const;
     void done();
@@ -250,4 +261,5 @@ private:
     int m_nextPoll = 0;                     // round robin over the channels
     std::atomic<bool> m_network{false};     // `tcp connect` allowed (the GUI may set it while the guest runs)
     double m_sincePoll = 0;
+    double m_sinceWrite = 1e9;              // seconds since the guest last wrote to a channel
 };
