@@ -73,7 +73,7 @@ static ToolchainPluginInfo s_toolchains[] = {
     {"6803", nullptr, createDisasm6803, createAsm6801},
     {"6801", nullptr, createDisasm6801, createAsm6801},
 };
-static MachinePluginInfo s_machines[] = { {"raw6803", createMachineRaw6803, "Raw MC6803 with 64 KB of RAM"} };
+static MachinePluginInfo s_machines[] = { {"raw6803", createMachineRaw6803, "Raw MC6803 with 64 KB of RAM", "Bare CPU"} };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,

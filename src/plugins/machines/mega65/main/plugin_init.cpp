@@ -27,6 +27,6 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* host) {
     registerHdosIntercept();   // "mega65.hdos" intercept type (machines/mega65.json)
     MachineRegistry::instance().registerMachine("mega65",
         []() -> MachineDescriptor* { return Mega65MachineFactory::create(); },
-        "MEGA65");
+        "MEGA65", "Commodore");
     return &s_manifest;
 }

@@ -120,6 +120,10 @@ The plugin describes its contents via this struct returned from `mmemuPluginInit
 - **Dependencies**: `deps` (null-terminated list of required plugin IDs).
 - **Filtering**: `supportedMachineIds` (null-terminated list of machines this plugin is relevant for).
 - **Factories**: Arrays of `CorePluginInfo`, `DevicePluginInfo`, `MachinePluginInfo`, etc.
+  `MachinePluginInfo` is `{machineId, create, description, vendor}`; `vendor` (API 2.0) names
+  the maker's family the GUI groups the machine under (`"Commodore"`, `"Tandy"`; a third-party
+  machine names the vendor it's compatible with). Plugins registering through
+  `MachineRegistry::registerMachine(id, factory, description, vendor)` pass it there.
 
 ---
 

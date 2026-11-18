@@ -92,7 +92,7 @@ static void reg(const char* id, plus4::Model model, bool ntsc, const char* desc)
         MachineDescriptor* m = plus4::create(model, ntsc, &err);
         if (!m) LogRegistry::instance().getLogger("plus4")->error("{}: {}", id, err);
         return m;
-    }, desc);
+    }, desc, "Commodore");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

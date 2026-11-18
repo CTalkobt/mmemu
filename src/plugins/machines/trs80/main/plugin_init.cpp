@@ -81,7 +81,7 @@ static void reg(const char* id, trs80::Model model, const char* desc) {
         if (!m) LogRegistry::instance().getLogger("trs80")->error("{}: {}", id, err);
         else m->machineId = id;     // without ROMs: made, with a warning (create() prints it)
         return m;
-    }, desc);
+    }, desc, "Tandy");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

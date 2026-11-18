@@ -1,8 +1,10 @@
 #include "test_harness.h"
+#include <algorithm>
 #include "libcore/main/rom_loader.h"
 #include "libcore/main/machine_desc.h"
 #include "libmem/main/memory_bus.h"
 #include "libdevices/main/io_registry.h"
+#include "libcore/main/machines/machine_registry.h"
 
 TEST_CASE(smoke_test) {
     ASSERT(1 == 1);
@@ -78,4 +80,47 @@ TEST_CASE(machine_descriptor_cleanup) {
     ASSERT(genericDeleted == true);
     // Note: cpus and buses are also deleted, but they are pointers to ICore/IBus
     // which we'd need more mocks to verify. This is enough for now.
+}
+
+// A machine's vendor (for the GUI's grouped machine list) is kept with its
+// registration, handed to the descriptor it creates, and "" when not given
+TEST_CASE(machine_registry_vendor) {
+    auto& reg = MachineRegistry::instance();
+    reg.registerMachine("test-vendor-a", [] { auto* m = new MachineDescriptor(); m->machineId = "a"; return m; },
+                        "Test machine A", "Acme");
+    reg.registerMachine("test-vendor-b", [] { auto* m = new MachineDescriptor(); m->machineId = "b"; return m; },
+                        "Test machine B");
+    reg.registerMachine("test-vendor-c", [] {
+        auto* m = new MachineDescriptor();
+        m->machineId = "c";
+        m->vendor = "Own";                          // the descriptor's own wins
+        return m;
+    }, "Test machine C", "Acme");
+    EXPECT_EQ(reg.vendorOf("test-vendor-a"), std::string("Acme"));
+    EXPECT_EQ(reg.vendorOf("test-vendor-b"), std::string(""));
+    EXPECT_EQ(reg.vendorOf("no-such-machine"), std::string(""));
+    MachineDescriptor* a = reg.createMachine("test-vendor-a");
+    MachineDescriptor* b = reg.createMachine("test-vendor-b");
+    MachineDescriptor* c = reg.createMachine("test-vendor-c");
+    ASSERT(a && b && c);
+    EXPECT_EQ(a->vendor, std::string("Acme"));
+    EXPECT_EQ(b->vendor, std::string(""));
+    EXPECT_EQ(c->vendor, std::string("Own"));
+    delete a;
+    delete b;
+    delete c;
+    // Registering again without a vendor forgets it
+    reg.registerMachine("test-vendor-a", [] { return new MachineDescriptor(); }, "Test machine A", "");
+    EXPECT_EQ(reg.vendorOf("test-vendor-a"), std::string(""));
+    // The plugin registering a machine is kept with it
+    reg.setSource("mmemu-plugin-test.so");
+    reg.registerMachine("test-vendor-b", [] { return new MachineDescriptor(); }, "Test machine B", "Acme");
+    reg.setSource("");
+    EXPECT_EQ(reg.sourceOf("test-vendor-b"), std::string("mmemu-plugin-test.so"));
+    EXPECT_EQ(reg.sourceOf("test-vendor-c"), std::string(""));
+    for (const char* id : {"test-vendor-a", "test-vendor-b", "test-vendor-c"}) reg.unregisterMachine(id);
+    EXPECT_EQ(reg.sourceOf("test-vendor-b"), std::string(""));
+    std::vector<std::string> ids;
+    reg.enumerate(ids);
+    EXPECT_TRUE(std::find(ids.begin(), ids.end(), "test-vendor-b") == ids.end());
 }

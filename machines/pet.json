@@ -3,6 +3,7 @@
 
     {
       "id": "pet2001",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],
@@ -86,6 +87,7 @@
 
     {
       "id": "pet4032",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],
@@ -171,6 +173,7 @@
 
     {
       "id": "pet8032",
+      "vendor": "Commodore",
       "ui": { "panes": ["tape", "drive"],
               "screenButtons": [
                 { "label": "Trigger NMI", "keys": ["nmi"],

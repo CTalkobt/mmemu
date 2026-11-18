@@ -23,7 +23,7 @@ static MachineDescriptor* createMachineRawZ80() {
 
 static CorePluginInfo s_cores[] = { {"z80", "NMOS", "open", createCoreZ80} };
 static ToolchainPluginInfo s_toolchains[] = { {"z80", nullptr, createDisasmZ80, nullptr} };
-static MachinePluginInfo s_machines[] = { {"rawz80", createMachineRawZ80} };
+static MachinePluginInfo s_machines[] = { {"rawz80", createMachineRawZ80, nullptr, "Bare CPU"} };
 
 static SimPluginManifest s_manifest = {
     MMEMU_PLUGIN_API_VERSION,

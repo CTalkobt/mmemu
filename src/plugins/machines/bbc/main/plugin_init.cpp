@@ -27,7 +27,7 @@ static void reg(const char* id, bbc::Model model, const char* desc) {
         MachineDescriptor* m = bbc::create(model, &err);
         if (!m) LogRegistry::instance().getLogger("bbc")->error("{}: {}", id, err);
         return m;
-    }, desc);
+    }, desc, "Acorn");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
@@ -42,6 +42,6 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
         MachineDescriptor* m = electron::create(&err);
         if (!m) LogRegistry::instance().getLogger("bbc")->error("electron: {}", err);
         return m;
-    }, "Acorn Electron (OS 1.00, BASIC 2)");
+    }, "Acorn Electron (OS 1.00, BASIC 2)", "Acorn");
     return &s_manifest;
 }

@@ -119,6 +119,12 @@ bool PluginLoader::load(const std::string& path) {
         return false;
     }
 
+    // Machines registered from here on are this plugin's
+    struct SourceScope {
+        explicit SourceScope(const std::string& s) { MachineRegistry::instance().setSource(s); }
+        ~SourceScope() { MachineRegistry::instance().setSource(""); }
+    } source(std::filesystem::path(path).filename().string());
+
     SimPluginManifest* manifest = initFn(&s_hostAPI);
     if (!manifest) {
         std::cerr << "Plugin initialization failed: " << path << std::endl;
@@ -225,7 +231,7 @@ void PluginLoader::registerPluginItems(SimPluginManifest* manifest) {
     for (int i = 0; i < manifest->machineCount; ++i) {
         auto& m = manifest->machines[i];
         std::string desc = m.description ? m.description : "";
-        MachineRegistry::instance().registerMachine(m.machineId, m.create, desc);
+        MachineRegistry::instance().registerMachine(m.machineId, m.create, desc, m.vendor ? m.vendor : "");
     }
 
     // Devices

@@ -14,11 +14,30 @@ void MachineRegistry::setInstance(MachineRegistry* inst) {
 
 void MachineRegistry::registerMachine(const std::string& id, FactoryFn factory) {
     m_factories[id] = factory;
+    if (m_source.empty()) m_sources.erase(id);
+    else m_sources[id] = m_source;
 }
 
 void MachineRegistry::registerMachine(const std::string& id, FactoryFn factory, const std::string& description) {
-    m_factories[id] = factory;
+    registerMachine(id, std::move(factory));
     m_descriptions[id] = description;
+}
+
+void MachineRegistry::registerMachine(const std::string& id, FactoryFn factory, const std::string& description,
+                                      const std::string& vendor) {
+    registerMachine(id, std::move(factory), description);
+    if (vendor.empty()) m_vendors.erase(id);
+    else m_vendors[id] = vendor;
+}
+
+std::string MachineRegistry::vendorOf(const std::string& id) const {
+    const auto it = m_vendors.find(id);
+    return it == m_vendors.end() ? "" : it->second;
+}
+
+std::string MachineRegistry::sourceOf(const std::string& id) const {
+    const auto it = m_sources.find(id);
+    return it == m_sources.end() ? "" : it->second;
 }
 
 MachineDescriptor* MachineRegistry::createMachine(const std::string& id) {
@@ -29,6 +48,7 @@ MachineDescriptor* MachineRegistry::createMachine(const std::string& id) {
         return nullptr;
     }
     auto* result = it->second();
+    if (result && result->vendor.empty()) result->vendor = vendorOf(id);
     if (result)
         log->debug("createMachine: '{}' has {} CPUs and {} buses", id, result->cpus.size(), result->buses.size());
     else
@@ -50,7 +70,16 @@ void MachineRegistry::enumerateDetailed(std::vector<std::pair<std::string, std::
     }
 }
 
+void MachineRegistry::unregisterMachine(const std::string& id) {
+    m_factories.erase(id);
+    m_descriptions.erase(id);
+    m_vendors.erase(id);
+    m_sources.erase(id);
+}
+
 void MachineRegistry::clear() {
     m_factories.clear();
     m_descriptions.clear();
+    m_vendors.clear();
+    m_sources.clear();
 }

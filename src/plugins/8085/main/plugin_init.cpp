@@ -38,7 +38,7 @@ MachineDescriptor* createMachineRaw8085() {
 
 CorePluginInfo s_cores[] = { {"8085", "NMOS", "open", createCore8085} };
 ToolchainPluginInfo s_toolchains[] = { {"8085", nullptr, createDisasm8085, createAsm8085} };
-MachinePluginInfo s_machines[] = { {"raw8085", createMachineRaw8085, "Raw Intel 8085 with 64 KB of RAM"} };
+MachinePluginInfo s_machines[] = { {"raw8085", createMachineRaw8085, "Raw Intel 8085 with 64 KB of RAM", "Bare CPU"} };
 
 }  // namespace
 

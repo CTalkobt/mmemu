@@ -76,7 +76,7 @@ static SimPluginManifest s_manifest = {
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {
     auto& reg = MachineRegistry::instance();
-    reg.registerMachine("snes", []() { return snes::create(false); }, "Super Nintendo Entertainment System (NTSC)");
-    reg.registerMachine("superfamicom", []() { return snes::create(true); }, "Nintendo Super Famicom");
+    reg.registerMachine("snes", []() { return snes::create(false); }, "Super Nintendo Entertainment System (NTSC)", "Nintendo");
+    reg.registerMachine("superfamicom", []() { return snes::create(true); }, "Nintendo Super Famicom", "Nintendo");
     return &s_manifest;
 }

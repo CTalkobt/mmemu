@@ -26,7 +26,7 @@ static void ensureMega65Registered() {
 
     MachineRegistry::instance().registerMachine("mega65",
         []() -> MachineDescriptor* { return Mega65MachineFactory::create(); },
-        "MEGA65");
+        "MEGA65", "Commodore");
 }
 
 TEST_CASE(mega65_integration_wiring) {
