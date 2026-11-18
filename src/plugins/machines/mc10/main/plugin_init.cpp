@@ -107,7 +107,7 @@ static void reg(const char* id, mc10::Model model, mc10::Expansion exp, const ch
         if (!m) LogRegistry::instance().getLogger("mc10")->error("{}: {}", id, err);
         else m->machineId = id;     // without ROMs: made, with a warning (create() prints it)
         return m;
-    }, desc);
+    }, desc, "Tandy");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

@@ -276,6 +276,7 @@ std::string BeckerCart::describe() const {
     std::string s = "Becker port ($FF41/$FF42) to the built-in DriveWire 4 server";
     if (!m_rom.empty()) s += ", ROM " + (m_label.empty() ? std::string("at $C000") : m_label);
     if (m_cow) s += ", copy on write";
+    if (m_dw.network()) s += ", network on";
     const std::string drives = m_dw.describe();
     if (!drives.empty()) s += "; " + drives;
     return s;
@@ -334,6 +335,15 @@ void BeckerCart::clock(uint64_t ticks) {
 
 bool BeckerCart::mountDisk(int drive, const std::string& path) {
     return m_dw.mount(drive, path, m_cow ? DriveWireServer::Mode::CopyOnWrite : DriveWireServer::Mode::WriteThrough);
+}
+
+BeckerCart* findBecker(Cart* port) {
+    if (auto* b = dynamic_cast<BeckerCart*>(port)) return b;
+    if (auto* mpi = dynamic_cast<MultiPak*>(port)) {
+        for (int i = 0; i < 4; ++i)
+            if (auto* b = dynamic_cast<BeckerCart*>(mpi->slot(i))) return b;
+    }
+    return nullptr;
 }
 
 bool BeckerCart::diskStatus(int drive, int& track, bool& motor) const {

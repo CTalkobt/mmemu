@@ -28,6 +28,6 @@ extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) 
         MachineDescriptor* m = x16::create(&err);
         if (!m) LogRegistry::instance().getLogger("x16")->error("{}", err);
         return m;
-    }, "Commander X16");
+    }, "Commander X16", "Commodore");
     return &s_manifest;
 }

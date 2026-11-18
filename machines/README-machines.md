@@ -28,6 +28,7 @@ This document defines the JSON schema used to describe and reconstruct the vario
 |---|---|---|
 | `id` | string | Unique registry key for the machine (e.g., `"c64"`, `"vic20"`) |
 | `displayName` | string | Human-readable name (e.g., `"Commodore 64"`) |
+| `vendor` | string | The maker whose family the machine belongs to (e.g. `"Commodore"`); the GUI's machine list groups by it. A third-party machine names the vendor it's compatible with (the MEGA65: `"Commodore"`). Machines without one appear under "Other". |
 | `licenseClass` | string | `"proprietary"` or `"open"` |
 | `clockHz` | number | (Optional) Device clock in Hz (e.g. `985248` for a PAL C64). The GUI and CLI start machines at real time and pace them at this rate (`--speed max` or `speed max` runs unpaced; #169); machines created elsewhere, e.g. in tests or the MCP server, start unpaced. Omit for a machine that is never paced. |
 | `bus` | BusSpec | Primary system memory bus configuration |
@@ -68,6 +69,14 @@ Individual hardware components.
 - `name`: Instance name (e.g., `"VIA1"`, `"VIC-II"`).
 - `baseAddr`: Hex string of the memory-mapped base address, or `null`.
 - `clockHz`: (Optional) Custom clock frequency for the device.
+- `options`: (Optional) The device's settings, `{ "key": "value" }`, applied
+  when the machine is built (`IOHandler::setOption`). A setting that has to
+  wait until the device has started (the guest must send its init codes
+  first, or the device isn't on the reset line) takes `{ "value": "on",
+  "when": "started" }` or a delay in guest seconds, `"when": "2.5"`; only
+  devices that can tell when they've started take these
+  (`IOHandler::setOptionWhen`). The CLI's `devopt <device> <key> <value>
+  when started|<seconds>` does the same while the machine runs.
 - `colorRam`: (Optional, bool) Indicates the device needs access to the color RAM.
 - `dmaBus`: (Optional, bool) Indicates the device needs a DMA bus.
 - `lines`: (Optional) Map of device pins to signal names (e.g., `{"ca1": "vsync"}`).

@@ -27,6 +27,129 @@ The canonical version is defined in the `VERSION` file at the repository root.
 - Checked under AddressSanitizer: all 98 machines created and run in one CLI
   session, and about 60 GUI machine switches, running and paused.
 
+### CoCo: DriveWire's virtual serial channels; NitrOS-9's headless builds run (#356)
+
+- **The built-in DriveWire 4 server carries virtual channels**: NitrOS-9's
+  `scdwv` devices (`/Term` 0, `/N1-/N13`, `/MIDI` 14, the windows `/Z1-/Z15`
+  `$11-$1F`) open them with `OP_SERINIT` / `OP_SERTERM`, write with
+  `OP_FASTWRITE` (`$80` + port), `SERWRITE` and `SERWRITEM`, and report
+  paths with `SERSETSTAT` (SS.Open, SS.Close, SS.ComSt's 26 bytes). Bytes
+  for the guest are offered when `dwio` polls (`OP_SERREAD`), round robin:
+  one byte (`1 + port, byte`), several (`$11 + port, n`, then
+  `OP_SERREADM`), a window's key (`$40 + n, key`) or the host's hang-up
+  (`$10, port`: S$HUP to the guest's processes on it).
+- **`drivewire` CLI command**: `drivewire channel CH tcp:PORT[,raw] |
+  file:PATH | loopback | modem | none` gives a channel a far end (`nc
+  localhost PORT` gets the headless console or a shell on `/N1`; text in
+  is telnet-style, LF to CR); `drivewire type|send|read|hangup CH` work it
+  from the CLI; `drivewire` alone lists the drives and channels. An
+  in-process API (`hostWrite`, `channelOutput`, `hostClose`) for tests and
+  frontends. A new `IOHandler::deviceCommand` hook carries it.
+- **The virtual modem**: on a `/N` channel with no far end the lines the
+  guest writes are DW4 API commands, as NitrOS-9's `dw` and `telnet` send
+  them: `dw disk show`, `dw disk eject`, `dw server version`, `dw port show`
+  answer and close the channel; `tcp connect HOST PORT` connects it to a
+  TCP server; anything else answers `FAIL 208` (`tcp listen` for `inetd`
+  is not there).
+- **Network access is opt-in**: `tcp connect` answers `FAIL 205` until the
+  host turns it on: `,net` on `expansion cart becker` / `serial drivewire`,
+  `drivewire network on|off`, or the device option `network`.
+- **Device switches**: a device can list on/off settings
+  (`DeviceInfo::switches`, set through `IOHandler::setOption`). The GUI's
+  Devices pane shows each as a toggle button; the CLI's new `devopt <device>
+  [<key> <value>]` lists and sets them, `devinfo` shows them, and MCP's
+  device info returns them. DriveWire's network access is the first.
+- **Held device options**: `IOHandler::setOptionWhen` applies an option now,
+  once the device's startup has finished (`started`: the device says when;
+  for DriveWire, the guest's driver sending DWINIT / INIT), or after a delay
+  of guest time (for devices the reset line doesn't reach). The CLI's
+  `devopt ... when started|<seconds>` and a machine JSON's `{ "value": ...,
+  "when": ... }` set them; `devinfo`, the GUI's Devices pane and MCP list
+  the held ones. A header-only `DeferredOptions` helper does the holding.
+- Fixed: Level 1's `dw` no longer hangs the machine when its channel
+  closes. NitrOS-9 Level 1's `dwio` handles the close notice with
+  `F$AProc` on each process holding the channel, and Level 1's `F$AProc`
+  inserts a process that is already in the active queue a second time (its
+  queue link then points at itself and the kernel loops). That happens
+  when `dw` is waiting for a time slice, e.g. while `/N1` is listing a
+  directory. The server now announces a close only once the guest has
+  been quiet on DriveWire for 0.25 s (`CLOSE_QUIET`). The headless Level 1
+  test now runs `dw disk show` while `/N1` is busy and checks both shells
+  afterwards.
+- Fixed: the DriveWire server read past a one-byte command (NOP, INIT,
+  TERM, the resets) looking for SS.KySns, and could answer a stray byte.
+- `OP_SERGETSTAT` SS.KySns answers 0 (Level 1's `scdwv` reads it; Level 2's
+  doesn't, so a new command now drops answer bytes the guest left unread,
+  on the Becker port and the bit banger). A channel's close is announced
+  0.5 s after the guest last took a byte of it, so its reader runs first.
+- With the local HDB-DOS builds, NitrOS-9 v3.3.0's `_becker_headless`
+  (CoCo 3, CoCo 2) and `_dw_headless` (CoCo 3) disks boot to the shell on
+  DriveWire channel 0 and run `dir` there, a second shell on `/N1`, and
+  `dw disk show`, on Level 1 too (below).
+- Tests: byte-level SERREAD single / multi-byte (SERREADM), window keys,
+  closed-channel notice, round robin, writes per channel, SS.Open /
+  SS.Close / SS.ComSt, SS.KySns, a cooked far end, the modem's `dw` and FAIL
+  replies, `tcp connect` both ways and its hang-up, the CLI command;
+  real-disk boots of the headless builds.
+
+### CoCo: DriveWire over the bit banger; NitrOS-9's `_dw` builds boot (#356)
+
+- **`serial drivewire[:BAUD][,cow]`** puts the built-in DriveWire 4 server
+  on the CoCo's serial port, as a PC on the end of the bit-banger cable:
+  the guest's 8N1 frames off PIA1 PA1 are its commands, the answers go down
+  PB0 at the same rate, starting 500 us after the stop bit of the byte
+  that completed the command (device option `turnaround`), back to back.
+  57600 baud on the CoCo 1/2 and 115200 on the CoCo 3 unless given (38400
+  for the CoCo 1 builds). `disk mount N FILE` puts an image in DriveWire
+  drive N-1 while it's attached; refused while a Becker cartridge (in the
+  port or a Multi-Pak slot) has its own server.
+- **PB0 on the CoCo 1/2**: the receive line is now read by PIA1 port B
+  there too (it was wired on the CoCo 3 only), sampled as the read's cycle
+  starts.
+- **The 6809's dead cycles in their place**: an instruction's VMA cycles
+  before its operand's access (and the one inside a read-modify-write) are
+  placed where the data sheet and XRoar have them and reported through a
+  new dead-cycle hook (the HD6309's too); the CoCo's System counts them
+  as they pass, so an `LDA $FF22` reads PIA1 on its 5th cycle rather than
+  its 4th (they used to be added after the instruction). Cycle counts are
+  unchanged.
+- **`expansion cart dosrom ROM`**: a DOS ROM at `$C000` with no hardware
+  and no autostart, for HDB-DOS built for the bit banger.
+- With HDB-DOS built from ToolShed for the serial port (`hdbdw3cc3.rom`,
+  `hdbdw3cc2.rom`, `hdbdw3cc1.rom`; steps in doc/README-COCO.md, local
+  only), NitrOS-9 v3.3.0's `_dw` disks boot to the shell and run `dir`:
+  Level 2 6809 and 6309 on the CoCo 3 (115200), Level 1 on the CoCo 2
+  (57600) and CoCo 1 (38400).
+- Tests: the 6809's bus-cycle order for 19 instruction forms; PB0 seen on
+  the exact read cycle (CoCo 2, CoCo 3 at 1.79 MHz); the transport's
+  framing and turnaround; a cycle-counted 6809 client in the drivers'
+  style reading a sector with READEX at 57600 on a CoCo 2 and 115200 on a
+  CoCo 3 (6809 and 6309), and failing at the wrong rate; real-disk boots
+  of the four `_dw` builds when the ROMs and disks are present.
+
+### GUI: the machine list is a tree of vendors
+
+- **Load Machine** (Ctrl-L) shows a node per vendor, with that vendor's
+  machines and the third-party machines compatible with them under it:
+  Acorn, Apple, Atari, Bare CPU, Commodore, Nintendo, Sinclair, Tandy. Each
+  machine reads "description [id]". A filter box keeps the machines whose
+  id, description or vendor matches, opens their vendors, and Enter takes
+  the first match.
+- **The vendor comes from each machine's registration, not a list in the
+  GUI.** `MachineDescriptor::vendor`, the 4-argument
+  `MachineRegistry::registerMachine(id, factory, description, vendor)`,
+  `MachinePluginInfo.vendor` and the machine JSON's `"vendor"` key carry
+  it. A third-party machine names the vendor it's compatible with: the
+  MEGA65 and Commander X16 under Commodore; the Dragons, Matra Alice and
+  the Kyocera, NEC and Olivetti Model 100 siblings under Tandy. Machines
+  without a vendor appear under "Other".
+- **Plugin API 2.0:** `MachinePluginInfo` gained `vendor`, so the API's
+  major version is now 2 and plugins built for 1.x are refused (the
+  struct's size changed).
+- The registry also records the plugin that registered each machine
+  (`sourceOf`). `validate_all_plugins` checks that every plugin's machine
+  has a vendor. New `MachineRegistry::unregisterMachine`.
+
 ### Model 100/200: the RAMPAC follows the card's logic, with banks; RAMDSK runs (#358)
 
 - **The RAMPAC / Node Datapac now works the way the card does.** The model

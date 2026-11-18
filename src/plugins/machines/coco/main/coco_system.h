@@ -13,6 +13,7 @@
 #include "plugins/devices/mc6883/main/mc6883.h"
 #include "plugins/devices/gime/main/gime.h"
 #include "libcore/main/icore.h"
+#include "plugins/devices/drivewire/main/drivewire_server.h"
 #include <cstdio>
 #include <functional>
 #include <deque>
@@ -140,9 +141,28 @@ private:
  * The receive line (PIA1 PB0, and on the CoCo 3 the GIME's EI2): bytes
  * queued (`serial in:PATH`, or receive()) arrive 8N1 at the same rate, the
  * line at mark (high) between them; with nothing connected it reads low.
+ *
+ * DriveWire over the bit banger (`serial drivewire[:BAUD][,cow]`): the
+ * built-in DriveWire 4 server (DriveWireServer) at the far end of the
+ * cable, as a DriveWire host on a PC's serial port. The frames the guest
+ * sends on PA1 are its commands; the server's answers come back on PB0,
+ * 8N1 at the same rate, starting TURNAROUND_US after the stop bit of the
+ * byte that completed the command (the guest is already in its receive
+ * loop by then, sampling for the start bit) and back to back after that.
+ * The rate is the machine's (57600 baud on the CoCo 1/2, whose 0.89 MHz
+ * 6809 bit-bangs it in 15.5-cycle bit cells; 115200 on the CoCo 3 at 1.79
+ * MHz) unless given: 38400 for the CoCo 1 builds. `disk mount N FILE`
+ * puts an image in DriveWire drive N-1 while it's attached.
+ *
+ * Time: `now` is in master-clock ticks (14.31818 MHz), as the System keeps
+ * it: PA1's level changes and PB0 is sampled at the start of the bus cycle
+ * that writes / reads PIA1 (System::access), so the guest's cycle-counted
+ * loops see the line exactly where their cycle counts put them.
  */
 class BitBanger : public IOHandler {
 public:
+    /** From the stop bit of the guest's last byte to the start bit of the answer. */
+    static constexpr double TURNAROUND_US = 500.0;
     ~BitBanger() override;
     const char* name() const override { return "RS-232"; }
     uint32_t baseAddr() const override { return 0; }
@@ -151,26 +171,59 @@ public:
     bool ioWrite(IBus*, uint32_t, uint8_t) override { return false; }
     void reset() override {}
     void tick(uint64_t) override {}
+    /** file:PATH, in:PATH, drivewire[:BAUD][,cow][,net], none. */
     bool attachSerial(const std::string& spec) override;
+    /** `drivewire ...` (DriveWireServer::hostCommand) while DriveWire is attached. */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
+    /** baud (50-115200); turnaround (DriveWire's, in microseconds); network
+     *  (on/off: DriveWire's network access, kept for a later attach). */
     bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    /** Held options: "started" applies when the guest's DriveWire driver starts
+     *  (its DWINIT / INIT), a delay counts guest time from when it was set. */
+    bool setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                       std::string& err) override;
+    std::vector<PendingOption> pendingOptions() const override { return m_deferred.pending(); }
+    void getDeviceInfo(DeviceInfo& out) const override;
+    /** With DriveWire attached: unit 1-256 is DriveWire drive 0-255. */
+    bool mountDisk(int unit, const std::string& path) override;
+    void ejectDisk(int unit) override;
+    bool getDiskStatus(int unit, int& track, int& sector, bool& led) override;
+    std::string getMountedDiskPath(int unit) override;
 
     /** PA1 at time `now` (ticks). */
     void txLevel(uint64_t now, bool level);
     /** The receive line at time `now` (ticks): true at mark. */
     bool rxLevel(uint64_t now);
-    /** Bytes to send down the receive line, after any queued. */
-    void receive(const std::vector<uint8_t>& bytes) {
-        m_rxQueue.insert(m_rxQueue.end(), bytes.begin(), bytes.end());
-        m_rxConnected = true;
-    }
+    /** Bytes to send down the receive line, after any queued (from the next look at the line). */
+    void receive(const std::vector<uint8_t>& bytes) { receiveAt(bytes, RX_ASAP); }
+    /** Bytes to send down the receive line, the first no earlier than tick `at`. */
+    void receiveAt(const std::vector<uint8_t>& bytes, uint64_t at);
     /** Something drives the receive line (bytes were queued): else it floats low. */
     bool rxConnected() const { return m_rxConnected; }
     bool receiving() const { return m_rxBusy || !m_rxQueue.empty(); }
     void setBaud(int baud) { m_baud = baud > 0 ? baud : 600; }
+    int baud() const { return m_baud; }
     void setMasterHz(double hz) { m_hz = hz; }
-    std::vector<uint8_t> sent;            ///< everything decoded
+    /** Time passes to `now` (ticks): a frame on PA1 completes, DriveWire's command timeout. */
+    void clock(uint64_t now);
+    /** The guest's reset: DriveWire's part commands and unsent answers dropped. */
+    void lineReset();
+
+    /** DriveWire on the port at `baud` (0: the machine's rate); false if another
+     *  DriveWire server (a Becker cartridge's) has the drives. `network`: the
+     *  server's network access (DriveWireServer::setNetwork). */
+    bool attachDriveWire(int baud = 0, bool copyOnWrite = false, bool network = false);
+    void detachDriveWire();
+    DriveWireServer* driveWire() const { return m_dw.get(); }
+    /** The machine's DriveWire rate (57600, or 115200 on the CoCo 3). */
+    void setDriveWireBaud(int baud) { m_dwBaud = baud; }
+    int driveWireBaud() const { return m_dwBaud; }
+    /** Whether another DriveWire server is plugged in (the System: a Becker cartridge). */
+    std::function<bool()> driveWireElsewhere;
+    std::vector<uint8_t> sent;            ///< everything decoded (not DriveWire's commands)
 
 private:
+    static constexpr uint64_t RX_ASAP = ~(uint64_t)0;
     double m_hz = MASTER_HZ;
     int m_baud = 600;
     bool m_level = true;
@@ -180,11 +233,24 @@ private:
     std::vector<std::pair<uint64_t, bool>> m_edges;
     FILE* m_file = nullptr;
     void decodeFrame(uint64_t end);
-    // Receiving: the byte on the line since m_rxStart; the last frame's end; the last poll
+    void byteIn(uint8_t v, uint64_t frameEnd);
+    // Receiving: the byte on the line since m_rxStart; the last frame's end; the last poll;
+    // when the queued bytes may start (RX_ASAP: at the next look)
     std::deque<uint8_t> m_rxQueue;
     bool m_rxBusy = false, m_rxConnected = false;
     uint8_t m_rxByte = 0;
-    uint64_t m_rxStart = 0, m_rxEnd = 0, m_rxPoll = 0;
+    uint64_t m_rxStart = 0, m_rxEnd = 0, m_rxPoll = 0, m_rxReady = RX_ASAP;
+    // DriveWire
+    std::unique_ptr<DriveWireServer> m_dw;
+    bool m_dwCow = false;
+    bool m_dwNetwork = false;
+    DeferredOptions m_deferred;
+    uint64_t m_dwInits = 0;                  // the server's inits seen
+    int m_dwBaud = 57600;
+    double m_turnaroundUs = TURNAROUND_US;
+    uint64_t m_clockAt = 0, m_clockAcc = 0;
+    double m_sinceAccess = 1e9;     // seconds since the last disk transfer
+    uint64_t m_lastCount = 0;
 };
 
 /**
@@ -295,6 +361,17 @@ public:
     void reset() override {}
     void tick(uint64_t) override {}
     bool attachSerial(const std::string& spec) override;
+    /** `drivewire ...` for a Becker cartridge's server (alone or in a Multi-Pak). */
+    bool deviceCommand(const std::string& verb, const std::vector<std::string>& args, std::string& out) override;
+    /** network (on/off): a Becker cartridge's DriveWire network access. */
+    bool setOption(const std::string& key, const std::string& value, std::string& err) override;
+    /** Held options: "started" applies when the Becker cartridge's DriveWire
+     *  driver starts in the guest, a delay counts guest time from when it was set. */
+    bool setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                       std::string& err) override;
+    std::vector<PendingOption> pendingOptions() const override { return m_deferred.pending(); }
+    /** Guest time passing (the System's sync): held options come due. */
+    void clock(uint64_t ticks);
     /** Disks in the cartridge's controller (an FD-500, alone or in a Multi-Pak slot):
      *  unit 1-4 is Disk BASIC's DRIVE 0-3, as other machines number from 1. */
     bool mountDisk(int unit, const std::string& path) override;
@@ -304,6 +381,10 @@ public:
     void getDeviceInfo(DeviceInfo& out) const override;
 private:
     System* m_sys;
+    DeferredOptions m_deferred;
+    const void* m_becker = nullptr;          // the server whose inits m_inits counts
+    uint64_t m_inits = 0;
+    uint64_t m_acc = 0;
 };
 
 /**
@@ -356,6 +437,7 @@ public:
     template <class Cpu> void setCpu(Cpu* cpu) {
         m_cpu = cpu;
         m_setFirq = [cpu](bool on) { cpu->setFirqLine(on); };
+        cpu->setDeadCycleHook([this]() { deadCycle(); });   // its dead cycles where they fall
     }
     uint64_t ticks() const { return m_ticks; }
     uint64_t slowCycles() const { return m_ticks / TICKS_SLOW; }
@@ -421,6 +503,8 @@ public:
 private:
     std::vector<uint8_t> state() const;
     uint8_t access(uint16_t a, bool write, uint8_t v);
+    void deadCycle();
+    void serialInUpdate();
     // The CoCo 3 (machine_coco3.cpp)
     void wireCoco3(std::vector<uint8_t> rom, int ramKb);
     uint8_t access3(uint16_t a, bool write, uint8_t v);

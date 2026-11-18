@@ -31,7 +31,7 @@ static void reg(const char* id, spectrum::Model model, const char* desc) {
         MachineDescriptor* m = spectrum::create(model, &err);
         if (!m) LogRegistry::instance().getLogger("spectrum")->error("{}: {}", id, err);
         return m;
-    }, desc);
+    }, desc, "Sinclair");
 }
 
 extern "C" SimPluginManifest* mmemuPluginInit(const SimPluginHostAPI* /*host*/) {

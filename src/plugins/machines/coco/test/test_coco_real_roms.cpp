@@ -15,7 +15,9 @@
 //    a disk's file with DIR, then SAVEs, lists, LOADs and RUNs a program.
 //  - nitros9/*.dsk (NitrOS-9 v3.3.0's release disks): each build boots to its
 //    shell and runs dir (CoCo 1/2/3, 6309, CoCo SDC, Dragon 64), and the
-//    Becker builds over DriveWire with HDB-DOS (hdbdw3bc3.rom, hdbdw3bck.rom).
+//    Becker builds over DriveWire with HDB-DOS (hdbdw3bc3.rom, hdbdw3bck.rom),
+//    and the bit-banger (_dw) builds over DriveWire on the serial port with
+//    HDB-DOS built for it (hdbdw3cc3.rom, hdbdw3cc2.rom, hdbdw3cc1.rom).
 
 #include "test_harness.h"
 #include "coco_test_rom.h"
@@ -521,7 +523,7 @@ bool os9WaitForModule(MachineDescriptor* m, const std::string& name, double seco
 // root directory's OS9Boot
 void nitros9(Model model, bool hd6309, const std::string& cart, const std::string& cartOpt, const std::string& disk,
              const std::string& command, const std::string& prompt, const std::string& boot,
-             const std::function<void(MachineDescriptor*)>& then = nullptr) {
+             const std::function<void(MachineDescriptor*)>& then = nullptr, const std::string& serial = "") {
     const std::string path = coco::firmwareDir() + "/nitros9/" + disk;
     if (!haveFile(path)) return;
     if (isDragon(model) ? !haveDragon64() : !haveFile(coco::firmwareDir() + "/disk11.rom")) return;
@@ -529,6 +531,7 @@ void nitros9(Model model, bool hd6309, const std::string& cart, const std::strin
     MachineDescriptor* m = coco::create(model, &err, model == Model::CoCo3 ? 512 : 64, nullptr, coco::Tv::Default, hd6309);
     ASSERT(m != nullptr);
     ASSERT(m->expansionSlot("cart")->install(cart, cartOpt, err));
+    if (!serial.empty()) ASSERT(coco::systemOf(m)->rs232.attachSerial(serial));   // `serial drivewire`
     // A copy: NitrOS-9 writes to its disk
     const std::string copy = "/tmp/mmsim_nitros9_" + std::to_string((long)getpid()) + ".dsk";
     {
@@ -641,4 +644,164 @@ TEST_CASE(real_nitros9_level2_coco3_6309_becker) {
 }
 TEST_CASE(real_nitros9_level1_coco2_becker) {
     nitros9Becker(Model::CoCo2, false, "hdbdw3bck.rom", "nos96809l1v030300coco2_becker.dsk", "OS9:", "OS9BOOT");
+}
+
+// DriveWire over the bit banger: HDB-DOS built for the serial port
+// (hdbdw3cc3.rom: the CoCo 3 at 115200 baud, 1.79 MHz; hdbdw3cc2.rom: the
+// CoCo 2 at 57600; hdbdw3cc1.rom: 38400; toolshed's hdbdos/, see
+// doc/README-COCO.md) in a ROM socket with no controller (`dosrom`), the
+// built-in server on the serial port (`serial drivewire`); DOS loads the
+// boot track, then NitrOS-9's own bit-banger rbdw/dwio (the _dw builds)
+// read the rest, every bit cycle-counted on PIA1 PA1 / PB0
+namespace {
+void nitros9BitBanger(Model model, bool hd6309, const std::string& rom, const std::string& disk, const std::string& prompt,
+                      const std::string& boot, const std::string& serial = "drivewire",
+                      const std::function<void(MachineDescriptor*)>& then = nullptr) {
+    const std::string hdb = coco::firmwareDir() + "/" + rom;
+    if (!haveFile(hdb)) return;
+    nitros9(model, hd6309, "dosrom", hdb, disk, "DOS", prompt, boot, then, serial);
+}
+}  // namespace
+TEST_CASE(real_nitros9_level2_coco3_bitbanger) {
+    nitros9BitBanger(Model::CoCo3, false, "hdbdw3cc3.rom", "nos96809l2v030300coco3_dw.dsk", "/DD:", "OS9Boot", "drivewire",
+                     [](MachineDescriptor* m) {
+                         coco::System* sys = coco::systemOf(m);
+                         EXPECT_EQ(sys->rs232.baud(), 115200);
+                         const auto& st = sys->rs232.driveWire()->stats();
+                         EXPECT_TRUE(st.reads > 20);
+                         EXPECT_EQ((int)st.crcErrors, 0);
+                         EXPECT_TRUE(st.serialPolls > 0);              // dwio polls the virtual channels
+                     });
+}
+TEST_CASE(real_nitros9_level2_coco3_6309_bitbanger) {
+    nitros9BitBanger(Model::CoCo3, true, "hdbdw3cc3.rom", "nos96309l2v030300coco3_dw.dsk", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level1_coco2_bitbanger) {
+    nitros9BitBanger(Model::CoCo2, false, "hdbdw3cc2.rom", "nos96809l1v030300coco2_dw.dsk", "OS9:", "OS9BOOT", "drivewire",
+                     [](MachineDescriptor* m) {
+                         coco::System* sys = coco::systemOf(m);
+                         EXPECT_EQ(sys->rs232.baud(), 57600);
+                         EXPECT_EQ((int)sys->rs232.driveWire()->stats().crcErrors, 0);
+                     });
+}
+// The CoCo 1 builds' driver and HDB-DOS's hdbdw3cc1 run at 38400
+TEST_CASE(real_nitros9_level1_coco1_bitbanger) {
+    nitros9BitBanger(Model::CoCo1, false, "hdbdw3cc1.rom", "nos96809l1v030300coco1_dw.dsk", "OS9:", "OS9BOOT",
+                     "drivewire:38400");
+}
+
+// The headless builds (_becker_headless, _dw_headless): no screen or
+// keyboard driver; the console, /Term, is DriveWire virtual channel 0. The
+// shell's prompt and dir's listing come out of the server's channel and the
+// commands go in through it. Then a second shell on /N1 (a channel with no
+// far end but the test), and NitrOS-9's dw utility asks the server's
+// virtual modem (on the next free /N) for its drives.
+namespace {
+
+std::string channelText(DriveWireServer* dw, int port) { return upper(dw->channelOutput(port)); }
+
+bool channelWaitFor(MachineDescriptor* m, DriveWireServer* dw, int port, const std::string& text, double seconds) {
+    for (double t = 0; t < seconds; t += 0.25) {
+        if (channelText(dw, port).find(upper(text)) != std::string::npos) return true;
+        runSeconds(m, 0.25);
+    }
+    if (channelText(dw, port).find(upper(text)) != std::string::npos) return true;
+    std::string out = dw->channelOutput(port);
+    for (char& c : out) if (c == '\r') c = '\n';
+    std::printf("  waiting for \"%s\" on /%s; it has:\n%s\n", text.c_str(), DriveWireServer::portName(port).c_str(),
+                out.c_str());
+    return false;
+}
+
+void nitros9Headless(Model model, bool hd6309, const std::string& rom, const std::string& disk, const std::string& prompt,
+                     const std::string& boot, const std::string& serial = "") {
+    const std::string path = coco::firmwareDir() + "/nitros9/" + disk;
+    const std::string hdb = coco::firmwareDir() + "/" + rom;
+    if (!haveFile(path) || !haveFile(hdb)) return;
+    std::string err;
+    MachineDescriptor* m = coco::create(model, &err, model == Model::CoCo3 ? 512 : 64, nullptr, coco::Tv::Default, hd6309);
+    ASSERT(m != nullptr);
+    coco::System* sys = coco::systemOf(m);
+    if (serial.empty()) {
+        ASSERT(m->expansionSlot("cart")->install("becker", hdb, err));
+    } else {
+        ASSERT(m->expansionSlot("cart")->install("dosrom", hdb, err));
+        ASSERT(sys->rs232.attachSerial(serial));
+    }
+    const std::string copy = "/tmp/mmsim_nitros9_hl_" + std::to_string((long)getpid()) + ".dsk";
+    {
+        std::ifstream in(path, std::ios::binary);
+        std::ofstream out(copy, std::ios::binary | std::ios::trunc);
+        out << in.rdbuf();
+    }
+    EXPECT_TRUE(m->ioRegistry->mountDisk(1, copy) != nullptr);
+    m->onReset(*m);
+    auto* becker = dynamic_cast<coco::BeckerCart*>(sys->cart());
+    DriveWireServer* dw = serial.empty() ? (becker ? &becker->server() : nullptr) : sys->rs232.driveWire();
+    ASSERT(dw != nullptr);
+    EXPECT_TRUE(waitFor(m, "OK", 10));
+    runSeconds(m, 1.0);
+    type(m, "DOS\\n");
+    // The console is DriveWire's channel 0: the banner, then the shell's prompt
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, "NitrOS-9", 60));
+    bool shell = false;
+    for (int i = 0; i < 20 && !shell; ++i) {
+        for (double t = 0; t < 3 && !shell; t += 0.25) {
+            runSeconds(m, 0.25);
+            shell = channelText(dw, 0).find(upper(prompt)) != std::string::npos;
+        }
+        if (!shell) dw->hostWrite(0, "\r");                 // ("Time ?" without a clock)
+    }
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 0.25));
+    EXPECT_TRUE(dw->channelOpen(0));
+    dw->clearChannelOutput(0);
+    dw->hostWrite(0, "dir\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, boot, 30));
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 10));
+    // A second shell on /N1, driven through its channel
+    std::string err2;
+    ASSERT(dw->attachChannel(1, "none", err2));             // (not the virtual modem: a shell)
+    dw->clearChannelOutput(0);
+    dw->hostWrite(0, "shell i=/n1&\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 20));
+    for (double t = 0; t < 20 && !dw->channelOpen(1); t += 0.25) runSeconds(m, 0.25);
+    EXPECT_TRUE(dw->channelOpen(1));
+    dw->hostWrite(1, "dir /dd/cmds\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 1, "Shell", 30));
+    // The dw utility: /N (the next free one, N2) to the virtual modem, while
+    // /N1's dir may still be printing. dw returns when the channel's close is
+    // announced (on Level 1, an announcement while the guest is busy would
+    // hang its kernel: DriveWireServer::CLOSE_QUIET)
+    dw->clearChannelOutput(0);
+    dw->hostWrite(0, "dw disk show\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, "mmsim_nitros9_hl_", 30));
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, prompt, 20));
+    EXPECT_TRUE(!dw->channelOpen(2));
+    // Both shells still answer
+    dw->clearChannelOutput(0);
+    dw->clearChannelOutput(1);
+    dw->hostWrite(0, "dir\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 0, boot, 30));
+    dw->hostWrite(1, "dir\r");
+    EXPECT_TRUE(channelWaitFor(m, dw, 1, boot, 30));
+    for (int port : {0, 1}) {
+        std::string out;
+        for (char c : dw->channelOutput(port)) if (c) out += c == '\r' ? '\n' : c;
+        std::printf("/%s:\n%s\n", DriveWireServer::portName(port).c_str(), out.c_str());
+    }
+    delete m;
+    std::remove(copy.c_str());
+}
+
+}  // namespace
+
+TEST_CASE(real_nitros9_level2_coco3_becker_headless) {
+    nitros9Headless(Model::CoCo3, false, "hdbdw3bc3.rom", "nos96809l2v030300coco3_becker_headless.dsk", "/DD:", "OS9Boot");
+}
+TEST_CASE(real_nitros9_level2_coco3_dw_headless) {
+    nitros9Headless(Model::CoCo3, false, "hdbdw3cc3.rom", "nos96809l2v030300coco3_dw_headless.dsk", "/DD:", "OS9Boot",
+                    "drivewire");
+}
+TEST_CASE(real_nitros9_level1_coco2_becker_headless) {
+    nitros9Headless(Model::CoCo2, false, "hdbdw3bck.rom", "nos96809l1v030300coco2_becker_headless.dsk", "OS9:", "OS9BOOT");
 }

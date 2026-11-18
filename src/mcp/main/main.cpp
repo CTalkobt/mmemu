@@ -3127,6 +3127,24 @@ Json handleToolsCall(const Json& params) {
                     state.push_back(sj);
                 }
                 res.oVal["state"] = state;
+                Json switches(Json::ARR);
+                for (const auto& sw : info.switches) {
+                    Json sj(Json::OBJ);
+                    sj.oVal["key"] = Json(sw.key);
+                    sj.oVal["label"] = Json(sw.label);
+                    sj.oVal["on"] = Json(sw.on);
+                    switches.push_back(sj);
+                }
+                res.oVal["switches"] = switches;
+                Json held(Json::ARR);
+                for (const auto& p : handler->pendingOptions()) {
+                    Json pj(Json::OBJ);
+                    pj.oVal["key"] = Json(p.key);
+                    pj.oVal["value"] = Json(p.value);
+                    pj.oVal["when"] = Json(p.when.str());
+                    held.push_back(pj);
+                }
+                res.oVal["heldOptions"] = held;
                 Json regs(Json::ARR);
                 for (const auto& r : info.registers) {
                     Json rj(Json::OBJ);

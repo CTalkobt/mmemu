@@ -6,6 +6,9 @@
 #include "test_harness.h"
 #include "plugins/6809/main/cpu6809.h"
 #include "libmem/main/memory_bus.h"
+#include <algorithm>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -188,4 +191,71 @@ TEST_CASE(m6809_disassembler) {
     EXPECT_EQ(std::string(b), std::string("TFR A,B"));
     r.cpu.disassembleOne(&r.mem, 0x100C, b, sizeof b);
     EXPECT_EQ(std::string(b), std::string("BNE $100C"));
+}
+
+// The bus cycles in order: reads (R), writes (W) and the dead cycles the core
+// places among them (D, reported through the dead-cycle hook) as the data
+// sheet and XRoar's cycle-by-cycle core have them. Dead cycles after the
+// last access (a TST's, SUBD's ALU cycle) are the rest of step()'s count.
+namespace {
+struct LogBus : FlatMemoryBus {
+    std::string log;
+    LogBus() : FlatMemoryBus("system", 16) {}
+    uint8_t read8(uint32_t a) override { log += 'R'; return FlatMemoryBus::read8(a); }
+    void write8(uint32_t a, uint8_t v) override { log += 'W'; FlatMemoryBus::write8(a, v); }
+};
+// One instruction at $1000 (X = $2000, DP = $00): its bus cycles, and step()'s count
+std::string cyclesOf(const std::vector<uint8_t>& code, int& total, bool hook = true) {
+    LogBus bus;
+    M6809 cpu;
+    cpu.setDataBus(&bus);
+    for (size_t i = 0; i < code.size(); ++i) bus.FlatMemoryBus::write8((uint32_t)(0x1000 + i), code[i]);
+    bus.FlatMemoryBus::write8(0x2000, 0x20);                   // a pointer for [,X]: $2010
+    bus.FlatMemoryBus::write8(0x2001, 0x10);
+    cpu.setPc(0x1000);
+    cpu.regWrite(M6809::R_X, 0x2000);
+    cpu.regWrite(M6809::R_DP, 0x00);
+    if (hook) cpu.setDeadCycleHook([&bus]() { bus.log += 'D'; });
+    bus.log.clear();
+    total = cpu.step();
+    return bus.log;
+}
+}  // namespace
+
+TEST_CASE(m6809_dead_cycles_in_place) {
+    struct Case { std::vector<uint8_t> code; const char* bus; int cycles; };
+    const Case cases[] = {
+        {{0x96, 0x22}, "RRDR", 4},                         // LDA <$22: the read on the 4th cycle
+        {{0xB6, 0xFF, 0x22}, "RRRDR", 5},                  // LDA $FF22: on the 5th
+        {{0xD7, 0x20}, "RRDW", 4},                         // STB <$20
+        {{0xB7, 0xFF, 0x20}, "RRRDW", 5},                  // STA $FF20
+        {{0xA6, 0x84}, "RRDR", 4},                         // LDA ,X
+        {{0xA6, 0x1F}, "RRDDR", 5},                        // LDA -1,X
+        {{0xA6, 0x89, 0x00, 0x10}, "RRRRDDDR", 8},         // LDA $10,X
+        {{0xA6, 0x94}, "RRDRRDR", 7},                      // LDA [,X]: the pointer, a dead cycle, the operand
+        {{0xA6, 0x9F, 0x20, 0x00}, "RRRRDRRDR", 9},        // LDA [$2000]
+        {{0x0F, 0x20}, "RRDRDW", 6},                       // CLR <$20: read, dead, write
+        {{0x76, 0x20, 0x00}, "RRRDRDW", 7},                // ROR $2000
+        {{0x6C, 0x84}, "RRDRDW", 6},                       // INC ,X
+        {{0x7D, 0x20, 0x00}, "RRRDRD", 7},                 // TST $2000 (one more dead cycle after)
+        {{0xFC, 0x20, 0x00}, "RRRDRR", 6},                 // LDD $2000
+        {{0xDD, 0x20}, "RRDWW", 5},                        // STD <$20
+        {{0xB3, 0x20, 0x00}, "RRRDRR", 7},                 // SUBD $2000 (then the ALU's dead cycle)
+        {{0x10, 0xBE, 0x20, 0x00}, "RRRRDRR", 7},          // LDY $2000
+        {{0x11, 0xB3, 0x20, 0x00}, "RRRRDRR", 8},          // CMPU $2000
+        {{0x95, 0x22}, "RRDR", 4},                         // BITA <$22
+    };
+    for (const auto& c : cases) {
+        int total = 0;
+        const std::string got = cyclesOf(c.code, total);
+        if (got != c.bus) std::printf("  opcode $%02X: %s, want %s\n", c.code[0], got.c_str(), c.bus);
+        EXPECT_TRUE(got == c.bus);
+        EXPECT_EQ(total, c.cycles);
+        // Without the hook: the same accesses and count
+        int plain = 0;
+        std::string want = c.bus;
+        want.erase(std::remove(want.begin(), want.end(), 'D'), want.end());
+        EXPECT_TRUE(cyclesOf(c.code, plain, false) == want);
+        EXPECT_EQ(plain, c.cycles);
+    }
 }

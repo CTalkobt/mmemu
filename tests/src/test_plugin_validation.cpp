@@ -68,6 +68,16 @@ TEST_CASE(validate_all_plugins) {
         std::cout << "  Created machine: " << id << std::flush << std::endl;
         ASSERT(machine != nullptr);
         ASSERT(!machine->machineId.empty());
+        // Every plugin's machine names its vendor (the GUI's machine tree
+        // groups by it; other tests register throwaway machines without)
+        const std::string vendor = MachineRegistry::instance().vendorOf(id);
+        if (!MachineRegistry::instance().sourceOf(id).empty()) {
+            if (vendor.empty())
+                std::cerr << "Machine '" << id << "' (" << MachineRegistry::instance().sourceOf(id)
+                          << ") was registered without a vendor" << std::endl;
+            ASSERT(!vendor.empty());
+        }
+        if (!vendor.empty()) ASSERT_EQ(machine->vendor, vendor);
         std::cout << "  Machine: " << id << " (Descriptor ID: " << machine->machineId << ")" << std::endl;
         
         // Also check all devices in the machine

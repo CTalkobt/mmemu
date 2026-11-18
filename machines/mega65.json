@@ -2,6 +2,7 @@
   "machines": [
     {
       "id": "mega65",
+      "vendor": "Commodore",
       "displayName": "MEGA65",
       "licenseClass": "proprietary",
       "assembler": "ca45",

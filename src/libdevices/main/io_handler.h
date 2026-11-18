@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <string>
 #include <functional>
+#include <vector>
 #include "device_info.h"
+#include "deferred_options.h"
 
 class IBus;
 class ISignalLine;
@@ -99,6 +101,11 @@ public:
     /** A serial port's far end (CLI `serial`): e.g. "loopback", "tcp:PORT",
      *  "none". False if this device has no serial port or the spec fails. */
     virtual bool attachSerial(const std::string& /*spec*/)   { return false; }
+    /** A command for a device's own host-side features, by name (the CLI
+     *  `drivewire ...`: the CoCo's DriveWire server and its virtual channels).
+     *  False if this device doesn't take `verb`; else `out` is the reply. */
+    virtual bool deviceCommand(const std::string& /*verb*/, const std::vector<std::string>& /*args*/,
+                               std::string& /*out*/) { return false; }
     /** A bus master (an REU's DMA): while it holds the bus, run one cycle of
      *  its work and return the cycles used (the CPU waits); 0 while it
      *  doesn't. Machines with a device that can take the bus call it before
@@ -118,6 +125,20 @@ public:
         err = "no such option";
         return false;
     }
+    /** setOption now, or held until `when`: the device's startup has finished
+     *  (OptionTiming::started: what that is, the device decides, e.g. the
+     *  guest has sent its init codes) or a delay of guest time has passed
+     *  (for a device the reset line doesn't reach). A device that can't tell
+     *  takes only "now" (the default). */
+    virtual bool setOptionWhen(const std::string& key, const std::string& value, const OptionTiming& when,
+                               std::string& err) {
+        if (when.kind == OptionTiming::Kind::Now) return setOption(key, value, err);
+        err = std::string(name()) + " can't tell when its startup has finished: only now";
+        return false;
+    }
+    /** The options setOptionWhen is holding. */
+    virtual std::vector<PendingOption> pendingOptions() const { return {}; }
+
     /** Save the device's memory as an image file (an REU's RAM). */
     virtual bool saveDeviceImage(const std::string& /*path*/, std::string& err) {
         err = "this device has no image to save";

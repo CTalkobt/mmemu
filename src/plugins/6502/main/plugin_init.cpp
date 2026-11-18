@@ -87,8 +87,8 @@ static ToolchainPluginInfo s_toolchains[] = {
 };
 
 static MachinePluginInfo s_machines[] = {
-    {"raw6502", createMachineRaw6502},
-    {"raw6510", createMachineRaw6510}
+    {"raw6502", createMachineRaw6502, nullptr, "Bare CPU"},
+    {"raw6510", createMachineRaw6510, nullptr, "Bare CPU"}
 };
 
 static SimPluginManifest s_manifest = {

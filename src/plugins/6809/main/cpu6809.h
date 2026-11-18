@@ -2,6 +2,7 @@
 
 #include "libcore/main/icore.h"
 #include <cstdint>
+#include <functional>
 
 /**
  * Motorola 6809 CPU core (#13, the BBC Micro's 6809 Second Processor).
@@ -18,6 +19,15 @@
  *
  * Interrupts: /IRQ and /FIRQ are level-sensitive (setIrqLine,
  * setFirqLine), /NMI is edge-triggered. step() returns cycles.
+ *
+ * Bus cycles in order: an instruction's dead ("don't care", VMA low)
+ * cycles before its operand's read or write, and the one between a
+ * read-modify-write's read and write, are placed where the data sheet
+ * (and XRoar's cycle-by-cycle core) has them, and reported through the
+ * dead-cycle hook as they pass, so a machine that keeps time by the bus
+ * cycle (the CoCo) sees an LDA $FF22 read the PIA on the instruction's
+ * fifth cycle, not its fourth. Dead cycles after the last access (a
+ * branch's, a TST's) are not reported: they are the rest of step()'s count.
  */
 class M6809 : public ICore {
 public:
@@ -58,6 +68,8 @@ public:
     void setVectorBase(uint16_t base) { m_vectors = base; }
     /** /FIRQ (level-sensitive). */
     void setFirqLine(bool asserted) { m_firq = asserted; m_linesDriven = true; }
+    /** Called for each dead cycle placed among an instruction's accesses (see above). */
+    void setDeadCycleHook(std::function<void()> hook) { m_onDead = std::move(hook); }
     bool isHalted() const override { return m_wait != WAIT_NONE; }
 
     int  disassembleOne  (IBus* bus, uint32_t addr, char* buf, int bufsz) override;
@@ -93,8 +105,10 @@ protected:
     // register file, the flag helpers and the 8/16-bit arithmetic.
     enum Wait { WAIT_NONE, WAIT_CWAI, WAIT_SYNC };
 
-    uint8_t rd(uint16_t a) { return m_bus ? m_bus->read8(a) : 0xFF; }
-    void    wr(uint16_t a, uint8_t v) { if (m_bus) m_bus->write8(a, v); }
+    uint8_t rd(uint16_t a) { ++m_bc; return m_bus ? m_bus->read8(a) : 0xFF; }
+    void    wr(uint16_t a, uint8_t v) { ++m_bc; if (m_bus) m_bus->write8(a, v); }
+    /** Dead cycles until the instruction has used `n` bus cycles. */
+    void deadTo(int n) { while (m_bc < n) { ++m_bc; if (m_onDead) m_onDead(); } }
     uint16_t rd16(uint16_t a) { uint8_t h = rd(a); return (uint16_t)(h << 8 | rd((uint16_t)(a + 1))); }
     void    wr16(uint16_t a, uint16_t v) { wr(a, v >> 8); wr((uint16_t)(a + 1), v & 0xFF); }
     uint8_t fetch() { return rd(m_pc++); }
@@ -141,4 +155,6 @@ protected:
     uint16_t m_vectors = 0xFFF0;
     uint16_t vec(int n) { return rd16((uint16_t)(m_vectors | n)); }
     uint64_t m_cycles = 0;
+    int m_bc = 0;                               // bus cycles (accesses and placed dead cycles) this step
+    std::function<void()> m_onDead;
 };
