@@ -7,6 +7,33 @@ The canonical version is defined in the `VERSION` file at the repository root.
 
 ## [0.4.0] - Unreleased
 
+### Each device lives in one plugin; plugins link the ones they use (#395)
+
+- **No more duplicate copies.** 61 CPU and device sources were compiled
+  into several plugins at once. The 6502, GTIA, VIC-II, SID, CIA, WD17xx,
+  the 6551 and others each existed two to six times in the process. Since
+  plugins load with `RTLD_GLOBAL`, which copy ran depended on load order,
+  and AddressSanitizer stopped at startup with an ODR violation. Each
+  device is now compiled into one plugin only, and the plugins that use it
+  link to that plugin.
+- **Hidden dependencies made explicit.** 19 plugins used code that only
+  another plugin contained. For example, the BBC, Apple II and NES used the
+  6502 plugin's code, and VIC-III used VIC-II's. They only worked because
+  that plugin happened to load first. They now link to it.
+- **Extensions link to their base:** VIC4 → VIC3 → VIC2, SID pair → SID,
+  and SNES (Super Game Boy) → Game Boy.
+- **New plugins for chips that several machines share:**
+  - `spectrum_ay`: the AY-3-8910, used by the Spectrum, the Mockingboard
+    and the Dragon/CoCo paks
+  - `sn76489`: used by the BBC and the CoCo Game Master Cartridge
+  - `coco_tape`: the cassette, used by the CoCo, Dragon, MC-10 and
+    Model 100
+  - `mc6847`
+  - `serial_endpoint`
+  The first three moved from the machine directories to `src/plugins/devices/`.
+- Each plugin's soname is its file name, and it finds the plugins it links
+  to in its own directory (`$ORIGIN`).
+
 ### Switching machines in the GUI no longer crashes (#391)
 
 - **Load Machine from a running machine** (for example C64 → C16) crashed.

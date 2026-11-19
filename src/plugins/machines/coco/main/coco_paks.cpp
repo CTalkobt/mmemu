@@ -7,7 +7,7 @@
 #include "coco_paks.h"
 #include "coco_system.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
-#include "plugins/machines/bbc/main/sn76489.h"
+#include "plugins/devices/sn76489/main/sn76489.h"
 #include <fstream>
 
 namespace coco {

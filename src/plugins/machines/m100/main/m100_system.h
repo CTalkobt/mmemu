@@ -1,7 +1,7 @@
 #pragma once
 
 #include "machine_m100.h"
-#include "plugins/machines/coco/main/coco_tape.h"
+#include "plugins/devices/coco_tape/main/coco_tape.h"
 #include "plugins/devices/hd44102/main/m100_lcd.h"
 #include "plugins/devices/hd61830/main/hd61830.h"
 #include "plugins/devices/i8155/main/i8155.h"

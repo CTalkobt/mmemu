@@ -10,7 +10,7 @@
 #include "plugins/z80/main/cpu_z80.h"
 #include "plugins/6809/main/cpu6809.h"
 #include "plugins/arm/main/cpu_arm2.h"
-#include "sn76489.h"
+#include "plugins/devices/sn76489/main/sn76489.h"
 #include "libcore/main/machine_desc.h"
 #include "libdevices/main/io_registry.h"
 #include "libdevices/main/io_handler.h"

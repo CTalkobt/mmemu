@@ -1,7 +1,7 @@
 #pragma once
 
 #include "coco_cart.h"
-#include "coco_tape.h"
+#include "plugins/devices/coco_tape/main/coco_tape.h"
 #include "machine_coco.h"
 #include "libdevices/main/io_handler.h"
 #include "libdevices/main/ikeyboard_matrix.h"

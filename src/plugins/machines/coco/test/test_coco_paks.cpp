@@ -4,7 +4,7 @@
 #include "test_harness.h"
 #include "coco_test_rom.h"
 #include "plugins/machines/coco/main/coco_paks.h"
-#include "plugins/machines/bbc/main/sn76489.h"
+#include "plugins/devices/sn76489/main/sn76489.h"
 #include "plugins/devices/wd17xx/main/wd17xx.h"
 #include <cstdio>
 #include <fstream>
