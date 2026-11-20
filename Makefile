@@ -1580,10 +1580,10 @@ man:
 	@echo "Generating man pages from documentation..."
 	@for f in doc/README-*.md; do \
 		base=$$(basename $$f .md | sed 's/README-//' | tr '[:upper:]' '[:lower:]'); \
-		pandoc -s -t man $$f -o $(MANDIR)/mmemu-$$base.7; \
+		pandoc -s -f markdown-tex_math_dollars -t man $$f -o $(MANDIR)/mmemu-$$base.7; \
 	done
-	@pandoc -s -t man doc/iec.md -o $(MANDIR)/mmemu-iec.7
-	@pandoc -s -t man README.md -o $(MANDIR)/mmemu.1
+	@pandoc -s -f markdown-tex_math_dollars -t man doc/iec.md -o $(MANDIR)/mmemu-iec.7
+	@pandoc -s -f markdown-tex_math_dollars -t man README.md -o $(MANDIR)/mmemu.1
 
 clean:
 	rm -rf $(BINDIR) $(LIBDIR) $(ILIBDIR) $(MANDIR) $(COVDIR) sdk/cpp/build
