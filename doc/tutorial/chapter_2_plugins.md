@@ -16,6 +16,7 @@ This chapter documents the dynamic loading subsystem and C ABI boundaries of the
 Located at [plugin_loader.h:L7](file:///home/duck/m65/inpg/mmsim/src/plugin_loader/main/plugin_loader.h#L7). It acts as the central plugin controller.
 - `load(const std::string& path)`: Direct loading of a single shared library `.so` file. Loads the binary into memory using `dlopen(path, RTLD_LAZY | RTLD_GLOBAL)`.
 - `loadFromDir(const std::string& dir)`: Scans a target directory, finding files matching `mmemu-plugin-*.so`.
+- **Plugins that use another plugin's code link to it.** Each CPU and device is compiled into exactly one plugin. A plugin that uses another one's code links to it: the machine plugins link the CPU and device plugins they use, and VIC4 links VIC3, which links VIC2. Each plugin's soname is its file name, and its rpath is `$ORIGIN`. So `dlopen` loads a plugin's dependencies from the same directory, whatever order the scan finds them in.
 - `loadFromStandardLocations()`: Implements fallback path search hierarchy.
 - `setPaneRegisterFn()`, `setCommandRegisterFn()`, `setMcpToolRegisterFn()`: Sets function pointer callbacks to route plugin UI elements, console operations, and AI tools back to the respective frontend dispatch tables.
 

@@ -62,7 +62,10 @@ endif
 
 # Plugins must NOT link spdlog/fmt themselves; they use host API function pointers.
 # The host binary (BASE_LIBS) exports spdlog symbols; dlopen resolves them at load time.
-PLUGIN_LIBS =
+# Each plugin is named by its file (soname) and finds the plugins it links
+# against beside itself ($ORIGIN): a device lives in one plugin, and the
+# plugins that use it link to it instead of compiling their own copy (#395)
+PLUGIN_LIBS = -Wl,-soname,$(notdir $@) -Wl,-rpath,'$$ORIGIN' -L$(LIBDIR)
 
 # libca45 (the MEGA65 compiler suite's assembler as a library, its
 # include/ca45/ca45.hpp): the 45GS02 ca45 backend's assembleLine() (the CLI's
@@ -145,11 +148,6 @@ PLUGIN_SNES_SRCS = src/plugins/machines/snes/main/machine_snes.cpp \
 	src/plugins/machines/snes/main/snes_msu1.cpp \
 	src/plugins/machines/snes/main/snes_sgb.cpp \
 	src/plugins/machines/snes/main/spc700.cpp \
-	src/plugins/machines/gameboy/main/gameboy.cpp \
-	src/plugins/machines/gameboy/main/gb_cpu.cpp \
-	src/plugins/machines/gameboy/main/gb_ppu.cpp \
-	src/plugins/machines/gameboy/main/gb_apu.cpp \
-	src/plugins/machines/gameboy/main/gb_cart.cpp \
 	src/plugins/machines/snes/main/plugin_init.cpp
 
 PLUGIN_GAMEBOY_SRCS = src/plugins/machines/gameboy/main/machine_gameboy.cpp \
@@ -180,17 +178,12 @@ PLUGIN_APPLE2_SRCS = src/plugins/machines/apple2/main/machine_apple2.cpp \
 	src/plugins/machines/apple2/main/mockingboard.cpp \
 	src/plugins/machines/apple2/main/super_serial.cpp \
 	src/plugins/machines/apple2/main/mouse_card.cpp \
-	src/plugins/devices/acia6551/main/acia6551.cpp \
-	src/plugins/devices/acia6551/main/hayes_modem.cpp \
-	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
-	src/plugins/devices/via6522/main/via6522.cpp \
 	src/plugins/machines/apple2/main/disk2.cpp \
 	src/plugins/devices/apple2_video/main/apple2_video.cpp \
 	src/plugins/machines/apple2/main/plugin_init.cpp
 
 PLUGIN_SPECTRUM_SRCS = src/plugins/machines/spectrum/main/machine_spectrum.cpp \
 	src/plugins/machines/spectrum/main/spectrum_tape.cpp \
-	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
 	src/plugins/machines/spectrum/main/spi_sd_card.cpp \
 	src/plugins/machines/spectrum/main/plugin_init.cpp
 PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
@@ -199,28 +192,18 @@ PLUGIN_COCO_SRCS = src/plugins/machines/coco/main/machine_coco.cpp \
 	src/plugins/machines/coco/main/coco_addons.cpp \
 	src/plugins/devices/tms7000/main/tms7000.cpp \
 	src/plugins/devices/sp0256/main/sp0256.cpp \
-	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
 	src/plugins/devices/coco_sdc/main/coco_sdc.cpp \
 	src/plugins/devices/xt_hdc/main/xt_hdc.cpp \
 	src/plugins/devices/drivewire/main/drivewire_server.cpp \
-	src/plugins/machines/coco/main/coco_tape.cpp \
 	src/plugins/machines/coco/main/machine_dragon.cpp \
 	src/plugins/machines/coco/main/dragon_dos.cpp \
 	src/plugins/machines/coco/main/coco_paks.cpp \
 	src/plugins/machines/coco/main/dragon_pro.cpp \
-	src/plugins/machines/bbc/main/sn76489.cpp \
-	src/plugins/machines/spectrum/main/spectrum_ay.cpp \
 	src/plugins/machines/coco/main/machine_coco3.cpp \
 	src/plugins/devices/gime/main/gime.cpp \
 	src/plugins/devices/gime/main/gime_font.cpp \
-	src/plugins/devices/mc6847/main/mc6847.cpp \
-	src/plugins/devices/mc6847/main/mc6847_font.cpp \
 	src/plugins/devices/mc6883/main/mc6883.cpp \
 	src/plugins/devices/mc6821/main/mc6821.cpp \
-	src/plugins/devices/acia6551/main/acia6551.cpp \
-	src/plugins/devices/acia6551/main/hayes_modem.cpp \
-	src/plugins/devices/wd17xx/main/wd17xx.cpp \
-	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
 	src/plugins/machines/coco/main/plugin_init.cpp
 PLUGIN_TRS80_SRCS = src/plugins/machines/trs80/main/machine_trs80.cpp \
 	src/plugins/machines/trs80/main/trs80_system.cpp \
@@ -229,12 +212,9 @@ PLUGIN_TRS80_SRCS = src/plugins/machines/trs80/main/machine_trs80.cpp \
 	src/plugins/machines/trs80/main/trs80_serial.cpp \
 	src/plugins/machines/trs80/main/trs80_hard.cpp \
 	src/plugins/machines/trs80/main/trs80_stringy.cpp \
-	src/plugins/devices/wd17xx/main/wd17xx.cpp \
-	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
 	src/plugins/machines/trs80/main/plugin_init.cpp
 PLUGIN_BBC_SRCS = src/plugins/machines/bbc/main/machine_bbc.cpp \
 	src/plugins/machines/bbc/main/bbc_via.cpp \
-	src/plugins/machines/bbc/main/sn76489.cpp \
 	src/plugins/machines/bbc/main/bbc_disc.cpp \
 	src/plugins/machines/bbc/main/bbc_tape.cpp \
 	src/plugins/machines/bbc/main/bbc_tube.cpp \
@@ -255,9 +235,6 @@ PLUGIN_6801_SRCS = src/plugins/6801/main/cpu6801.cpp \
 PLUGIN_MC10_SRCS = src/plugins/machines/mc10/main/machine_mc10.cpp \
 	src/plugins/machines/mc10/main/mc10_cart.cpp \
 	src/plugins/devices/ef9345/main/ef9345.cpp \
-	src/plugins/machines/coco/main/coco_tape.cpp \
-	src/plugins/devices/mc6847/main/mc6847.cpp \
-	src/plugins/devices/mc6847/main/mc6847_font.cpp \
 	src/plugins/machines/mc10/main/plugin_init.cpp
 PLUGIN_8085_SRCS = src/plugins/8085/main/cpu8085.cpp \
 	src/plugins/8085/main/opcodes8085.cpp \
@@ -267,8 +244,6 @@ PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
 	src/plugins/machines/m100/main/m100_system.cpp \
 	src/plugins/machines/m100/main/pc8201.cpp \
 	src/plugins/machines/m100/main/kyocera_keys.cpp \
-	src/plugins/machines/coco/main/coco_tape.cpp \
-	src/plugins/devices/serial_endpoint/main/serial_endpoint.cpp \
 	src/plugins/devices/hd44102/main/hd44102.cpp \
 	src/plugins/devices/hd44102/main/m100_lcd.cpp \
 	src/plugins/devices/hd61830/main/hd61830.cpp \
@@ -285,10 +260,6 @@ PLUGIN_M100_SRCS = src/plugins/machines/m100/main/machine_m100.cpp \
 	src/plugins/devices/rex/main/rex.cpp \
 	src/plugins/devices/rex/main/rexcpm.cpp \
 	src/plugins/devices/dvi/main/dvi.cpp \
-	src/plugins/devices/wd17xx/main/wd17xx.cpp \
-	src/plugins/devices/wd17xx/main/floppy_disk.cpp \
-	src/plugins/z80/main/cpu_z80.cpp \
-	src/plugins/z80/main/disasm_z80.cpp \
 	src/plugins/machines/m100/main/plugin_init.cpp
 PLUGIN_Z80_SRCS = src/plugins/z80/main/cpu_z80.cpp \
 	src/plugins/z80/main/disasm_z80.cpp \
@@ -368,47 +339,17 @@ PLUGIN_PIA6520_SRCS = src/plugins/devices/pia6520/main/pia6520.cpp \
 	src/plugins/devices/pia6520/main/plugin_init.cpp
 
 PLUGIN_PLUS4_SRCS = src/plugins/machines/plus4/main/machine_plus4.cpp \
-	src/plugins/devices/ted/main/ted.cpp \
-	src/plugins/devices/ted/main/ted_video.cpp \
-	src/plugins/devices/ted/main/ted_sound.cpp \
-	src/plugins/devices/iec_drive/main/iec_drive.cpp \
-	src/plugins/devices/acia6551/main/acia6551.cpp \
-	src/plugins/devices/acia6551/main/hayes_modem.cpp \
-	src/plugins/devices/datasette/main/datasette.cpp \
-	src/plugins/cbm-loader/main/tap_parser.cpp \
-	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
-	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
-	src/plugins/devices/ieee488/main/imd_disk.cpp \
-	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/machines/plus4/main/plugin_init.cpp
 
 PLUGIN_C128_SRCS = src/plugins/machines/c128/main/machine_c128.cpp \
                    src/plugins/machines/c128/main/c128_carts.cpp \
-	src/plugins/devices/reu/main/reu.cpp \
-	src/plugins/devices/georam/main/georam.cpp \
-	src/plugins/devices/acia6551/main/acia6551.cpp \
-	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/vdc8563/main/vdc8563.cpp \
-	src/plugins/devices/vic2/main/vic2.cpp \
-	src/plugins/devices/sid6581/main/sid6581.cpp \
-	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/sid_voice.cpp \
-	src/plugins/devices/sid6581/main/spectral_analyzer.cpp \
-	src/plugins/devices/cia6526/main/cia6526.cpp \
-	src/plugins/devices/iec_drive/main/iec_drive.cpp \
-	src/plugins/devices/datasette/main/datasette.cpp \
-	src/plugins/cbm-loader/main/tap_parser.cpp \
-	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
-	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
-	src/plugins/devices/ieee488/main/imd_disk.cpp \
-	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/machines/c128/main/plugin_init.cpp
 
 PLUGIN_IEEE488_SRCS = src/plugins/devices/ieee488/main/ieee488_bus.cpp \
 	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
 	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
 	src/plugins/devices/ieee488/main/imd_disk.cpp \
-	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
 	src/plugins/devices/ieee488/main/plugin_init.cpp
 
 PLUGIN_CBMLOADER_SRCS = src/plugins/cbm-loader/main/prg_loader.cpp \
@@ -433,11 +374,26 @@ PLUGIN_PET_SRCS = src/plugins/machines/pet/main/plugin_init.cpp \
 PLUGIN_ANTIC_SRCS = src/plugins/devices/antic/main/antic.cpp \
 	src/plugins/devices/antic/main/plugin_init.cpp
 
+PLUGIN_SPECTRUM_AY_SRCS = src/plugins/devices/spectrum_ay/main/spectrum_ay.cpp \
+	src/plugins/devices/spectrum_ay/main/plugin_init.cpp
+
+PLUGIN_SN76489_SRCS = src/plugins/devices/sn76489/main/sn76489.cpp \
+	src/plugins/devices/sn76489/main/plugin_init.cpp
+
+PLUGIN_COCO_TAPE_SRCS = src/plugins/devices/coco_tape/main/coco_tape.cpp \
+	src/plugins/devices/coco_tape/main/plugin_init.cpp
+
+PLUGIN_MC6847_SRCS = src/plugins/devices/mc6847/main/mc6847.cpp \
+	src/plugins/devices/mc6847/main/mc6847_font.cpp \
+	src/plugins/devices/mc6847/main/plugin_init.cpp
+
+PLUGIN_SERIAL_ENDPOINT_SRCS = src/plugins/devices/serial_endpoint/main/serial_endpoint.cpp \
+	src/plugins/devices/serial_endpoint/main/plugin_init.cpp
+
 PLUGIN_GTIA_SRCS = src/plugins/devices/gtia/main/gtia.cpp \
 	src/plugins/devices/gtia/main/plugin_init.cpp
 
 PLUGIN_DATASETTE_SRCS = src/plugins/devices/datasette/main/datasette.cpp \
-        src/plugins/cbm-loader/main/tap_parser.cpp \
         src/plugins/devices/datasette/main/plugin_init.cpp
 
 PLUGIN_POKEY_SRCS = src/plugins/devices/pokey/main/pokey.cpp \
@@ -457,19 +413,11 @@ PLUGIN_TED_SRCS = src/plugins/devices/ted/main/ted.cpp \
 PLUGIN_DRIVE1541_SRCS = src/plugins/devices/drive1541/main/drive1541.cpp \
 	src/plugins/devices/drive1541/main/gcr.cpp \
 	src/plugins/devices/drive1541/main/p64.cpp \
-	src/plugins/devices/via6522/main/via6522.cpp \
 	src/plugins/devices/drive1541/main/plugin_init.cpp
 
 PLUGIN_VIRTUALIEC_SRCS = src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
 	src/plugins/devices/virtual_iec/main/plugin_init.cpp \
-	src/plugins/devices/iec_drive/main/iec_drive.cpp \
-	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
-	src/plugins/devices/ieee488/main/cbm_image_dos.cpp \
-	src/plugins/devices/ieee488/main/imd_disk.cpp \
-	src/plugins/cbm-loader/main/cbm_sector_disk.cpp \
-	src/plugins/cbm-loader/main/d64_parser.cpp \
-	src/plugins/cbm-loader/main/t64_parser.cpp \
-	src/plugins/cbm-loader/main/g64_parser.cpp
+	src/plugins/devices/iec_drive/main/iec_drive.cpp
 
 PLUGIN_F018B_DMA_SRCS = src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
 	src/plugins/devices/f018b_dma/main/plugin_init.cpp
@@ -488,57 +436,23 @@ PLUGIN_SID_PAIR_SRCS = src/plugins/devices/sid_pair/main/sid_pair.cpp \
 PLUGIN_ATARI_SRCS = src/plugins/machines/atari/main/machine_atari.cpp \
 	src/plugins/machines/atari/main/plugin_init.cpp \
 	src/plugins/machines/atari/main/atari_sio.cpp \
-	src/plugins/machines/atari/main/atari_cart.cpp \
-	src/plugins/devices/antic/main/antic.cpp \
-	src/plugins/devices/gtia/main/gtia.cpp \
-	src/plugins/devices/pokey/main/pokey.cpp \
-	src/plugins/devices/pia6520/main/pia6520.cpp \
-	src/plugins/6502/main/cpu6502.cpp \
-	src/plugins/6502/main/cpu6502_cmos.cpp
+	src/plugins/machines/atari/main/atari_cart.cpp
 
 PLUGIN_X16_SRCS = src/plugins/machines/x16/main/machine_x16.cpp \
-	src/plugins/devices/vera/main/sdcard_spi.cpp \
 	src/plugins/devices/ym2151/main/ym2151.cpp \
 	src/third_party/ymfm/ymfm_opm.cpp \
 	src/plugins/machines/x16/main/x16_i2c.cpp \
 	src/plugins/machines/x16/main/x16_hostfs.cpp \
-	src/plugins/devices/ieee488/main/cbm_host_dos.cpp \
-	src/plugins/machines/x16/main/plugin_init.cpp \
-	src/plugins/devices/vera/main/vera.cpp \
-	src/plugins/devices/vera/main/vera_psg.cpp \
-	src/plugins/devices/vera/main/vera_pcm.cpp \
-	src/plugins/devices/via6522/main/via6522.cpp \
-	src/plugins/6502/main/cpu6502.cpp \
-	src/plugins/6502/main/cpu6502_cmos.cpp
+	src/plugins/machines/x16/main/plugin_init.cpp
 
 PLUGIN_MEGA65_SRCS = src/plugins/machines/mega65/main/machine_mega65.cpp \
-	src/plugins/devices/acia6551/main/acia6551.cpp \
-	src/plugins/devices/acia6551/main/hayes_modem.cpp \
 	src/plugins/devices/keyboard/main/keyboard_matrix_mega65.cpp \
-	src/plugins/devices/cia6526/main/cia6526.cpp \
-	src/plugins/devices/virtual_iec/main/virtual_iec.cpp \
-	src/plugins/devices/vic4/main/vic4.cpp \
-	src/plugins/devices/vic3/main/vic3.cpp \
-	src/plugins/devices/vic2/main/vic2.cpp \
-	src/plugins/devices/sid_pair/main/sid_pair.cpp \
-	src/plugins/devices/sid6581/main/sid6581.cpp \
-	src/plugins/devices/sid6581/main/combined_waveforms.cpp \
-	src/plugins/devices/sid6581/main/sid_voice.cpp \
-	src/plugins/45gs02/main/cpu45gs02.cpp \
-	src/plugins/45gs02/main/ca45_assembler.cpp \
-	src/plugins/devices/map_mmu/main/map_mmu.cpp \
-	src/plugins/devices/map_mmu/main/key_register.cpp \
-	src/plugins/devices/map_mmu/main/c64_bank_controller.cpp \
-	src/plugins/devices/f018b_dma/main/f018b_dma.cpp \
-	src/plugins/devices/audio_dma/main/audio_dma.cpp \
-	src/plugins/devices/mega65_math/main/mega65_math.cpp \
 	src/plugins/devices/mega65_hypervisor/main/hypervisor_regs.cpp \
 	src/plugins/devices/mega65_hypervisor/main/hdos_handler.cpp \
 	src/plugins/devices/sdcard/main/sdcard.cpp \
 	src/plugins/devices/sdcard/main/f011.cpp \
 	src/plugins/devices/mega65_rtc/main/mega65_rtc.cpp \
 	src/plugins/devices/mega65_io/main/mega65_io_stub.cpp \
-	src/plugins/devices/exit_trap/main/exit_trap.cpp \
 	src/plugins/machines/mega65/main/plugin_init.cpp
 
 PLUGIN_EXIT_TRAP_SRCS = src/plugins/devices/exit_trap/main/exit_trap.cpp \
@@ -900,7 +814,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/apple2_video/main/apple2_video.o \
 	src/plugins/machines/bbc/main/machine_bbc.o \
 	src/plugins/machines/bbc/main/bbc_via.o \
-	src/plugins/machines/bbc/main/sn76489.o \
+	src/plugins/devices/sn76489/main/sn76489.o \
 	src/plugins/machines/bbc/main/bbc_disc.o \
 	src/plugins/machines/bbc/main/bbc_tape.o \
 	src/plugins/machines/bbc/main/bbc_tube.o \
@@ -908,7 +822,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/bbc_video/main/bbc_video.o \
 	src/plugins/machines/spectrum/main/machine_spectrum.o \
 	src/plugins/machines/spectrum/main/spectrum_tape.o \
-	src/plugins/machines/spectrum/main/spectrum_ay.o \
+	src/plugins/devices/spectrum_ay/main/spectrum_ay.o \
 	src/plugins/machines/spectrum/main/spi_sd_card.o \
 	src/plugins/machines/coco/main/machine_coco.o \
 	src/plugins/machines/coco/main/coco_cart.o \
@@ -919,7 +833,7 @@ ALL_PLUGIN_OBJS = src/plugins/6502/main/cpu6502.o \
 	src/plugins/devices/coco_sdc/main/coco_sdc.o \
 	src/plugins/devices/xt_hdc/main/xt_hdc.o \
 	src/plugins/devices/drivewire/main/drivewire_server.o \
-	src/plugins/machines/coco/main/coco_tape.o \
+	src/plugins/devices/coco_tape/main/coco_tape.o \
 	src/plugins/machines/coco/main/machine_dragon.o \
 	src/plugins/machines/coco/main/dragon_dos.o \
 	src/plugins/machines/coco/main/coco_paks.o \
@@ -1079,9 +993,7 @@ PLUGIN_HYPERSERIAL_OBJS = $(PLUGIN_HYPERSERIAL_SRCS:.cpp=.o)
 PLUGIN_VIA6522_OBJS = $(PLUGIN_VIA6522_SRCS:.cpp=.o)
 PLUGIN_VIC6560_OBJS = $(PLUGIN_VIC6560_SRCS:.cpp=.o)
 PLUGIN_KBDVIC20_OBJS = $(PLUGIN_KBDVIC20_SRCS:.cpp=.o)
-PLUGIN_VIC20_CORE_OBJS = $(PLUGIN_VIC20_CORE_SRCS:.cpp=.o) \
-	src/plugins/devices/via6522/main/via6522.o \
-	src/plugins/devices/vic6560/main/vic6560.o
+PLUGIN_VIC20_CORE_OBJS = $(PLUGIN_VIC20_CORE_SRCS:.cpp=.o)
 PLUGIN_VIC20_GUI_OBJS  = src/plugins/machines/vic20/main/plugin_init.o
 PLUGIN_VICEIMPORTER_OBJS = $(PLUGIN_VICEIMPORTER_SRCS:.cpp=.o)
 PLUGIN_MEGA65IMPORTER_OBJS = $(PLUGIN_MEGA65IMPORTER_SRCS:.cpp=.o)
@@ -1097,12 +1009,7 @@ PLUGIN_VIC3_OBJS   = $(PLUGIN_VIC3_SRCS:.cpp=.o)
 PLUGIN_VIC4_OBJS   = $(PLUGIN_VIC4_SRCS:.cpp=.o)
 PLUGIN_SID6581_OBJS = $(PLUGIN_SID6581_SRCS:.cpp=.o)
 
-PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o) \
-	src/plugins/devices/cia6526/main/cia6526.o \
-	src/plugins/devices/vic2/main/vic2.o \
-	src/plugins/devices/sid6581/main/sid6581.o \
-	src/plugins/devices/sid6581/main/sid_voice.o \
-	src/plugins/devices/c64_pla/main/c64_pla.o
+PLUGIN_C64_CORE_OBJS = $(PLUGIN_C64_CORE_SRCS:.cpp=.o)
 PLUGIN_C64_GUI_OBJS  = src/plugins/machines/c64/main/plugin_init.o
 PLUGIN_PIA6520_OBJS  = $(PLUGIN_PIA6520_SRCS:.cpp=.o)
 PLUGIN_IEEE488_OBJS  = $(PLUGIN_IEEE488_SRCS:.cpp=.o)
@@ -1128,14 +1035,15 @@ PLUGIN_TRS80_OBJS  = $(PLUGIN_TRS80_SRCS:.cpp=.o)
 PLUGIN_CBMLOADER_OBJS = $(PLUGIN_CBMLOADER_SRCS:.cpp=.o)
 PLUGIN_CRTC6545_OBJS = $(PLUGIN_CRTC6545_SRCS:.cpp=.o)
 PLUGIN_PETVIDEO_OBJS = $(PLUGIN_PETVIDEO_SRCS:.cpp=.o)
-PLUGIN_PET_OBJS      = $(PLUGIN_PET_SRCS:.cpp=.o) \
-	src/plugins/devices/pia6520/main/pia6520.o \
-	src/plugins/devices/via6522/main/via6522.o \
-	src/plugins/devices/crtc6545/main/crtc6545.o \
-	src/plugins/devices/pet_video/main/pet_video.o
+PLUGIN_PET_OBJS      = $(PLUGIN_PET_SRCS:.cpp=.o)
 
 PLUGIN_ANTIC_OBJS = $(PLUGIN_ANTIC_SRCS:.cpp=.o)
 PLUGIN_GTIA_OBJS = $(PLUGIN_GTIA_SRCS:.cpp=.o)
+PLUGIN_SERIAL_ENDPOINT_OBJS = $(PLUGIN_SERIAL_ENDPOINT_SRCS:.cpp=.o)
+PLUGIN_SPECTRUM_AY_OBJS = $(PLUGIN_SPECTRUM_AY_SRCS:.cpp=.o)
+PLUGIN_SN76489_OBJS = $(PLUGIN_SN76489_SRCS:.cpp=.o)
+PLUGIN_COCO_TAPE_OBJS = $(PLUGIN_COCO_TAPE_SRCS:.cpp=.o)
+PLUGIN_MC6847_OBJS = $(PLUGIN_MC6847_SRCS:.cpp=.o)
 PLUGIN_DATASETTE_OBJS = $(PLUGIN_DATASETTE_SRCS:.cpp=.o)
 PLUGIN_POKEY_OBJS = $(PLUGIN_POKEY_SRCS:.cpp=.o)
 PLUGIN_VERA_OBJS = $(PLUGIN_VERA_SRCS:.cpp=.o)
@@ -1219,6 +1127,11 @@ PLUGINS = $(LIBDIR)/mmemu-plugin-6502.so \
 	$(LIBDIR)/mmemu-plugin-pet-video.so \
 	$(LIBDIR)/mmemu-plugin-pet.so \
 	$(LIBDIR)/mmemu-plugin-antic.so \
+	$(LIBDIR)/mmemu-plugin-spectrum-ay.so \
+	$(LIBDIR)/mmemu-plugin-sn76489.so \
+	$(LIBDIR)/mmemu-plugin-coco-tape.so \
+	$(LIBDIR)/mmemu-plugin-mc6847.so \
+	$(LIBDIR)/mmemu-plugin-serial-endpoint.so \
 	$(LIBDIR)/mmemu-plugin-gtia.so \
 	$(LIBDIR)/mmemu-plugin-pokey.so \
 	$(LIBDIR)/mmemu-plugin-vera.so \
@@ -1294,7 +1207,7 @@ $(LIBDIR)/mmemu-plugin-via6522.so: $(PLUGIN_VIA6522_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-vic6560.so: $(PLUGIN_VIC6560_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-vic20.so: $(PLUGIN_VIC20_CORE_OBJS) $(PLUGIN_VIC20_GUI_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-vic20.so: $(PLUGIN_VIC20_CORE_OBJS) $(PLUGIN_VIC20_GUI_OBJS) $(LIBDIR)/mmemu-plugin-via6522.so $(LIBDIR)/mmemu-plugin-vic6560.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-kbd-vic20.so: $(PLUGIN_KBDVIC20_OBJS) | $(LIBDIR)
@@ -1330,28 +1243,28 @@ $(LIBDIR)/mmemu-plugin-cia6526.so: $(PLUGIN_CIA6526_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-vic2.so: $(PLUGIN_VIC2_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-vic3.so: $(PLUGIN_VIC3_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-vic3.so: $(PLUGIN_VIC3_OBJS) $(LIBDIR)/mmemu-plugin-vic2.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-vic4.so: $(PLUGIN_VIC4_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-vic4.so: $(PLUGIN_VIC4_OBJS) $(LIBDIR)/mmemu-plugin-vic2.so $(LIBDIR)/mmemu-plugin-vic3.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-sid6581.so: $(PLUGIN_SID6581_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-c64.so: $(PLUGIN_C64_CORE_OBJS) $(PLUGIN_C64_GUI_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-c64.so: $(PLUGIN_C64_CORE_OBJS) $(PLUGIN_C64_GUI_OBJS) $(LIBDIR)/mmemu-plugin-c64-pla.so $(LIBDIR)/mmemu-plugin-cia6526.so $(LIBDIR)/mmemu-plugin-sid6581.so $(LIBDIR)/mmemu-plugin-vic2.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-pia6520.so: $(PLUGIN_PIA6520_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-ieee488.so: $(PLUGIN_IEEE488_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-ieee488.so: $(PLUGIN_IEEE488_OBJS) $(LIBDIR)/mmemu-plugin-cbm-loader.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-plus4.so: $(PLUGIN_PLUS4_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-plus4.so: $(PLUGIN_PLUS4_OBJS) $(LIBDIR)/mmemu-plugin-acia6551.so $(LIBDIR)/mmemu-plugin-cbm-loader.so $(LIBDIR)/mmemu-plugin-datasette.so $(LIBDIR)/mmemu-plugin-ieee488.so $(LIBDIR)/mmemu-plugin-ted.so $(LIBDIR)/mmemu-plugin-virtual-iec.so $(LIBDIR)/mmemu-plugin-6502.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-c128.so: $(PLUGIN_C128_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-c128.so: $(PLUGIN_C128_OBJS) $(LIBDIR)/mmemu-plugin-acia6551.so $(LIBDIR)/mmemu-plugin-cbm-loader.so $(LIBDIR)/mmemu-plugin-cia6526.so $(LIBDIR)/mmemu-plugin-datasette.so $(LIBDIR)/mmemu-plugin-georam.so $(LIBDIR)/mmemu-plugin-ieee488.so $(LIBDIR)/mmemu-plugin-reu.so $(LIBDIR)/mmemu-plugin-sid6581.so $(LIBDIR)/mmemu-plugin-vic2.so $(LIBDIR)/mmemu-plugin-virtual-iec.so $(LIBDIR)/mmemu-plugin-6502.so $(LIBDIR)/mmemu-plugin-z80.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
@@ -1360,7 +1273,7 @@ $(LIBDIR)/mmemu-plugin-z80.so: $(PLUGIN_Z80_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-8085.so: $(PLUGIN_8085_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-m100.so: $(PLUGIN_M100_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-m100.so: $(PLUGIN_M100_OBJS) $(LIBDIR)/mmemu-plugin-coco-tape.so $(LIBDIR)/mmemu-plugin-wd17xx.so $(LIBDIR)/mmemu-plugin-z80.so $(LIBDIR)/mmemu-plugin-8085.so $(LIBDIR)/mmemu-plugin-serial-endpoint.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-6809.so: $(PLUGIN_6809_OBJS) | $(LIBDIR)
@@ -1369,7 +1282,7 @@ $(LIBDIR)/mmemu-plugin-6809.so: $(PLUGIN_6809_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-6801.so: $(PLUGIN_6801_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-mc10.so: $(PLUGIN_MC10_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-mc10.so: $(PLUGIN_MC10_OBJS) $(LIBDIR)/mmemu-plugin-coco-tape.so $(LIBDIR)/mmemu-plugin-mc6847.so $(LIBDIR)/mmemu-plugin-6801.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-arm.so: $(PLUGIN_ARM_OBJS) | $(LIBDIR)
@@ -1378,31 +1291,31 @@ $(LIBDIR)/mmemu-plugin-arm.so: $(PLUGIN_ARM_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-65816.so: $(PLUGIN_65816_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-atari2600.so: $(PLUGIN_A2600_OBJS) $(LIBDIR)/mmemu-plugin-6502.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-nes.so: $(PLUGIN_NES_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-nes.so: $(PLUGIN_NES_OBJS) $(LIBDIR)/mmemu-plugin-6502.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-snes.so: $(PLUGIN_SNES_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-snes.so: $(PLUGIN_SNES_OBJS) $(LIBDIR)/mmemu-plugin-gameboy.so $(LIBDIR)/mmemu-plugin-65816.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-gameboy.so: $(PLUGIN_GAMEBOY_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-apple2.so: $(PLUGIN_APPLE2_OBJS) $(LIBDIR)/mmemu-plugin-acia6551.so $(LIBDIR)/mmemu-plugin-spectrum-ay.so $(LIBDIR)/mmemu-plugin-via6522.so $(LIBDIR)/mmemu-plugin-6502.so $(LIBDIR)/mmemu-plugin-65816.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-bbc.so: $(PLUGIN_BBC_OBJS) $(LIBDIR)/mmemu-plugin-sn76489.so $(LIBDIR)/mmemu-plugin-6502.so $(LIBDIR)/mmemu-plugin-6809.so $(LIBDIR)/mmemu-plugin-arm.so $(LIBDIR)/mmemu-plugin-z80.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS) -lz
 
-$(LIBDIR)/mmemu-plugin-spectrum.so: $(PLUGIN_SPECTRUM_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-spectrum.so: $(PLUGIN_SPECTRUM_OBJS) $(LIBDIR)/mmemu-plugin-spectrum-ay.so $(LIBDIR)/mmemu-plugin-z80.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-coco.so: $(PLUGIN_COCO_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-coco.so: $(PLUGIN_COCO_OBJS) $(LIBDIR)/mmemu-plugin-acia6551.so $(LIBDIR)/mmemu-plugin-coco-tape.so $(LIBDIR)/mmemu-plugin-mc6847.so $(LIBDIR)/mmemu-plugin-sn76489.so $(LIBDIR)/mmemu-plugin-spectrum-ay.so $(LIBDIR)/mmemu-plugin-wd17xx.so $(LIBDIR)/mmemu-plugin-6809.so $(LIBDIR)/mmemu-plugin-serial-endpoint.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-trs80.so: $(PLUGIN_TRS80_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-trs80.so: $(PLUGIN_TRS80_OBJS) $(LIBDIR)/mmemu-plugin-wd17xx.so $(LIBDIR)/mmemu-plugin-z80.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
@@ -1411,19 +1324,34 @@ $(LIBDIR)/mmemu-plugin-cbm-loader.so: $(PLUGIN_CBMLOADER_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-crtc6545.so: $(PLUGIN_CRTC6545_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-pet-video.so: $(PLUGIN_PETVIDEO_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-pet-video.so: $(PLUGIN_PETVIDEO_OBJS) $(LIBDIR)/mmemu-plugin-crtc6545.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-pet.so: $(PLUGIN_PET_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-pet.so: $(PLUGIN_PET_OBJS) $(LIBDIR)/mmemu-plugin-crtc6545.so $(LIBDIR)/mmemu-plugin-pet-video.so $(LIBDIR)/mmemu-plugin-pia6520.so $(LIBDIR)/mmemu-plugin-via6522.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-antic.so: $(PLUGIN_ANTIC_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-antic.so: $(PLUGIN_ANTIC_OBJS) $(LIBDIR)/mmemu-plugin-gtia.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-spectrum-ay.so: $(PLUGIN_SPECTRUM_AY_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-sn76489.so: $(PLUGIN_SN76489_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-coco-tape.so: $(PLUGIN_COCO_TAPE_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-mc6847.so: $(PLUGIN_MC6847_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
+
+$(LIBDIR)/mmemu-plugin-serial-endpoint.so: $(PLUGIN_SERIAL_ENDPOINT_OBJS) | $(LIBDIR)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-gtia.so: $(PLUGIN_GTIA_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-datasette.so: $(PLUGIN_DATASETTE_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-datasette.so: $(PLUGIN_DATASETTE_OBJS) $(LIBDIR)/mmemu-plugin-cbm-loader.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-pokey.so: $(PLUGIN_POKEY_OBJS) | $(LIBDIR)
@@ -1435,10 +1363,10 @@ $(LIBDIR)/mmemu-plugin-vera.so: $(PLUGIN_VERA_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-ted.so: $(PLUGIN_TED_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-virtual-iec.so: $(PLUGIN_VIRTUALIEC_OBJS) $(LIBDIR)/mmemu-plugin-cbm-loader.so $(LIBDIR)/mmemu-plugin-ieee488.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-drive1541.so: $(PLUGIN_DRIVE1541_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-drive1541.so: $(PLUGIN_DRIVE1541_OBJS) $(LIBDIR)/mmemu-plugin-via6522.so $(LIBDIR)/mmemu-plugin-6502.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-f018b-dma.so: $(PLUGIN_F018B_DMA_OBJS) | $(LIBDIR)
@@ -1450,13 +1378,13 @@ $(LIBDIR)/mmemu-plugin-audio-dma.so: $(PLUGIN_AUDIODMA_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-map-mmu.so: $(PLUGIN_MAP_MMU_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-mega65.so: $(PLUGIN_MEGA65_OBJS) $(LIBDIR)/mmemu-plugin-45gs02.so $(LIBDIR)/mmemu-plugin-acia6551.so $(LIBDIR)/mmemu-plugin-audio-dma.so $(LIBDIR)/mmemu-plugin-cia6526.so $(LIBDIR)/mmemu-plugin-exit-trap.so $(LIBDIR)/mmemu-plugin-f018b-dma.so $(LIBDIR)/mmemu-plugin-map-mmu.so $(LIBDIR)/mmemu-plugin-mega65-math.so $(LIBDIR)/mmemu-plugin-sid-pair.so $(LIBDIR)/mmemu-plugin-sid6581.so $(LIBDIR)/mmemu-plugin-vic2.so $(LIBDIR)/mmemu-plugin-vic3.so $(LIBDIR)/mmemu-plugin-vic4.so $(LIBDIR)/mmemu-plugin-virtual-iec.so $(LIBDIR)/mmemu-plugin-hyper-serial.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS) $(CA45_LIBS)
 
-$(LIBDIR)/mmemu-plugin-atari.so: $(PLUGIN_ATARI_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-atari.so: $(PLUGIN_ATARI_OBJS) $(LIBDIR)/mmemu-plugin-6502.so $(LIBDIR)/mmemu-plugin-antic.so $(LIBDIR)/mmemu-plugin-gtia.so $(LIBDIR)/mmemu-plugin-pia6520.so $(LIBDIR)/mmemu-plugin-pokey.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-x16.so: $(PLUGIN_X16_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-x16.so: $(PLUGIN_X16_OBJS) $(LIBDIR)/mmemu-plugin-6502.so $(LIBDIR)/mmemu-plugin-ieee488.so $(LIBDIR)/mmemu-plugin-vera.so $(LIBDIR)/mmemu-plugin-via6522.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
@@ -1465,7 +1393,7 @@ $(LIBDIR)/mmemu-plugin-exit-trap.so: $(PLUGIN_EXIT_TRAP_OBJS) | $(LIBDIR)
 $(LIBDIR)/mmemu-plugin-mega65-math.so: $(PLUGIN_MEGA65_MATH_OBJS) | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(WXLIBS) $(PLUGIN_LIBS)
 
-$(LIBDIR)/mmemu-plugin-sid-pair.so: $(PLUGIN_SID_PAIR_OBJS) | $(LIBDIR)
+$(LIBDIR)/mmemu-plugin-sid-pair.so: $(PLUGIN_SID_PAIR_OBJS) $(LIBDIR)/mmemu-plugin-sid6581.so | $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(PLUGIN_LIBS)
 
 $(LIBDIR)/mmemu-plugin-cbm-hle.so: $(PLUGIN_CBMHLE_OBJS) | $(LIBDIR)

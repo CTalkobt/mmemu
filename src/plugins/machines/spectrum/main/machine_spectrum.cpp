@@ -7,7 +7,7 @@
 
 #include "machine_spectrum.h"
 #include "spectrum_tape.h"
-#include "spectrum_ay.h"
+#include "plugins/devices/spectrum_ay/main/spectrum_ay.h"
 #include "divmmc.h"
 #include "libcore/main/image_loader.h"
 #include "libdevices/main/disk_file.h"

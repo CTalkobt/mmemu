@@ -2,7 +2,7 @@
 
 #include "machine_mc10.h"
 #include "mc10_cart.h"
-#include "plugins/machines/coco/main/coco_tape.h"
+#include "plugins/devices/coco_tape/main/coco_tape.h"
 #include "plugins/devices/mc6847/main/mc6847.h"
 #include "plugins/devices/ef9345/main/ef9345.h"
 #include "libdevices/main/io_handler.h"

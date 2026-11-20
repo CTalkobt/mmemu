@@ -6,7 +6,7 @@
 #include "coco_cart.h"
 #include "plugins/devices/sp0256/main/sp0256.h"
 #include "plugins/devices/tms7000/main/tms7000.h"
-#include "plugins/machines/spectrum/main/spectrum_ay.h"
+#include "plugins/devices/spectrum_ay/main/spectrum_ay.h"
 
 namespace coco {
 

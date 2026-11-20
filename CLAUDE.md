@@ -210,6 +210,7 @@ Plugins do NOT need to export dynamic registration — the host's `SimPluginHost
 1. Implement the `IOHandler` interface
 2. Create a `plugin_init.cpp` that calls `host->registerDevice()`
 3. Add the plugin to `PLUGINS` in the Makefile
+4. If it uses a CPU or device from another plugin, link to that plugin: list `$(LIBDIR)/mmemu-plugin-<name>.so` as a prerequisite of its `.so` rule. Never add the other plugin's sources to its `_SRCS`. Each device lives in exactly one plugin. A device that extends another (VIC3 on VIC2, VIC4 on VIC3) links to the one it extends. A distinct chip shared by several machines gets its own plugin (for example `spectrum_ay`, `sn76489`, `mc6847`) (#395).
 
 ### Symbol Resolution
 

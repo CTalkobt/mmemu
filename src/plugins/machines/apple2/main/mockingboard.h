@@ -2,7 +2,7 @@
 
 #include "slot_card.h"
 #include "plugins/devices/via6522/main/via6522.h"
-#include "plugins/machines/spectrum/main/spectrum_ay.h"
+#include "plugins/devices/spectrum_ay/main/spectrum_ay.h"
 #include <cstdint>
 
 namespace apple2 {

@@ -6,7 +6,7 @@
 
 #include "libdevices/main/io_handler.h"
 #include "plugins/devices/mc6821/main/mc6821.h"
-#include "plugins/machines/spectrum/main/spectrum_ay.h"
+#include "plugins/devices/spectrum_ay/main/spectrum_ay.h"
 #include <cstdint>
 #include <memory>
 #include <string>
