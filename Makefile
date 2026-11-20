@@ -1159,6 +1159,13 @@ CLI_OBJS = $(CLI_SRCS:.cpp=.o)
 CLI_OBJS_FOR_TEST = $(filter-out src/cli/main/main.o,$(CLI_OBJS))
 MCP_OBJS = $(MCP_SRCS:.cpp=.o)
 
+# CLI objects the other binaries link too (listed as prerequisites so a
+# clean `make gui`, `make mcp` or `make test` builds them, #394)
+GUI_CLI_OBJS = src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o
+MCP_CLI_OBJS = src/cli/main/lua_engine.o
+TEST_CLI_OBJS = src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o \
+	src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o
+
 # Binaries
 CLI_BIN = $(BINDIR)/mmemu-cli
 GUI_BIN = $(BINDIR)/mmemu-gui
@@ -1479,11 +1486,11 @@ src/mcp/main/main.o: $(VERSION_HDR)
 $(CLI_BIN): $(CLI_OBJS) $(LIBS) | $(BINDIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(CLI_OBJS) $(BASE_LIBS)
 
-$(GUI_BIN): $(GUI_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o $(BASE_LIBS) $(WXLIBS) $(SDL2_LIBS) -lasound
+$(GUI_BIN): $(GUI_OBJS) $(GUI_CLI_OBJS) $(LIBS) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $(WXCXXFLAGS) -rdynamic -o $@ $(GUI_OBJS) $(GUI_CLI_OBJS) $(BASE_LIBS) $(WXLIBS) $(SDL2_LIBS) -lasound
 
-$(MCP_BIN): $(MCP_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) src/cli/main/lua_engine.o $(BASE_LIBS)
+$(MCP_BIN): $(MCP_OBJS) $(MCP_CLI_OBJS) $(LIBS) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -rdynamic -o $@ $(MCP_OBJS) $(MCP_CLI_OBJS) $(BASE_LIBS)
 
 # Test runner binary (unified multi-backend test framework)
 TEST_RUNNER_OBJS = src/cli/main/test_runner_main.o \
@@ -1498,8 +1505,8 @@ $(TEST_RUNNER_BIN): $(TEST_RUNNER_OBJS) $(LIBS) | $(BINDIR)
 
 test-runner: $(TEST_RUNNER_BIN) plugins
 
-$(TEST_BIN): $(TEST_OBJS) $(LIBS) | $(BINDIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) src/cli/main/lua_engine.o src/cli/main/vice_snapshot.o src/cli/main/hardware_test_bridge.o src/cli/main/cross_validation_runner.o $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound -lz
+$(TEST_BIN): $(TEST_OBJS) $(TEST_CLI_OBJS) $(LIBS) | $(BINDIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTEST_BUILD -Itests/src -rdynamic -o $@ $(TEST_OBJS) $(TEST_CLI_OBJS) $(CA45_LIBS) $(BASE_LIBS) $(WXLIBS) -lasound -lz
 
 src/plugins/45gs02/main/ca45_assembler.o src/plugins/45gs02/test/test_ca45_assemble_line.o: CXXFLAGS += $(CA45_CXXFLAGS)
 src/gui/main/host_gamepad.o: CXXFLAGS += $(SDL2_CXXFLAGS)
